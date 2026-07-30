@@ -1,0 +1,52 @@
+ghostfolio:
+  db:
+    host: "gf-postgres"
+    port: 5432
+    database: "ghostfolio"
+    username: "ghostfolio"
+    password: "change-me"
+    ssl: false
+
+market_data:
+  primary: "alpha_vantage"
+  fallback: ["financial_modeling_prep", "frankfurter_fx", "external_import_market_data"]
+  experimental_fallback: ["stooq", "sec_company_facts", "yahoo_finance"]
+  cache_ttl_hours: 24
+  max_cache_mb: 1000
+  alpha_vantage:
+    api_key: "${ALPHA_VANTAGE_API_KEY}"
+  financial_modeling_prep:
+    api_key: "${FMP_API_KEY}"
+  yahoo_finance:
+    enabled: true
+  google_finance:
+    enabled: false
+
+dashboard:
+  https_port: 6443
+  display_currencies: ["USD", "ILS", "USD/ILS"]
+  banner_items:
+    - label: "USD/ILS"
+      type: "fx"
+      symbol: "USD/ILS"
+    - label: "EUR/ILS"
+      type: "fx"
+      symbol: "EUR/ILS"
+    - label: "Nasdaq"
+      type: "index"
+      symbol: "IXIC"
+    - label: "Gold"
+      type: "commodity"
+      symbol: "GCUSD"
+
+alerts:
+  schedule: "0 7 * * *"
+  timezone: "Asia/Jerusalem"
+  notification:
+    channels: ["dashboard"]
+
+backup:
+  enabled: true
+  schedule: "45 23 * * *"
+  timezone: "Asia/Jerusalem"
+  keep: 30

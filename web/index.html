@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#080d25" />
+    <title>Portfolio Analyzer</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/app-icon.svg" />
+    <link rel="stylesheet" href="/styles.css?v=0.4.5" />
+  </head>
+  <body>
+    <div id="loadingOverlay" class="loading-overlay" role="status" aria-live="polite">
+      <div class="loading-panel">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <b id="loadingTitle">Loading portfolio</b>
+        <small id="loadingDetail">Reading cached analytics</small>
+      </div>
+    </div>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Main navigation">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span>Portfolio</span>
+        </div>
+        <nav class="nav">
+          <button class="nav-item active" type="button">Overview</button>
+          <button class="nav-item" type="button" data-modal="accountsModal">Accounts</button>
+          <button class="nav-item" type="button" data-modal="securitiesModal">Securities</button>
+          <button class="nav-item" type="button" data-modal="pricesModal">Prices</button>
+          <button class="nav-item" type="button" data-modal="reportsModal">Reports</button>
+          <button class="nav-item" type="button" data-modal="fundsModal">Pension/Funds</button>
+          <button class="nav-item" type="button" data-modal="marketModal">Market screener</button>
+          <button class="nav-item" type="button" data-modal="alertsModal">Alerts</button>
+          <button class="nav-item" type="button" data-modal="bannerModal">Banner</button>
+          <button class="nav-item" type="button" data-modal="settingsModal">Settings</button>
+          <button class="nav-item" type="button" data-modal="aboutModal">About</button>
+        </nav>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Overview</p>
+            <h1>Portfolio analyzer</h1>
+            <p id="status">Loading portfolio</p>
+          </div>
+          <button id="refresh" class="icon-button" title="Refresh" aria-label="Refresh">↻</button>
+        </header>
+
+        <section class="ticker-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Markets</p>
+              <h2>Currency, indexes, and commodities</h2>
+            </div>
+            <button type="button" class="secondary" data-modal="bannerModal">Manage</button>
+          </div>
+          <div id="bannerItems" class="ticker-row"></div>
+        </section>
+
+        <section class="overview-grid">
+          <div class="balance-panel">
+            <p class="eyebrow">Portfolio value</p>
+            <div id="balanceValue" class="balance-value">∅</div>
+            <div id="profitBadge" class="delta neutral">∅</div>
+            <div id="currencyBreakdown" class="currency-strip"></div>
+          </div>
+          <div id="summary" class="summary"></div>
+        </section>
+
+        <section id="fundsOverview" class="funds-overview-panel"></section>
+
+        <section class="analytics-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Analytics</p>
+              <h2>Portfolio visual overview</h2>
+            </div>
+            <div class="dashboard-controls">
+              <div class="dashboard-view-toggle" aria-label="Dashboard view">
+                <button type="button" data-dashboard-mode="basic" title="Show the compact dashboard">Glance</button>
+                <button type="button" data-dashboard-mode="expanded" title="Show all enabled dashboard cards">Full</button>
+              </div>
+              <button id="dashboardEdit" class="secondary" type="button" title="Customize dashboard cards">Edit</button>
+              <button id="dashboardReset" class="secondary" type="button" title="Reset graph layout">Reset</button>
+            </div>
+          </div>
+          <div id="analyticsBoard" class="analytics-board"></div>
+        </section>
+
+        <section class="tool-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Portfolio screener</p>
+              <h2>Holdings</h2>
+            </div>
+            <span id="count" class="count"></span>
+          </div>
+
+          <div class="toolbar">
+            <input id="query" placeholder="Symbol or name" />
+            <select id="account">
+              <option value="">Any account</option>
+            </select>
+            <select id="assetClass">
+              <option value="">Any asset</option>
+              <option value="EQUITY">Equity</option>
+              <option value="BOND">Bond</option>
+              <option value="ETF">ETF</option>
+              <option value="MUTUALFUND">Fund</option>
+              <option value="OPTION">Option</option>
+              <option value="FUTURE">Future</option>
+            </select>
+            <select id="currency">
+              <option value="">Any currency</option>
+            </select>
+            <select id="accountType">
+              <option value="">Any account type</option>
+            </select>
+            <input id="locationFilter" list="countryOptions" placeholder="Any location" />
+            <input id="sector" placeholder="Sector" />
+            <input id="minHoldingValue" type="number" placeholder="Min value" />
+            <input id="maxHoldingValue" type="number" placeholder="Max value" />
+            <label class="check"><input id="includeMissing" type="checkbox" checked /> Include missing</label>
+            <button id="apply" type="button">Search</button>
+          </div>
+
+          <div class="table-wrap">
+            <table class="holdings-table">
+              <thead>
+                <tr>
+                  <th>Security</th>
+                  <th>Account</th>
+                  <th>Value / P&amp;L</th>
+                  <th>1Y High / Low</th>
+                  <th>Net income</th>
+                  <th>Dividend Trend</th>
+                  <th>Support / Resistance</th>
+                  <th>Data Status</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <datalist id="countryOptions"></datalist>
+
+    <div id="accountsModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="accountsTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Local portfolio DB</p>
+            <h2 id="accountsTitle">Accounts</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="info-strip">
+          Imported accounts are linked to local securities. Manual accounts stay separate and can be edited here.
+        </div>
+        <div id="accountsSummary" class="report-grid account-summary"></div>
+        <div class="management-form account-form">
+          <label class="field"><span>Type</span><select id="localAccountType" title="Investment, long-term savings, or bank account"></select></label>
+          <label class="field"><span>Country</span><input id="localAccountLocation" list="countryOptions" placeholder="Location" title="Account country. Israel uses agorot for security prices; USA bonds use cents." /></label>
+          <label class="field"><span>Currency</span><select id="localAccountCurrency" title="Account base currency"></select></label>
+          <label class="field"><span>Initial cash</span><input id="localInitialCash" type="number" step="0.01" placeholder="0" title="Opening cash balance. Buy/sell/short transactions affect cash; add/remove security does not." /></label>
+          <label class="field"><span>Username</span><input id="localUsername" placeholder="Owner / login" title="Owner or username shown in account reports" /></label>
+          <label class="field"><span>Account id</span><input id="localAccountId" placeholder="Account id" title="External account id from broker, bank, pension company, or import sync" /></label>
+          <label class="field"><span>Management company</span><input id="localManagementCompany" placeholder="Broker / bank / fund" title="Broker, bank, pension company, or platform" /></label>
+          <label class="field"><span>Comments</span><input id="localAccountComments" placeholder="Comments" title="Optional operational notes for finance managers" /></label>
+          <div class="form-actions">
+            <button id="saveLocalAccount" type="button" title="Create or update a manual account">Save account</button>
+            <button id="importSource" class="secondary" type="button" title="Refresh account and security links from the configured import source">Sync import</button>
+          </div>
+        </div>
+        <p id="accountsStatus" class="status-line"></p>
+        <div id="accountsList" class="stack management-list"></div>
+      </section>
+    </div>
+
+    <div id="securitiesModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="securitiesTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Manual transactions</p>
+            <h2 id="securitiesTitle">Securities</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="management-section">
+          <p class="form-caption">Instrument definition</p>
+          <div class="management-form instrument-form">
+            <input id="manualSecuritySymbol" placeholder="ID or symbol" />
+            <input id="manualSecurityName" placeholder="Name" />
+            <input id="manualSecurityMarket" placeholder="Market" />
+            <select id="manualInstrumentType"></select>
+            <select id="manualSecurityCurrency"></select>
+            <input id="manualSecurityLocation" list="countryOptions" placeholder="Location" />
+            <input id="manualUnderlyingSymbol" data-derivative-field placeholder="Underlying" />
+            <select id="manualOptionType" data-option-field></select>
+            <input id="manualExpirationDate" data-derivative-field type="date" />
+            <input id="manualStrikePrice" data-option-field type="number" step="0.0001" placeholder="Strike" />
+            <input id="manualContractMultiplier" data-derivative-field type="number" step="0.0001" placeholder="Multiplier" />
+            <input id="manualSecurityComments" placeholder="Comments" />
+            <button id="saveManualSecurity" type="button">Save instrument</button>
+          </div>
+          <p id="manualSecurityStatus" class="status-line"></p>
+          <div id="manualSecuritiesList" class="stack management-list compact-list"></div>
+        </div>
+        <div class="management-section">
+          <p class="form-caption">Account transaction</p>
+          <div class="management-form transaction-form">
+            <select id="securityAccount"></select>
+            <select id="securityKnownInstrument"></select>
+            <select id="securityAction">
+              <option value="BUY">Buy</option>
+              <option value="SELL">Sell</option>
+              <option value="SHORT">Short</option>
+              <option value="ADD">Add security</option>
+              <option value="REMOVE">Remove security</option>
+            </select>
+            <input id="securitySymbol" placeholder="ID or symbol" />
+            <input id="securityMarket" placeholder="Stock market" />
+            <select id="securityAssetClass"></select>
+            <input id="securityQuantity" type="number" step="0.0001" placeholder="Amount" />
+            <input id="securityPrice" type="number" step="0.0001" placeholder="Buy/short price" />
+            <input id="securityDate" type="date" />
+            <label class="check"><input id="securityAllowManual" type="checkbox" /> Manual if not found</label>
+            <input id="securityComments" placeholder="Comments" />
+            <button id="saveSecurity" type="button">Save transaction</button>
+          </div>
+        </div>
+        <p id="securityStatus" class="status-line"></p>
+        <div id="securitiesList" class="stack management-list"></div>
+      </section>
+    </div>
+
+    <div id="pricesModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="pricesTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Manual historical prices</p>
+            <h2 id="pricesTitle">Prices</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="management-form">
+          <select id="priceKnownInstrument"></select>
+          <input id="priceSymbol" placeholder="Symbol" />
+          <input id="priceMarket" placeholder="Stock market" />
+          <select id="priceAssetClass"></select>
+          <input id="priceLocation" list="countryOptions" placeholder="Location" />
+          <select id="priceCurrency"></select>
+          <input id="priceInput" type="number" step="0.0001" placeholder="Historic price" />
+          <input id="priceDate" type="date" />
+          <input id="priceComments" placeholder="Comments" />
+          <button id="savePrice" type="button">Save</button>
+        </div>
+        <p id="priceStatus" class="status-line"></p>
+        <div id="priceFocusBar" class="info-strip" hidden></div>
+        <div id="pricesList" class="stack management-list"></div>
+      </section>
+    </div>
+
+    <div id="aboutModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Application</p>
+            <h2 id="aboutTitle">About</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div id="aboutContent" class="settings-grid"></div>
+      </section>
+    </div>
+
+    <div id="securityDetailModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="securityDetailTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Security</p>
+            <h2 id="securityDetailTitle">Overview</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div id="securityDetailOverview" class="report-grid security-overview-grid"></div>
+        <div class="management-section">
+          <div class="section-head compact-head">
+            <div>
+              <p class="form-caption">Price chart</p>
+            </div>
+            <div class="security-chart-controls">
+              <label class="chart-date-field"><span>From</span><input id="securityChartStartDate" type="date" /></label>
+              <div class="dashboard-view-toggle security-chart-toggle" aria-label="Security chart period">
+                <button type="button" data-security-chart-period="1m">1M</button>
+                <button type="button" data-security-chart-period="1y">1Y</button>
+                <button type="button" data-security-chart-period="3y">3Y</button>
+                <button type="button" data-security-chart-period="5y">5Y</button>
+              </div>
+            </div>
+          </div>
+          <div id="securityDetailChart" class="security-chart"></div>
+        </div>
+        <div class="management-section">
+          <p class="form-caption">Update price history</p>
+          <div class="management-form detail-price-form">
+            <input id="detailPriceInput" type="number" step="0.0001" placeholder="Historic price" />
+            <input id="detailPriceDate" type="date" />
+            <input id="detailPriceComments" placeholder="Comments" />
+            <button id="saveDetailPrice" type="button">Save price</button>
+            <button id="openFocusedPrices" class="secondary" type="button">Open prices</button>
+          </div>
+          <p id="securityDetailStatus" class="status-line"></p>
+        </div>
+        <div class="detail-columns">
+          <div>
+            <p class="form-caption">Transaction history</p>
+            <div id="securityDetailTransactions" class="stack management-list"></div>
+          </div>
+          <div>
+            <p class="form-caption">Saved price history</p>
+            <div id="securityDetailPrices" class="stack management-list"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="reportsModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="reportsTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Account value and profit</p>
+            <h2 id="reportsTitle">Reports</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="management-form">
+          <select id="reportAccount"></select>
+          <select id="reportAccountType"></select>
+          <input id="reportLocation" list="countryOptions" placeholder="Location" />
+          <input id="reportFrom" type="date" />
+          <input id="reportTo" type="date" />
+          <button id="loadReports" type="button">Run report</button>
+        </div>
+        <div id="reportsSummary" class="report-grid"></div>
+        <div id="accountTrendChart" class="chart-card report-chart"></div>
+        <div class="history-editor">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Saved daily history</p>
+              <h2>Correct account history</h2>
+            </div>
+            <button id="captureHistorySnapshot" class="secondary" type="button">Capture today</button>
+          </div>
+          <div class="history-form">
+            <select id="historyAccount"></select>
+            <input id="historyDate" type="date" />
+            <input id="historyValue" type="number" step="0.01" placeholder="Total value" />
+            <input id="historyCash" type="number" step="0.01" placeholder="Cash" />
+            <input id="historyProfit" type="number" step="0.01" placeholder="Profit" />
+            <input id="historyProfitPercent" type="number" step="0.01" placeholder="Profit %" />
+            <button id="saveHistorySnapshot" type="button">Save point</button>
+          </div>
+          <p id="historyStatus" class="status-line"></p>
+          <div id="historyList" class="stack management-list"></div>
+        </div>
+        <div id="reportsDetails" class="stack management-list"></div>
+      </section>
+    </div>
+
+    <div id="fundsModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="fundsTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Retirement calculator</p>
+            <h2 id="fundsTitle">Pension, provident, and savings funds</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="management-form">
+          <select id="fundKind"></select>
+          <input id="fundPensionId" placeholder="Pension / fund id" />
+          <input id="fundAmount" type="number" step="0.01" placeholder="Amount saved" />
+          <input id="fundFactor" type="number" step="0.01" value="200" placeholder="Factor" />
+          <input id="fundComments" placeholder="Comments" />
+          <button id="saveFund" type="button">Save</button>
+        </div>
+        <p id="fundStatus" class="status-line"></p>
+        <div id="fundsList" class="stack management-list"></div>
+        <div class="simulator-panel">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Simulation</p>
+              <h3>Pension projection</h3>
+            </div>
+            <button id="runPensionSimulation" class="secondary" type="button">Run simulation</button>
+          </div>
+          <div class="management-form simulator-form">
+            <select id="simFundSource"></select>
+            <input id="simName" placeholder="Scenario name" />
+            <select id="simKind"></select>
+            <input id="simCurrentAge" type="number" min="0" step="0.1" placeholder="Current age" />
+            <input id="simRetireAge" type="number" min="0" step="0.1" placeholder="Retire age" />
+            <input id="simAmount" type="number" min="0" step="0.01" placeholder="Current amount" />
+            <input id="simAnnualReturn" type="number" step="0.01" placeholder="Annual return %" />
+            <input id="simMonthlyIncome" type="number" min="0" step="0.01" placeholder="Monthly income" />
+            <input id="simContributionPercent" type="number" min="0" step="0.01" placeholder="Deposit %" />
+            <input id="simMonthlyDeposit" type="number" min="0" step="0.01" placeholder="Monthly deposit" />
+            <input id="simFactor" type="number" min="1" step="0.01" value="200" placeholder="Payout factor" />
+            <button id="addPensionScenario" type="button">Add scenario</button>
+          </div>
+          <div class="history-form simulator-period-form">
+            <input id="simPeriodFrom" type="number" min="0" step="0.1" placeholder="From age" />
+            <input id="simPeriodTo" type="number" min="0" step="0.1" placeholder="To age" />
+            <input id="simPeriodIncome" type="number" min="0" step="0.01" placeholder="Monthly income" />
+            <input id="simPeriodContribution" type="number" min="0" step="0.01" placeholder="Deposit %" />
+            <input id="simPeriodDeposit" type="number" min="0" step="0.01" placeholder="Monthly deposit" />
+            <button id="addPensionPeriod" class="secondary" type="button">Add income period</button>
+          </div>
+          <p id="pensionSimulationStatus" class="status-line"></p>
+          <div id="pensionPeriods" class="simulator-list"></div>
+          <div id="pensionScenarios" class="simulator-list"></div>
+          <div id="pensionSimulationResults" class="simulator-results"></div>
+        </div>
+      </section>
+    </div>
+
+    <div id="marketModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="marketTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Stocks outside portfolio</p>
+            <h2 id="marketTitle">Market screener</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="toolbar modal-toolbar">
+          <input id="marketQuery" placeholder="Symbol or company" />
+          <select id="marketExchange">
+            <option value="NASDAQ">NASDAQ</option>
+            <option value="NYSE">NYSE</option>
+            <option value="AMEX">AMEX</option>
+            <option value="TASE">TASE</option>
+            <option value="">Any exchange</option>
+          </select>
+          <input id="marketSector" placeholder="Sector" />
+          <input id="marketCapMoreThan" type="number" placeholder="Min market cap" />
+          <input id="dividendMoreThan" type="number" step="0.01" placeholder="Min dividend" />
+          <button id="runMarketScreener" type="button">Search</button>
+        </div>
+        <p id="marketStatus" class="status-line"></p>
+        <div class="table-wrap">
+          <table class="market-table">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Name</th>
+                <th>Exchange</th>
+                <th>Price</th>
+                <th>Market Cap</th>
+                <th>Sector</th>
+                <th>Dividend</th>
+              </tr>
+            </thead>
+            <tbody id="marketRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div id="alertsModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="alertsTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Daily filters</p>
+            <h2 id="alertsTitle">Alerts</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="alert-form">
+          <input id="alertName" placeholder="Alert name" />
+          <select id="alertTrend">
+            <option value="up">Trend up</option>
+            <option value="down">Trend down</option>
+            <option value="flat">Trend flat</option>
+          </select>
+          <select id="alertDividendTrend">
+            <option value="">Any dividend</option>
+            <option value="up">Dividend up</option>
+            <option value="down">Dividend down</option>
+            <option value="flat">Dividend flat</option>
+          </select>
+          <input id="alertMinProfitMarketCap" type="number" step="0.01" placeholder="Min profit/cap" />
+          <input id="alertMinDividendGrowth" type="number" placeholder="Min dividend %" />
+          <button id="saveAlert" type="button">Save</button>
+          <button id="runAlerts" type="button" class="secondary">Run now</button>
+        </div>
+        <div id="alertsList" class="stack"></div>
+      </section>
+    </div>
+
+    <div id="bannerModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="bannerTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Top banner</p>
+            <h2 id="bannerTitle">Instruments</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="banner-form">
+          <input id="bannerLabel" placeholder="Label" />
+          <select id="bannerType">
+            <option value="fx">Currency</option>
+            <option value="index">Index</option>
+            <option value="commodity">Commodity</option>
+            <option value="quote">Quote</option>
+          </select>
+          <input id="bannerSymbol" placeholder="USD/ILS, IXIC, GCUSD" />
+          <button id="addBannerItem" type="button">Add</button>
+        </div>
+        <div id="bannerList" class="stack"></div>
+      </section>
+    </div>
+
+    <div id="settingsModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Runtime and data</p>
+            <h2 id="settingsTitle">Settings</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="settings-section">
+          <div class="settings-section-title">
+            <h3>Table display</h3>
+          </div>
+          <div class="management-form settings-form">
+          <label class="field"><span>Table MA period</span><select id="tableMaPeriod"><option value="7">MA 7</option><option value="15">MA 15</option><option value="30">MA 30</option></select></label>
+            <button id="saveTableSettings" type="button">Save table settings</button>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-section-title">
+            <h3>Data</h3>
+          </div>
+          <div class="settings-actions">
+            <button id="exportData" type="button">Export data</button>
+            <button id="chooseImportData" class="secondary" type="button">Import data</button>
+            <button id="runBackupNow" class="secondary" type="button">Backup now</button>
+            <input id="importDataFile" type="file" accept="application/json" hidden />
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-section-title">
+            <h3>Backup schedule</h3>
+          </div>
+          <div class="management-form settings-form">
+            <label class="field"><span>Backup enabled</span><select id="backupEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
+            <label class="field"><span>Cron</span><input id="backupSchedule" placeholder="45 23 * * *" /></label>
+            <label class="field"><span>Timezone</span><input id="backupTimezone" placeholder="Asia/Jerusalem" /></label>
+            <label class="field"><span>Keep files</span><input id="backupKeep" type="number" min="1" step="1" placeholder="30" /></label>
+            <button id="saveBackupSettings" type="button">Save backup</button>
+          </div>
+        </div>
+        <p id="settingsStatus" class="status-line"></p>
+        <div id="cacheStatus" class="settings-grid"></div>
+        <div id="backupStatus" class="settings-grid"></div>
+      </section>
+    </div>
+
+    <script src="/app.js?v=0.4.5"></script>
+  </body>
+</html>
