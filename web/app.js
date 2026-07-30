@@ -19,6 +19,8 @@ const state = {
   securityChartStartDate: HISTORY_START_DATE,
   securityHistory: [],
   localFunds: [],
+  localAccountPersons: [],
+  fundPersons: [],
   pensionIncomePeriods: [],
   pensionScenarios: [],
   pensionSimulationResults: [],
@@ -31,6 +33,8 @@ const state = {
   },
   optionsReady: false,
   tableMaPeriod: "30",
+  backupSettings: null,
+  riskSnapshot: null,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -589,6 +593,307 @@ function groupByAccount(items) {
   }, {})).map((group) => ({ ...group, currencies: [...group.currencies] }));
 }
 
+function accountCashValue(account) {
+  if (!account) return 0;
+  return Math.max(0, normalizedAmount(account.initial_cash, account.currency));
+}
+
+function accountRecordForHolding(holding) {
+  return state.localAccounts.find((account) => account.id === holding.account_id)
+    || state.localAccounts.find((account) => cleanSourceLabel(accountLabel(account)) === cleanSourceLabel(holding.account));
+}
+
+function assetRiskFactor(item) {
+  const h = item.holding || {};
+  const asset = String(h.asset_class || h.asset_sub_class || "").toUpperCase();
+  const instrument = String(h.asset_sub_class || "").toUpperCase();
+  const symbol = String(h.symbol || "").toUpperCase();
+  if (["OPTION", "FUTURE"].includes(asset) || ["OPTION", "FUTURE"].includes(instrument)) return 1;
+  if (symbol.includes("3X") || symbol.includes("2X") || symbol.includes("LEVERAGED")) return 1;
+  if (asset === "BOND") return 0.35;
+  if (asset === "ETF" || asset === "MUTUALFUND") return 0.45;
+  if (asset === "EQUITY") return 0.65;
+  if (["CRYPTO", "COMMODITY", "OTHER"].includes(asset)) return 0.85;
+  return 0.7;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(Number(value || 0), min), max);
+}
+
+function holdingValuePct(item, totalValue) {
+  return totalValue > 0 ? Math.abs(normalizedField(item, "market_value")) / totalValue * 100 : 0;
+}
+
+function derivativeHolding(item) {
+  const h = item.holding || {};
+  const asset = String(h.asset_class || "").toUpperCase();
+  const instrument = String(h.asset_sub_class || "").toUpperCase();
+  const symbol = String(h.symbol || "").toUpperCase();
+  return ["OPTION", "FUTURE"].includes(asset) || ["OPTION", "FUTURE"].includes(instrument) || symbol.includes("3X") || symbol.includes("2X") || symbol.includes("LEVERAGED");
+}
+
+function diversifiedFund(item) {
+  const h = item.holding || {};
+  const asset = String(h.asset_class || "").toUpperCase();
+  const symbol = String(h.symbol || "").toUpperCase();
+  const industry = String(item.industry || h.industry || h.sector || "").toLowerCase();
+  if (!["ETF", "MUTUALFUND"].includes(asset)) return false;
+  if (derivativeHolding(item)) return false;
+  if (industry.includes("sector") || industry.includes("industry")) return false;
+  return !/(ARKK|SOXX|XLK|XLE|XLF|XLV|XLI|XLY|XLP|XLU|XLB|XLC|XBI|KWEB|TAN|ICLN|SMH)/.test(symbol);
+}
+
+function industryLabel(item) {
+  const h = item.holding || {};
+  if (diversifiedFund(item)) return "Diversified fund";
+  return String(item.industry || h.industry || h.sector || "").trim();
+}
+
+function issuerLabel(item) {
+  const h = item.holding || {};
+  return String(h.symbol || h.name || "Unknown").trim().toUpperCase();
+}
+
+function countryLabel(item) {
+  const h = item.holding || {};
+  return String(h.country || h.location || h.currency || "Unknown").trim();
+}
+
+function volatilityProxy(item) {
+  const h = item.holding || {};
+  const range = item.price_ranges?.["1y"] || {};
+  const high = Number(range.high || 0);
+  const low = Number(range.min || 0);
+  const current = Number(range.current || h.market_value / Math.max(Math.abs(Number(h.quantity || 0)), 1) || 0);
+  if (high > 0 && low > 0 && current > 0 && high >= low) {
+    return clamp(((high - low) / current) * 100, 0, 120);
+  }
+  if (derivativeHolding(item)) return 90;
+  const asset = String(h.asset_class || "").toUpperCase();
+  if (asset === "BOND") return 14;
+  if (asset === "ETF" || asset === "MUTUALFUND") return diversifiedFund(item) ? 24 : 36;
+  if (asset === "EQUITY") return 48;
+  return 55;
+}
+
+function personHorizonYears(person) {
+  const age = Number(person?.age || ageFromBirthDate(person?.birth_date));
+  if (!age) return null;
+  return Math.max(0, 67 - age);
+}
+
+function accountHorizonYears(account) {
+  const horizons = (account?.persons || []).map(personHorizonYears).filter((value) => value !== null);
+  if (horizons.length) return Math.min(...horizons);
+  if (account?.type === "Long-Term Savings") return 15;
+  return null;
+}
+
+function riskBand(score) {
+  if (score <= 20) return { key: "low", label: "Low", symbol: "●" };
+  if (score <= 40) return { key: "moderate", label: "Moderate", symbol: "◆" };
+  if (score <= 60) return { key: "elevated", label: "Elevated", symbol: "▲" };
+  if (score <= 80) return { key: "high", label: "High", symbol: "⬟" };
+  return { key: "extreme", label: "Extreme", symbol: "!" };
+}
+
+function riskBadge(risk, compact = false) {
+  if (!risk) return "";
+  const band = riskBand(risk.score);
+  return `<span class="risk-badge risk-${band.key}" title="${esc(riskTooltip(risk))}">
+    <span class="risk-symbol" aria-hidden="true">${esc(band.symbol)}</span>
+    <b>${esc(risk.score)}</b>${compact ? "" : `<span>${esc(band.label)}</span>`}
+  </span>`;
+}
+
+function riskTooltip(risk) {
+  const parts = risk.components || {};
+  const drivers = (risk.drivers || []).slice(0, 5).join("; ") || "No dominant driver";
+  return [
+    `${risk.label || "Risk"} score ${risk.score}/100 (${riskBand(risk.score).label}). Min 0, max 100.`,
+    "Advanced formula: concentration + asset mix + currency + industry + cash + options/futures/leverage + volatility + horizon suitability + issuer/country + data quality.",
+    `Components: concentration ${fmt(parts.concentration, 1)}/16, asset ${fmt(parts.asset_mix, 1)}/14, currency ${fmt(parts.currency, 1)}/10, industry ${fmt(parts.industry, 1)}/10, cash ${fmt(parts.cash, 1)}/7, derivatives ${fmt(parts.derivatives, 1)}/10, volatility ${fmt(parts.volatility, 1)}/10, horizon ${fmt(parts.horizon, 1)}/10, issuer/country ${fmt(parts.issuer_country, 1)}/8, data ${fmt(parts.data_quality, 1)}/5.`,
+    `Drivers: ${drivers}.`,
+  ].join("\n");
+}
+
+function riskScoreForItems(items, options = {}) {
+  const rows = items || [];
+  const label = options.label || "Portfolio risk";
+  const cash = Math.max(0, Number(options.cash || 0));
+  const horizonYears = options.horizonYears ?? null;
+  const values = rows.map((item) => Math.abs(normalizedField(item, "market_value"))).filter((value) => value > 0);
+  const holdingsValue = sum(values);
+  const totalValue = holdingsValue + cash;
+  if (totalValue <= 0) {
+    return { label, score: 0, components: {}, drivers: ["No account value"], position_risks: new Map() };
+  }
+
+  const topPositionPct = values.length ? Math.max(...values) / totalValue * 100 : 0;
+  const hhi = rows.reduce((total, item) => {
+    const pct = Math.abs(normalizedField(item, "market_value")) / totalValue * 100;
+    return total + pct * pct;
+  }, 0);
+  const concentration = Math.min(topPositionPct / 40, 1) * 10 + Math.min(hhi / 2500, 1) * 6;
+
+  const weightedAsset = rows.reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")) * assetRiskFactor(item), cash * 0.05);
+  const assetMix = totalValue ? weightedAsset / totalValue * 14 : 0;
+
+  const currencyTotals = rows.reduce((totals, item) => {
+    const currency = item.holding.currency || state.baseCurrency;
+    totals[currency] = (totals[currency] || 0) + Math.abs(normalizedField(item, "market_value"));
+    return totals;
+  }, {});
+  if (cash) {
+    const cashCurrency = options.cashCurrency || state.baseCurrency;
+    currencyTotals[cashCurrency] = (currencyTotals[cashCurrency] || 0) + cash;
+  }
+  const foreignValues = Object.entries(currencyTotals).filter(([currency]) => currency !== state.baseCurrency).map(([, value]) => value);
+  const nonBaseCurrencyPct = sum(foreignValues) / totalValue * 100;
+  const largestForeignCurrencyPct = (foreignValues.length ? Math.max(...foreignValues) : 0) / totalValue * 100;
+  const currency = Math.min(nonBaseCurrencyPct / 80, 1) * 7 + Math.min(largestForeignCurrencyPct / 60, 1) * 3;
+
+  const industryRows = rows.filter((item) => Math.abs(normalizedField(item, "market_value")) > 0);
+  const industryTotals = industryRows.reduce((totals, item) => {
+    const industry = industryLabel(item);
+    if (!industry) return totals;
+    totals[industry] = (totals[industry] || 0) + Math.abs(normalizedField(item, "market_value"));
+    return totals;
+  }, {});
+  const industryHhi = Object.values(industryTotals).reduce((total, value) => {
+    const pct = Number(value || 0) / Math.max(holdingsValue, 1) * 100;
+    return total + pct * pct;
+  }, 0);
+  const missingIndustryPct = holdingsValue ? industryRows
+    .filter((item) => !industryLabel(item))
+    .reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")), 0) / holdingsValue * 100 : 0;
+  const industry = Math.min(industryHhi / 3000, 1) * 7 + missingIndustryPct / 100 * 3;
+
+  const cashPct = cash / totalValue * 100;
+  const cashScore = cashPct >= 5 && cashPct <= 20 ? 0 : cashPct < 5 ? (5 - cashPct) / 5 * 5 : Math.min((cashPct - 20) / 50, 1) * 2;
+
+  const derivativesValue = rows
+    .filter(derivativeHolding)
+    .reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")), 0);
+  const derivativePct = derivativesValue / totalValue * 100;
+  const hasShort = rows.some((item) => Number(item.holding.quantity || 0) < 0);
+  const derivatives = Math.min(derivativePct / 25, 1) * 8 + (hasShort ? 2 : 0);
+
+  const weightedVolatility = rows.reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")) * volatilityProxy(item), 0);
+  const avgVolatilityPct = holdingsValue ? weightedVolatility / holdingsValue : 0;
+  const volatility = Math.min(avgVolatilityPct / 60, 1) * 10;
+
+  const riskyAssetPct = totalValue ? rows
+    .filter((item) => assetRiskFactor(item) >= 0.65 || derivativeHolding(item))
+    .reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")), 0) / totalValue * 100 : 0;
+  let horizon = 0;
+  if (horizonYears !== null && horizonYears !== undefined) {
+    const shortHorizonPressure = horizonYears < 3 ? 1 : horizonYears < 7 ? (7 - horizonYears) / 4 : 0;
+    const longHorizonUnderRisk = horizonYears > 15 && riskyAssetPct < 35 ? Math.min((35 - riskyAssetPct) / 35, 1) * 0.35 : 0;
+    horizon = Math.min((shortHorizonPressure * (riskyAssetPct / 100) + longHorizonUnderRisk) * 10, 10);
+  }
+
+  const issuerTotals = rows.reduce((totals, item) => {
+    const issuer = issuerLabel(item);
+    const fundLookThroughWeight = diversifiedFund(item) ? 0.35 : 1;
+    totals[issuer] = (totals[issuer] || 0) + Math.abs(normalizedField(item, "market_value")) * fundLookThroughWeight;
+    return totals;
+  }, {});
+  const countryTotals = rows.reduce((totals, item) => {
+    const country = countryLabel(item);
+    totals[country] = (totals[country] || 0) + Math.abs(normalizedField(item, "market_value"));
+    return totals;
+  }, {});
+  const largestIssuerPct = holdingsValue ? Math.max(0, ...Object.values(issuerTotals)) / holdingsValue * 100 : 0;
+  const largestCountryPct = holdingsValue ? Math.max(0, ...Object.values(countryTotals)) / holdingsValue * 100 : 0;
+  const issuerCountry = Math.min(largestIssuerPct / 35, 1) * 4 + Math.max(0, Math.min((largestCountryPct - 55) / 35, 1)) * 4;
+
+  const missingPricePct = holdingsValue ? rows.filter((item) => (item.missing || []).includes("price history")).reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")), 0) / holdingsValue * 100 : 0;
+  const missingClassPct = holdingsValue ? rows.filter((item) => !item.holding.asset_class || !item.holding.currency).reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")), 0) / holdingsValue * 100 : 0;
+  const dataQuality = missingPricePct / 100 * 2 + missingIndustryPct / 100 * 1.5 + missingClassPct / 100 * 1.5;
+
+  const components = {
+    concentration,
+    asset_mix: assetMix,
+    currency,
+    industry,
+    cash: cashScore,
+    derivatives,
+    volatility,
+    horizon,
+    issuer_country: issuerCountry,
+    data_quality: dataQuality,
+  };
+  const score = Math.min(Math.max(Math.round(sum(Object.values(components))), 0), 100);
+  const drivers = [
+    topPositionPct > 25 ? `Top holding ${fmt(topPositionPct, 1)}%` : "",
+    nonBaseCurrencyPct > 40 ? `Foreign currency ${fmt(nonBaseCurrencyPct, 1)}%` : "",
+    derivativePct > 0 ? `Options/futures/leverage ${fmt(derivativePct, 1)}%` : "",
+    avgVolatilityPct > 35 ? `1Y volatility proxy ${fmt(avgVolatilityPct, 1)}%` : "",
+    horizonYears !== null && horizonYears !== undefined ? `Horizon ${fmt(horizonYears, 1)} years` : "",
+    largestIssuerPct > 25 ? `Issuer concentration ${fmt(largestIssuerPct, 1)}%` : "",
+    largestCountryPct > 70 ? `Country concentration ${fmt(largestCountryPct, 1)}%` : "",
+    cashPct < 5 ? `Low cash ${fmt(cashPct, 1)}%` : cashPct > 20 ? `High cash ${fmt(cashPct, 1)}%` : "",
+    missingIndustryPct > 20 ? `Missing industry ${fmt(missingIndustryPct, 1)}%` : "",
+  ].filter(Boolean);
+  const positionRisks = new Map(rows.map((item) => {
+    const valuePct = Math.abs(normalizedField(item, "market_value")) / totalValue * 100;
+    const itemVolatility = volatilityProxy(item);
+    const itemScore = Math.min(Math.round(valuePct * 0.65 + assetRiskFactor(item) * 20 + itemVolatility / 120 * 15 + (derivativeHolding(item) ? 15 : 0) + ((item.missing || []).length ? 6 : 0)), 100);
+    return [item, {
+      label: `${item.holding.symbol} holding risk`,
+      score: itemScore,
+      components,
+      drivers: [
+        `Holding weight ${fmt(valuePct, 1)}%`,
+        `Asset factor ${fmt(assetRiskFactor(item), 2)}`,
+        `1Y volatility proxy ${fmt(itemVolatility, 1)}%`,
+        diversifiedFund(item) ? "ETF/fund treated as diversified proxy" : "",
+        derivativeHolding(item) ? "Option/future/leveraged instrument" : "",
+        ...(item.missing || []).slice(0, 2).map((label) => `Missing ${label}`),
+      ].filter(Boolean),
+    }];
+  }));
+  return { label, score, components, drivers, position_risks: positionRisks, cash_pct: cashPct };
+}
+
+function portfolioRiskSnapshot(items) {
+  const accountsById = Object.fromEntries(state.localAccounts.map((account) => [account.id, account]));
+  const itemsByAccount = items.reduce((groups, item) => {
+    const key = item.holding.account_id || cleanSourceLabel(item.holding.account) || "Unassigned";
+    groups[key] = groups[key] || [];
+    groups[key].push(item);
+    return groups;
+  }, {});
+  const accountRisks = Object.entries(itemsByAccount).map(([key, rows]) => {
+    const account = accountsById[key] || accountRecordForHolding(rows[0].holding);
+    const cash = accountCashValue(account);
+    const value = sum(rows.map((item) => Math.abs(normalizedField(item, "market_value")))) + cash;
+    const horizonYears = accountHorizonYears(account);
+    return {
+      key,
+      account: cleanSourceLabel(rows[0].holding.account) || account?.account_id || "Unassigned",
+      value,
+      horizonYears,
+      risk: riskScoreForItems(rows, { label: `${cleanSourceLabel(rows[0].holding.account) || "Account"} risk`, cash, cashCurrency: account?.currency, horizonYears }),
+    };
+  });
+  const combinedCash = sum(state.localAccounts.map(accountCashValue));
+  const portfolioHorizons = state.localAccounts.map(accountHorizonYears).filter((value) => value !== null);
+  const portfolioHorizonYears = portfolioHorizons.length ? Math.min(...portfolioHorizons) : null;
+  const combinedRisk = riskScoreForItems(items, { label: "Total portfolio risk", cash: combinedCash, horizonYears: portfolioHorizonYears });
+  const holdingsValue = sum(items.map((item) => Math.abs(normalizedField(item, "market_value"))));
+  const cashValue = combinedCash;
+  const nav = holdingsValue + cashValue || 1;
+  const weightedAccountScore = accountRisks.reduce((total, entry) => {
+    return total + entry.risk.score * (entry.value / nav);
+  }, 0);
+  const score = Math.min(Math.max(Math.round(0.75 * combinedRisk.score + 0.25 * weightedAccountScore), 0), 100);
+  const totalRisk = { ...combinedRisk, score, label: "Total portfolio risk" };
+  return { total: totalRisk, accounts: accountRisks };
+}
+
 function cleanSourceLabel(value) {
   const legacyName = String.fromCharCode(71, 104, 111, 115, 116, 102, 111, 108, 105, 111);
   return String(value || "").replace(new RegExp(legacyName, "gi"), "").replace(/import-/gi, "").replace(/\s+/g, " ").trim().replace(/^[\s-]+|[\s-]+$/g, "");
@@ -934,6 +1239,7 @@ function missingStats(items) {
 }
 
 function renderSummary(items) {
+  state.riskSnapshot = portfolioRiskSnapshot(items);
   const primaryValue = sum(items.map((item) => normalizedField(item, "market_value")));
   const primaryProfit = sum(items.map((item) => normalizedField(item, "unrealized_profit")));
   const accountTotals = groupByAccount(items).sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
@@ -948,6 +1254,7 @@ function renderSummary(items) {
   $("profitBadge").title = `Holding profit converted to ${state.baseCurrency} using displayed FX rates when available`;
   $("currencyBreakdown").innerHTML = accountTotals
     .map((account) => {
+      const accountRisk = state.riskSnapshot.accounts.find((entry) => entry.account === account.account)?.risk;
       const symbolsText = account.symbols.slice(0, 12).join(", ");
       const more = account.symbols.length > 12 ? `, +${account.symbols.length - 12} more` : "";
       const localAmounts = Object.entries(account.localValues || {})
@@ -956,11 +1263,12 @@ function renderSummary(items) {
         .map(([currency, value]) => money(value, currency, 0));
       const localLine = localAmounts.length ? `<small>${esc(localAmounts.join(" · "))}</small>` : "";
       const title = `Account: ${account.account}; ${account.type || "Account"}${account.location ? ` · ${account.location}` : ""}; Securities: ${symbolsText}${more}; Source currencies: ${account.currencies.join(", ")}`;
-      return `<span class="account-chip" title="${esc(title)}"><b>${esc(account.account)}</b><span class="account-chip-values"><strong>${money(account.value, state.baseCurrency, 0)}</strong>${localLine}</span></span>`;
+      return `<span class="account-chip" title="${esc(title)}"><b>${esc(account.account)}</b><span class="account-chip-values"><strong>${money(account.value, state.baseCurrency, 0)}</strong>${localLine}</span>${riskBadge(accountRisk, true)}</span>`;
     })
     .join("");
 
   $("summary").innerHTML = [
+    ["Risk", state.riskSnapshot.total.score, riskTooltip(state.riskSnapshot.total), riskBand(state.riskSnapshot.total.score).label, riskBadge(state.riskSnapshot.total, true)],
     ["Positions", items.length, "Number of open positions shown after filters"],
     ["Securities", symbols, "Unique security symbols"],
     ["Equities", equities, "Open equity positions"],
@@ -968,9 +1276,9 @@ function renderSummary(items) {
     ["Data gaps", gaps.total, gaps.topLabels || "No missing analytics fields", `${gaps.positions}/${items.length} positions`],
   ].map(([label, value, tooltip, detail]) => `
     <div class="stat" title="${esc(tooltip || "")}">
-      <b>${esc(value)}</b>
+      ${detail && String(detail).includes("risk-badge") ? detail : `<b>${esc(value)}</b>`}
       <span>${esc(label)}</span>
-      ${detail ? `<small>${esc(detail)}</small>` : ""}
+      ${detail && !String(detail).includes("risk-badge") ? `<small>${esc(detail)}</small>` : ""}
     </div>
   `).join("");
 }
@@ -1018,9 +1326,11 @@ function renderRows(items) {
     const industry = String(item.industry || h.industry || h.sector || "").trim();
     const industryLine = `<div class="security-industry">Industry: ${esc(industry || "Not available")}</div>`;
     const marketLine = `${h.asset_class || "Asset"} · ${h.currency || ""} · Market: ${market} · API: ${provider}`;
+    const rowRisk = state.riskSnapshot?.total?.position_risks?.get(item);
     return `<tr>
       <td data-label="Security"><div class="security-cell"><button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button><div class="security-name">${esc(companyLine)}</div>${industryLine}<div class="sub security-meta">${esc(marketLine)}</div></div></td>
       <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(cleanSourceLabel(h.account_type || h.location || h.sector || ""))}</div></td>
+      <td data-label="Risk">${riskBadge(rowRisk)}</td>
       <td data-label="Value / P&L"><div class="value-cell"><strong>${money(h.market_value, h.currency)}</strong><span>${fmt(h.quantity, 3)} units</span><b class="${Number(h.unrealized_profit) >= 0 ? "positive" : "negative"}">${signedMoney(h.unrealized_profit, h.currency)}</b></div></td>
       <td data-label="1Y High / Low">${rangeCell(range, h.currency)}</td>
       <td data-label="Net income">${trendCell(item.profit_trend, "Net income", { currency: h.currency, marketCap: item.market_cap })}</td>
@@ -1617,9 +1927,10 @@ async function loadLocalAccounts() {
       <b>${esc(accountLabel(account))}</b>
       <span>${esc(account.type)} · ${esc(account.location)} · ${esc(account.currency)} · ${isImportedAccount(account) ? "Imported" : "Manual"}</span>
       ${isImportedAccount(account) ? '<span class="badge ok" title="Synced from the configured import source. Refresh with Sync import.">Synced</span>' : `<button class="secondary compact-button" type="button" data-delete-account="${esc(account.id)}" title="Remove this manual account and its local transactions">Remove</button>`}
-      <div class="sub">Initial cash ${fmt(account.initial_cash)} · ${esc(cleanSourceLabel(account.comments) || "No comments")}</div>
+      <div class="sub">Initial cash ${fmt(account.initial_cash)}${(account.persons || []).length ? ` · ${(account.persons || []).map(personLabel).map(esc).join(" · ")}` : ""} · ${esc(cleanSourceLabel(account.comments) || "No comments")}</div>
     </div>
   `).join("") : '<div class="empty">No local accounts yet</div>';
+  renderPersonLists();
 }
 
 async function saveLocalAccount() {
@@ -1631,11 +1942,14 @@ async function saveLocalAccount() {
     username: valueOf("localUsername"),
     account_id: valueOf("localAccountId"),
     management_company: valueOf("localManagementCompany"),
+    persons: state.localAccountPersons.map((person) => ({ ...person })),
     comments: valueOf("localAccountComments"),
   };
   await api("/api/local/accounts", { method: "POST", body: JSON.stringify(payload) });
   $("accountsStatus").textContent = "Account saved";
   ["localInitialCash", "localUsername", "localAccountId", "localManagementCompany", "localAccountComments"].forEach((id) => { $(id).value = ""; });
+  state.localAccountPersons = [];
+  renderPersonLists();
   await loadLocalAccounts();
   await loadPortfolio();
 }
@@ -2262,14 +2576,58 @@ async function loadFunds() {
       <b>${esc(fund.kind)} ${esc(fund.pension_id)}</b>
       <span>Saved ${fmt(fund.amount, 0)} · Monthly ${fmt(fund.monthly_estimate, 0)}</span>
       <button class="secondary compact-button" type="button" data-delete-fund="${esc(fund.id)}">Remove</button>
-      <div class="sub">Factor ${fmt(fund.factor, 2)} · ${esc(fund.comments || "")}</div>
+      <div class="sub">Factor ${fmt(fund.factor, 2)}${(fund.persons || []).length ? ` · ${(fund.persons || []).map(personLabel).map(esc).join(" · ")}` : ""} · ${esc(fund.comments || "")}</div>
     </div>
   `).join("") : '<div class="empty">No pension, provident, or savings funds yet</div>';
+  renderPersonLists();
 }
 
 function numberValue(id) {
   const value = valueOf(id);
   return value === "" ? "" : Number(value);
+}
+
+function ageFromBirthDate(value) {
+  if (!value) return "";
+  const birth = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(birth.getTime())) return "";
+  const today = new Date();
+  const diffDays = (Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) - Date.UTC(birth.getFullYear(), birth.getMonth(), birth.getDate())) / 86400000;
+  return diffDays >= 0 ? Math.round((diffDays / 365.2425) * 100) / 100 : "";
+}
+
+function personLabel(person) {
+  const age = person.age ?? ageFromBirthDate(person.birth_date);
+  return `${person.name || "Person"} · ${person.birth_date}${age ? ` · age ${fmt(age, 1)}` : ""}`;
+}
+
+function addPersonTo(listKey, nameId, birthDateId, statusId) {
+  const name = valueOf(nameId);
+  const birthDate = valueOf(birthDateId);
+  if (!birthDate) {
+    $(statusId).textContent = "Birthday is required for a family member";
+    return;
+  }
+  state[listKey].push({ name: name || `Person ${state[listKey].length + 1}`, birth_date: birthDate });
+  $(nameId).value = "";
+  $(birthDateId).value = "";
+  renderPersonLists();
+}
+
+function renderPersonList(id, people, deleteAttr) {
+  const frame = $(id);
+  if (!frame) return;
+  frame.innerHTML = people.length ? people.map((person, index) => `
+    <div class="person-chip">
+      <span>${esc(personLabel(person))}</span>
+      <button class="secondary compact-button" type="button" ${deleteAttr}="${index}">Remove</button>
+    </div>
+  `).join("") : '<div class="empty compact-empty">No family members added</div>';
+}
+
+function renderPersonLists() {
+  renderPersonList("localAccountPersons", state.localAccountPersons, "data-delete-local-person");
+  renderPersonList("fundPersons", state.fundPersons, "data-delete-fund-person");
 }
 
 function renderPensionSimulatorControls() {
@@ -2282,6 +2640,7 @@ function renderPensionSimulatorControls() {
     )).join("");
     fundSelect.value = state.localFunds.some((fund) => fund.id === current) ? current : "";
   }
+  renderSimulationPersonOptions();
   renderPensionPeriods();
   renderPensionScenarios();
   renderPensionSimulationResults();
@@ -2298,15 +2657,47 @@ function applySimulationFund() {
   $("simKind").value = fund.kind;
   $("simAmount").value = fund.amount;
   $("simFactor").value = fund.factor || 200;
+  renderSimulationPersonOptions();
+  applySimulationPerson();
   if (!$("simName").value) $("simName").value = fund.pension_id;
+}
+
+function renderSimulationPersonOptions() {
+  const select = $("simPersonSource");
+  if (!select) return;
+  const current = select.value;
+  const people = selectedSimulationFund()?.persons || [];
+  select.innerHTML = '<option value="">Custom person</option>' + people.map((person, index) => (
+    `<option value="${index}">${esc(personLabel(person))}</option>`
+  )).join("");
+  select.value = [...select.options].some((option) => option.value === current) ? current : (people.length === 1 ? "0" : "");
+}
+
+function selectedSimulationPerson() {
+  const people = selectedSimulationFund()?.persons || [];
+  const raw = valueOf("simPersonSource");
+  if (raw === "") return null;
+  const index = Number(raw);
+  return Number.isInteger(index) ? people[index] : null;
+}
+
+function applySimulationPerson() {
+  const person = selectedSimulationPerson();
+  if (!person) return;
+  $("simBirthDate").value = person.birth_date || "";
+  $("simCurrentAge").value = ageFromBirthDate(person.birth_date);
 }
 
 function currentPensionScenario() {
   const fund = selectedSimulationFund();
+  const person = selectedSimulationPerson();
+  const birthDate = valueOf("simBirthDate") || person?.birth_date || "";
   return {
-    name: valueOf("simName") || fund?.pension_id || `Scenario ${state.pensionScenarios.length + 1}`,
+    name: valueOf("simName") || [fund?.pension_id, person?.name].filter(Boolean).join(" ") || `Scenario ${state.pensionScenarios.length + 1}`,
     kind: valueOf("simKind") || fund?.kind || "Pension",
-    current_age: numberValue("simCurrentAge"),
+    birth_date: birthDate,
+    person_name: person?.name || "",
+    current_age: numberValue("simCurrentAge") || ageFromBirthDate(birthDate),
     retire_age: numberValue("simRetireAge"),
     amount: numberValue("simAmount") || fund?.amount || 0,
     annual_return: numberValue("simAnnualReturn") || 0,
@@ -2415,11 +2806,14 @@ async function saveFund() {
       pension_id: valueOf("fundPensionId"),
       amount: valueOf("fundAmount"),
       factor: valueOf("fundFactor") || 200,
+      persons: state.fundPersons.map((person) => ({ ...person })),
       comments: valueOf("fundComments"),
     }),
   });
   $("fundStatus").textContent = "Fund saved";
   ["fundPensionId", "fundAmount", "fundComments"].forEach((id) => { $(id).value = ""; });
+  state.fundPersons = [];
+  renderPersonLists();
   await loadFunds();
 }
 
@@ -2627,11 +3021,16 @@ async function loadCacheStatus() {
   const settings = await api("/api/settings");
   const data = settings.cache || {};
   const backup = settings.backup || {};
+  state.backupSettings = {
+    ...backup,
+    schedule_config: normalizeBackupScheduleConfig(backup.schedule_config),
+    missed_policy: backup.missed_policy === "run" ? "run" : "wait",
+  };
   $("tableMaPeriod").value = state.tableMaPeriod || "30";
   $("backupEnabled").value = String(backup.enabled !== false);
-  $("backupSchedule").value = backup.schedule || "";
   $("backupTimezone").value = backup.timezone || "";
   $("backupKeep").value = backup.keep || 30;
+  updateBackupScheduleSummary();
   $("cacheStatus").innerHTML = [
     ["Cache file", data.path],
     ["API response entries", data.entries],
@@ -2642,6 +3041,7 @@ async function loadCacheStatus() {
   ].map(([label, value]) => `<div class="setting-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
   $("backupStatus").innerHTML = [
     ["Backup directory", backup.directory || ""],
+    ["Schedule", backup.schedule_summary || backupScheduleSummary(backup.schedule_config)],
     ["Next run", backup.next_run || "Disabled"],
     ["Latest backup", backup.latest?.filename || "None"],
     ["Backup files", (backup.backups || []).length],
@@ -2685,18 +3085,118 @@ async function runBackupNow() {
   await loadCacheStatus();
 }
 
+function defaultBackupScheduleConfig() {
+  return { frequency: "weekly", weekdays: [0, 2, 4], month_days: [1], hour: 23, minute: 45 };
+}
+
+function normalizeBackupScheduleConfig(config = {}) {
+  const base = defaultBackupScheduleConfig();
+  const frequency = ["daily", "weekly", "monthly"].includes(config.frequency) ? config.frequency : base.frequency;
+  const hour = Math.min(Math.max(Number(config.hour ?? base.hour), 0), 23);
+  const minute = Math.min(Math.max(Number(config.minute ?? base.minute), 0), 59);
+  const weekdays = Array.isArray(config.weekdays) ? config.weekdays.map(Number).filter((day) => day >= 0 && day <= 6) : base.weekdays;
+  const monthDays = Array.isArray(config.month_days) ? config.month_days.map(Number).filter((day) => day >= 1 && day <= 31) : base.month_days;
+  return {
+    frequency,
+    weekdays: [...new Set(weekdays)].sort((a, b) => a - b),
+    month_days: [...new Set(monthDays)].sort((a, b) => a - b),
+    hour,
+    minute,
+  };
+}
+
+function backupScheduleSummary(config = defaultBackupScheduleConfig()) {
+  const item = normalizeBackupScheduleConfig(config);
+  const time = `${String(item.hour).padStart(2, "0")}:${String(item.minute).padStart(2, "0")}`;
+  if (item.frequency === "daily") return `Every day at ${time}`;
+  if (item.frequency === "monthly") return `Monthly on day ${item.month_days.join(", ")} at ${time}`;
+  const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  return `${item.weekdays.map((day) => names[day]).join(", ")} at ${time}`;
+}
+
+function renderBackupSchedulePickers() {
+  const weekly = $("backupWeeklyPicker");
+  const monthly = $("backupMonthlyPicker");
+  if (weekly && !weekly.innerHTML) {
+    const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    weekly.innerHTML = names.map((name, index) => `<label class="schedule-option"><input type="checkbox" name="backupWeekday" value="${index}" /> <span>${name}</span></label>`).join("");
+  }
+  if (monthly && !monthly.innerHTML) {
+    monthly.innerHTML = Array.from({ length: 31 }, (_, index) => {
+      const day = index + 1;
+      return `<label class="schedule-option small"><input type="checkbox" name="backupMonthDay" value="${day}" /> <span>${day}</span></label>`;
+    }).join("");
+  }
+}
+
+function updateBackupScheduleSummary() {
+  const backup = state.backupSettings || {};
+  const summary = backup.schedule_summary || backupScheduleSummary(backup.schedule_config);
+  $("backupScheduleSummary").innerHTML = `<span>Schedule</span><b>${esc(summary)}</b><small>${backup.missed_policy === "run" ? "Backup now if the selected time already passed" : "Wait for the next selected time"}</small>`;
+}
+
+function populateBackupScheduleForm() {
+  renderBackupSchedulePickers();
+  const backup = state.backupSettings || {};
+  const config = normalizeBackupScheduleConfig(backup.schedule_config);
+  $("backupScheduleFrequency").value = config.frequency;
+  $("backupScheduleHour").value = config.hour;
+  $("backupScheduleMinute").value = config.minute;
+  $("backupMissedPolicy").value = backup.missed_policy === "run" ? "run" : "wait";
+  document.querySelectorAll("input[name='backupWeekday']").forEach((input) => { input.checked = config.weekdays.includes(Number(input.value)); });
+  document.querySelectorAll("input[name='backupMonthDay']").forEach((input) => { input.checked = config.month_days.includes(Number(input.value)); });
+  syncBackupSchedulePickers();
+}
+
+function syncBackupSchedulePickers() {
+  const frequency = valueOf("backupScheduleFrequency") || "weekly";
+  $("backupWeeklyPicker").hidden = frequency !== "weekly";
+  $("backupMonthlyPicker").hidden = frequency !== "monthly";
+}
+
+function backupScheduleFromForm() {
+  const frequency = valueOf("backupScheduleFrequency") || "weekly";
+  const weekdays = [...document.querySelectorAll("input[name='backupWeekday']:checked")].map((input) => Number(input.value));
+  const monthDays = [...document.querySelectorAll("input[name='backupMonthDay']:checked")].map((input) => Number(input.value));
+  return normalizeBackupScheduleConfig({
+    frequency,
+    weekdays: weekdays.length ? weekdays : [0],
+    month_days: monthDays.length ? monthDays : [1],
+    hour: numberValue("backupScheduleHour"),
+    minute: numberValue("backupScheduleMinute"),
+  });
+}
+
+function applyBackupSchedule() {
+  state.backupSettings = {
+    ...(state.backupSettings || {}),
+    schedule_config: backupScheduleFromForm(),
+    missed_policy: valueOf("backupMissedPolicy") || "wait",
+  };
+  state.backupSettings.schedule_summary = backupScheduleSummary(state.backupSettings.schedule_config);
+  updateBackupScheduleSummary();
+  closeModal($("backupScheduleModal"));
+}
+
 async function saveBackupSettings() {
   $("settingsStatus").textContent = "Saving backup schedule";
+  state.backupSettings = {
+    ...(state.backupSettings || {}),
+    schedule_config: normalizeBackupScheduleConfig(state.backupSettings?.schedule_config),
+    missed_policy: state.backupSettings?.missed_policy === "run" ? "run" : "wait",
+  };
   const backup = await api("/api/settings/backup", {
     method: "PUT",
     body: JSON.stringify({
       enabled: $("backupEnabled").value === "true",
-      schedule: $("backupSchedule").value.trim(),
+      schedule_config: state.backupSettings.schedule_config,
+      missed_policy: state.backupSettings.missed_policy,
       timezone: $("backupTimezone").value.trim(),
       keep: $("backupKeep").value,
     }),
   });
-  $("settingsStatus").textContent = backup.enabled ? `Backup scheduled: ${backup.schedule}` : "Backup disabled";
+  state.backupSettings = backup;
+  $("settingsStatus").textContent = backup.enabled ? `Backup scheduled: ${backup.schedule_summary || backupScheduleSummary(backup.schedule_config)}` : "Backup disabled";
   await loadCacheStatus();
 }
 
@@ -2723,6 +3223,7 @@ function openModal(id) {
   if (id === "alertsModal") loadAlerts();
   if (id === "bannerModal") renderBannerSettings();
   if (id === "settingsModal") loadCacheStatus();
+  if (id === "backupScheduleModal") populateBackupScheduleForm();
   if (id === "aboutModal") loadAbout().catch((error) => { $("aboutContent").innerHTML = `<div class="empty">Error: ${esc(error.message)}</div>`; });
 }
 
@@ -2830,6 +3331,18 @@ document.addEventListener("click", (event) => {
     api(`/api/local/funds/${fundId}`, { method: "DELETE" }).then(loadFunds);
   }
 
+  const localPersonIndex = event.target.closest("[data-delete-local-person]")?.dataset.deleteLocalPerson;
+  if (localPersonIndex !== undefined) {
+    state.localAccountPersons.splice(Number(localPersonIndex), 1);
+    renderPersonLists();
+  }
+
+  const fundPersonIndex = event.target.closest("[data-delete-fund-person]")?.dataset.deleteFundPerson;
+  if (fundPersonIndex !== undefined) {
+    state.fundPersons.splice(Number(fundPersonIndex), 1);
+    renderPersonLists();
+  }
+
   const periodIndex = event.target.closest("[data-delete-pension-period]")?.dataset.deletePensionPeriod;
   if (periodIndex !== undefined) {
     state.pensionIncomePeriods.splice(Number(periodIndex), 1);
@@ -2893,6 +3406,18 @@ document.addEventListener("change", (event) => {
     applySimulationFund();
   }
 
+  if (event.target.id === "simPersonSource") {
+    applySimulationPerson();
+  }
+
+  if (event.target.id === "simBirthDate" && !$("simCurrentAge").value) {
+    $("simCurrentAge").value = ageFromBirthDate(event.target.value);
+  }
+
+  if (event.target.id === "backupScheduleFrequency") {
+    syncBackupSchedulePickers();
+  }
+
   if (event.target.id === "reportFrom" || event.target.id === "historyDate") {
     event.target.value = clampedHistoryDate(event.target.value);
   }
@@ -2939,6 +3464,7 @@ $("runAlerts").addEventListener("click", runAlerts);
 $("addBannerItem").addEventListener("click", addBannerItem);
 $("runMarketScreener").addEventListener("click", runMarketScreener);
 $("saveLocalAccount").addEventListener("click", () => saveLocalAccount().catch((error) => { $("accountsStatus").textContent = `Error: ${error.message}`; }));
+$("addLocalAccountPerson").addEventListener("click", () => addPersonTo("localAccountPersons", "localPersonName", "localPersonBirthDate", "accountsStatus"));
 $("importSource").addEventListener("click", () => importSourceToLocal().catch((error) => { $("accountsStatus").textContent = `Error: ${error.message}`; }));
 $("exportData").addEventListener("click", () => exportLocalData().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }));
 $("chooseImportData").addEventListener("click", () => $("importDataFile").click());
@@ -2961,9 +3487,11 @@ $("loadReports").addEventListener("click", () => loadReports().catch((error) => 
 $("saveHistorySnapshot").addEventListener("click", () => saveHistorySnapshot().catch((error) => { $("historyStatus").textContent = `Error: ${error.message}`; }));
 $("captureHistorySnapshot").addEventListener("click", () => captureHistorySnapshot().catch((error) => { $("historyStatus").textContent = `Error: ${error.message}`; }));
 $("saveFund").addEventListener("click", () => saveFund().catch((error) => { $("fundStatus").textContent = `Error: ${error.message}`; }));
+$("addFundPerson").addEventListener("click", () => addPersonTo("fundPersons", "fundPersonName", "fundPersonBirthDate", "fundStatus"));
 $("addPensionPeriod").addEventListener("click", addPensionPeriod);
 $("addPensionScenario").addEventListener("click", addPensionScenario);
 $("runPensionSimulation").addEventListener("click", () => runPensionSimulation().catch((error) => { $("pensionSimulationStatus").textContent = `Error: ${error.message}`; }));
+$("applyBackupSchedule").addEventListener("click", applyBackupSchedule);
 $("localAccountLocation").addEventListener("change", () => syncCurrencyFromLocation("localAccountLocation", "localAccountCurrency"));
 $("priceLocation").addEventListener("change", () => syncCurrencyFromLocation("priceLocation", "priceCurrency"));
 ["manualSecuritySymbol", "manualUnderlyingSymbol", "securitySymbol", "priceSymbol"].forEach((id) => {

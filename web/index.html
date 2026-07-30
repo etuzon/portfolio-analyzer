@@ -131,6 +131,7 @@
                 <tr>
                   <th>Security</th>
                   <th>Account</th>
+                  <th>Risk</th>
                   <th>Value / P&amp;L</th>
                   <th>1Y High / Low</th>
                   <th>Net income</th>
@@ -171,6 +172,10 @@
           <label class="field"><span>Account id</span><input id="localAccountId" placeholder="Account id" title="External account id from broker, bank, pension company, or import sync" /></label>
           <label class="field"><span>Management company</span><input id="localManagementCompany" placeholder="Broker / bank / fund" title="Broker, bank, pension company, or platform" /></label>
           <label class="field"><span>Comments</span><input id="localAccountComments" placeholder="Comments" title="Optional operational notes for finance managers" /></label>
+          <label class="field"><span>Person</span><input id="localPersonName" placeholder="Family member name" /></label>
+          <label class="field"><span>Birthday</span><input id="localPersonBirthDate" type="date" title="Birthday for long-term savings age calculations" /></label>
+          <button id="addLocalAccountPerson" class="secondary" type="button">Add person</button>
+          <div id="localAccountPersons" class="person-list"></div>
           <div class="form-actions">
             <button id="saveLocalAccount" type="button" title="Create or update a manual account">Save account</button>
             <button id="importSource" class="secondary" type="button" title="Refresh account and security links from the configured import source">Sync import</button>
@@ -393,6 +398,10 @@
           <input id="fundAmount" type="number" step="0.01" placeholder="Amount saved" />
           <input id="fundFactor" type="number" step="0.01" value="200" placeholder="Factor" />
           <input id="fundComments" placeholder="Comments" />
+          <input id="fundPersonName" placeholder="Family member name" />
+          <input id="fundPersonBirthDate" type="date" title="Birthday for automatic age calculation" />
+          <button id="addFundPerson" class="secondary" type="button">Add person</button>
+          <div id="fundPersons" class="person-list"></div>
           <button id="saveFund" type="button">Save</button>
         </div>
         <p id="fundStatus" class="status-line"></p>
@@ -409,6 +418,8 @@
             <select id="simFundSource"></select>
             <input id="simName" placeholder="Scenario name" />
             <select id="simKind"></select>
+            <select id="simPersonSource"></select>
+            <input id="simBirthDate" type="date" title="User birthday for automatic current age" />
             <input id="simCurrentAge" type="number" min="0" step="0.1" placeholder="Current age" />
             <input id="simRetireAge" type="number" min="0" step="0.1" placeholder="Retire age" />
             <input id="simAmount" type="number" min="0" step="0.01" placeholder="Current amount" />
@@ -572,15 +583,41 @@
           </div>
           <div class="management-form settings-form">
             <label class="field"><span>Backup enabled</span><select id="backupEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
-            <label class="field"><span>Cron</span><input id="backupSchedule" placeholder="45 23 * * *" /></label>
             <label class="field"><span>Timezone</span><input id="backupTimezone" placeholder="Asia/Jerusalem" /></label>
             <label class="field"><span>Keep files</span><input id="backupKeep" type="number" min="1" step="1" placeholder="30" /></label>
+            <div id="backupScheduleSummary" class="schedule-summary"></div>
+            <button id="editBackupSchedule" class="secondary" type="button" data-modal="backupScheduleModal">Edit schedule</button>
             <button id="saveBackupSettings" type="button">Save backup</button>
           </div>
         </div>
         <p id="settingsStatus" class="status-line"></p>
         <div id="cacheStatus" class="settings-grid"></div>
         <div id="backupStatus" class="settings-grid"></div>
+      </section>
+    </div>
+
+    <div id="backupScheduleModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card schedule-card" role="dialog" aria-modal="true" aria-labelledby="backupScheduleTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Backup schedule</p>
+            <h2 id="backupScheduleTitle">Backup timing</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="schedule-form">
+          <label class="field"><span>Frequency</span><select id="backupScheduleFrequency"><option value="weekly">Days each week</option><option value="monthly">Days each month</option><option value="daily">Every day</option></select></label>
+          <label class="field"><span>Hour</span><input id="backupScheduleHour" type="number" min="0" max="23" step="1" /></label>
+          <label class="field"><span>Minute</span><input id="backupScheduleMinute" type="number" min="0" max="59" step="1" /></label>
+          <label class="field"><span>Passed time</span><select id="backupMissedPolicy"><option value="wait">Wait for next time</option><option value="run">Backup now</option></select></label>
+        </div>
+        <div id="backupWeeklyPicker" class="schedule-picker"></div>
+        <div id="backupMonthlyPicker" class="schedule-picker"></div>
+        <div class="modal-toolbar">
+          <button id="applyBackupSchedule" type="button">Apply schedule</button>
+          <button class="secondary" type="button" data-close>Cancel</button>
+        </div>
       </section>
     </div>
 

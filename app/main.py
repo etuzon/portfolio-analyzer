@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, time as clock_time, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
 from threading import RLock
 import time
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, HTTPException, Response
@@ -35,6 +36,7 @@ alert_store = AlertStore()
 local_store = LocalPortfolioStore()
 scheduler = None
 BACKUP_JOB_ID = "local-data-backup"
+WEEKDAY_CRON = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 PORTFOLIO_CACHE_FILE = "portfolio-analysis-cache.json"
 HISTORY_START_DATE = date(2026, 4, 14)
 _portfolio_cache_lock = RLock()
@@ -74,12 +76,85 @@ def portfolio_cache_ttl_seconds() -> int:
 
 def default_backup_settings() -> dict[str, Any]:
     backup = config.raw.get("backup", {}) if isinstance(config.raw.get("backup"), dict) else {}
+    schedule = str(backup.get("schedule") or "45 23 * * *")
+    timezone_name = str(backup.get("timezone") or config.alerts.get("timezone") or "UTC")
     return {
         "enabled": bool(backup.get("enabled", True)),
-        "schedule": str(backup.get("schedule") or "45 23 * * *"),
-        "timezone": str(backup.get("timezone") or config.alerts.get("timezone") or "UTC"),
+        "schedule": schedule,
+        "schedule_config": backup_schedule_config(backup.get("schedule_config"), schedule),
+        "missed_policy": str(backup.get("missed_policy") or "wait"),
+        "timezone": timezone_name,
         "keep": int(backup.get("keep", 30) or 30),
     }
+
+
+def backup_schedule_config(raw: Any = None, schedule: str = "45 23 * * *") -> dict[str, Any]:
+    if isinstance(raw, dict):
+        frequency = str(raw.get("frequency") or "weekly")
+        hour = _bounded_int(raw.get("hour"), 23, 0, 23)
+        minute = _bounded_int(raw.get("minute"), 45, 0, 59)
+        weekdays = _int_list(raw.get("weekdays"), 0, 6)
+        month_days = _int_list(raw.get("month_days"), 1, 31)
+        if frequency == "monthly":
+            return {"frequency": "monthly", "month_days": month_days or [1], "hour": hour, "minute": minute}
+        if frequency == "daily":
+            return {"frequency": "daily", "hour": hour, "minute": minute}
+        return {"frequency": "weekly", "weekdays": weekdays or [0, 2, 4], "hour": hour, "minute": minute}
+    return backup_schedule_config_from_cron(schedule)
+
+
+def backup_schedule_config_from_cron(schedule: str) -> dict[str, Any]:
+    parts = str(schedule or "").split()
+    if len(parts) != 5:
+        return {"frequency": "weekly", "weekdays": [0, 2, 4], "hour": 23, "minute": 45}
+    minute, hour, day, _month, weekday = parts
+    config_out = {"hour": _bounded_int(hour, 23, 0, 23), "minute": _bounded_int(minute, 45, 0, 59)}
+    if day != "*" and weekday == "*":
+        return {**config_out, "frequency": "monthly", "month_days": _int_list(day.split(","), 1, 31) or [1]}
+    if weekday != "*":
+        return {**config_out, "frequency": "weekly", "weekdays": _weekday_list(weekday) or [0, 2, 4]}
+    return {**config_out, "frequency": "daily"}
+
+
+def backup_cron_from_config(schedule_config: dict[str, Any]) -> str:
+    config_out = backup_schedule_config(schedule_config)
+    minute = config_out["minute"]
+    hour = config_out["hour"]
+    if config_out["frequency"] == "monthly":
+        days = ",".join(str(day) for day in config_out["month_days"])
+        return f"{minute} {hour} {days} * *"
+    if config_out["frequency"] == "daily":
+        return f"{minute} {hour} * * *"
+    weekdays = ",".join(WEEKDAY_CRON[day] for day in config_out["weekdays"])
+    return f"{minute} {hour} * * {weekdays}"
+
+
+def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = default
+    return min(max(number, minimum), maximum)
+
+
+def _int_list(value: Any, minimum: int, maximum: int) -> list[int]:
+    items = value if isinstance(value, list) else str(value or "").split(",")
+    numbers = []
+    for item in items:
+        try:
+            number = int(item)
+        except (TypeError, ValueError):
+            continue
+        if minimum <= number <= maximum and number not in numbers:
+            numbers.append(number)
+    return sorted(numbers)
+
+
+def _weekday_list(value: Any) -> list[int]:
+    names = {name: index for index, name in enumerate(WEEKDAY_CRON)}
+    names.update({"0": 0, "1": 1, "2": 2, "3": 3, "4": 4, "5": 5, "6": 6})
+    items = value if isinstance(value, list) else str(value or "").lower().split(",")
+    return sorted({names[str(item).strip()] for item in items if str(item).strip() in names})
 
 
 def load_runtime_settings() -> dict[str, Any]:
@@ -120,7 +195,54 @@ def configure_backup_job() -> None:
         trigger,
         id=BACKUP_JOB_ID,
         replace_existing=True,
+        coalesce=True,
+        misfire_grace_time=60 * 60 * 24 if backup.get("missed_policy") == "run" else 60,
     )
+    maybe_run_missed_backup(backup)
+
+
+def maybe_run_missed_backup(backup: dict[str, Any]) -> dict[str, Any] | None:
+    if not backup.get("enabled", True) or backup.get("missed_policy") != "run":
+        return None
+    due_at = latest_due_backup_time(backup)
+    if not due_at:
+        return None
+    backups = local_store.list_backups()
+    latest = backups[0] if backups else None
+    if latest and _parse_backup_modified_at(latest.get("modified_at"), backup.get("timezone") or "UTC") >= due_at:
+        return None
+    return local_store.write_backup(int(backup.get("keep") or 30))
+
+
+def latest_due_backup_time(backup: dict[str, Any]) -> datetime | None:
+    try:
+        tz = ZoneInfo(str(backup.get("timezone") or "UTC"))
+    except ZoneInfoNotFoundError:
+        tz = ZoneInfo("UTC")
+    now = datetime.now(tz)
+    config_out = backup_schedule_config(backup.get("schedule_config"), backup.get("schedule") or "")
+    scheduled = datetime.combine(now.date(), clock_time(config_out["hour"], config_out["minute"]), tzinfo=tz)
+    if scheduled > now:
+        return None
+    frequency = config_out["frequency"]
+    if frequency == "daily":
+        return scheduled
+    if frequency == "weekly" and now.weekday() in config_out["weekdays"]:
+        return scheduled
+    if frequency == "monthly" and now.day in config_out["month_days"]:
+        return scheduled
+    return None
+
+
+def _parse_backup_modified_at(value: Any, timezone_name: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except ValueError:
+        parsed = datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        return parsed.astimezone(ZoneInfo(timezone_name))
+    except ZoneInfoNotFoundError:
+        return parsed.astimezone(timezone.utc)
 
 
 def backup_status() -> dict[str, Any]:
@@ -129,11 +251,25 @@ def backup_status() -> dict[str, Any]:
     backups = local_store.list_backups()
     return {
         **backup,
+        "schedule_summary": backup_schedule_summary(backup),
         "directory": str(local_store.backup_dir()),
         "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
         "latest": backups[0] if backups else None,
         "backups": backups[:10],
     }
+
+
+def backup_schedule_summary(backup: dict[str, Any]) -> str:
+    config_out = backup_schedule_config(backup.get("schedule_config"), backup.get("schedule") or "")
+    time_label = f"{config_out['hour']:02d}:{config_out['minute']:02d}"
+    if config_out["frequency"] == "daily":
+        return f"Daily at {time_label}"
+    if config_out["frequency"] == "monthly":
+        days = ", ".join(str(day) for day in config_out["month_days"])
+        return f"Monthly on day {days} at {time_label}"
+    names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    days = ", ".join(names[day] for day in config_out["weekdays"])
+    return f"{days} at {time_label}"
 
 
 def ghostfolio_holdings_synced():
@@ -623,20 +759,27 @@ def settings_status():
 
 @app.put("/api/settings/backup")
 def update_backup_settings(payload: dict[str, Any]):
-    backup = default_backup_settings()
     payload = payload or {}
+    settings = load_runtime_settings()
+    backup = {**default_backup_settings(), **settings.get("backup", {})}
     if "enabled" in payload:
         backup["enabled"] = bool(payload.get("enabled"))
+    if "schedule_config" in payload:
+        backup["schedule_config"] = backup_schedule_config(payload.get("schedule_config"))
+        backup["schedule"] = backup_cron_from_config(backup["schedule_config"])
     if "schedule" in payload:
         schedule = str(payload.get("schedule") or "").strip()
         if len(schedule.split()) != 5:
             raise HTTPException(status_code=400, detail="Backup schedule must be a 5-field cron expression")
         backup["schedule"] = schedule
+        backup["schedule_config"] = backup_schedule_config_from_cron(schedule)
+    if "missed_policy" in payload:
+        policy = str(payload.get("missed_policy") or "wait")
+        backup["missed_policy"] = policy if policy in {"wait", "run"} else "wait"
     if "timezone" in payload:
         backup["timezone"] = str(payload.get("timezone") or "UTC").strip() or "UTC"
     if "keep" in payload:
         backup["keep"] = max(int(payload.get("keep") or 1), 1)
-    settings = load_runtime_settings()
     settings["backup"] = backup
     save_runtime_settings(settings)
     try:

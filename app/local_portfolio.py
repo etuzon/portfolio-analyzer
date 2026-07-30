@@ -30,6 +30,7 @@ EXPORT_TABLES = {
         "username",
         "account_id",
         "management_company",
+        "persons",
         "comments",
         "created_at",
     ],
@@ -81,7 +82,7 @@ EXPORT_TABLES = {
         "comments",
         "created_at",
     ],
-    "funds": ["id", "kind", "pension_id", "amount", "factor", "comments", "created_at"],
+    "funds": ["id", "kind", "pension_id", "amount", "factor", "birth_date", "persons", "comments", "created_at"],
     "account_snapshots": [
         "account_db_id",
         "snapshot_date",
@@ -126,6 +127,7 @@ class LocalPortfolioStore:
                         username text not null default '',
                         account_id text not null default '',
                         management_company text not null default '',
+                        persons text not null default '[]',
                         comments text not null default '',
                         created_at text not null
                     )
@@ -201,6 +203,8 @@ class LocalPortfolioStore:
                         pension_id text not null,
                         amount real not null,
                         factor real not null default 200,
+                        birth_date text not null default '',
+                        persons text not null default '[]',
                         comments text not null default '',
                         created_at text not null
                     )
@@ -223,10 +227,18 @@ class LocalPortfolioStore:
                     """
                 )
                 conn.execute("create index if not exists idx_account_snapshots_date on account_snapshots(snapshot_date)")
+                self._ensure_column(conn, "accounts", "persons", "text not null default '[]'")
+                self._ensure_column(conn, "funds", "birth_date", "text not null default ''")
+                self._ensure_column(conn, "funds", "persons", "text not null default '[]'")
                 self._normalize_existing_symbols(conn)
         except sqlite3.OperationalError as exc:
             if "readonly" not in str(exc).lower():
                 raise
+
+    def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {row["name"] for row in conn.execute(f"pragma table_info({table})").fetchall()}
+        if column not in columns:
+            conn.execute(f"alter table {table} add column {column} {definition}")
 
     def _normalize_existing_symbols(self, conn: sqlite3.Connection) -> None:
         for table in ["manual_securities", "transactions", "price_history"]:
@@ -337,9 +349,11 @@ class LocalPortfolioStore:
             record["symbol"] = _clean_security_symbol(record["symbol"])
         if "underlying_symbol" in record:
             record["underlying_symbol"] = _clean_security_symbol(record["underlying_symbol"])
-        for key in ["type", "name", "username", "account_id", "management_company", "comments", "source", "kind", "pension_id", "created_at", "updated_at"]:
+        for key in ["type", "name", "username", "account_id", "management_company", "comments", "source", "kind", "pension_id", "created_at", "updated_at", "birth_date"]:
             if key in record:
                 record[key] = str(record.get(key) or "")
+        if "persons" in record:
+            record["persons"] = json.dumps(_clean_persons(record.get("persons")))
         for key in ["initial_cash", "quantity", "price_input", "price", "amount", "factor", "value", "cash", "profit", "profit_percent", "strike_price", "contract_multiplier"]:
             if key in record:
                 record[key] = _number(record.get(key), 0)
@@ -383,7 +397,7 @@ class LocalPortfolioStore:
     def list_accounts(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute("select * from accounts order by management_company, username, account_id").fetchall()
-        return [_dict(row) for row in rows]
+        return [self._account_out(row) for row in rows]
 
     def save_account(self, payload: dict[str, Any]) -> dict[str, Any]:
         account_id = str(payload.get("id") or uuid4())
@@ -397,6 +411,7 @@ class LocalPortfolioStore:
             "username": str(payload.get("username") or "").strip(),
             "account_id": str(payload.get("account_id") or "").strip(),
             "management_company": str(payload.get("management_company") or "").strip(),
+            "persons": json.dumps(_clean_persons(payload.get("persons"))),
             "comments": str(payload.get("comments") or "").strip(),
             "created_at": str(payload.get("created_at") or _now()),
         }
@@ -406,13 +421,13 @@ class LocalPortfolioStore:
             conn.execute(
                 """
                 insert or replace into accounts
-                  (id, type, location, currency, initial_cash, username, account_id, management_company, comments, created_at)
+                  (id, type, location, currency, initial_cash, username, account_id, management_company, persons, comments, created_at)
                 values
-                  (:id, :type, :location, :currency, :initial_cash, :username, :account_id, :management_company, :comments, :created_at)
+                  (:id, :type, :location, :currency, :initial_cash, :username, :account_id, :management_company, :persons, :comments, :created_at)
                 """,
                 record,
             )
-        return record
+        return self._account_out(record)
 
     def delete_account(self, account_db_id: str) -> bool:
         with self._connect() as conn:
@@ -840,6 +855,8 @@ class LocalPortfolioStore:
             "pension_id": str(payload.get("pension_id") or "").strip(),
             "amount": _number(payload.get("amount"), 0),
             "factor": _number(payload.get("factor"), 200) or 200,
+            "birth_date": _clean_birth_date(payload.get("birth_date") or payload.get("birthday")),
+            "persons": json.dumps(_clean_persons(payload.get("persons"))),
             "comments": str(payload.get("comments") or "").strip(),
             "created_at": str(payload.get("created_at") or _now()),
         }
@@ -849,13 +866,13 @@ class LocalPortfolioStore:
             conn.execute(
                 """
                 insert or replace into funds
-                  (id, kind, pension_id, amount, factor, comments, created_at)
+                  (id, kind, pension_id, amount, factor, birth_date, persons, comments, created_at)
                 values
-                  (:id, :kind, :pension_id, :amount, :factor, :comments, :created_at)
+                  (:id, :kind, :pension_id, :amount, :factor, :birth_date, :persons, :comments, :created_at)
                 """,
                 record,
             )
-        return {**record, "monthly_estimate": monthly_pension(record["amount"], record["factor"])}
+        return {**self._fund_out(record), "monthly_estimate": monthly_pension(record["amount"], record["factor"])}
 
     def simulate_pension(self, payload: dict[str, Any]) -> dict[str, Any]:
         scenarios = payload.get("scenarios")
@@ -867,6 +884,9 @@ class LocalPortfolioStore:
                 continue
             kind = _choice(scenario.get("kind"), FUND_KINDS, "Pension")
             current_age = _number(scenario.get("current_age"), _number(scenario.get("age"), 0))
+            birth_date = _clean_birth_date(scenario.get("birth_date") or scenario.get("birthday") or scenario.get("person_birth_date"))
+            if current_age <= 0 and birth_date:
+                current_age = age_from_birth_date(birth_date)
             retire_age = _number(scenario.get("retire_age"), _number(scenario.get("retirement_age"), 0))
             if current_age <= 0:
                 raise ValueError("Current age is required")
@@ -906,6 +926,7 @@ class LocalPortfolioStore:
                 {
                     "name": str(scenario.get("name") or f"Scenario {index}").strip(),
                     "kind": kind,
+                    "birth_date": birth_date,
                     "current_age": current_age,
                     "retire_age": retire_age,
                     "years": retire_age - current_age,
@@ -1503,7 +1524,15 @@ class LocalPortfolioStore:
 
     def _fund_out(self, row) -> dict[str, Any]:
         item = _dict(row)
+        item["persons"] = _clean_persons(item.get("persons"))
+        if not item["persons"] and item.get("birth_date"):
+            item["persons"] = [{"name": "Person 1", "birth_date": item["birth_date"], "age": age_from_birth_date(item["birth_date"])}]
         item["monthly_estimate"] = monthly_pension(item["amount"], item["factor"])
+        return item
+
+    def _account_out(self, row) -> dict[str, Any]:
+        item = _dict(row)
+        item["persons"] = _clean_persons(item.get("persons"))
         return item
 
     def _snapshot_out(self, row) -> dict[str, Any]:
@@ -1542,6 +1571,48 @@ def denormalize_price(price: float, location: str, asset_class: str) -> float:
 
 def monthly_pension(amount: float, factor: float = 200) -> float:
     return amount / (factor or 200)
+
+
+def age_from_birth_date(value: str, on_date: date | None = None) -> float:
+    birth_date = date.fromisoformat(value)
+    today = on_date or date.today()
+    if birth_date > today:
+        raise ValueError("Birth date cannot be in the future")
+    return round((today - birth_date).days / 365.2425, 2)
+
+
+def _clean_birth_date(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        parsed = date.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError("Birth date must use YYYY-MM-DD") from exc
+    if parsed > date.today():
+        raise ValueError("Birth date cannot be in the future")
+    return text
+
+
+def _clean_persons(value: Any) -> list[dict[str, Any]]:
+    raw = value
+    if isinstance(value, str):
+        try:
+            raw = json.loads(value) if value.strip() else []
+        except json.JSONDecodeError:
+            raw = []
+    if not isinstance(raw, list):
+        raw = []
+    persons = []
+    for index, item in enumerate(raw, start=1):
+        if not isinstance(item, dict):
+            continue
+        birth_date = _clean_birth_date(item.get("birth_date") or item.get("birthday"))
+        if not birth_date:
+            continue
+        name = str(item.get("name") or f"Person {index}").strip() or f"Person {index}"
+        persons.append({"name": name, "birth_date": birth_date, "age": age_from_birth_date(birth_date)})
+    return persons
 
 
 def _income_periods(scenario: dict[str, Any], current_age: float, retire_age: float) -> list[dict[str, Any]]:

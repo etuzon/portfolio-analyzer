@@ -1181,7 +1181,7 @@ h2 {
 
 .currency-strip .account-chip {
   display: inline-grid;
-  grid-template-columns: minmax(0, auto) auto;
+  grid-template-columns: minmax(0, auto) auto auto;
   column-gap: 8px;
   row-gap: 2px;
   align-items: center;
@@ -1226,7 +1226,7 @@ h2 {
 
 .summary {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -1253,6 +1253,77 @@ h2 {
   color: #7f8998;
   font-size: 11px;
   font-weight: 700;
+}
+
+.risk-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: fit-content;
+  min-height: 28px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.risk-badge b,
+.stat .risk-badge b,
+.account-chip .risk-badge b {
+  display: inline;
+  max-width: none;
+  color: inherit;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.risk-badge span,
+.stat .risk-badge span {
+  display: inline;
+  margin: 0;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.risk-symbol {
+  min-width: 14px;
+  text-align: center;
+  font-size: 13px;
+}
+
+.risk-low {
+  background: rgba(46, 229, 157, 0.12);
+  border-color: rgba(46, 229, 157, 0.42);
+  color: #6ee787;
+}
+
+.risk-moderate {
+  background: rgba(33, 167, 255, 0.12);
+  border-color: rgba(33, 167, 255, 0.42);
+  color: #77c8ff;
+}
+
+.risk-elevated {
+  background: rgba(240, 216, 106, 0.13);
+  border-color: rgba(240, 216, 106, 0.45);
+  color: #f0d86a;
+}
+
+.risk-high {
+  background: rgba(255, 174, 24, 0.13);
+  border-color: rgba(255, 174, 24, 0.45);
+  color: #ffb84a;
+}
+
+.risk-extreme {
+  background: rgba(255, 82, 109, 0.13);
+  border-color: rgba(255, 82, 109, 0.48);
+  color: #ff6f86;
 }
 
 .tool-panel {
@@ -1294,6 +1365,28 @@ h2 {
   border: 1px solid #2b3038;
   border-radius: 8px;
   background: #111317;
+}
+
+.person-list {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.person-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border: 1px solid #303846;
+  border-radius: 7px;
+  padding: 4px 6px 4px 10px;
+  background: #171c24;
+  color: #d9e7ff;
+  font-size: 12px;
+  font-weight: 750;
 }
 
 .form-caption {
@@ -1539,30 +1632,34 @@ table {
 }
 
 .holdings-table th:nth-child(2) {
-  width: 11%;
+  width: 10%;
 }
 
 .holdings-table th:nth-child(3) {
-  width: 11%;
+  width: 7%;
 }
 
 .holdings-table th:nth-child(4) {
-  width: 12%;
+  width: 10%;
 }
 
 .holdings-table th:nth-child(5) {
-  width: 16%;
+  width: 11%;
 }
 
 .holdings-table th:nth-child(6) {
-  width: 12%;
+  width: 15%;
 }
 
 .holdings-table th:nth-child(7) {
-  width: 12%;
+  width: 11%;
 }
 
 .holdings-table th:nth-child(8) {
+  width: 12%;
+}
+
+.holdings-table th:nth-child(9) {
   width: 10%;
 }
 
@@ -1946,6 +2043,71 @@ tbody tr:hover {
   margin-top: 0;
 }
 
+.schedule-summary {
+  display: grid;
+  gap: 3px;
+  min-height: 38px;
+  border: 1px solid #2b3340;
+  border-radius: 7px;
+  padding: 7px 10px;
+  background: #171c24;
+}
+
+.schedule-summary span {
+  color: #9aa4b2;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.schedule-summary b {
+  color: #f7f9ff;
+  font-size: 12px;
+}
+
+.schedule-summary small {
+  color: #8fa0b8;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.schedule-card {
+  width: min(760px, 100%);
+}
+
+.schedule-form {
+  display: grid;
+  grid-template-columns: 1.4fr repeat(3, minmax(110px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.schedule-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.schedule-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  border: 1px solid #2b3340;
+  border-radius: 7px;
+  padding: 0 10px;
+  background: #171c24;
+  color: #d9e7ff;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.schedule-option.small {
+  width: 45px;
+  justify-content: center;
+}
+
 .setting-row {
   display: grid;
   grid-template-columns: 150px minmax(0, 1fr);
@@ -1997,7 +2159,8 @@ tbody tr:hover {
   .management-form,
   .simulator-form,
   .simulator-period-form,
-  .simulator-results {
+  .simulator-results,
+  .schedule-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2067,6 +2230,7 @@ tbody tr:hover {
   .simulator-form,
   .simulator-period-form,
   .simulator-results,
+  .schedule-form,
   .simulation-grid,
   .simulation-timeline,
   .account-form,
