@@ -1,4 +1,5 @@
 const HISTORY_START_DATE = "2026-04-14";
+const DATE_PLACEHOLDER = "dd/mm/yyyy";
 
 const state = {
   items: [],
@@ -19,28 +20,39 @@ const state = {
   securityChartStartDate: HISTORY_START_DATE,
   securityHistory: [],
   localFunds: [],
+  longTermView: "total",
+  brokers: [],
+  familyMembers: [],
   localAccountPersons: [],
+  editAccountPersons: [],
   fundPersons: [],
+  editFundPersons: [],
+  editingAccountId: "",
+  editingBrokerId: "",
+  editingFamilyMemberId: "",
+  editingFundId: "",
   pensionIncomePeriods: [],
   pensionScenarios: [],
   pensionSimulationResults: [],
   localOptions: {
-    account_types: ["Investment", "Long-Term Savings", "Bank"],
+    account_types: ["Investment", "Long-Term Savings", "Bank", "ESOP"],
     fund_kinds: ["Pension", "Provident Fund", "Savings Fund"],
-    asset_classes: ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE"],
-    instrument_types: ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE"],
+    asset_classes: ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"],
+    instrument_types: ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"],
     option_types: ["CALL", "PUT"],
   },
   optionsReady: false,
   tableMaPeriod: "30",
   backupSettings: null,
   riskSnapshot: null,
+  language: "en",
 };
 
 const $ = (id) => document.getElementById(id);
 
 const DASHBOARD_WIDGETS = [
   { id: "account_trend", title: "Account value trend", view: "basic", size: "wide" },
+  { id: "long_term", title: "Long-term funds", view: "basic", size: "wide" },
   { id: "market_cost", title: "Market vs cost basis", view: "basic", size: "wide" },
   { id: "asset_mix", title: "Asset mix", view: "basic", size: "compact" },
   { id: "top_holdings", title: "Top holdings", view: "basic", size: "compact" },
@@ -52,7 +64,12 @@ const DASHBOARD_WIDGETS = [
 
 const DASHBOARD_STORAGE_KEY = "portfolioAnalyzer.dashboard";
 const DASHBOARD_ACCOUNT_STORAGE_KEY = "portfolioAnalyzer.dashboard.accountTrend";
+const DASHBOARD_LONG_TERM_STORAGE_KEY = "portfolioAnalyzer.dashboard.longTerm";
 const TABLE_SETTINGS_STORAGE_KEY = "portfolioAnalyzer.tableSettings";
+const LANGUAGE_STORAGE_KEY = "portfolioAnalyzer.language";
+const LOG_PREFIX = "[Portfolio Analyzer]";
+const MIN_LOADING_VISIBLE_MS = 700;
+const SENSITIVE_LOG_KEY = /(password|passwd|secret|token|api[_-]?key|authorization|credential|connection|string)/i;
 const DASHBOARD_SECTIONS = [
   { view: "basic", label: "Glance" },
   { view: "expanded", label: "Full" },
@@ -60,8 +77,120 @@ const DASHBOARD_SECTIONS = [
 ];
 
 const REGION_CODES = "AF AX AL DZ AS AD AO AI AQ AG AR AM AW AU AT AZ BS BH BD BB BY BE BZ BJ BM BT BO BQ BA BW BV BR IO BN BG BF BI CV KH CM CA KY CF TD CL CN CX CC CO KM CG CD CK CR CI HR CU CW CY CZ DK DJ DM DO EC EG SV GQ ER EE SZ ET FK FO FJ FI FR GF PF TF GA GM GE DE GH GI GR GL GD GP GU GT GG GN GW GY HT HM VA HN HK HU IS IN ID IR IQ IE IM IL IT JM JP JE JO KZ KE KI KP KR KW KG LA LV LB LS LR LY LI LT LU MO MG MW MY MV ML MT MH MQ MR MU YT MX FM MD MC MN ME MS MA MZ MM NA NR NP NL NC NZ NI NE NG NU NF MK MP NO OM PK PW PS PA PG PY PE PH PN PL PT PR QA RE RO RU RW BL SH KN LC MF PM VC WS SM ST SA SN RS SC SL SG SX SK SI SB SO ZA GS SS ES LK SD SR SJ SE CH SY TW TJ TZ TH TL TG TK TO TT TN TR TM TC TV UG UA AE GB US UM UY UZ VU VE VN VG VI WF EH YE ZM ZW".split(" ");
+const ACCOUNT_COUNTRIES = ["USA", "Israel"];
 const FALLBACK_CURRENCIES = "USD ILS EUR GBP JPY CHF CAD AUD NZD CNY HKD SGD INR KRW MXN BRL ARS CLP COP ZAR AED SAR TRY PLN CZK HUF SEK NOK DKK ISK RUB UAH RON BGN HRK RSD THB IDR MYR PHP VND TWD ILS".split(" ");
 const countryNames = typeof Intl.DisplayNames === "function" ? new Intl.DisplayNames([navigator.language || "en"], { type: "region" }) : null;
+const TRANSLATIONS = {
+  en: {
+    appName: "Portfolio analyzer",
+    brand: "Portfolio",
+    overview: "Overview",
+    loadingPortfolio: "Loading portfolio",
+    readingCachedAnalytics: "Reading cached analytics",
+    mainMenu: "Main Menu",
+    dashboard: "Dashboard",
+    reports: "Reports",
+    portfolioData: "Portfolio Data",
+    accounts: "Accounts",
+    brokers: "Brokers",
+    securities: "Securities",
+    prices: "Prices",
+    householdRetirement: "Household & Retirement",
+    familyMembers: "Family Members",
+    pensionFunds: "Pension/Funds",
+    marketsAlerts: "Markets & Alerts",
+    marketScreener: "Market Screener",
+    alerts: "Alerts",
+    marketBanner: "Market Banner",
+    system: "System",
+    settings: "Settings",
+    about: "About",
+    markets: "Markets",
+    currencyIndexesCommodities: "Currency, indexes, and commodities",
+    manage: "Manage",
+    longTermSavings: "Long-term savings",
+    pensionAccountsFunds: "Pension accounts and funds",
+    pension: "pension",
+    provident: "provident",
+    savingsFund: "savings fund",
+    longTermAccounts: "long-term accounts",
+    pensionMonthlyEstimate: "pension monthly estimate",
+    notApplicable: "Not applicable",
+    language: "Language",
+    display: "Display",
+    appLanguage: "App language",
+    saveDisplaySettings: "Save display settings",
+    displaySettingsSaved: "Display settings saved",
+    tableDisplay: "Table display",
+    tableMaPeriod: "Table MA period",
+    saveTableSettings: "Save table settings",
+    data: "Data",
+    backupSchedule: "Backup schedule",
+  },
+  he: {
+    appName: "מנתח תיק השקעות",
+    brand: "תיק השקעות",
+    overview: "סקירה",
+    loadingPortfolio: "טוען תיק",
+    readingCachedAnalytics: "קורא נתוני ניתוח שמורים",
+    mainMenu: "תפריט ראשי",
+    dashboard: "דשבורד",
+    reports: "דוחות",
+    portfolioData: "נתוני תיק",
+    accounts: "חשבונות",
+    brokers: "ברוקרים",
+    securities: "ניירות ערך",
+    prices: "מחירים",
+    householdRetirement: "משפחה ופרישה",
+    familyMembers: "בני משפחה",
+    pensionFunds: "פנסיה וקופות",
+    marketsAlerts: "שווקים והתראות",
+    marketScreener: "סורק שוק",
+    alerts: "התראות",
+    marketBanner: "סרגל שוק",
+    system: "מערכת",
+    settings: "הגדרות",
+    about: "אודות",
+    markets: "שווקים",
+    currencyIndexesCommodities: "מטבעות, מדדים וסחורות",
+    manage: "ניהול",
+    longTermSavings: "חסכון לטווח ארוך",
+    pensionAccountsFunds: "חשבונות פנסיה וקופות",
+    pension: "פנסיה",
+    provident: "גמל",
+    savingsFund: "קרן השתלמות",
+    longTermAccounts: "חשבונות לטווח ארוך",
+    pensionMonthlyEstimate: "אומדן קצבה חודשית",
+    notApplicable: "לא רלוונטי",
+    language: "שפה",
+    display: "תצוגה",
+    appLanguage: "שפת הממשק",
+    saveDisplaySettings: "שמור הגדרות תצוגה",
+    displaySettingsSaved: "הגדרות התצוגה נשמרו",
+    tableDisplay: "תצוגת טבלה",
+    tableMaPeriod: "תקופת ממוצע נע בטבלה",
+    saveTableSettings: "שמור הגדרות טבלה",
+    data: "נתונים",
+    backupSchedule: "תזמון גיבוי",
+  },
+};
+
+function locale() {
+  return state.language === "he" ? "he-IL" : undefined;
+}
+
+function t(key) {
+  return TRANSLATIONS[state.language]?.[key] || TRANSLATIONS.en[key] || key;
+}
+const OPTION_LABELS = {
+  MUTUALFUND: "Mutual Fund",
+  STOCK_OPTION: "Stock Option",
+  RSU: "RSU",
+};
+
+function optionLabel(value) {
+  return OPTION_LABELS[value] || value;
+}
 
 function flagFor(code) {
   return code.replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt(0)));
@@ -220,33 +349,89 @@ function preferredCurrencyForLocation(location) {
   return "";
 }
 
+function normalizeAccountCountry(location) {
+  const text = String(location || "").trim().toLowerCase();
+  if (["israel", "il", "state of israel"].includes(text)) return "Israel";
+  if (["usa", "us", "u.s.", "u.s.a.", "united states", "united states of america"].includes(text)) return "USA";
+  return ACCOUNT_COUNTRIES.includes(location) ? location : "USA";
+}
+
+function sanitizeLogValue(value, depth = 0) {
+  if (depth > 2) return "[nested]";
+  if (Array.isArray(value)) return value.slice(0, 10).map((item) => sanitizeLogValue(item, depth + 1));
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => (
+    SENSITIVE_LOG_KEY.test(key) ? [key, "[redacted]"] : [key, sanitizeLogValue(item, depth + 1)]
+  )));
+}
+
+function appLog(event, details = {}) {
+  console.info(LOG_PREFIX, event, sanitizeLogValue(details));
+}
+
+function appWarn(event, details = {}) {
+  console.warn(LOG_PREFIX, event, sanitizeLogValue(details));
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  if (!response.ok) {
-    let message = `${response.status} ${response.statusText}`;
-    try {
-      const data = await response.json();
-      message = data.detail?.message || data.detail || message;
-    } catch {
-      // Keep the HTTP status text when the API returns no JSON body.
+  const started = performance.now();
+  const method = options.method || "GET";
+  const endpoint = String(path).split("?")[0];
+  try {
+    const response = await fetch(path, {
+      headers: { "Content-Type": "application/json" },
+      ...options,
+    });
+    appLog("api.response", { method, endpoint, status: response.status, ms: Math.round(performance.now() - started) });
+    if (!response.ok) {
+      let message = `${response.status} ${response.statusText}`;
+      try {
+        const data = await response.json();
+        message = data.detail?.message || data.detail || message;
+      } catch {
+        // Keep the HTTP status text when the API returns no JSON body.
+      }
+      throw new Error(message);
     }
-    throw new Error(message);
+    return response.json();
+  } catch (error) {
+    appWarn("api.error", { method, endpoint, message: error.message });
+    throw error;
   }
-  return response.json();
 }
 
 let loadingRequests = 0;
+let loadingStartedAt = 0;
+let loadingHideTimer = null;
 
-function setLoading(active, detail = "Reading cached analytics") {
+function setLoading(active, detail = "") {
   const overlay = $("loadingOverlay");
   if (!overlay) return;
+  const loadingDetailText = detail || t("readingCachedAnalytics");
+  if (loadingHideTimer) {
+    clearTimeout(loadingHideTimer);
+    loadingHideTimer = null;
+  }
+  if (active && loadingRequests === 0) {
+    loadingStartedAt = performance.now();
+    overlay.hidden = false;
+    appLog("loading.start", { detail: loadingDetailText });
+  }
   loadingRequests = Math.max(0, loadingRequests + (active ? 1 : -1));
-  $("loadingDetail").textContent = detail;
-  overlay.hidden = loadingRequests === 0;
+  $("loadingTitle").textContent = t("loadingPortfolio");
+  $("loadingDetail").textContent = loadingDetailText;
   $("refresh")?.classList.toggle("is-loading", loadingRequests > 0);
+  if (loadingRequests > 0) return;
+  const elapsed = performance.now() - loadingStartedAt;
+  const hide = () => {
+    overlay.hidden = true;
+    appLog("loading.end", { elapsed_ms: Math.round(performance.now() - loadingStartedAt) });
+  };
+  if (elapsed >= MIN_LOADING_VISIBLE_MS) {
+    hide();
+  } else {
+    loadingHideTimer = setTimeout(hide, MIN_LOADING_VISIBLE_MS - elapsed);
+  }
 }
 
 function esc(value) {
@@ -259,15 +444,107 @@ function esc(value) {
   })[char]);
 }
 
+function parseDateInput(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) return validIsoDate(text) ? text : "";
+  const display = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (!display) return "";
+  const day = display[1].padStart(2, "0");
+  const month = display[2].padStart(2, "0");
+  const candidate = `${display[3]}-${month}-${day}`;
+  return validIsoDate(candidate) ? candidate : "";
+}
+
+function validIsoDate(value) {
+  const [year, month, day] = String(value || "").split("-").map(Number);
+  if (!year || !month || !day) return false;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function formatDate(value) {
+  const iso = parseDateInput(value);
+  if (!iso) return value || "";
+  const [year, month, day] = iso.split("-");
+  return `${day}/${month}/${year}`;
+}
+
+function dateValue(id) {
+  return parseDateInput(valueOf(id));
+}
+
+function setDateField(id, value) {
+  const input = $(id);
+  if (input) input.value = formatDate(value || "");
+}
+
+function ensureHierarchicalNav() {
+  const nav = document.querySelector(".nav");
+  if (!nav) return;
+  nav.innerHTML = `
+    <div class="nav-title">${esc(t("mainMenu"))}</div>
+    <details class="nav-menu" open>
+      <summary>${esc(t("dashboard"))}</summary>
+      <div class="nav-children">
+        <button class="nav-item active" type="button">${esc(t("overview"))}</button>
+        <button class="nav-item" type="button" data-modal="reportsModal">${esc(t("reports"))}</button>
+      </div>
+    </details>
+    <details class="nav-menu">
+      <summary>${esc(t("portfolioData"))}</summary>
+      <div class="nav-children">
+        <button class="nav-item" type="button" data-modal="accountsModal">${esc(t("accounts"))}</button>
+        <button class="nav-item" type="button" data-modal="brokersModal">${esc(t("brokers"))}</button>
+        <button class="nav-item" type="button" data-modal="securitiesModal">${esc(t("securities"))}</button>
+        <button class="nav-item" type="button" data-modal="pricesModal">${esc(t("prices"))}</button>
+      </div>
+    </details>
+    <details class="nav-menu">
+      <summary>${esc(t("householdRetirement"))}</summary>
+      <div class="nav-children">
+        <button class="nav-item" type="button" data-modal="familyModal">${esc(t("familyMembers"))}</button>
+        <button class="nav-item" type="button" data-modal="fundsModal">${esc(t("pensionFunds"))}</button>
+      </div>
+    </details>
+    <details class="nav-menu">
+      <summary>${esc(t("marketsAlerts"))}</summary>
+      <div class="nav-children">
+        <button class="nav-item" type="button" data-modal="marketModal">${esc(t("marketScreener"))}</button>
+        <button class="nav-item" type="button" data-modal="alertsModal">${esc(t("alerts"))}</button>
+        <button class="nav-item" type="button" data-modal="bannerModal">${esc(t("marketBanner"))}</button>
+      </div>
+    </details>
+    <details class="nav-menu">
+      <summary>${esc(t("system"))}</summary>
+      <div class="nav-children">
+        <button class="nav-item" type="button" data-modal="settingsModal">${esc(t("settings"))}</button>
+        <button class="nav-item" type="button" data-modal="aboutModal">${esc(t("about"))}</button>
+      </div>
+    </details>`;
+}
+
+function bindNavAccordion() {
+  document.querySelectorAll(".nav-menu").forEach((navMenu) => {
+    navMenu.addEventListener("toggle", () => {
+      if (!navMenu.open) return;
+      document.querySelectorAll(".nav-menu[open]").forEach((menu) => {
+        if (menu !== navMenu) menu.open = false;
+      });
+    });
+  });
+}
+
 function fmt(value, digits = 2) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "∅";
-  return Number(value).toLocaleString(undefined, { maximumFractionDigits: digits });
+  return Number(value).toLocaleString(locale(), { maximumFractionDigits: digits });
 }
 
 function money(value, currency = "USD", digits = 0) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "∅";
   try {
-    return new Intl.NumberFormat(undefined, {
+    return new Intl.NumberFormat(locale(), {
       style: "currency",
       currency: currency || "USD",
       maximumFractionDigits: digits,
@@ -280,7 +557,7 @@ function money(value, currency = "USD", digits = 0) {
 function compactMoney(value, currency = "USD") {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "∅";
   try {
-    return new Intl.NumberFormat(undefined, {
+    return new Intl.NumberFormat(locale(), {
       style: "currency",
       currency: currency || "USD",
       notation: "compact",
@@ -298,7 +575,7 @@ function pct(value) {
 
 function compactNumber(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "Not available";
-  return new Intl.NumberFormat(undefined, {
+  return new Intl.NumberFormat(locale(), {
     notation: "compact",
     maximumFractionDigits: 2,
   }).format(Number(value));
@@ -361,6 +638,9 @@ function loadDashboardSettings() {
     base.mode = ["basic", "expanded"].includes(saved.mode) ? saved.mode : base.mode;
     base.edit = false;
     base.accountTrendAccountId = saved.accountTrendAccountId || localStorage.getItem(DASHBOARD_ACCOUNT_STORAGE_KEY) || base.accountTrendAccountId;
+    state.longTermView = ["total", "people", "funds"].includes(saved.longTermView)
+      ? saved.longTermView
+      : localStorage.getItem(DASHBOARD_LONG_TERM_STORAGE_KEY) || state.longTermView;
     base.widgets = DASHBOARD_WIDGETS.map((widget, index) => {
       const savedWidget = savedWidgets.get(widget.id) || {};
       return {
@@ -377,7 +657,7 @@ function loadDashboardSettings() {
 
 function saveDashboardSettings() {
   if (!state.dashboard) return;
-  localStorage.setItem(DASHBOARD_STORAGE_KEY, JSON.stringify(state.dashboard));
+  localStorage.setItem(DASHBOARD_STORAGE_KEY, JSON.stringify({ ...state.dashboard, longTermView: state.longTermView }));
 }
 
 function loadTableSettings() {
@@ -393,6 +673,53 @@ function loadTableSettings() {
 
 function saveTableSettings() {
   localStorage.setItem(TABLE_SETTINGS_STORAGE_KEY, JSON.stringify({ maPeriod: state.tableMaPeriod }));
+}
+
+function loadLanguageSettings() {
+  const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+  state.language = saved === "he" ? "he" : "en";
+}
+
+function saveLanguageSettings() {
+  localStorage.setItem(LANGUAGE_STORAGE_KEY, state.language);
+}
+
+function applyAutoDirection() {
+  document.querySelectorAll('input:not([type="number"]):not([type="date"]):not([type="file"]), textarea').forEach((field) => {
+    field.setAttribute("dir", "auto");
+  });
+}
+
+function applyLanguage() {
+  document.documentElement.lang = state.language === "he" ? "he" : "en";
+  document.documentElement.dir = state.language === "he" ? "rtl" : "ltr";
+  document.title = t("appName");
+  const brand = document.querySelector(".brand span:last-child");
+  if (brand) brand.textContent = t("brand");
+  const topEyebrow = document.querySelector(".topbar .eyebrow");
+  if (topEyebrow) topEyebrow.textContent = t("overview");
+  const topTitle = document.querySelector(".topbar h1");
+  if (topTitle) topTitle.textContent = t("appName");
+  const marketEyebrow = document.querySelector(".ticker-panel .eyebrow");
+  if (marketEyebrow) marketEyebrow.textContent = t("markets");
+  const marketTitle = document.querySelector(".ticker-panel h2");
+  if (marketTitle) marketTitle.textContent = t("currencyIndexesCommodities");
+  const marketManage = document.querySelector('.ticker-panel [data-modal="bannerModal"]');
+  if (marketManage) marketManage.textContent = t("manage");
+  const settingsTitle = $("settingsTitle");
+  if (settingsTitle) settingsTitle.textContent = t("settings");
+  const loadingTitle = $("loadingTitle");
+  if (loadingTitle) loadingTitle.textContent = t("loadingPortfolio");
+  const loadingDetail = $("loadingDetail");
+  if (loadingDetail && !loadingDetail.textContent.trim()) loadingDetail.textContent = t("readingCachedAnalytics");
+  const languageSelect = $("appLanguage");
+  if (languageSelect) languageSelect.value = state.language;
+  document.querySelectorAll("[data-i18n]").forEach((node) => {
+    node.textContent = t(node.dataset.i18n);
+  });
+  ensureHierarchicalNav();
+  bindNavAccordion();
+  applyAutoDirection();
 }
 
 function normalizeDashboardOrders() {
@@ -608,11 +935,11 @@ function assetRiskFactor(item) {
   const asset = String(h.asset_class || h.asset_sub_class || "").toUpperCase();
   const instrument = String(h.asset_sub_class || "").toUpperCase();
   const symbol = String(h.symbol || "").toUpperCase();
-  if (["OPTION", "FUTURE"].includes(asset) || ["OPTION", "FUTURE"].includes(instrument)) return 1;
+  if (["OPTION", "FUTURE", "STOCK_OPTION"].includes(asset) || ["OPTION", "FUTURE", "STOCK_OPTION"].includes(instrument)) return 1;
   if (symbol.includes("3X") || symbol.includes("2X") || symbol.includes("LEVERAGED")) return 1;
   if (asset === "BOND") return 0.35;
   if (asset === "ETF" || asset === "MUTUALFUND") return 0.45;
-  if (asset === "EQUITY") return 0.65;
+  if (asset === "EQUITY" || asset === "RSU") return 0.65;
   if (["CRYPTO", "COMMODITY", "OTHER"].includes(asset)) return 0.85;
   return 0.7;
 }
@@ -630,7 +957,7 @@ function derivativeHolding(item) {
   const asset = String(h.asset_class || "").toUpperCase();
   const instrument = String(h.asset_sub_class || "").toUpperCase();
   const symbol = String(h.symbol || "").toUpperCase();
-  return ["OPTION", "FUTURE"].includes(asset) || ["OPTION", "FUTURE"].includes(instrument) || symbol.includes("3X") || symbol.includes("2X") || symbol.includes("LEVERAGED");
+  return ["OPTION", "FUTURE", "STOCK_OPTION"].includes(asset) || ["OPTION", "FUTURE", "STOCK_OPTION"].includes(instrument) || symbol.includes("3X") || symbol.includes("2X") || symbol.includes("LEVERAGED");
 }
 
 function diversifiedFund(item) {
@@ -680,7 +1007,7 @@ function volatilityProxy(item) {
 function personHorizonYears(person) {
   const age = Number(person?.age || ageFromBirthDate(person?.birth_date));
   if (!age) return null;
-  return Math.max(0, 67 - age);
+  return Math.max(0, Number(person?.retire_age || 67) - age);
 }
 
 function accountHorizonYears(account) {
@@ -989,7 +1316,7 @@ function trendText(direction) {
 function seriesDate(trend, offset) {
   const series = trend?.series || [];
   const row = series[series.length - offset];
-  return row?.date || "";
+  return formatDate(row?.date || "");
 }
 
 function formatMetricValue(value, kind, currency) {
@@ -1043,8 +1370,8 @@ function rangeCell(range, currency) {
       <span class="metric-name">High / Low</span>
       ${range.state === "partial" ? '<span class="metric-pill warn">Partial</span>' : '<span class="metric-pill ok">Complete</span>'}
     </div>
-    <div class="metric-row"><span>High</span><b>${money(range.high, currency)}</b>${range.high_date ? `<em>${esc(range.high_date)}</em>` : ""}</div>
-    <div class="metric-row"><span>Low</span><b>${money(range.min, currency)}</b>${range.min_date ? `<em>${esc(range.min_date)}</em>` : ""}</div>
+    <div class="metric-row"><span>High</span><b>${money(range.high, currency)}</b>${range.high_date ? `<em>${esc(formatDate(range.high_date))}</em>` : ""}</div>
+    <div class="metric-row"><span>Low</span><b>${money(range.min, currency)}</b>${range.min_date ? `<em>${esc(formatDate(range.min_date))}</em>` : ""}</div>
     ${range.state === "partial" ? `<small class="warn-text">${esc(range.message)}</small>` : ""}
   </div>`;
 }
@@ -1138,7 +1465,7 @@ function setSelectOptions(id, values, label) {
   select.innerHTML = `<option value="">${label}</option>` + values
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b))
-    .map((value) => `<option value="${esc(value)}">${esc(value)}</option>`)
+    .map((value) => `<option value="${esc(value)}">${esc(optionLabel(value))}</option>`)
     .join("");
   select.value = values.includes(current) ? current : "";
 }
@@ -1147,7 +1474,7 @@ function setOptions(id, values, label = "") {
   const select = $(id);
   if (!select) return;
   const current = select.value;
-  select.innerHTML = (label ? `<option value="">${esc(label)}</option>` : "") + values.map((value) => `<option value="${esc(value)}">${esc(value)}</option>`).join("");
+  select.innerHTML = (label ? `<option value="">${esc(label)}</option>` : "") + values.map((value) => `<option value="${esc(value)}">${esc(optionLabel(value))}</option>`).join("");
   if (values.includes(current)) select.value = current;
 }
 
@@ -1175,26 +1502,32 @@ function populateStaticOptions() {
       return `<option value="${esc(name)}" label="${esc(flagFor(code))} ${esc(name)}"></option>`;
     })
     .join("");
-  ["localAccountCurrency", "priceCurrency", "manualSecurityCurrency"].forEach(setCurrencyOptions);
-  const assetClasses = state.localOptions.asset_classes || ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE"];
+  ["localAccountCurrency", "editAccountCurrency", "priceCurrency", "manualSecurityCurrency"].forEach(setCurrencyOptions);
+  const assetClasses = state.localOptions.asset_classes || ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"];
   setOptions("localAccountType", state.localOptions.account_types);
+  setOptions("editAccountType", state.localOptions.account_types);
+  setOptions("localAccountLocation", ACCOUNT_COUNTRIES);
+  setOptions("editAccountLocation", ACCOUNT_COUNTRIES);
+  setOptions("brokerCountry", ACCOUNT_COUNTRIES);
+  setOptions("brokerCurrency", ["USD", "ILS"]);
   setOptions("reportAccountType", state.localOptions.account_types, "Any account type");
   setOptions("fundKind", state.localOptions.fund_kinds);
+  setOptions("editFundKind", state.localOptions.fund_kinds);
   setOptions("securityAssetClass", assetClasses);
   setOptions("priceAssetClass", assetClasses);
-  setOptions("manualInstrumentType", state.localOptions.instrument_types || ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE"]);
+  setOptions("manualInstrumentType", state.localOptions.instrument_types || ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"]);
   setOptions("manualOptionType", state.localOptions.option_types || ["CALL", "PUT"]);
   $("localAccountLocation").value = "USA";
+  $("editAccountLocation").value = "USA";
+  $("brokerCountry").value = "USA";
+  $("brokerCurrency").value = "USD";
   $("manualSecurityLocation").value = "USA";
   $("priceLocation").value = "USA";
-  $("securityDate").value = todayString();
-  $("priceDate").value = todayString();
-  $("historyDate").value = todayString();
-  $("historyDate").min = HISTORY_START_DATE;
-  $("reportTo").value = todayString();
-  $("reportFrom").min = HISTORY_START_DATE;
-  $("reportFrom").value = HISTORY_START_DATE;
-  if ($("securityChartStartDate")) $("securityChartStartDate").min = HISTORY_START_DATE;
+  setDateField("securityDate", todayString());
+  setDateField("priceDate", todayString());
+  setDateField("historyDate", todayString());
+  setDateField("reportTo", todayString());
+  setDateField("reportFrom", HISTORY_START_DATE);
   toggleManualInstrumentFields();
 }
 
@@ -1203,7 +1536,7 @@ function todayString() {
 }
 
 function clampedHistoryDate(value) {
-  const dateValue = String(value || "").slice(0, 10);
+  const dateValue = parseDateInput(value);
   return dateValue && dateValue > HISTORY_START_DATE ? dateValue : HISTORY_START_DATE;
 }
 
@@ -1287,26 +1620,46 @@ function renderFundsOverview() {
   const frame = $("fundsOverview");
   if (!frame) return;
   const funds = state.localFunds || [];
+  const longTermLocalAccounts = (state.localAccounts || []).filter((account) => account.type === "Long-Term Savings");
   const longTermAccountItems = (state.items || []).filter((item) => item.holding.account_type === "Long-Term Savings");
-  const longTermAccounts = new Set(longTermAccountItems.map((item) => item.holding.account).filter(Boolean));
+  const longTermAccounts = new Set([
+    ...longTermLocalAccounts.map(accountLabel),
+    ...longTermAccountItems.map((item) => item.holding.account),
+  ].filter(Boolean));
   const securitiesValue = sum(longTermAccountItems.map((item) => normalizedField(item, "market_value")));
-  const amount = sum(funds.map((fund) => fund.amount)) + securitiesValue;
-  const monthly = sum(funds.map((fund) => fund.monthly_estimate));
-  const fundTitle = funds.map((fund) => `${fund.kind} ${fund.pension_id}: saved ${fmt(fund.amount, 0)}, monthly ${fmt(fund.monthly_estimate, 0)}`).join("; ");
+  const accountCash = sum(longTermLocalAccounts.map((account) => normalizedAmount(account.initial_cash, account.currency || state.baseCurrency)));
+  const pensionSaved = sum(funds.filter((fund) => fund.kind === "Pension").map((fund) => fund.amount));
+  const providentSaved = sum(funds.filter((fund) => fund.kind === "Provident Fund").map((fund) => fund.amount));
+  const savingsSaved = sum(funds.filter((fund) => fund.kind === "Savings Fund").map((fund) => fund.amount));
+  const accountSaved = securitiesValue + accountCash;
+  const pensionMonthlyFunds = funds.filter((fund) => fund.kind === "Pension" && fund.monthly_estimate !== null && fund.monthly_estimate !== undefined);
+  const monthly = sum(pensionMonthlyFunds.map((fund) => fund.monthly_estimate));
+  const fundTitle = funds.map((fund) => {
+    const label = [fund.kind, fund.fund_name || "", fund.pension_id].filter(Boolean).join(" ");
+    const monthlyText = fund.kind === "Pension" && fund.monthly_estimate !== null && fund.monthly_estimate !== undefined
+      ? `, ${t("pensionMonthlyEstimate")} ${fmt(fund.monthly_estimate, 0)}`
+      : "";
+    return `${label}: saved ${fmt(fund.amount, 0)}${monthlyText}`;
+  }).join("; ");
   const accountTitle = [...longTermAccounts].join(", ");
-  const title = [accountTitle ? `Long-term accounts: ${accountTitle}` : "", fundTitle].filter(Boolean).join("; ");
+  const savedBreakdown = `${t("pension")} ${money(pensionSaved, state.baseCurrency, 0)}; ${t("provident")} ${money(providentSaved, state.baseCurrency, 0)}; ${t("savingsFund")} ${money(savingsSaved, state.baseCurrency, 0)}; ${t("longTermAccounts")} ${money(accountSaved, state.baseCurrency, 0)}`;
+  const title = [accountTitle ? `Long-term accounts: ${accountTitle}` : "", fundTitle, savedBreakdown].filter(Boolean).join("; ");
+  const monthlyLabel = pensionMonthlyFunds.length ? `${fmt(monthly, 0)} ${t("pensionMonthlyEstimate")}` : t("notApplicable");
   frame.innerHTML = `
     <div>
-      <p class="eyebrow">Long-term savings</p>
-      <h2>Pension accounts and funds</h2>
+      <p class="eyebrow">${esc(t("longTermSavings"))}</p>
+      <h2>${esc(t("pensionAccountsFunds"))}</h2>
     </div>
     <div class="funds-overview-stats" title="${esc(title || "No pension fund records")}">
-      <span><b>${esc(longTermAccounts.size)}</b> accounts</span>
-      <span><b>${esc(funds.length)}</b> funds</span>
-      <span><b>${money(amount, state.baseCurrency, 0)}</b> saved</span>
-      <span title="Estimated monthly pension payout from saved fund records. Formula: amount / factor."><b>${fmt(monthly, 0)}</b> monthly estimate</span>
+      <span><b>${esc(longTermAccounts.size)}</b> ${esc(t("accounts"))}</span>
+      <span><b>${esc(funds.length)}</b> ${esc(t("pensionFunds"))}</span>
+      <span title="Pension fund saved balance"><b>${money(pensionSaved, state.baseCurrency, 0)}</b> ${esc(t("pension"))}</span>
+      <span title="Provident fund saved balance"><b>${money(providentSaved, state.baseCurrency, 0)}</b> ${esc(t("provident"))}</span>
+      <span title="Savings fund saved balance"><b>${money(savingsSaved, state.baseCurrency, 0)}</b> ${esc(t("savingsFund"))}</span>
+      <span title="Long-term account securities plus initial cash"><b>${money(accountSaved, state.baseCurrency, 0)}</b> ${esc(t("longTermAccounts"))}</span>
+      <span class="${pensionMonthlyFunds.length ? "" : "muted-metric"}" title="Estimated monthly pension payout from pension records only. Provident and savings funds do not use pension factor."><b>${esc(monthlyLabel)}</b></span>
     </div>
-    <button class="secondary" type="button" data-modal="fundsModal">Manage</button>
+    <button class="secondary" type="button" data-modal="fundsModal">${esc(t("manage"))}</button>
   `;
 }
 
@@ -1494,11 +1847,11 @@ function renderAccountValueTrend() {
     return `<path class="account-trend-account-line" d="${path}" fill="none" stroke="${colorAt(index)}"></path>`;
   }).join("");
   const last = points.at(-1) || {};
-  const latestTooltip = `${selectedLabel}\nLatest total amount: ${trendAmount(last, "value")}\nLatest cash: ${trendAmount(last, "cash")}\nDate: ${last.date || ""}`;
+  const latestTooltip = `${selectedLabel}\nLatest total amount: ${trendAmount(last, "value")}\nLatest cash: ${trendAmount(last, "cash")}\nDate: ${formatDate(last.date || "")}`;
   const valueMarkers = points.map((point, index) => {
     const cx = x(point, index);
     const cy = y(point, "value");
-    const tooltip = `${point.date}\n${selectedLabel}\nTotal amount: ${trendAmount(point, "value")}`;
+    const tooltip = `${formatDate(point.date)}\n${selectedLabel}\nTotal amount: ${trendAmount(point, "value")}`;
     return `
       <circle class="trend-hit" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="18" fill="transparent">
         <title>${esc(tooltip)}</title>
@@ -1511,7 +1864,7 @@ function renderAccountValueTrend() {
   const cashMarkers = points.map((point, index) => {
     const cx = x(point, index);
     const cy = y(point, "cash");
-    const tooltip = `${point.date}\n${selectedLabel}\nCash: ${trendAmount(point, "cash")}`;
+    const tooltip = `${formatDate(point.date)}\n${selectedLabel}\nCash: ${trendAmount(point, "cash")}`;
     return `
       <circle class="trend-hit" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="18" fill="transparent">
         <title>${esc(tooltip)}</title>
@@ -1561,7 +1914,7 @@ function renderAccountValueTrend() {
           <title>${esc(latestTooltip)}</title>
         </path>
         <path class="trend-hit-line" d="${cashPath}" fill="none">
-          <title>${esc(`${selectedLabel}\nCash line\nLatest cash: ${trendAmount(last, "cash")}\nDate: ${last.date || ""}`)}</title>
+          <title>${esc(`${selectedLabel}\nCash line\nLatest cash: ${trendAmount(last, "cash")}\nDate: ${formatDate(last.date || "")}`)}</title>
         </path>
         ${valueMarkers}
         ${cashMarkers}
@@ -1569,20 +1922,213 @@ function renderAccountValueTrend() {
           const pointIndex = points.findIndex((item) => item.date === point.date);
           const tickX = x(point, pointIndex);
           const anchor = index === 0 ? "start" : index === xTicks.length - 1 ? "end" : "middle";
-          return `<text class="axis-label" x="${tickX.toFixed(1)}" y="${height - 12}" text-anchor="${anchor}">${esc(point.date || "")}</text>`;
+          return `<text class="axis-label" x="${tickX.toFixed(1)}" y="${height - 12}" text-anchor="${anchor}">${esc(formatDate(point.date || ""))}</text>`;
         }).join("")}
         <text class="axis-title" x="${padLeft + plotWidth / 2}" y="${height - 2}">Date</text>
       </svg>
     </div>`;
 }
 
+function longTermPersonKey(person) {
+  const name = personFullName(person);
+  return name && name !== "Family member" ? name : "Unassigned";
+}
+
+function longTermDates() {
+  const dates = new Set([todayString()]);
+  (state.accountTrend.accounts || []).forEach((entry) => {
+    (entry.points || []).forEach((point) => {
+      if (point.date) dates.add(point.date);
+    });
+  });
+  return [...dates].sort((left, right) => left.localeCompare(right));
+}
+
+function emptyLongTermSeries(dates) {
+  return Object.fromEntries(dates.map((date) => [date, 0]));
+}
+
+function addLongTermValue(groups, key, dates, valueByDate) {
+  if (!groups[key]) groups[key] = emptyLongTermSeries(dates);
+  dates.forEach((date) => {
+    groups[key][date] += Number(valueByDate[date] || 0);
+  });
+}
+
+function longTermAccountSeries(dates) {
+  const trendsById = new Map((state.accountTrend.accounts || []).map((entry) => [entry.account.id, entry]));
+  return (state.localAccounts || [])
+    .filter((account) => account.type === "Long-Term Savings")
+    .map((account) => {
+      const points = trendSeriesForAccount(trendsById.get(account.id));
+      const values = emptyLongTermSeries(dates);
+      if (points.length) {
+        let latest = 0;
+        dates.forEach((date) => {
+          const point = points.find((item) => item.date === date);
+          if (point) latest = Number(point.value || 0);
+          values[date] = latest;
+        });
+      } else {
+        const current = normalizedAmount(account.initial_cash || 0, account.currency || state.baseCurrency);
+        dates.forEach((date) => { values[date] = current; });
+      }
+      return { account, values };
+    });
+}
+
+function longTermData() {
+  const dates = longTermDates();
+  const today = dates.at(-1) || todayString();
+  const byPerson = {};
+  const byCategory = {};
+  const total = emptyLongTermSeries(dates);
+  const details = [];
+  let monthly = 0;
+
+  (state.localFunds || []).forEach((fund) => {
+    const amount = normalizedAmount(fund.amount, state.baseCurrency);
+    const values = Object.fromEntries(dates.map((date) => [date, amount]));
+    const people = (fund.persons || []).length ? fund.persons : [{ name: "Unassigned" }];
+    const share = amount / Math.max(people.length, 1);
+    dates.forEach((date) => { total[date] += amount; });
+    people.forEach((person) => {
+      addLongTermValue(byPerson, longTermPersonKey(person), dates, Object.fromEntries(dates.map((date) => [date, share])));
+    });
+    if (fund.kind !== "Pension") {
+      addLongTermValue(byCategory, fund.kind || "Fund", dates, values);
+    }
+    const monthlyEstimate = fund.kind === "Pension" && fund.monthly_estimate !== null && fund.monthly_estimate !== undefined
+      ? Number(fund.monthly_estimate || 0)
+      : null;
+    monthly += Number(monthlyEstimate || 0);
+    details.push({ label: [fund.kind, fund.fund_name || "", fund.pension_id].filter(Boolean).join(" · "), value: amount, monthly: monthlyEstimate, type: fund.kind || "Fund" });
+  });
+
+  longTermAccountSeries(dates).forEach(({ account, values }) => {
+    const people = (account.persons || []).length ? account.persons : [{ name: "Unassigned" }];
+    dates.forEach((date) => { total[date] += Number(values[date] || 0); });
+    people.forEach((person) => {
+      addLongTermValue(
+        byPerson,
+        longTermPersonKey(person),
+        dates,
+        Object.fromEntries(dates.map((date) => [date, Number(values[date] || 0) / Math.max(people.length, 1)])),
+      );
+    });
+    addLongTermValue(byCategory, "Long-Term Savings accounts", dates, values);
+    details.push({ label: accountLabel(account), value: Number(values[today] || 0), monthly: 0, type: "Long-Term Savings account" });
+  });
+
+  const sortByLatest = (left, right) => Number(right.values[today] || 0) - Number(left.values[today] || 0);
+  return {
+    dates,
+    today,
+    total,
+    byPerson,
+    byCategory,
+    details,
+    monthly,
+    lineSets: {
+      total: [{ label: "Total long-term", values: total }],
+      people: Object.entries(byPerson).map(([label, values]) => ({ label, values })).sort(sortByLatest),
+      funds: Object.entries(byCategory).map(([label, values]) => ({ label, values })).sort(sortByLatest),
+    },
+  };
+}
+
+function renderLongTermDashboard() {
+  const data = longTermData();
+  const view = ["total", "people", "funds"].includes(state.longTermView) ? state.longTermView : "total";
+  const lines = data.lineSets[view] || data.lineSets.total;
+  const latest = Number(data.total[data.today] || 0);
+  if (!data.details.length || !lines.length) {
+    return `
+      <div class="chart-card long-term-card">
+        <div class="chart-header">
+          <div class="chart-title">Long-term funds</div>
+        </div>
+        <div class="empty">No long-term funds or savings accounts yet</div>
+      </div>`;
+  }
+
+  const width = 640;
+  const height = 230;
+  const padLeft = 116;
+  const padRight = 22;
+  const padTop = 22;
+  const padBottom = 40;
+  const plotWidth = width - padLeft - padRight;
+  const plotHeight = height - padTop - padBottom;
+  const allValues = lines.flatMap((line) => data.dates.map((date) => Number(line.values[date] || 0)));
+  const rawMax = Math.max(...allValues, 1);
+  const max = rawMax * 1.08;
+  const x = (_date, index) => padLeft + (index / Math.max(1, data.dates.length - 1)) * plotWidth;
+  const yValue = (value) => padTop + plotHeight - (Number(value || 0) / (max || 1)) * plotHeight;
+  const yTicks = [max, max * 0.67, max * 0.33, 0];
+  const xTicks = data.dates.length <= 3 ? data.dates : [data.dates[0], data.dates[Math.floor((data.dates.length - 1) / 2)], data.dates.at(-1)];
+  const paths = lines.map((line, index) => {
+    const points = data.dates.map((date) => ({ date, value: Number(line.values[date] || 0) }));
+    const path = linePath(points, (_point, pointIndex) => x(_point.date, pointIndex), (point) => yValue(point.value));
+    const color = colorAt(index);
+    return `
+      <path class="long-term-line" d="${path}" fill="none" stroke="${color}"></path>
+      ${points.map((point, pointIndex) => `
+        <circle class="trend-hit" cx="${x(point.date, pointIndex).toFixed(1)}" cy="${yValue(point.value).toFixed(1)}" r="15" fill="transparent">
+          <title>${esc(`${formatDate(point.date)}\n${line.label}\n${money(point.value, state.baseCurrency, 0)}`)}</title>
+        </circle>
+      `).join("")}
+    `;
+  }).join("");
+  const personStats = Object.entries(data.byPerson)
+    .sort(([, left], [, right]) => Number(right[data.today] || 0) - Number(left[data.today] || 0))
+    .slice(0, 4);
+  return `
+    <div class="chart-card long-term-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">Long-term funds</div>
+          <small class="chart-subtitle">Saved ${money(latest, state.baseCurrency, 0)} · <span class="${data.monthly ? "" : "muted-inline"}">Monthly pension estimate ${data.monthly ? fmt(data.monthly, 0) : "N/A"}</span></small>
+        </div>
+        <div class="dashboard-view-toggle long-term-toggle" aria-label="Long-term dashboard view">
+          <button type="button" data-long-term-view="total" class="${view === "total" ? "active" : ""}">Total</button>
+          <button type="button" data-long-term-view="people" class="${view === "people" ? "active" : ""}">People</button>
+          <button type="button" data-long-term-view="funds" class="${view === "funds" ? "active" : ""}">Funds</button>
+        </div>
+      </div>
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Long-term funds line graph">
+        ${yTicks.map((tick) => {
+          const tickY = yValue(tick);
+          return `
+            <line class="chart-grid" x1="${padLeft}" y1="${tickY.toFixed(1)}" x2="${width - padRight}" y2="${tickY.toFixed(1)}"></line>
+            <text class="axis-label y-axis-label" x="${padLeft - 8}" y="${(tickY + 3).toFixed(1)}">${money(tick, state.baseCurrency, 0)}</text>
+          `;
+        }).join("")}
+        <line class="axis-line" x1="${padLeft}" y1="${height - padBottom}" x2="${width - padRight}" y2="${height - padBottom}"></line>
+        <line class="axis-line" x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}"></line>
+        ${paths}
+        ${xTicks.map((date, index) => {
+          const tickX = x(date, data.dates.indexOf(date));
+          const anchor = index === 0 ? "start" : index === xTicks.length - 1 ? "end" : "middle";
+          return `<text class="axis-label" x="${tickX.toFixed(1)}" y="${height - 12}" text-anchor="${anchor}">${esc(formatDate(date))}</text>`;
+        }).join("")}
+      </svg>
+      <div class="long-term-summary">
+        ${personStats.length ? personStats.map(([label, values], index) => `
+          <span title="${esc(`${label}\n${money(values[data.today], state.baseCurrency, 0)}`)}"><i style="background:${colorAt(index)}"></i>${esc(label)} <b>${money(values[data.today], state.baseCurrency, 0)}</b></span>
+        `).join("") : '<span>No assigned family members</span>'}
+      </div>
+    </div>`;
+}
+
 function renderMarketCostBars(items) {
   const top = [...items].sort((a, b) => normalizedField(b, "market_value") - normalizedField(a, "market_value")).slice(0, 7);
   const width = 360;
-  const height = 170;
-  const padX = 24;
+  const height = 182;
+  const padLeft = 28;
+  const padRight = 22;
   const padTop = 22;
-  const padBottom = 30;
+  const padBottom = 42;
   const plotHeight = height - padTop - padBottom;
   const rows = top.map((item) => ({
     symbol: item.holding.symbol,
@@ -1593,7 +2139,7 @@ function renderMarketCostBars(items) {
     currency: item.holding.currency || state.baseCurrency,
   }));
   const max = Math.max(...rows.flatMap((row) => [row.market, row.cost]), 1);
-  const groupWidth = (width - padX * 2) / Math.max(rows.length, 1);
+  const groupWidth = (width - padLeft - padRight) / Math.max(rows.length, 1);
   const barWidth = Math.min(14, Math.max(6, groupWidth * 0.24));
   const gap = Math.min(5, Math.max(3, groupWidth * 0.08));
   const baseline = height - padBottom;
@@ -1610,7 +2156,7 @@ function renderMarketCostBars(items) {
           <span><i class="cost-key"></i>Cost</span>
         </div>
       </div>
-      <svg viewBox="0 0 360 170" role="img" aria-label="Market value compared with cost basis">
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Market value compared with cost basis">
         <defs>
           <linearGradient id="barMarket" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stop-color="#8c86ff" />
@@ -1621,11 +2167,11 @@ function renderMarketCostBars(items) {
             <stop offset="100%" stop-color="#d9dde8" />
           </linearGradient>
         </defs>
-        <line class="chart-grid" x1="${padX}" y1="${padTop}" x2="${width - padX}" y2="${padTop}"></line>
-        <line class="chart-grid" x1="${padX}" y1="${padTop + plotHeight / 2}" x2="${width - padX}" y2="${padTop + plotHeight / 2}"></line>
-        <line class="axis-line" x1="${padX}" y1="${baseline}" x2="${width - padX}" y2="${baseline}"></line>
+        <line class="chart-grid" x1="${padLeft}" y1="${padTop}" x2="${width - padRight}" y2="${padTop}"></line>
+        <line class="chart-grid" x1="${padLeft}" y1="${padTop + plotHeight / 2}" x2="${width - padRight}" y2="${padTop + plotHeight / 2}"></line>
+        <line class="axis-line" x1="${padLeft}" y1="${baseline}" x2="${width - padRight}" y2="${baseline}"></line>
         ${rows.map((row, index) => {
-          const center = padX + groupWidth * index + groupWidth / 2;
+          const center = padLeft + groupWidth * index + groupWidth / 2;
           const marketHeight = barHeight(row.market);
           const costHeight = barHeight(row.cost);
           const marketX = center - barWidth - gap / 2;
@@ -1639,7 +2185,7 @@ function renderMarketCostBars(items) {
               <title>${esc(tooltip)}</title>
               <rect class="comparison-bar market-bar" x="${marketX.toFixed(1)}" y="${(baseline - marketHeight).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${marketHeight.toFixed(1)}" rx="4" fill="url(#barMarket)"></rect>
               <rect class="comparison-bar cost-bar" x="${costX.toFixed(1)}" y="${(baseline - costHeight).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${costHeight.toFixed(1)}" rx="4" fill="url(#barCost)"></rect>
-              <text x="${center.toFixed(1)}" y="164">${esc(row.symbol.slice(0, 5))}</text>
+              <text x="${center.toFixed(1)}" y="${height - 12}" text-anchor="middle">${esc(row.symbol.slice(0, 5))}</text>
             </g>
           `;
         }).join("")}
@@ -1705,7 +2251,7 @@ function renderMiniBars(items) {
       </div>
       <div class="mini-bars-legend">
         ${top.slice(0, 6).map((item, index) => `
-          <span title="${esc(item.holding.symbol)}"><i style="background:${colorAt(index)}"></i>${String(index + 1).padStart(2, "0")} ${esc(item.holding.symbol.slice(0, 8))}</span>
+          <span title="${esc(item.holding.symbol)}"><i style="background:${colorAt(index)}"></i>${String(index + 1).padStart(2, "0")} - ${esc(item.holding.symbol.slice(0, 8))}</span>
         `).join("")}
       </div>
     </div>`;
@@ -1839,7 +2385,7 @@ function renderAnalytics(items) {
   if (!board) return;
   if (!state.dashboard) loadDashboardSettings();
   renderDashboardControls();
-  if (!items.length) {
+  if (!items.length && !(state.localFunds || []).length) {
     board.innerHTML = '<div class="empty">No portfolio data</div>';
     return;
   }
@@ -1848,6 +2394,7 @@ function renderAnalytics(items) {
   const currencyGroups = groupValues(items, (item) => item.holding.currency);
   const renderers = {
     account_trend: () => renderAccountValueTrend(),
+    long_term: () => renderLongTermDashboard(),
     market_cost: () => renderMarketCostBars(items),
     asset_mix: () => renderDonut(assetGroups, "Asset mix", `${Math.round((assetGroups[0]?.value || 0) / total * 100)}%`, total),
     top_holdings: () => renderMiniBars(items),
@@ -1873,6 +2420,14 @@ function renderPortfolio(items) {
   renderRows(items);
 }
 
+function rerenderPortfolioIfLoaded() {
+  if (state.items.length) renderPortfolio(state.items);
+}
+
+function reportBackgroundError(error) {
+  $("status").textContent = `Error: ${error.message}`;
+}
+
 function valueOf(id) {
   return $(id)?.value?.trim() || "";
 }
@@ -1887,6 +2442,289 @@ function accountLabel(account) {
 
 function accountOptionHtml(account) {
   return `<option value="${esc(account.id)}">${esc(accountLabel(account))}</option>`;
+}
+
+function brokerLabel(broker) {
+  return `${broker.name} · ${broker.country} · ${broker.currency}`;
+}
+
+function brokerByName(name) {
+  return state.brokers.find((broker) => broker.name === name);
+}
+
+function ensureBrokerOption(name) {
+  const value = String(name || "").trim();
+  if (!value) return;
+  ["localAccountBroker", "editAccountBroker"].forEach((id) => {
+    const select = $(id);
+    if (!select || [...select.options].some((option) => option.value === value)) return;
+    select.insertAdjacentHTML("beforeend", `<option value="${esc(value)}">${esc(value)} · Unlisted</option>`);
+  });
+}
+
+function refreshBrokerSelects() {
+  ["localAccountBroker", "editAccountBroker"].forEach((id) => {
+    const select = $(id);
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = '<option value="">Choose broker</option>' + state.brokers
+      .map((broker) => `<option value="${esc(broker.name)}">${esc(brokerLabel(broker))}</option>`)
+      .join("");
+    if ([...select.options].some((option) => option.value === current)) select.value = current;
+  });
+}
+
+function applyBrokerToAccount(brokerId, locationId, currencyId) {
+  const broker = brokerByName(valueOf(brokerId));
+  if (!broker) return;
+  $(locationId).value = normalizeAccountCountry(broker.country);
+  $(currencyId).value = broker.currency;
+}
+
+async function loadBrokers() {
+  const data = await api("/api/local/brokers");
+  state.brokers = data.items || [];
+  refreshBrokerSelects();
+  const list = $("brokersList");
+  if (list) {
+    list.innerHTML = state.brokers.length ? state.brokers.map((broker) => `
+      <div class="stack-item management-item">
+        <b>${esc(broker.name)}</b>
+        <span>${esc(broker.country)} · ${esc(broker.currency)}${broker.attached_accounts ? ` · ${broker.attached_accounts} account${broker.attached_accounts === 1 ? "" : "s"}` : ""}</span>
+        <button class="secondary compact-button" type="button" data-edit-broker="${esc(broker.id)}">Edit</button>
+        <button class="secondary compact-button" type="button" data-delete-broker="${esc(broker.id)}"${broker.attached_accounts ? " disabled" : ""} title="${broker.attached_accounts ? "Cannot delete while attached to an account" : "Remove broker"}">Remove</button>
+        <div class="sub">${esc(broker.comments || "No comments")}</div>
+      </div>
+    `).join("") : '<div class="empty">No brokers yet</div>';
+  }
+}
+
+async function saveBroker() {
+  await api("/api/local/brokers", {
+    method: "POST",
+    body: JSON.stringify({
+      id: state.editingBrokerId || undefined,
+      name: valueOf("brokerName"),
+      country: valueOf("brokerCountry"),
+      currency: valueOf("brokerCurrency"),
+      comments: valueOf("brokerComments"),
+    }),
+  });
+  $("brokerStatus").textContent = state.editingBrokerId ? "Broker updated" : "Broker saved";
+  clearBrokerForm();
+  await loadBrokers();
+}
+
+function clearBrokerForm() {
+  state.editingBrokerId = "";
+  ["brokerName", "brokerComments"].forEach((id) => { $(id).value = ""; });
+  $("brokerCountry").value = "USA";
+  $("brokerCurrency").value = "USD";
+}
+
+function editBroker(brokerId) {
+  const broker = state.brokers.find((item) => item.id === brokerId);
+  if (!broker) return;
+  state.editingBrokerId = broker.id;
+  $("brokerName").value = broker.name || "";
+  $("brokerCountry").value = normalizeAccountCountry(broker.country);
+  $("brokerCurrency").value = broker.currency || preferredCurrencyForLocation(broker.country) || "USD";
+  $("brokerComments").value = broker.comments || "";
+  $("brokerStatus").textContent = `Editing ${broker.name}`;
+}
+
+function personFullName(person) {
+  return [person.first_name, person.last_name].map((part) => String(part || "").trim()).filter(Boolean).join(" ") || person.name || "Family member";
+}
+
+function memberLabel(member) {
+  return personFullName(member);
+}
+
+function memberMetaHtml(member) {
+  const rows = [
+    ["Gender", member.gender || "Not set"],
+    ["Birth Date", formatDate(member.birth_date)],
+    ["Retire Age", member.retire_age ? fmt(member.retire_age, 1) : "Not set"],
+    ["Age", member.age ? fmt(member.age, 1) : ""],
+  ].filter(([, value]) => value !== "");
+  return rows.map(([label, value]) => `<span><strong>${esc(label)}</strong>${esc(value)}</span>`).join("");
+}
+
+function familyMemberById(id) {
+  return state.familyMembers.find((member) => member.id === id);
+}
+
+function personFromFamilyMember(member) {
+  return {
+    member_id: member.id,
+    name: memberLabel(member),
+    first_name: member.first_name || "",
+    last_name: member.last_name || "",
+    gender: member.gender || "",
+    birth_date: member.birth_date,
+    retire_age: member.retire_age,
+    age: member.age,
+  };
+}
+
+function refreshFamilyMemberSelects() {
+  const options = '<option value="">Choose family member</option>' + state.familyMembers
+    .map((member) => `<option value="${esc(member.id)}">${esc(memberLabel(member))}</option>`)
+    .join("");
+  ["localAccountFamilyMember", "editAccountFamilyMember", "fundFamilyMember", "editFundFamilyMember", "familyAttachMember"].forEach((id) => {
+    const select = $(id);
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = options;
+    if ([...select.options].some((option) => option.value === current)) select.value = current;
+  });
+}
+
+function refreshFamilyAccountSelects() {
+  const options = '<option value="">Choose account</option>' + state.localAccounts
+    .map((account) => `<option value="${esc(account.id)}">${esc(accountLabel(account))} · ${esc(account.type)}</option>`)
+    .join("");
+  ["familyAttachAccount"].forEach((id) => {
+    const select = $(id);
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = options;
+    if ([...select.options].some((option) => option.value === current)) select.value = current;
+  });
+}
+
+async function loadFamilyMembers() {
+  const data = await api("/api/local/family-members");
+  state.familyMembers = data.items || [];
+  refreshFamilyMemberSelects();
+  refreshFamilyAccountSelects();
+  renderSimulationPersonOptions();
+  const list = $("familyMembersList");
+  if (list) {
+    list.innerHTML = state.familyMembers.length ? state.familyMembers.map((member) => {
+      const attachedAccounts = member.attached_account_items || [];
+      return `
+      <div class="stack-item management-item family-member-item">
+        <div class="family-member-main">
+          <b>${esc(memberLabel(member))}</b>
+          <div class="family-member-meta">${memberMetaHtml(member)}</div>
+          <div class="sub">${esc(member.comments || "No comments")}</div>
+        </div>
+        <div class="family-member-actions">
+          <button class="secondary compact-button" type="button" data-edit-family-member="${esc(member.id)}">Edit</button>
+          <button class="secondary compact-button" type="button" data-delete-family-member="${esc(member.id)}"${member.attached_accounts ? " disabled" : ""} title="${member.attached_accounts ? "Cannot delete while attached to an account" : "Remove family member"}">Remove</button>
+        </div>
+        <div class="attached-account-list">
+          ${attachedAccounts.length ? attachedAccounts.map((account) => `<span>${esc(account.label)} · ${esc(account.type)}</span>`).join("") : "<em>No attached accounts</em>"}
+        </div>
+      </div>
+    `;
+    }).join("") : '<div class="empty">No family members yet</div>';
+  }
+}
+
+async function saveFamilyMember() {
+  const birthDate = dateValue("familyMemberBirthDate");
+  if (!birthDate) {
+    $("familyStatus").textContent = `Birthday must use ${DATE_PLACEHOLDER}`;
+    return;
+  }
+  await api("/api/local/family-members", {
+    method: "POST",
+    body: JSON.stringify({
+      id: state.editingFamilyMemberId || undefined,
+      first_name: valueOf("familyMemberFirstName"),
+      last_name: valueOf("familyMemberLastName"),
+      gender: valueOf("familyMemberGender"),
+      birth_date: birthDate,
+      retire_age: valueOf("familyMemberRetireAge"),
+      comments: valueOf("familyMemberComments"),
+    }),
+  });
+  $("familyStatus").textContent = state.editingFamilyMemberId ? "Person updated" : "Person saved";
+  clearFamilyMemberForm();
+  await loadFamilyMembers();
+}
+
+function clearFamilyMemberForm() {
+  state.editingFamilyMemberId = "";
+  ["familyMemberFirstName", "familyMemberLastName", "familyMemberBirthDate", "familyMemberRetireAge", "familyMemberComments"].forEach((id) => { $(id).value = ""; });
+  $("familyMemberGender").value = "";
+}
+
+function editFamilyMember(memberId) {
+  const member = familyMemberById(memberId);
+  if (!member) return;
+  state.editingFamilyMemberId = member.id;
+  $("familyMemberFirstName").value = member.first_name || "";
+  $("familyMemberLastName").value = member.last_name || "";
+  $("familyMemberGender").value = member.gender || "";
+  setDateField("familyMemberBirthDate", member.birth_date || "");
+  $("familyMemberRetireAge").value = member.retire_age || "";
+  $("familyMemberComments").value = member.comments || "";
+  $("familyStatus").textContent = `Editing ${memberLabel(member)}`;
+}
+
+function attachFamilyMember(listKey, selectId, statusId, { single = false } = {}) {
+  const member = familyMemberById(valueOf(selectId));
+  if (!member) {
+    $(statusId).textContent = "Choose a family member first";
+    return;
+  }
+  const person = personFromFamilyMember(member);
+  const current = state[listKey] || [];
+  if (current.some((item) => item.member_id === person.member_id)) {
+    $(statusId).textContent = "Family member already attached";
+    return;
+  }
+  state[listKey] = single ? [person] : current.concat(person);
+  $(selectId).value = "";
+  $(statusId).textContent = single ? "Family member attached" : `${state[listKey].length} family members attached`;
+  renderPersonLists();
+}
+
+function accountAllowsMultipleMembers(account) {
+  return account?.type !== "Long-Term Savings";
+}
+
+function accountSavePayload(account, persons) {
+  return {
+    id: account.id,
+    type: account.type,
+    location: account.location,
+    currency: account.currency,
+    initial_cash: account.initial_cash || 0,
+    username: account.username || "",
+    account_id: account.account_id || "",
+    management_company: account.management_company || "",
+    persons,
+    comments: account.comments || "",
+  };
+}
+
+async function attachAccountToMember() {
+  const account = state.localAccounts.find((item) => item.id === valueOf("familyAttachAccount"));
+  const member = familyMemberById(valueOf("familyAttachMember"));
+  if (!account || !member) {
+    $("familyStatus").textContent = "Choose an account and a family member";
+    return;
+  }
+  const person = personFromFamilyMember(member);
+  const current = account.persons || [];
+  if (current.some((item) => item.member_id === person.member_id)) {
+    $("familyStatus").textContent = "That member is already attached to this account";
+    return;
+  }
+  const persons = accountAllowsMultipleMembers(account) ? current.concat(person) : [person];
+  await api("/api/local/accounts", {
+    method: "POST",
+    body: JSON.stringify(accountSavePayload(account, persons)),
+  });
+  $("familyStatus").textContent = accountAllowsMultipleMembers(account)
+    ? "Member attached to account"
+    : "Member attached as the account owner";
+  await Promise.all([loadLocalAccounts(), loadFamilyMembers(), loadPortfolio()]);
 }
 
 function isImportedAccount(account) {
@@ -1908,12 +2746,28 @@ function refreshLocalAccountSelects() {
     historySelect.innerHTML = '<option value="">Choose account</option>' + state.localAccounts.map(accountOptionHtml).join("");
     if ([...historySelect.options].some((option) => option.value === current)) historySelect.value = current;
   }
+  refreshFundAccountSelects();
+}
+
+function refreshFundAccountSelects() {
+  const accounts = (state.localAccounts || []).filter((account) => account.type === "Long-Term Savings");
+  const options = '<option value="">No linked long-term account</option>' + accounts.map(accountOptionHtml).join("");
+  ["fundAccount", "editFundAccount"].forEach((id) => {
+    const select = $(id);
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML = options;
+    if ([...select.options].some((option) => option.value === current)) select.value = current;
+  });
 }
 
 async function loadLocalAccounts() {
   const data = await api("/api/local/accounts");
   state.localAccounts = data.items || [];
   refreshLocalAccountSelects();
+  refreshFamilyAccountSelects();
+  renderFundsOverview();
+  rerenderPortfolioIfLoaded();
   const importedAccounts = state.localAccounts.filter(isImportedAccount).length;
   const manualAccounts = state.localAccounts.length - importedAccounts;
   $("accountsSummary").innerHTML = [
@@ -1926,42 +2780,118 @@ async function loadLocalAccounts() {
     <div class="stack-item management-item">
       <b>${esc(accountLabel(account))}</b>
       <span>${esc(account.type)} · ${esc(account.location)} · ${esc(account.currency)} · ${isImportedAccount(account) ? "Imported" : "Manual"}</span>
-      ${isImportedAccount(account) ? '<span class="badge ok" title="Synced from the configured import source. Refresh with Sync import.">Synced</span>' : `<button class="secondary compact-button" type="button" data-delete-account="${esc(account.id)}" title="Remove this manual account and its local transactions">Remove</button>`}
+      <button class="secondary compact-button" type="button" data-edit-account="${esc(account.id)}">Edit</button>
+      ${isImportedAccount(account) ? '<span class="badge ok" title="Synced from the configured import source. Refresh with Sync import.">Synced</span>' : '<span class="badge" title="Manual account">Manual</span>'}
       <div class="sub">Initial cash ${fmt(account.initial_cash)}${(account.persons || []).length ? ` · ${(account.persons || []).map(personLabel).map(esc).join(" · ")}` : ""} · ${esc(cleanSourceLabel(account.comments) || "No comments")}</div>
     </div>
   `).join("") : '<div class="empty">No local accounts yet</div>';
   renderPersonLists();
 }
 
+function setAccountsTab(tab) {
+  const activeTab = tab === "existing" ? "existing" : "new";
+  document.querySelectorAll("[data-account-tab]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.accountTab === activeTab);
+  });
+  $("accountNewPanel").hidden = activeTab !== "new";
+  $("accountExistingPanel").hidden = activeTab !== "existing";
+}
+
 async function saveLocalAccount() {
+  const country = normalizeAccountCountry(valueOf("localAccountLocation"));
   const payload = {
     type: valueOf("localAccountType"),
-    location: valueOf("localAccountLocation") || "USA",
+    location: country,
     currency: valueOf("localAccountCurrency") || "USD",
     initial_cash: valueOf("localInitialCash") || 0,
     username: valueOf("localUsername"),
     account_id: valueOf("localAccountId"),
-    management_company: valueOf("localManagementCompany"),
+    management_company: valueOf("localAccountBroker"),
     persons: state.localAccountPersons.map((person) => ({ ...person })),
     comments: valueOf("localAccountComments"),
   };
   await api("/api/local/accounts", { method: "POST", body: JSON.stringify(payload) });
-  $("accountsStatus").textContent = "Account saved";
-  ["localInitialCash", "localUsername", "localAccountId", "localManagementCompany", "localAccountComments"].forEach((id) => { $(id).value = ""; });
+  $("accountsStatus").textContent = "Account created";
+  resetNewAccountForm();
+  await loadLocalAccounts();
+  await loadPortfolio();
+}
+
+function resetNewAccountForm() {
+  $("localAccountType").value = "Investment";
+  $("localAccountLocation").value = "USA";
+  $("localAccountCurrency").value = "USD";
+  ["localInitialCash", "localUsername", "localAccountId", "localAccountBroker", "localAccountComments", "localAccountFamilyMember"].forEach((id) => { $(id).value = ""; });
   state.localAccountPersons = [];
   renderPersonLists();
+}
+
+function editLocalAccount(accountId) {
+  const account = state.localAccounts.find((item) => item.id === accountId);
+  if (!account) return;
+  state.editingAccountId = account.id;
+  $("editAccountType").value = account.type || "Investment";
+  $("editAccountLocation").value = normalizeAccountCountry(account.location);
+  $("editAccountCurrency").value = account.currency || "USD";
+  $("editInitialCash").value = account.initial_cash || 0;
+  $("editUsername").value = account.username || "";
+  $("editAccountId").value = account.account_id || "";
+  ensureBrokerOption(account.management_company);
+  $("editAccountBroker").value = account.management_company || "";
+  $("editAccountComments").value = account.comments || "";
+  $("editAccountFamilyMember").value = "";
+  state.editAccountPersons = (account.persons || []).map((person) => ({ ...person }));
+  $("editAccountStatus").textContent = accountLabel(account);
+  renderPersonLists();
+  openModal("accountEditModal");
+}
+
+async function saveEditAccount() {
+  const account = state.localAccounts.find((item) => item.id === state.editingAccountId);
+  if (!account) {
+    $("editAccountStatus").textContent = "Choose an account to edit";
+    return;
+  }
+  if (!confirm(`Save changes to ${accountLabel(account)}?`)) return;
+  const country = normalizeAccountCountry(valueOf("editAccountLocation"));
+  const payload = {
+    id: account.id,
+    type: valueOf("editAccountType"),
+    location: country,
+    currency: valueOf("editAccountCurrency") || "USD",
+    initial_cash: valueOf("editInitialCash") || 0,
+    username: valueOf("editUsername"),
+    account_id: valueOf("editAccountId"),
+    management_company: valueOf("editAccountBroker"),
+    persons: state.editAccountPersons.map((person) => ({ ...person })),
+    comments: valueOf("editAccountComments"),
+  };
+  await api("/api/local/accounts", { method: "POST", body: JSON.stringify(payload) });
+  $("accountsStatus").textContent = "Account updated";
+  $("editAccountStatus").textContent = "Account updated";
+  closeModal($("accountEditModal"));
+  state.editingAccountId = "";
+  state.editAccountPersons = [];
   await loadLocalAccounts();
   await loadPortfolio();
 }
 
 async function importSourceToLocal() {
   $("accountsStatus").textContent = "Importing holdings";
+  appLog("source_import.start");
   const result = await api("/api/local/import/source", { method: "POST", body: "{}" });
+  appLog("source_import.done", {
+    accounts: result.accounts,
+    positions: result.positions,
+    source_transactions: result.source_transactions,
+    price_history: result.price_history,
+    source: result.source,
+  });
   $("accountsStatus").textContent = `Imported ${result.positions} positions and ${result.accounts} accounts`;
   await loadLocalAccounts();
   await loadLocalSecurities();
   await loadLocalPrices();
-  await loadPortfolio();
+  await loadPortfolio({ refresh: true });
 }
 
 function transactionCashImpact(tx) {
@@ -1979,9 +2909,9 @@ function cleanSecuritySymbol(value) {
 function instrumentLabel(item) {
   const name = item.name && item.name !== item.symbol ? ` · ${item.name}` : "";
   const derivative = item.instrument_type === "OPTION"
-    ? ` · ${item.option_type} ${fmt(item.strike_price, 4)} · exp ${item.expiration_date}`
+    ? ` · ${item.option_type} ${fmt(item.strike_price, 4)} · exp ${formatDate(item.expiration_date)}`
     : item.instrument_type === "FUTURE"
-      ? ` · exp ${item.expiration_date}`
+      ? ` · exp ${formatDate(item.expiration_date)}`
       : "";
   return `${item.symbol}${name} · ${item.instrument_type}${derivative}`;
 }
@@ -2025,7 +2955,7 @@ function fillPriceFormFromFocus() {
   $("priceAssetClass").value = focus.asset_class || "EQUITY";
   $("priceLocation").value = focus.location || "USA";
   $("priceCurrency").value = focus.currency || "USD";
-  $("priceDate").value = todayString();
+  setDateField("priceDate", todayString());
 }
 
 function renderPriceFocusBar() {
@@ -2094,8 +3024,8 @@ async function openSecurityDetail(dataset) {
     location: dataset.securityDetailLocation || h.country || h.location || "USA",
   };
   state.securityChartStartDate = clampedHistoryDate(state.securityChartStartDate);
-  if ($("securityChartStartDate")) $("securityChartStartDate").value = state.securityChartStartDate;
-  $("detailPriceDate").value = todayString();
+  setDateField("securityChartStartDate", state.securityChartStartDate);
+  setDateField("detailPriceDate", todayString());
   $("detailPriceInput").value = "";
   $("detailPriceComments").value = "";
   openModal("securityDetailModal");
@@ -2144,14 +3074,14 @@ function renderSecurityDetail() {
   $("securityDetailTransactions").innerHTML = txs.length ? txs.map((tx) => `
     <div class="stack-item management-item">
       <b>${esc(tx.action)} ${fmt(tx.quantity, 4)}</b>
-      <span>${esc(tx.trade_date)} · input ${fmt(tx.price_input, 4)} · ${esc(tx.currency)} ${fmt(tx.price, 4)}</span>
+    <span>${esc(formatDate(tx.trade_date))} · input ${fmt(tx.price_input, 4)} · ${esc(tx.currency)} ${fmt(tx.price, 4)}</span>
       <div class="sub">${transactionCashImpact(tx) ? `Cash ${signedMoney(transactionCashImpact(tx), tx.currency)}` : "No cash movement"} · ${esc(cleanSourceLabel(tx.management_company || ""))} ${esc(cleanSourceLabel(tx.account_id || ""))}${tx.comments ? ` · ${esc(cleanSourceLabel(tx.comments))}` : ""}</div>
     </div>
   `).join("") : '<div class="empty">No transactions for this security</div>';
   const prices = state.localPrices.filter((price) => priceMatchesSecurity(price, detail));
   $("securityDetailPrices").innerHTML = prices.length ? prices.map((price) => `
     <div class="stack-item management-item">
-      <b>${esc(price.price_date)}</b>
+      <b>${esc(formatDate(price.price_date))}</b>
       <span>${fmt(price.price_input, 4)} · ${esc(price.currency)} ${fmt(price.price, 4)}</span>
       <button class="secondary compact-button" type="button" data-delete-price="${esc(price.id)}">Remove</button>
       <div class="sub">${esc(price.asset_class)} · ${esc(price.location)}${price.comments ? ` · ${esc(price.comments)}` : ""}</div>
@@ -2164,7 +3094,7 @@ function renderSecurityChart() {
   document.querySelectorAll("[data-security-chart-period]").forEach((button) => {
     button.classList.toggle("active", button.dataset.securityChartPeriod === state.securityChartPeriod);
   });
-  if ($("securityChartStartDate")) $("securityChartStartDate").value = clampedHistoryDate(state.securityChartStartDate);
+  setDateField("securityChartStartDate", clampedHistoryDate(state.securityChartStartDate));
   const frame = $("securityDetailChart");
   const points = (state.securityHistory || [])
     .map((point) => ({ date: point.date, price: Number(point.price || 0) }))
@@ -2220,9 +3150,9 @@ function renderSecurityChart() {
       <rect x="${calloutX.toFixed(1)}" y="${calloutY.toFixed(1)}" width="${calloutWidth}" height="${calloutHeight}" rx="7" fill="#0b1018" stroke="#2d3543" opacity="0.96" />
       <text x="${(calloutX + calloutWidth - 9).toFixed(1)}" y="${(calloutY + 15).toFixed(1)}" fill="#dce7ff" font-size="13" font-weight="800" text-anchor="end">${esc(fmt(last.price, 4))}</text>
       <text x="${(calloutX + calloutWidth - 9).toFixed(1)}" y="${(calloutY + 30).toFixed(1)}" fill="${calloutTextColor}" font-size="11" font-weight="800" text-anchor="end">${esc(signedMoney(change, state.securityDetail?.currency || "USD"))} · ${esc(changePct.toFixed(2))}%</text>
-      <text x="${padLeft}" y="${height - 10}" fill="#9cacc2" font-size="11" font-weight="700">${esc(first.date)}</text>
-      <text x="${middleX.toFixed(1)}" y="${height - 10}" fill="#9cacc2" font-size="11" font-weight="700" text-anchor="middle">${esc(middle.date)}</text>
-      <text x="${width - padRight}" y="${height - 10}" fill="#9cacc2" font-size="11" font-weight="700" text-anchor="end">${esc(last.date)}</text>
+      <text x="${padLeft}" y="${height - 10}" fill="#9cacc2" font-size="11" font-weight="700">${esc(formatDate(first.date))}</text>
+      <text x="${middleX.toFixed(1)}" y="${height - 10}" fill="#9cacc2" font-size="11" font-weight="700" text-anchor="middle">${esc(formatDate(middle.date))}</text>
+      <text x="${width - padRight}" y="${height - 10}" fill="#9cacc2" font-size="11" font-weight="700" text-anchor="end">${esc(formatDate(last.date))}</text>
       <rect data-security-chart-hitbox x="${padLeft}" y="${padTop}" width="${plotWidth}" height="${plotHeight}" fill="transparent" />
     </svg>
     <div class="chart-hover-tip" hidden></div>
@@ -2261,7 +3191,7 @@ function attachSecurityChartHover(frame, points, dims) {
     point.setAttribute("cx", px.toFixed(1));
     point.setAttribute("cy", py.toFixed(1));
     tip.hidden = false;
-    tip.innerHTML = `<b>${esc(selected.date)}</b><span>${esc(money(selected.price, state.securityDetail?.currency || "USD", 4))}</span>`;
+    tip.innerHTML = `<b>${esc(formatDate(selected.date))}</b><span>${esc(money(selected.price, state.securityDetail?.currency || "USD", 4))}</span>`;
     const tipLeft = Math.max(8, Math.min(rect.width - tip.offsetWidth - 8, (px / dims.width) * rect.width - tip.offsetWidth / 2));
     const tipTop = Math.max(8, Math.min(rect.height - tip.offsetHeight - 8, (py / dims.height) * rect.height - tip.offsetHeight - 12));
     tip.style.left = `${tipLeft}px`;
@@ -2279,7 +3209,7 @@ async function saveSecurityDetailPrice() {
     location: detail.location || "USA",
     currency: detail.currency || "USD",
     price_input: valueOf("detailPriceInput"),
-    price_date: valueOf("detailPriceDate") || todayString(),
+    price_date: dateValue("detailPriceDate") || todayString(),
     comments: valueOf("detailPriceComments"),
   };
   await api("/api/local/prices", { method: "POST", body: JSON.stringify(payload) });
@@ -2292,7 +3222,7 @@ async function saveSecurityDetailPrice() {
 
 function toggleManualInstrumentFields() {
   const type = valueOf("manualInstrumentType") || "STOCK";
-  const isOption = type === "OPTION";
+  const isOption = type === "OPTION" || type === "STOCK_OPTION";
   const isDerivative = isOption || type === "FUTURE";
   document.querySelectorAll("[data-derivative-field]").forEach((node) => { node.hidden = !isDerivative; });
   document.querySelectorAll("[data-option-field]").forEach((node) => { node.hidden = !isOption; });
@@ -2311,10 +3241,10 @@ async function loadManualSecurities() {
   list.innerHTML = state.manualSecurities.length ? state.manualSecurities.map((item) => `
     <div class="stack-item management-item">
       <b>${esc(item.symbol)}</b>
-      <span>${esc(item.name || item.symbol)} · ${esc(item.instrument_type)} · ${esc(item.stock_market)} · ${esc(item.currency)}</span>
+      <span>${esc(item.name || item.symbol)} · ${esc(optionLabel(item.instrument_type))} · ${esc(item.stock_market)} · ${esc(item.currency)}</span>
       <button class="secondary compact-button" type="button" data-use-manual-security="${esc(item.id)}">Use</button>
       <button class="secondary compact-button" type="button" data-delete-manual-security="${esc(item.id)}">Remove</button>
-      <div class="sub">${esc(item.asset_class)}${item.underlying_symbol ? ` · Underlying ${esc(item.underlying_symbol)}` : ""}${item.option_type ? ` · ${esc(item.option_type)}` : ""}${item.expiration_date ? ` · Exp ${esc(item.expiration_date)}` : ""}${item.strike_price ? ` · Strike ${fmt(item.strike_price, 4)}` : ""}${item.contract_multiplier ? ` · Multiplier ${fmt(item.contract_multiplier, 4)}` : ""}${item.comments ? ` · ${esc(item.comments)}` : ""}</div>
+      <div class="sub">${esc(optionLabel(item.asset_class))}${item.underlying_symbol ? ` · Underlying ${esc(item.underlying_symbol)}` : ""}${item.option_type ? ` · ${esc(item.option_type)} option` : ""}${item.expiration_date ? ` · Exp ${esc(formatDate(item.expiration_date))}` : ""}${item.strike_price ? ` · Strike ${fmt(item.strike_price, 4)}` : ""}${item.contract_multiplier ? ` · Multiplier ${fmt(item.contract_multiplier, 4)}` : ""}${item.comments ? ` · ${esc(item.comments)}` : ""}</div>
     </div>
   `).join("") : '<div class="empty">No defined instruments yet</div>';
 }
@@ -2329,7 +3259,7 @@ async function saveManualSecurity() {
     location: valueOf("manualSecurityLocation") || "USA",
     underlying_symbol: cleanSecuritySymbol(valueOf("manualUnderlyingSymbol")),
     option_type: valueOf("manualOptionType"),
-    expiration_date: valueOf("manualExpirationDate"),
+    expiration_date: dateValue("manualExpirationDate"),
     strike_price: valueOf("manualStrikePrice") || 0,
     contract_multiplier: valueOf("manualContractMultiplier") || 0,
     comments: valueOf("manualSecurityComments"),
@@ -2350,7 +3280,7 @@ async function loadLocalSecurities() {
       <b>${esc(tx.action)} ${esc(tx.symbol)}</b>
       <span>${fmt(tx.quantity, 4)} @ ${fmt(tx.price_input, 4)} (${esc(tx.currency)} ${fmt(tx.price, 4)})${tx.instrument_type ? ` · ${esc(tx.instrument_type)}` : ""}</span>
       <button class="secondary compact-button" type="button" data-delete-security="${esc(tx.id)}">Remove</button>
-      <div class="sub">${esc(tx.stock_market)} · ${esc(tx.asset_class)}${tx.option_type ? ` · ${esc(tx.option_type)}` : ""}${tx.expiration_date ? ` · Exp ${esc(tx.expiration_date)}` : ""}${tx.strike_price ? ` · Strike ${fmt(tx.strike_price, 4)}` : ""} · ${esc(tx.trade_date)} · ${transactionCashImpact(tx) ? `Cash ${signedMoney(transactionCashImpact(tx), tx.currency)}` : "No cash movement"} · ${esc(tx.management_company || "")} ${esc(tx.account_id || "")}</div>
+      <div class="sub">${esc(tx.stock_market)} · ${esc(tx.asset_class)}${tx.option_type ? ` · ${esc(tx.option_type)}` : ""}${tx.expiration_date ? ` · Exp ${esc(formatDate(tx.expiration_date))}` : ""}${tx.strike_price ? ` · Strike ${fmt(tx.strike_price, 4)}` : ""} · ${esc(formatDate(tx.trade_date))} · ${transactionCashImpact(tx) ? `Cash ${signedMoney(transactionCashImpact(tx), tx.currency)}` : "No cash movement"} · ${esc(tx.management_company || "")} ${esc(tx.account_id || "")}</div>
     </div>
   `).join("") : '<div class="empty">No manual securities yet</div>';
 }
@@ -2364,7 +3294,7 @@ async function saveSecurity() {
     asset_class: valueOf("securityAssetClass"),
     quantity: valueOf("securityQuantity"),
     price_input: valueOf("securityPrice"),
-    trade_date: valueOf("securityDate") || todayString(),
+    trade_date: dateValue("securityDate") || todayString(),
     allow_manual: $("securityAllowManual").checked,
     comments: valueOf("securityComments"),
   };
@@ -2389,7 +3319,7 @@ async function loadLocalPrices() {
   $("pricesList").innerHTML = visiblePrices.length ? visiblePrices.map((price) => `
     <div class="stack-item management-item">
       <b>${esc(price.symbol)}</b>
-      <span>${esc(price.price_date)} · ${fmt(price.price_input, 4)} (${esc(price.currency)} ${fmt(price.price, 4)})</span>
+      <span>${esc(formatDate(price.price_date))} · ${fmt(price.price_input, 4)} (${esc(price.currency)} ${fmt(price.price, 4)})</span>
       <button class="secondary compact-button" type="button" data-delete-price="${esc(price.id)}">Remove</button>
       <div class="sub">${esc(price.stock_market)} · ${esc(price.asset_class)} · ${esc(price.location)} · ${esc(price.comments || "")}</div>
     </div>
@@ -2404,7 +3334,7 @@ async function savePrice() {
     location: valueOf("priceLocation") || "USA",
     currency: valueOf("priceCurrency") || "USD",
     price_input: valueOf("priceInput"),
-    price_date: valueOf("priceDate") || todayString(),
+    price_date: dateValue("priceDate") || todayString(),
     comments: valueOf("priceComments"),
   };
   await api("/api/local/prices", { method: "POST", body: JSON.stringify(payload) });
@@ -2434,16 +3364,17 @@ function renderReportSummary(report) {
 }
 
 function renderAccountTrend(trend) {
-  const series = (trend.accounts || []).flatMap((account) => account.points.map((point) => ({ ...point, account: account.account })));
+  const accounts = (trend.accounts || []).filter((account) => account.points?.length);
+  const series = accounts.flatMap((account) => account.points.map((point) => ({ ...point, account: account.account })));
   if (!series.length) {
     $("accountTrendChart").innerHTML = '<div class="empty">No trend data for this date range</div>';
     return;
   }
   const width = 760;
   const height = 280;
-  const pad = 34;
-  const labelWidth = 190;
-  const plotWidth = width - pad * 2 - labelWidth;
+  const padLeft = 48;
+  const padRight = 72;
+  const plotWidth = width - padLeft - padRight;
   const values = series.map((point) => Number(point.value || 0));
   const profits = series.map((point) => Number(point.profit_percent || 0));
   const minValue = Math.min(...values, 0);
@@ -2453,40 +3384,54 @@ function renderAccountTrend(trend) {
   const scaleLane = (value, min, max, top, bottom) => bottom - ((value - min) / (max - min || 1)) * (bottom - top);
   const scaleValue = (value) => scaleLane(value, minValue, maxValue, 42, 124);
   const scaleProfit = (value) => scaleLane(value, minProfit, maxProfit, 170, 244);
-  const pointX = (pointIndex, count) => pad + (pointIndex / Math.max(1, count - 1)) * plotWidth;
-  const accountLines = (trend.accounts || []).map((account, index) => {
+  const pointX = (pointIndex, count) => padLeft + (pointIndex / Math.max(1, count - 1)) * plotWidth;
+  const accountLines = accounts.map((account, index) => {
     const points = account.points;
     const valuePath = points.map((point, pointIndex) => `${pointIndex ? "L" : "M"} ${pointX(pointIndex, points.length)} ${scaleValue(point.value)}`).join(" ");
     const profitPath = points.map((point, pointIndex) => `${pointIndex ? "L" : "M"} ${pointX(pointIndex, points.length)} ${scaleProfit(point.profit_percent)}`).join(" ");
     const last = points.at(-1) || {};
+    const label = accountLabel(account.account);
     return `<g>
+      <title>${esc(`${label}\nValue ${fmt(last.value, 0)}\nProfit ${pct(last.profit_percent)}\nDate ${formatDate(last.date || "")}`)}</title>
       <path d="${valuePath}" fill="none" stroke="${colorAt(index)}" stroke-width="3"></path>
       <path d="${profitPath}" fill="none" stroke="${colorAt(index + 3)}" stroke-width="2" stroke-dasharray="5 5"></path>
-      <text x="${width - labelWidth + 12}" y="${44 + index * 18}">${esc(accountLabel(account.account))}</text>
-      <text x="${width - labelWidth + 12}" y="${62 + index * 18}">Value ${fmt(last.value, 0)} · ${pct(last.profit_percent)}</text>
     </g>`;
   }).join("");
+  const legend = accounts.map((account, index) => {
+    const last = account.points.at(-1) || {};
+    return `
+      <div class="report-trend-account" title="${esc(accountLabel(account.account))}">
+        <b><i style="--line-color:${colorAt(index)}"></i>${esc(accountLabel(account.account))}</b>
+        <span>Value ${fmt(last.value, 0)} · Profit ${pct(last.profit_percent)}</span>
+      </div>`;
+  }).join("");
   $("accountTrendChart").innerHTML = `
-    <div class="chart-title">Account value and profit %</div>
+    <div class="chart-header">
+      <div>
+        <div class="chart-title">Account value and profit %</div>
+        <small class="chart-subtitle">Solid lines show value. Dashed lines show profit percentage.</small>
+      </div>
+    </div>
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Account value and percent profit trend">
-      <text x="${pad}" y="24">Value</text>
-      <text x="${pad}" y="154">Profit %</text>
-      <line x1="${pad}" y1="42" x2="${pad + plotWidth}" y2="42"></line>
-      <line x1="${pad}" y1="124" x2="${pad + plotWidth}" y2="124"></line>
-      <line x1="${pad}" y1="170" x2="${pad + plotWidth}" y2="170"></line>
-      <line x1="${pad}" y1="244" x2="${pad + plotWidth}" y2="244"></line>
-      <text x="${pad + plotWidth + 10}" y="46">${fmt(maxValue, 0)}</text>
-      <text x="${pad + plotWidth + 10}" y="128">${fmt(minValue, 0)}</text>
-      <text x="${pad + plotWidth + 10}" y="174">${pct(maxProfit)}</text>
-      <text x="${pad + plotWidth + 10}" y="248">${pct(minProfit)}</text>
+      <text x="${padLeft}" y="24">Value</text>
+      <text x="${padLeft}" y="154">Profit %</text>
+      <line x1="${padLeft}" y1="42" x2="${padLeft + plotWidth}" y2="42"></line>
+      <line x1="${padLeft}" y1="124" x2="${padLeft + plotWidth}" y2="124"></line>
+      <line x1="${padLeft}" y1="170" x2="${padLeft + plotWidth}" y2="170"></line>
+      <line x1="${padLeft}" y1="244" x2="${padLeft + plotWidth}" y2="244"></line>
+      <text x="${padLeft + plotWidth + 10}" y="46">${fmt(maxValue, 0)}</text>
+      <text x="${padLeft + plotWidth + 10}" y="128">${fmt(minValue, 0)}</text>
+      <text x="${padLeft + plotWidth + 10}" y="174">${pct(maxProfit)}</text>
+      <text x="${padLeft + plotWidth + 10}" y="248">${pct(minProfit)}</text>
       ${accountLines}
-    </svg>`;
+    </svg>
+    <div class="report-trend-legend">${legend}</div>`;
 }
 
 function renderHistorySnapshots() {
   $("historyList").innerHTML = state.historySnapshots.length ? state.historySnapshots.map((snapshot) => `
     <div class="stack-item management-item">
-      <b>${esc(snapshot.snapshot_date)} · ${esc(cleanSourceLabel(snapshot.account_label) || snapshot.account_db_id)}</b>
+      <b>${esc(formatDate(snapshot.snapshot_date))} · ${esc(cleanSourceLabel(snapshot.account_label) || snapshot.account_db_id)}</b>
       <span>Value ${fmt(snapshot.value, 0)} · Cash ${fmt(snapshot.cash, 0)} · Profit ${fmt(snapshot.profit, 0)} · ${pct(snapshot.profit_percent)}</span>
       <button class="secondary compact-button" type="button"
         data-edit-history-snapshot
@@ -2505,8 +3450,8 @@ function renderHistorySnapshots() {
 async function loadHistorySnapshots() {
   const params = new URLSearchParams({
     account_id: valueOf("reportAccount"),
-    date_from: clampedHistoryDate(valueOf("reportFrom")),
-    date_to: valueOf("reportTo"),
+    date_from: clampedHistoryDate(dateValue("reportFrom")),
+    date_to: dateValue("reportTo"),
   });
   const data = await api(`/api/local/account-snapshots?${params}`);
   state.historySnapshots = data.items || [];
@@ -2523,7 +3468,7 @@ async function saveHistorySnapshot() {
     method: "POST",
     body: JSON.stringify({
       account_id: accountId,
-      snapshot_date: clampedHistoryDate(valueOf("historyDate") || todayString()),
+      snapshot_date: clampedHistoryDate(dateValue("historyDate") || todayString()),
       value: valueOf("historyValue"),
       cash: valueOf("historyCash") || 0,
       profit: valueOf("historyProfit") || 0,
@@ -2538,9 +3483,9 @@ async function saveHistorySnapshot() {
 async function captureHistorySnapshot() {
   const result = await api("/api/local/account-snapshots/capture", {
     method: "POST",
-    body: JSON.stringify({ snapshot_date: clampedHistoryDate(valueOf("historyDate") || todayString()) }),
+    body: JSON.stringify({ snapshot_date: clampedHistoryDate(dateValue("historyDate") || todayString()) }),
   });
-  $("historyStatus").textContent = `Captured ${result.snapshots} account history points for ${result.date}`;
+  $("historyStatus").textContent = `Captured ${result.snapshots} account history points for ${formatDate(result.date)}`;
   await Promise.all([loadReports(), loadPortfolio()]);
 }
 
@@ -2554,8 +3499,8 @@ async function loadReports() {
     account_id: valueOf("reportAccount"),
     account_type: valueOf("reportAccountType"),
     location: valueOf("reportLocation"),
-    date_from: clampedHistoryDate(valueOf("reportFrom")),
-    date_to: valueOf("reportTo"),
+    date_from: clampedHistoryDate(dateValue("reportFrom")),
+    date_to: dateValue("reportTo"),
   });
   const [report, trend] = await Promise.all([
     api(`/api/local/reports?${params}`),
@@ -2569,16 +3514,26 @@ async function loadReports() {
 async function loadFunds() {
   const data = await api("/api/local/funds");
   state.localFunds = data.items || [];
+  refreshFundAccountSelects();
   renderFundsOverview();
+  rerenderPortfolioIfLoaded();
   renderPensionSimulatorControls();
-  $("fundsList").innerHTML = state.localFunds.length ? state.localFunds.map((fund) => `
-    <div class="stack-item management-item">
-      <b>${esc(fund.kind)} ${esc(fund.pension_id)}</b>
-      <span>Saved ${fmt(fund.amount, 0)} · Monthly ${fmt(fund.monthly_estimate, 0)}</span>
-      <button class="secondary compact-button" type="button" data-delete-fund="${esc(fund.id)}">Remove</button>
-      <div class="sub">Factor ${fmt(fund.factor, 2)}${(fund.persons || []).length ? ` · ${(fund.persons || []).map(personLabel).map(esc).join(" · ")}` : ""} · ${esc(fund.comments || "")}</div>
-    </div>
-  `).join("") : '<div class="empty">No pension, provident, or savings funds yet</div>';
+  $("fundsList").innerHTML = state.localFunds.length ? state.localFunds.map((fund) => {
+    const hasMonthlyEstimate = fund.kind === "Pension" && fund.monthly_estimate !== null && fund.monthly_estimate !== undefined;
+    const estimate = hasMonthlyEstimate
+      ? `<span>Saved ${fmt(fund.amount, 0)} · Monthly pension estimate ${fmt(fund.monthly_estimate, 0)}</span>`
+      : `<span>Saved ${fmt(fund.amount, 0)} · <em class="muted-inline">Monthly pension estimate N/A</em></span>`;
+    const accountText = fund.account_label ? ` · Account ${esc(fund.account_label)}` : "";
+    return `
+      <div class="stack-item management-item">
+        <b>${esc([fund.kind, fund.fund_name || "", fund.pension_id].filter(Boolean).join(" · "))}</b>
+        ${estimate}
+        <button class="secondary compact-button" type="button" data-edit-fund="${esc(fund.id)}">Edit</button>
+        <button class="secondary compact-button" type="button" data-delete-fund="${esc(fund.id)}">Remove</button>
+        <div class="sub">${(fund.persons || []).length ? `${(fund.persons || []).map(personLabel).map(esc).join(" · ")} · ` : ""}${esc(fund.comments || "No comments")}${accountText}</div>
+      </div>
+    `;
+  }).join("") : '<div class="empty">No pension, provident, or savings funds yet</div>';
   renderPersonLists();
 }
 
@@ -2598,12 +3553,12 @@ function ageFromBirthDate(value) {
 
 function personLabel(person) {
   const age = person.age ?? ageFromBirthDate(person.birth_date);
-  return `${person.name || "Person"} · ${person.birth_date}${age ? ` · age ${fmt(age, 1)}` : ""}`;
+  return `${personFullName(person)} · ${formatDate(person.birth_date)}${age ? ` · age ${fmt(age, 1)}` : ""}`;
 }
 
 function addPersonTo(listKey, nameId, birthDateId, statusId) {
   const name = valueOf(nameId);
-  const birthDate = valueOf(birthDateId);
+  const birthDate = dateValue(birthDateId);
   if (!birthDate) {
     $(statusId).textContent = "Birthday is required for a family member";
     return;
@@ -2627,7 +3582,9 @@ function renderPersonList(id, people, deleteAttr) {
 
 function renderPersonLists() {
   renderPersonList("localAccountPersons", state.localAccountPersons, "data-delete-local-person");
+  renderPersonList("editAccountPersons", state.editAccountPersons, "data-delete-edit-person");
   renderPersonList("fundPersons", state.fundPersons, "data-delete-fund-person");
+  renderPersonList("editFundPersons", state.editFundPersons, "data-delete-edit-fund-person");
 }
 
 function renderPensionSimulatorControls() {
@@ -2636,7 +3593,7 @@ function renderPensionSimulatorControls() {
   if (fundSelect) {
     const current = fundSelect.value;
     fundSelect.innerHTML = '<option value="">Custom amount</option>' + state.localFunds.map((fund) => (
-      `<option value="${esc(fund.id)}">${esc(fund.kind)} ${esc(fund.pension_id)} · ${money(fund.amount, state.baseCurrency, 0)}</option>`
+      `<option value="${esc(fund.id)}">${esc([fund.kind, fund.fund_name || "", fund.pension_id].filter(Boolean).join(" · "))} · ${money(fund.amount, state.baseCurrency, 0)}</option>`
     )).join("");
     fundSelect.value = state.localFunds.some((fund) => fund.id === current) ? current : "";
   }
@@ -2644,6 +3601,7 @@ function renderPensionSimulatorControls() {
   renderPensionPeriods();
   renderPensionScenarios();
   renderPensionSimulationResults();
+  syncSimulationFactorState();
 }
 
 function selectedSimulationFund() {
@@ -2657,16 +3615,30 @@ function applySimulationFund() {
   $("simKind").value = fund.kind;
   $("simAmount").value = fund.amount;
   $("simFactor").value = fund.factor || 200;
+  syncSimulationFactorState();
   renderSimulationPersonOptions();
   applySimulationPerson();
-  if (!$("simName").value) $("simName").value = fund.pension_id;
+  if (!$("simName").value) $("simName").value = fund.fund_name || fund.pension_id;
+}
+
+function syncSimulationFactorState() {
+  const factorInput = $("simFactor");
+  if (!factorInput) return;
+  const isPension = (valueOf("simKind") || selectedSimulationFund()?.kind || "Pension") === "Pension";
+  factorInput.disabled = !isPension;
+  factorInput.classList.toggle("muted-control", !isPension);
+  factorInput.placeholder = isPension ? "Payout factor" : "Not applicable";
+  factorInput.title = isPension ? "Pension payout factor" : "Provident and savings funds do not use pension payout factor";
+  if (!isPension) factorInput.value = "";
+  if (isPension && !factorInput.value) factorInput.value = "200";
 }
 
 function renderSimulationPersonOptions() {
   const select = $("simPersonSource");
   if (!select) return;
   const current = select.value;
-  const people = selectedSimulationFund()?.persons || [];
+  const fundPeople = selectedSimulationFund()?.persons || [];
+  const people = fundPeople.length ? fundPeople : state.familyMembers;
   select.innerHTML = '<option value="">Custom person</option>' + people.map((person, index) => (
     `<option value="${index}">${esc(personLabel(person))}</option>`
   )).join("");
@@ -2674,7 +3646,8 @@ function renderSimulationPersonOptions() {
 }
 
 function selectedSimulationPerson() {
-  const people = selectedSimulationFund()?.persons || [];
+  const fundPeople = selectedSimulationFund()?.persons || [];
+  const people = fundPeople.length ? fundPeople : state.familyMembers;
   const raw = valueOf("simPersonSource");
   if (raw === "") return null;
   const index = Number(raw);
@@ -2684,27 +3657,29 @@ function selectedSimulationPerson() {
 function applySimulationPerson() {
   const person = selectedSimulationPerson();
   if (!person) return;
-  $("simBirthDate").value = person.birth_date || "";
+  setDateField("simBirthDate", person.birth_date || "");
   $("simCurrentAge").value = ageFromBirthDate(person.birth_date);
+  if (person.retire_age) $("simRetireAge").value = person.retire_age;
 }
 
 function currentPensionScenario() {
   const fund = selectedSimulationFund();
   const person = selectedSimulationPerson();
-  const birthDate = valueOf("simBirthDate") || person?.birth_date || "";
+  const birthDate = dateValue("simBirthDate") || person?.birth_date || "";
+  const kind = valueOf("simKind") || fund?.kind || "Pension";
   return {
-    name: valueOf("simName") || [fund?.pension_id, person?.name].filter(Boolean).join(" ") || `Scenario ${state.pensionScenarios.length + 1}`,
-    kind: valueOf("simKind") || fund?.kind || "Pension",
+    name: valueOf("simName") || [fund?.fund_name || fund?.pension_id, person?.name].filter(Boolean).join(" ") || `Scenario ${state.pensionScenarios.length + 1}`,
+    kind,
     birth_date: birthDate,
     person_name: person?.name || "",
     current_age: numberValue("simCurrentAge") || ageFromBirthDate(birthDate),
-    retire_age: numberValue("simRetireAge"),
+    retire_age: numberValue("simRetireAge") || person?.retire_age,
     amount: numberValue("simAmount") || fund?.amount || 0,
     annual_return: numberValue("simAnnualReturn") || 0,
     monthly_income: numberValue("simMonthlyIncome") || 0,
     contribution_percent: numberValue("simContributionPercent") || 0,
     monthly_deposit: numberValue("simMonthlyDeposit") || 0,
-    factor: numberValue("simFactor") || fund?.factor || 200,
+    factor: kind === "Pension" ? (numberValue("simFactor") || fund?.factor || 200) : null,
     income_periods: state.pensionIncomePeriods.map((period) => ({ ...period })),
   };
 }
@@ -2799,34 +3774,99 @@ async function runPensionSimulation() {
 }
 
 async function saveFund() {
+  if (!valueOf("fundPensionId")) {
+    $("fundStatus").textContent = "Fund ID is required";
+    return;
+  }
+  if (Number(valueOf("fundAmount") || 0) <= 0) {
+    $("fundStatus").textContent = "Saved amount is required";
+    return;
+  }
   await api("/api/local/funds", {
     method: "POST",
     body: JSON.stringify({
       kind: valueOf("fundKind"),
+      fund_name: valueOf("fundName"),
       pension_id: valueOf("fundPensionId"),
       amount: valueOf("fundAmount"),
-      factor: valueOf("fundFactor") || 200,
+      account_id: valueOf("fundAccount"),
       persons: state.fundPersons.map((person) => ({ ...person })),
       comments: valueOf("fundComments"),
     }),
   });
   $("fundStatus").textContent = "Fund saved";
-  ["fundPensionId", "fundAmount", "fundComments"].forEach((id) => { $(id).value = ""; });
+  ["fundName", "fundPensionId", "fundAmount", "fundAccount", "fundComments", "fundFamilyMember"].forEach((id) => { $(id).value = ""; });
   state.fundPersons = [];
   renderPersonLists();
   await loadFunds();
 }
 
-async function loadPortfolio() {
+function editFund(fundId) {
+  const fund = state.localFunds.find((item) => item.id === fundId);
+  if (!fund) return;
+  state.editingFundId = fund.id;
+  $("editFundKind").value = fund.kind || "Pension";
+  $("editFundName").value = fund.fund_name || "";
+  $("editFundPensionId").value = fund.pension_id || "";
+  $("editFundAmount").value = fund.amount || "";
+  refreshFundAccountSelects();
+  $("editFundAccount").value = fund.account_id || "";
+  $("editFundComments").value = fund.comments || "";
+  $("editFundFamilyMember").value = "";
+  state.editFundPersons = (fund.persons || []).map((person) => ({ ...person }));
+  $("editFundStatus").textContent = [fund.kind, fund.fund_name, fund.pension_id].filter(Boolean).join(" · ");
+  renderPersonLists();
+  openModal("fundEditModal");
+}
+
+async function saveEditFund() {
+  const fund = state.localFunds.find((item) => item.id === state.editingFundId);
+  if (!fund) {
+    $("editFundStatus").textContent = "Choose a fund to edit";
+    return;
+  }
+  if (!valueOf("editFundPensionId")) {
+    $("editFundStatus").textContent = "Fund ID is required";
+    return;
+  }
+  if (Number(valueOf("editFundAmount") || 0) <= 0) {
+    $("editFundStatus").textContent = "Saved amount is required";
+    return;
+  }
+  await api("/api/local/funds", {
+    method: "POST",
+    body: JSON.stringify({
+      id: fund.id,
+      kind: valueOf("editFundKind"),
+      fund_name: valueOf("editFundName"),
+      pension_id: valueOf("editFundPensionId"),
+      amount: valueOf("editFundAmount"),
+      account_id: valueOf("editFundAccount"),
+      persons: state.editFundPersons.map((person) => ({ ...person })),
+      comments: valueOf("editFundComments"),
+    }),
+  });
+  $("fundStatus").textContent = "Fund updated";
+  $("editFundStatus").textContent = "Fund updated";
+  closeModal($("fundEditModal"));
+  state.editingFundId = "";
+  state.editFundPersons = [];
+  await loadFunds();
+  await loadReports();
+}
+
+async function loadPortfolio({ refresh = false } = {}) {
   $("status").textContent = "Loading portfolio";
-  setLoading(true, "Loading portfolio analytics");
+  setLoading(true, refresh ? "Refreshing portfolio analytics" : "Loading portfolio analytics");
+  appLog("portfolio.load.start", { refresh });
   try {
     const trendParams = new URLSearchParams({
       date_from: HISTORY_START_DATE,
       date_to: todayString(),
     });
+    const portfolioPath = refresh ? "/api/portfolio?refresh=true" : "/api/portfolio";
     const [data, trend] = await Promise.all([
-      api("/api/portfolio"),
+      api(portfolioPath),
       api(`/api/local/account-trends?${trendParams}`),
     ]);
     state.items = data.items;
@@ -2834,6 +3874,17 @@ async function loadPortfolio() {
     populateOptions(data.items);
     $("status").textContent = `${data.count} positions · ${Object.entries(data.status).map(([k, v]) => `${k}: ${v}`).join(", ")}`;
     renderPortfolio(data.items);
+    appLog("portfolio.load.done", {
+      count: data.count,
+      status: data.status,
+      trend_accounts: trend.accounts?.length || 0,
+    });
+    if (!data.count) {
+      appWarn("portfolio.empty", {
+        local_accounts: state.localAccounts.length,
+        message: "Portfolio has no local position transactions. Use Accounts > Sync import to import positions.",
+      });
+    }
   } finally {
     setLoading(false);
   }
@@ -2844,10 +3895,10 @@ async function loadLocalOptions() {
     state.localOptions = await api("/api/local/options");
   } catch {
     state.localOptions = {
-      account_types: ["Investment", "Long-Term Savings", "Bank"],
+      account_types: ["Investment", "Long-Term Savings", "Bank", "ESOP"],
       fund_kinds: ["Pension", "Provident Fund", "Savings Fund"],
-      asset_classes: ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE"],
-      instrument_types: ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE"],
+      asset_classes: ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"],
+      instrument_types: ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"],
       option_types: ["CALL", "PUT"],
     };
   }
@@ -3031,6 +4082,7 @@ async function loadCacheStatus() {
   $("backupTimezone").value = backup.timezone || "";
   $("backupKeep").value = backup.keep || 30;
   updateBackupScheduleSummary();
+  syncBackupEnabledControls();
   $("cacheStatus").innerHTML = [
     ["Cache file", data.path],
     ["API response entries", data.entries],
@@ -3041,7 +4093,7 @@ async function loadCacheStatus() {
   ].map(([label, value]) => `<div class="setting-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
   $("backupStatus").innerHTML = [
     ["Backup directory", backup.directory || ""],
-    ["Schedule", backup.schedule_summary || backupScheduleSummary(backup.schedule_config)],
+    ["Schedule", backup.enabled === false ? "Disabled" : backup.schedule_summary || backupScheduleSummary(backup.schedule_config)],
     ["Next run", backup.next_run || "Disabled"],
     ["Latest backup", backup.latest?.filename || "None"],
     ["Backup files", (backup.backups || []).length],
@@ -3131,6 +4183,10 @@ function renderBackupSchedulePickers() {
 
 function updateBackupScheduleSummary() {
   const backup = state.backupSettings || {};
+  if (backup.enabled === false || $("backupEnabled")?.value === "false") {
+    $("backupScheduleSummary").innerHTML = '<span>Schedule</span><b>Automatic backup disabled</b><small>Manual backups remain available</small>';
+    return;
+  }
   const summary = backup.schedule_summary || backupScheduleSummary(backup.schedule_config);
   $("backupScheduleSummary").innerHTML = `<span>Schedule</span><b>${esc(summary)}</b><small>${backup.missed_policy === "run" ? "Backup now if the selected time already passed" : "Wait for the next selected time"}</small>`;
 }
@@ -3139,7 +4195,7 @@ function populateBackupScheduleForm() {
   renderBackupSchedulePickers();
   const backup = state.backupSettings || {};
   const config = normalizeBackupScheduleConfig(backup.schedule_config);
-  $("backupScheduleFrequency").value = config.frequency;
+  $("backupScheduleFrequency").value = backup.enabled === false ? "none" : config.frequency;
   $("backupScheduleHour").value = config.hour;
   $("backupScheduleMinute").value = config.minute;
   $("backupMissedPolicy").value = backup.missed_policy === "run" ? "run" : "wait";
@@ -3150,8 +4206,17 @@ function populateBackupScheduleForm() {
 
 function syncBackupSchedulePickers() {
   const frequency = valueOf("backupScheduleFrequency") || "weekly";
+  const enabled = frequency !== "none";
   $("backupWeeklyPicker").hidden = frequency !== "weekly";
   $("backupMonthlyPicker").hidden = frequency !== "monthly";
+  ["backupScheduleHour", "backupScheduleMinute", "backupMissedPolicy"].forEach((id) => {
+    const input = $(id);
+    if (input) input.disabled = !enabled;
+  });
+  document.querySelectorAll("#backupWeeklyPicker input, #backupMonthlyPicker input").forEach((input) => {
+    const picker = input.closest(".schedule-picker");
+    input.disabled = !enabled || picker?.hidden;
+  });
 }
 
 function backupScheduleFromForm() {
@@ -3168,14 +4233,28 @@ function backupScheduleFromForm() {
 }
 
 function applyBackupSchedule() {
+  const automaticBackup = valueOf("backupScheduleFrequency") !== "none";
   state.backupSettings = {
     ...(state.backupSettings || {}),
+    enabled: automaticBackup,
     schedule_config: backupScheduleFromForm(),
     missed_policy: valueOf("backupMissedPolicy") || "wait",
   };
+  $("backupEnabled").value = String(automaticBackup);
   state.backupSettings.schedule_summary = backupScheduleSummary(state.backupSettings.schedule_config);
   updateBackupScheduleSummary();
+  syncBackupEnabledControls();
   closeModal($("backupScheduleModal"));
+}
+
+function syncBackupEnabledControls() {
+  const enabled = $("backupEnabled").value === "true";
+  $("editBackupSchedule").disabled = !enabled;
+  state.backupSettings = {
+    ...(state.backupSettings || {}),
+    enabled,
+  };
+  updateBackupScheduleSummary();
 }
 
 async function saveBackupSettings() {
@@ -3215,11 +4294,16 @@ function openModal(id) {
   const modal = $(id);
   if (!modal) return;
   modal.hidden = false;
-  if (id === "accountsModal") loadLocalAccounts();
+  if (id === "accountsModal") {
+    setAccountsTab("existing");
+    Promise.all([loadBrokers(), loadFamilyMembers(), loadLocalAccounts()]);
+  }
+  if (id === "brokersModal") loadBrokers();
+  if (id === "familyModal") Promise.all([loadLocalAccounts(), loadFamilyMembers()]);
   if (id === "securitiesModal") Promise.all([loadLocalAccounts(), loadLocalSecurities()]);
   if (id === "pricesModal") loadLocalPrices();
   if (id === "reportsModal") Promise.all([loadLocalAccounts(), loadReports()]);
-  if (id === "fundsModal") loadFunds();
+  if (id === "fundsModal") Promise.all([loadLocalAccounts(), loadFamilyMembers(), loadFunds()]);
   if (id === "alertsModal") loadAlerts();
   if (id === "bannerModal") renderBannerSettings();
   if (id === "settingsModal") loadCacheStatus();
@@ -3234,6 +4318,17 @@ function closeModal(modal) {
 document.addEventListener("click", (event) => {
   const modalId = event.target.closest("[data-modal]")?.dataset.modal;
   if (modalId) openModal(modalId);
+
+  const accountTab = event.target.closest("[data-account-tab]")?.dataset.accountTab;
+  if (accountTab) setAccountsTab(accountTab);
+
+  const longTermView = event.target.closest("[data-long-term-view]")?.dataset.longTermView;
+  if (longTermView) {
+    state.longTermView = longTermView;
+    localStorage.setItem(DASHBOARD_LONG_TERM_STORAGE_KEY, longTermView);
+    saveDashboardSettings();
+    renderAnalytics(state.items || []);
+  }
 
   if (event.target.matches("[data-close]")) {
     closeModal(event.target.closest(".modal"));
@@ -3289,6 +4384,11 @@ document.addEventListener("click", (event) => {
     api(`/api/local/securities/${securityId}`, { method: "DELETE" }).then(() => Promise.all([loadLocalSecurities(), loadPortfolio()]));
   }
 
+  const editAccountId = event.target.closest("[data-edit-account]")?.dataset.editAccount;
+  if (editAccountId) {
+    editLocalAccount(editAccountId);
+  }
+
   const manualSecurityId = event.target.closest("[data-delete-manual-security]")?.dataset.deleteManualSecurity;
   if (manualSecurityId) {
     api(`/api/local/manual-securities/${manualSecurityId}`, { method: "DELETE" }).then(() => Promise.all([loadManualSecurities(), loadPortfolio()]));
@@ -3331,15 +4431,56 @@ document.addEventListener("click", (event) => {
     api(`/api/local/funds/${fundId}`, { method: "DELETE" }).then(loadFunds);
   }
 
+  const editFundId = event.target.closest("[data-edit-fund]")?.dataset.editFund;
+  if (editFundId) {
+    editFund(editFundId);
+  }
+
+  const familyMemberId = event.target.closest("[data-delete-family-member]")?.dataset.deleteFamilyMember;
+  if (familyMemberId) {
+    api(`/api/local/family-members/${familyMemberId}`, { method: "DELETE" })
+      .then(loadFamilyMembers)
+      .catch((error) => { $("familyStatus").textContent = `Error: ${error.message}`; });
+  }
+
+  const editFamilyMemberId = event.target.closest("[data-edit-family-member]")?.dataset.editFamilyMember;
+  if (editFamilyMemberId) {
+    editFamilyMember(editFamilyMemberId);
+  }
+
+  const brokerId = event.target.closest("[data-delete-broker]")?.dataset.deleteBroker;
+  if (brokerId) {
+    api(`/api/local/brokers/${brokerId}`, { method: "DELETE" })
+      .then(loadBrokers)
+      .catch((error) => { $("brokerStatus").textContent = `Error: ${error.message}`; });
+  }
+
+  const editBrokerId = event.target.closest("[data-edit-broker]")?.dataset.editBroker;
+  if (editBrokerId) {
+    editBroker(editBrokerId);
+  }
+
   const localPersonIndex = event.target.closest("[data-delete-local-person]")?.dataset.deleteLocalPerson;
   if (localPersonIndex !== undefined) {
     state.localAccountPersons.splice(Number(localPersonIndex), 1);
     renderPersonLists();
   }
 
+  const editPersonIndex = event.target.closest("[data-delete-edit-person]")?.dataset.deleteEditPerson;
+  if (editPersonIndex !== undefined) {
+    state.editAccountPersons.splice(Number(editPersonIndex), 1);
+    renderPersonLists();
+  }
+
   const fundPersonIndex = event.target.closest("[data-delete-fund-person]")?.dataset.deleteFundPerson;
   if (fundPersonIndex !== undefined) {
     state.fundPersons.splice(Number(fundPersonIndex), 1);
+    renderPersonLists();
+  }
+
+  const editFundPersonIndex = event.target.closest("[data-delete-edit-fund-person]")?.dataset.deleteEditFundPerson;
+  if (editFundPersonIndex !== undefined) {
+    state.editFundPersons.splice(Number(editFundPersonIndex), 1);
     renderPersonLists();
   }
 
@@ -3388,6 +4529,18 @@ document.addEventListener("change", (event) => {
     syncCurrencyFromLocation("manualSecurityLocation", "manualSecurityCurrency");
   }
 
+  if (event.target.id === "brokerCountry") {
+    syncCurrencyFromLocation("brokerCountry", "brokerCurrency");
+  }
+
+  if (event.target.id === "localAccountBroker") {
+    applyBrokerToAccount("localAccountBroker", "localAccountLocation", "localAccountCurrency");
+  }
+
+  if (event.target.id === "editAccountBroker") {
+    applyBrokerToAccount("editAccountBroker", "editAccountLocation", "editAccountCurrency");
+  }
+
   if (event.target.id === "securityKnownInstrument") {
     applyInstrumentToForm(instrumentById(event.target.value), "security");
   }
@@ -3398,7 +4551,7 @@ document.addEventListener("change", (event) => {
 
   if (event.target.id === "securityChartStartDate") {
     state.securityChartStartDate = clampedHistoryDate(event.target.value);
-    event.target.value = state.securityChartStartDate;
+    event.target.value = formatDate(state.securityChartStartDate);
     loadSecurityDetail().catch((error) => { $("securityDetailStatus").textContent = `Error: ${error.message}`; });
   }
 
@@ -3406,20 +4559,31 @@ document.addEventListener("change", (event) => {
     applySimulationFund();
   }
 
+  if (event.target.id === "simKind") {
+    syncSimulationFactorState();
+  }
+
   if (event.target.id === "simPersonSource") {
     applySimulationPerson();
   }
 
   if (event.target.id === "simBirthDate" && !$("simCurrentAge").value) {
-    $("simCurrentAge").value = ageFromBirthDate(event.target.value);
+    $("simCurrentAge").value = ageFromBirthDate(dateValue("simBirthDate"));
   }
 
   if (event.target.id === "backupScheduleFrequency") {
     syncBackupSchedulePickers();
   }
 
-  if (event.target.id === "reportFrom" || event.target.id === "historyDate") {
-    event.target.value = clampedHistoryDate(event.target.value);
+  if (event.target.id === "backupEnabled") {
+    syncBackupEnabledControls();
+  }
+
+  if (event.target.classList.contains("date-field")) {
+    const iso = event.target.id === "reportFrom" || event.target.id === "historyDate" || event.target.id === "securityChartStartDate"
+      ? clampedHistoryDate(event.target.value)
+      : parseDateInput(event.target.value);
+    if (iso) event.target.value = formatDate(iso);
   }
 });
 
@@ -3455,7 +4619,7 @@ document.addEventListener("drop", (event) => {
 });
 
 $("refresh").addEventListener("click", () => {
-  loadPortfolio().catch((error) => { $("status").textContent = `Error: ${error.message}`; });
+  loadPortfolio({ refresh: true }).catch((error) => { $("status").textContent = `Error: ${error.message}`; });
   loadBanner().catch(() => {});
 });
 $("apply").addEventListener("click", applyFilter);
@@ -3464,7 +4628,14 @@ $("runAlerts").addEventListener("click", runAlerts);
 $("addBannerItem").addEventListener("click", addBannerItem);
 $("runMarketScreener").addEventListener("click", runMarketScreener);
 $("saveLocalAccount").addEventListener("click", () => saveLocalAccount().catch((error) => { $("accountsStatus").textContent = `Error: ${error.message}`; }));
-$("addLocalAccountPerson").addEventListener("click", () => addPersonTo("localAccountPersons", "localPersonName", "localPersonBirthDate", "accountsStatus"));
+$("saveEditAccount").addEventListener("click", () => saveEditAccount().catch((error) => { $("editAccountStatus").textContent = `Error: ${error.message}`; }));
+$("saveBroker").addEventListener("click", () => saveBroker().catch((error) => { $("brokerStatus").textContent = `Error: ${error.message}`; }));
+$("clearBrokerForm").addEventListener("click", clearBrokerForm);
+$("saveFamilyMember").addEventListener("click", () => saveFamilyMember().catch((error) => { $("familyStatus").textContent = `Error: ${error.message}`; }));
+$("clearFamilyMemberForm").addEventListener("click", clearFamilyMemberForm);
+$("attachAccountToMember").addEventListener("click", () => attachAccountToMember().catch((error) => { $("familyStatus").textContent = `Error: ${error.message}`; }));
+$("attachLocalAccountPerson").addEventListener("click", () => attachFamilyMember("localAccountPersons", "localAccountFamilyMember", "accountsStatus", { single: !accountAllowsMultipleMembers({ type: valueOf("localAccountType") }) }));
+$("attachEditAccountPerson").addEventListener("click", () => attachFamilyMember("editAccountPersons", "editAccountFamilyMember", "editAccountStatus", { single: !accountAllowsMultipleMembers({ type: valueOf("editAccountType") }) }));
 $("importSource").addEventListener("click", () => importSourceToLocal().catch((error) => { $("accountsStatus").textContent = `Error: ${error.message}`; }));
 $("exportData").addEventListener("click", () => exportLocalData().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }));
 $("chooseImportData").addEventListener("click", () => $("importDataFile").click());
@@ -3477,6 +4648,15 @@ $("saveTableSettings").addEventListener("click", () => {
   $("settingsStatus").textContent = `Table moving average set to MA ${state.tableMaPeriod}`;
   renderRows(state.items || []);
 });
+$("saveDisplaySettings").addEventListener("click", () => {
+  state.language = valueOf("appLanguage") === "he" ? "he" : "en";
+  saveLanguageSettings();
+  applyLanguage();
+  renderFundsOverview();
+  renderSummary(state.items || []);
+  renderAnalytics(state.items || []);
+  $("settingsStatus").textContent = t("displaySettingsSaved");
+});
 $("dashboardEdit").addEventListener("click", () => setDashboardEdit(!state.dashboard.edit));
 $("dashboardReset").addEventListener("click", resetDashboard);
 $("saveManualSecurity").addEventListener("click", () => saveManualSecurity().catch((error) => { $("manualSecurityStatus").textContent = `Error: ${error.message}`; }));
@@ -3487,22 +4667,31 @@ $("loadReports").addEventListener("click", () => loadReports().catch((error) => 
 $("saveHistorySnapshot").addEventListener("click", () => saveHistorySnapshot().catch((error) => { $("historyStatus").textContent = `Error: ${error.message}`; }));
 $("captureHistorySnapshot").addEventListener("click", () => captureHistorySnapshot().catch((error) => { $("historyStatus").textContent = `Error: ${error.message}`; }));
 $("saveFund").addEventListener("click", () => saveFund().catch((error) => { $("fundStatus").textContent = `Error: ${error.message}`; }));
-$("addFundPerson").addEventListener("click", () => addPersonTo("fundPersons", "fundPersonName", "fundPersonBirthDate", "fundStatus"));
+$("saveEditFund").addEventListener("click", () => saveEditFund().catch((error) => { $("editFundStatus").textContent = `Error: ${error.message}`; }));
+$("attachFundPerson").addEventListener("click", () => attachFamilyMember("fundPersons", "fundFamilyMember", "fundStatus", { single: true }));
+$("attachEditFundPerson").addEventListener("click", () => attachFamilyMember("editFundPersons", "editFundFamilyMember", "editFundStatus", { single: true }));
 $("addPensionPeriod").addEventListener("click", addPensionPeriod);
 $("addPensionScenario").addEventListener("click", addPensionScenario);
 $("runPensionSimulation").addEventListener("click", () => runPensionSimulation().catch((error) => { $("pensionSimulationStatus").textContent = `Error: ${error.message}`; }));
 $("applyBackupSchedule").addEventListener("click", applyBackupSchedule);
 $("localAccountLocation").addEventListener("change", () => syncCurrencyFromLocation("localAccountLocation", "localAccountCurrency"));
+$("editAccountLocation").addEventListener("change", () => syncCurrencyFromLocation("editAccountLocation", "editAccountCurrency"));
+$("brokerCountry").addEventListener("change", () => syncCurrencyFromLocation("brokerCountry", "brokerCurrency"));
 $("priceLocation").addEventListener("change", () => syncCurrencyFromLocation("priceLocation", "priceCurrency"));
 ["manualSecuritySymbol", "manualUnderlyingSymbol", "securitySymbol", "priceSymbol"].forEach((id) => {
   $(id).addEventListener("blur", () => { $(id).value = cleanSecuritySymbol($(id).value); });
 });
 
+loadLanguageSettings();
 loadDashboardSettings();
 loadTableSettings();
+applyLanguage();
 
-Promise.all([loadLocalOptions(), loadLocalAccounts(), loadFunds()])
-  .then(() => Promise.all([loadPortfolio(), loadBanner(), loadAlerts()]))
-  .catch((error) => {
-  $("status").textContent = `Error: ${error.message}`;
-});
+loadPortfolio().catch(reportBackgroundError);
+loadBanner().catch(() => {});
+loadAlerts().catch(() => {});
+loadLocalOptions().catch(reportBackgroundError);
+loadBrokers().catch(reportBackgroundError);
+loadFamilyMembers().catch(reportBackgroundError);
+loadLocalAccounts().catch(reportBackgroundError);
+loadFunds().catch(reportBackgroundError);

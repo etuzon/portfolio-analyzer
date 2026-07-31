@@ -15,12 +15,14 @@ from .metrics import moving_averages, price_range_metrics, support_resistance, v
 from .models import Holding, Ohlcv, SymbolAnalysis, Trend
 
 
-ACCOUNT_TYPES = ["Investment", "Long-Term Savings", "Bank"]
+ACCOUNT_TYPES = ["Investment", "Long-Term Savings", "Bank", "ESOP"]
 FUND_KINDS = ["Pension", "Provident Fund", "Savings Fund"]
-ASSET_CLASSES = ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE"]
-INSTRUMENT_TYPES = ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE"]
+ASSET_CLASSES = ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"]
+INSTRUMENT_TYPES = ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"]
 OPTION_TYPES = ["CALL", "PUT"]
 EXPORT_TABLES = {
+    "brokers": ["id", "name", "country", "currency", "comments", "created_at"],
+    "family_members": ["id", "name", "first_name", "last_name", "gender", "birth_date", "retire_age", "comments", "created_at"],
     "accounts": [
         "id",
         "type",
@@ -82,7 +84,7 @@ EXPORT_TABLES = {
         "comments",
         "created_at",
     ],
-    "funds": ["id", "kind", "pension_id", "amount", "factor", "birth_date", "persons", "comments", "created_at"],
+    "funds": ["id", "kind", "fund_name", "pension_id", "amount", "factor", "account_id", "birth_date", "persons", "comments", "created_at"],
     "account_snapshots": [
         "account_db_id",
         "snapshot_date",
@@ -118,6 +120,18 @@ class LocalPortfolioStore:
                 conn.execute("pragma journal_mode=wal")
                 conn.execute(
                     """
+                    create table if not exists brokers (
+                        id text primary key,
+                        name text not null unique,
+                        country text not null,
+                        currency text not null,
+                        comments text not null default '',
+                        created_at text not null
+                    )
+                    """
+                )
+                conn.execute(
+                    """
                     create table if not exists accounts (
                         id text primary key,
                         type text not null,
@@ -128,6 +142,21 @@ class LocalPortfolioStore:
                         account_id text not null default '',
                         management_company text not null default '',
                         persons text not null default '[]',
+                        comments text not null default '',
+                        created_at text not null
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    create table if not exists family_members (
+                        id text primary key,
+                        name text not null,
+                        first_name text not null default '',
+                        last_name text not null default '',
+                        gender text not null default '',
+                        birth_date text not null,
+                        retire_age real,
                         comments text not null default '',
                         created_at text not null
                     )
@@ -200,9 +229,11 @@ class LocalPortfolioStore:
                     create table if not exists funds (
                         id text primary key,
                         kind text not null,
+                        fund_name text not null default '',
                         pension_id text not null,
                         amount real not null,
                         factor real not null default 200,
+                        account_id text not null default '',
                         birth_date text not null default '',
                         persons text not null default '[]',
                         comments text not null default '',
@@ -228,9 +259,15 @@ class LocalPortfolioStore:
                 )
                 conn.execute("create index if not exists idx_account_snapshots_date on account_snapshots(snapshot_date)")
                 self._ensure_column(conn, "accounts", "persons", "text not null default '[]'")
+                self._ensure_column(conn, "family_members", "first_name", "text not null default ''")
+                self._ensure_column(conn, "family_members", "last_name", "text not null default ''")
                 self._ensure_column(conn, "funds", "birth_date", "text not null default ''")
                 self._ensure_column(conn, "funds", "persons", "text not null default '[]'")
+                self._ensure_column(conn, "funds", "fund_name", "text not null default ''")
+                self._ensure_column(conn, "funds", "account_id", "text not null default ''")
+                self._split_existing_family_names(conn)
                 self._normalize_existing_symbols(conn)
+                self._seed_brokers_from_accounts(conn)
         except sqlite3.OperationalError as exc:
             if "readonly" not in str(exc).lower():
                 raise
@@ -239,6 +276,17 @@ class LocalPortfolioStore:
         columns = {row["name"] for row in conn.execute(f"pragma table_info({table})").fetchall()}
         if column not in columns:
             conn.execute(f"alter table {table} add column {column} {definition}")
+
+    def _split_existing_family_names(self, conn: sqlite3.Connection) -> None:
+        rows = conn.execute("select id, name, first_name, last_name from family_members").fetchall()
+        for row in rows:
+            if row["first_name"] or row["last_name"]:
+                continue
+            first_name, last_name = _split_person_name(row["name"])
+            conn.execute(
+                "update family_members set first_name = ?, last_name = ? where id = ?",
+                (first_name, last_name, row["id"]),
+            )
 
     def _normalize_existing_symbols(self, conn: sqlite3.Connection) -> None:
         for table in ["manual_securities", "transactions", "price_history"]:
@@ -254,6 +302,38 @@ class LocalPortfolioStore:
                       and existing.stock_market = {table}.stock_market
                   )
                 """
+            )
+
+    def _seed_brokers_from_accounts(self, conn: sqlite3.Connection) -> None:
+        rows = conn.execute(
+            """
+            select management_company, location, currency
+            from accounts
+            where trim(management_company) != ''
+            group by lower(management_company)
+            order by management_company
+            """
+        ).fetchall()
+        for row in rows:
+            country = _broker_country(row["location"])
+            currency = str(row["currency"] or _currency_for_location(country)).upper().strip()
+            if currency not in {"USD", "ILS"}:
+                currency = _currency_for_location(country)
+            conn.execute(
+                """
+                insert into brokers
+                  (id, name, country, currency, comments, created_at)
+                values
+                  (:id, :name, :country, :currency, '', :created_at)
+                on conflict(name) do nothing
+                """,
+                {
+                    "id": str(uuid4()),
+                    "name": str(row["management_company"] or "").strip(),
+                    "country": country,
+                    "currency": currency,
+                    "created_at": _now(),
+                },
             )
 
     def remove_source_branding(self) -> None:
@@ -288,6 +368,7 @@ class LocalPortfolioStore:
                 "transactions": conn.execute("select count(*) from transactions").fetchone()[0],
                 "prices": conn.execute("select count(*) from price_history").fetchone()[0],
                 "manual_securities": conn.execute("select count(*) from manual_securities").fetchone()[0],
+                "brokers": conn.execute("select count(*) from brokers").fetchone()[0],
                 "funds": conn.execute("select count(*) from funds").fetchone()[0],
                 "snapshots": conn.execute("select count(*) from account_snapshots").fetchone()[0],
             }
@@ -329,7 +410,9 @@ class LocalPortfolioStore:
                 conn.execute("delete from transactions")
                 conn.execute("delete from manual_securities")
                 conn.execute("delete from accounts")
-                for table in ["accounts", "manual_securities", "transactions", "price_history", "funds", "account_snapshots"]:
+                conn.execute("delete from family_members")
+                conn.execute("delete from brokers")
+                for table in ["brokers", "family_members", "accounts", "manual_securities", "transactions", "price_history", "funds", "account_snapshots"]:
                     columns = EXPORT_TABLES[table]
                     placeholders = ", ".join([":" + column for column in columns])
                     conn.executemany(
@@ -349,12 +432,15 @@ class LocalPortfolioStore:
             record["symbol"] = _clean_security_symbol(record["symbol"])
         if "underlying_symbol" in record:
             record["underlying_symbol"] = _clean_security_symbol(record["underlying_symbol"])
-        for key in ["type", "name", "username", "account_id", "management_company", "comments", "source", "kind", "pension_id", "created_at", "updated_at", "birth_date"]:
+        for key in ["type", "name", "first_name", "last_name", "gender", "username", "account_id", "management_company", "comments", "source", "kind", "fund_name", "pension_id", "created_at", "updated_at", "birth_date", "country", "currency"]:
             if key in record:
                 record[key] = str(record.get(key) or "")
+        if "first_name" in record and "last_name" in record and not (record["first_name"] or record["last_name"]):
+            record["first_name"], record["last_name"] = _split_person_name(record.get("name"))
+            record["name"] = _full_person_name(record["first_name"], record["last_name"]) or record.get("name", "")
         if "persons" in record:
             record["persons"] = json.dumps(_clean_persons(record.get("persons")))
-        for key in ["initial_cash", "quantity", "price_input", "price", "amount", "factor", "value", "cash", "profit", "profit_percent", "strike_price", "contract_multiplier"]:
+        for key in ["initial_cash", "quantity", "price_input", "price", "amount", "factor", "value", "cash", "profit", "profit_percent", "strike_price", "contract_multiplier", "retire_age"]:
             if key in record:
                 record[key] = _number(record.get(key), 0)
         return record
@@ -399,6 +485,188 @@ class LocalPortfolioStore:
             rows = conn.execute("select * from accounts order by management_company, username, account_id").fetchall()
         return [self._account_out(row) for row in rows]
 
+    def list_brokers(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute("select * from brokers order by name").fetchall()
+        return [self._broker_out(row) for row in rows]
+
+    def save_broker(self, payload: dict[str, Any]) -> dict[str, Any]:
+        country = _broker_country(payload.get("country") or payload.get("location"))
+        currency = str(payload.get("currency") or _currency_for_location(country)).upper().strip()
+        record = {
+            "id": str(payload.get("id") or uuid4()),
+            "name": str(payload.get("name") or "").strip(),
+            "country": country,
+            "currency": currency,
+            "comments": str(payload.get("comments") or "").strip(),
+            "created_at": str(payload.get("created_at") or _now()),
+        }
+        if not record["name"]:
+            raise ValueError("Broker name is required")
+        if record["currency"] not in {"USD", "ILS"}:
+            raise ValueError("Broker currency must be USD or ILS")
+        with self._connect() as conn:
+            existing = conn.execute("select * from brokers where id = ?", (record["id"],)).fetchone()
+            if existing:
+                old_name = str(existing["name"] or "").strip()
+                if old_name and old_name.lower() != record["name"].lower():
+                    conn.execute(
+                        """
+                        update accounts
+                        set management_company = :name
+                        where lower(management_company) = lower(:old_name)
+                        """,
+                        {"name": record["name"], "old_name": old_name},
+                    )
+                conn.execute(
+                    """
+                    update brokers
+                    set name = :name,
+                        country = :country,
+                        currency = :currency,
+                        comments = :comments
+                    where id = :id
+                    """,
+                    record,
+                )
+                row = conn.execute("select * from brokers where id = ?", (record["id"],)).fetchone()
+            else:
+                conn.execute(
+                    """
+                    insert into brokers
+                      (id, name, country, currency, comments, created_at)
+                    values
+                      (:id, :name, :country, :currency, :comments, :created_at)
+                    on conflict(name) do update set
+                      country = excluded.country,
+                      currency = excluded.currency,
+                      comments = excluded.comments
+                    """,
+                    record,
+                )
+                row = conn.execute("select * from brokers where name = ?", (record["name"],)).fetchone()
+        return self._broker_out(row or record)
+
+    def broker_account_count(self, broker_name: str) -> int:
+        name = str(broker_name or "").strip()
+        if not name:
+            return 0
+        with self._connect() as conn:
+            return int(conn.execute("select count(*) from accounts where lower(management_company) = lower(?)", (name,)).fetchone()[0])
+
+    def delete_broker(self, broker_id: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute("select * from brokers where id = ?", (broker_id,)).fetchone()
+            if not row:
+                return False
+            broker = self._broker_out(row)
+            if broker["attached_accounts"]:
+                raise ValueError("Broker is attached to at least one account")
+            conn.execute("delete from brokers where id = ?", (broker_id,))
+        return True
+
+    def list_family_members(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute("select * from family_members order by name, birth_date").fetchall()
+        return [self._family_member_out(row) for row in rows]
+
+    def save_family_member(self, payload: dict[str, Any]) -> dict[str, Any]:
+        first_name = str(payload.get("first_name") or "").strip()
+        last_name = str(payload.get("last_name") or "").strip()
+        if not first_name and not last_name:
+            first_name, last_name = _split_person_name(payload.get("name"))
+        name = _full_person_name(first_name, last_name)
+        record = {
+            "id": str(payload.get("id") or uuid4()),
+            "name": name,
+            "first_name": first_name,
+            "last_name": last_name,
+            "gender": str(payload.get("gender") or "").strip(),
+            "birth_date": _clean_birth_date(payload.get("birth_date") or payload.get("birthday")),
+            "retire_age": _optional_number(payload.get("retire_age")),
+            "comments": str(payload.get("comments") or "").strip(),
+            "created_at": str(payload.get("created_at") or _now()),
+        }
+        if not record["first_name"]:
+            raise ValueError("Family member first name is required")
+        if not record["birth_date"]:
+            raise ValueError("Family member birthday is required")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert into family_members
+                  (id, name, first_name, last_name, gender, birth_date, retire_age, comments, created_at)
+                values
+                  (:id, :name, :first_name, :last_name, :gender, :birth_date, :retire_age, :comments, :created_at)
+                on conflict(id) do update set
+                  name = excluded.name,
+                  first_name = excluded.first_name,
+                  last_name = excluded.last_name,
+                  gender = excluded.gender,
+                  birth_date = excluded.birth_date,
+                  retire_age = excluded.retire_age,
+                  comments = excluded.comments
+                """,
+                record,
+            )
+            self._sync_family_member_to_accounts(conn, record)
+        return self._family_member_out(record)
+
+    def family_member_account_count(self, member_id: str) -> int:
+        return len(self.family_member_accounts(member_id))
+
+    def family_member_accounts(self, member_id: str) -> list[dict[str, Any]]:
+        account_refs = []
+        for account in self.list_accounts():
+            if any(str(person.get("member_id") or person.get("id") or "") == str(member_id) for person in account.get("persons", [])):
+                account_refs.append(
+                    {
+                        "id": account["id"],
+                        "label": _account_label(account),
+                        "type": account.get("type", ""),
+                        "currency": account.get("currency", ""),
+                    }
+                )
+        return account_refs
+
+    def _sync_family_member_to_accounts(self, conn: sqlite3.Connection, member: dict[str, Any]) -> None:
+        member_id = str(member.get("id") or "")
+        if not member_id:
+            return
+        rows = conn.execute("select id, persons from accounts").fetchall()
+        for row in rows:
+            persons = _clean_persons(row["persons"])
+            changed = False
+            for person in persons:
+                if str(person.get("member_id") or person.get("id") or "") != member_id:
+                    continue
+                person.update(
+                    {
+                        "member_id": member_id,
+                        "name": member["name"],
+                        "first_name": member["first_name"],
+                        "last_name": member["last_name"],
+                        "gender": member.get("gender", ""),
+                        "birth_date": member["birth_date"],
+                        "age": age_from_birth_date(member["birth_date"]),
+                    }
+                )
+                if member.get("retire_age") is not None:
+                    person["retire_age"] = member["retire_age"]
+                else:
+                    person.pop("retire_age", None)
+                changed = True
+            if changed:
+                conn.execute("update accounts set persons = ? where id = ?", (json.dumps(persons), row["id"]))
+
+    def delete_family_member(self, member_id: str) -> bool:
+        if self.family_member_account_count(member_id):
+            raise ValueError("Family member is attached to at least one account")
+        with self._connect() as conn:
+            before = conn.execute("select count(*) from family_members where id = ?", (member_id,)).fetchone()[0]
+            conn.execute("delete from family_members where id = ?", (member_id,))
+        return bool(before)
+
     def save_account(self, payload: dict[str, Any]) -> dict[str, Any]:
         account_id = str(payload.get("id") or uuid4())
         location = str(payload.get("location") or "USA").strip()
@@ -420,14 +688,25 @@ class LocalPortfolioStore:
         with self._connect() as conn:
             conn.execute(
                 """
-                insert or replace into accounts
+                insert into accounts
                   (id, type, location, currency, initial_cash, username, account_id, management_company, persons, comments, created_at)
                 values
                   (:id, :type, :location, :currency, :initial_cash, :username, :account_id, :management_company, :persons, :comments, :created_at)
+                on conflict(id) do update set
+                  type = excluded.type,
+                  location = excluded.location,
+                  currency = excluded.currency,
+                  initial_cash = excluded.initial_cash,
+                  username = excluded.username,
+                  account_id = excluded.account_id,
+                  management_company = excluded.management_company,
+                  persons = excluded.persons,
+                  comments = excluded.comments
                 """,
                 record,
             )
-        return self._account_out(record)
+            row = conn.execute("select * from accounts where id = ?", (record["id"],)).fetchone()
+        return self._account_out(row or record)
 
     def delete_account(self, account_db_id: str) -> bool:
         with self._connect() as conn:
@@ -455,7 +734,8 @@ class LocalPortfolioStore:
         expiration_date = ""
         if payload.get("expiration_date"):
             expiration_date = _date_string(payload.get("expiration_date"))
-        if instrument_type == "OPTION":
+        is_option_grant = instrument_type in {"OPTION", "STOCK_OPTION"}
+        if is_option_grant:
             option_type = _choice(option_type, OPTION_TYPES, "CALL")
             if not str(payload.get("underlying_symbol") or "").strip():
                 raise ValueError("Underlying symbol is required for options")
@@ -467,7 +747,7 @@ class LocalPortfolioStore:
             raise ValueError("Expiration date is required for futures")
         else:
             option_type = ""
-        multiplier_default = 100 if instrument_type == "OPTION" else 1
+        multiplier_default = 100 if is_option_grant else 1
         record = {
             "id": str(payload.get("id") or uuid4()),
             "symbol": _clean_security_symbol(payload.get("symbol")),
@@ -852,27 +1132,48 @@ class LocalPortfolioStore:
         record = {
             "id": str(payload.get("id") or uuid4()),
             "kind": _choice(payload.get("kind"), FUND_KINDS, "Pension"),
+            "fund_name": str(payload.get("fund_name") or payload.get("name") or "").strip(),
             "pension_id": str(payload.get("pension_id") or "").strip(),
             "amount": _number(payload.get("amount"), 0),
             "factor": _number(payload.get("factor"), 200) or 200,
+            "account_id": str(payload.get("account_id") or "").strip(),
             "birth_date": _clean_birth_date(payload.get("birth_date") or payload.get("birthday")),
             "persons": json.dumps(_clean_persons(payload.get("persons"))),
             "comments": str(payload.get("comments") or "").strip(),
             "created_at": str(payload.get("created_at") or _now()),
         }
         if not record["pension_id"]:
-            record["pension_id"] = record["id"][:8]
+            raise ValueError("Fund ID is required")
+        if record["amount"] <= 0:
+            raise ValueError("Saved amount is required")
         with self._connect() as conn:
+            if record["account_id"]:
+                account = conn.execute("select * from accounts where id = ?", (record["account_id"],)).fetchone()
+                if not account:
+                    raise ValueError("Long-term account not found")
+                if account["type"] != "Long-Term Savings":
+                    raise ValueError("Fund can only be linked to a Long-Term Savings account")
             conn.execute(
                 """
-                insert or replace into funds
-                  (id, kind, pension_id, amount, factor, birth_date, persons, comments, created_at)
+                insert into funds
+                  (id, kind, fund_name, pension_id, amount, factor, account_id, birth_date, persons, comments, created_at)
                 values
-                  (:id, :kind, :pension_id, :amount, :factor, :birth_date, :persons, :comments, :created_at)
+                  (:id, :kind, :fund_name, :pension_id, :amount, :factor, :account_id, :birth_date, :persons, :comments, :created_at)
+                on conflict(id) do update set
+                  kind = excluded.kind,
+                  fund_name = excluded.fund_name,
+                  pension_id = excluded.pension_id,
+                  amount = excluded.amount,
+                  factor = excluded.factor,
+                  account_id = excluded.account_id,
+                  birth_date = excluded.birth_date,
+                  persons = excluded.persons,
+                  comments = excluded.comments
                 """,
                 record,
             )
-        return {**self._fund_out(record), "monthly_estimate": monthly_pension(record["amount"], record["factor"])}
+            row = conn.execute("select * from funds where id = ?", (record["id"],)).fetchone()
+        return self._fund_out(row or record)
 
     def simulate_pension(self, payload: dict[str, Any]) -> dict[str, Any]:
         scenarios = payload.get("scenarios")
@@ -892,7 +1193,7 @@ class LocalPortfolioStore:
                 raise ValueError("Current age is required")
             if retire_age <= current_age:
                 raise ValueError("Retirement age must be greater than current age")
-            factor = _number(scenario.get("factor"), 200) or 200
+            factor = (_number(scenario.get("factor"), 200) or 200) if kind == "Pension" else None
             annual_return = _number(scenario.get("annual_return"), _number(scenario.get("annual_return_percent"), 0)) / 100
             monthly_return = (1 + annual_return) ** (1 / 12) - 1 if annual_return > -1 else -1
             amount = _number(scenario.get("amount"), _number(scenario.get("current_amount"), 0))
@@ -921,7 +1222,7 @@ class LocalPortfolioStore:
                             "monthly_deposit": monthly_deposit,
                         }
                     )
-            monthly_payout = monthly_pension(amount, factor) if kind == "Pension" else None
+            monthly_payout = monthly_pension(amount, factor or 200) if kind == "Pension" else None
             results.append(
                 {
                     "name": str(scenario.get("name") or f"Scenario {index}").strip(),
@@ -1061,7 +1362,7 @@ class LocalPortfolioStore:
             "funds": {
                 "count": len(funds),
                 "amount": sum(item["amount"] for item in funds),
-                "monthly_estimate": sum(item["monthly_estimate"] for item in funds),
+                "monthly_estimate": sum(_number(item.get("monthly_estimate"), 0) for item in funds),
                 "items": funds,
             },
         }
@@ -1527,12 +1828,40 @@ class LocalPortfolioStore:
         item["persons"] = _clean_persons(item.get("persons"))
         if not item["persons"] and item.get("birth_date"):
             item["persons"] = [{"name": "Person 1", "birth_date": item["birth_date"], "age": age_from_birth_date(item["birth_date"])}]
-        item["monthly_estimate"] = monthly_pension(item["amount"], item["factor"])
+        item["monthly_estimate"] = monthly_pension(item["amount"], item["factor"]) if item.get("kind") == "Pension" else None
+        item["account"] = None
+        item["account_label"] = ""
+        if item.get("account_id"):
+            with self._connect() as conn:
+                account = conn.execute("select * from accounts where id = ?", (item["account_id"],)).fetchone()
+            if account:
+                item["account"] = self._account_out(account)
+                item["account_label"] = _account_label(item["account"])
         return item
 
     def _account_out(self, row) -> dict[str, Any]:
         item = _dict(row)
         item["persons"] = _clean_persons(item.get("persons"))
+        return item
+
+    def _broker_out(self, row) -> dict[str, Any]:
+        item = _dict(row)
+        item["country"] = _broker_country(item.get("country"))
+        item["currency"] = str(item.get("currency") or _currency_for_location(item["country"])).upper().strip()
+        item["attached_accounts"] = self.broker_account_count(item.get("name", ""))
+        return item
+
+    def _family_member_out(self, row) -> dict[str, Any]:
+        item = _dict(row)
+        if not item.get("first_name") and not item.get("last_name"):
+            item["first_name"], item["last_name"] = _split_person_name(item.get("name"))
+        item["name"] = _full_person_name(item.get("first_name"), item.get("last_name")) or str(item.get("name") or "").strip()
+        item["birth_date"] = _clean_birth_date(item.get("birth_date"))
+        item["retire_age"] = _optional_number(item.get("retire_age"))
+        item["age"] = age_from_birth_date(item["birth_date"])
+        attached_accounts = self.family_member_accounts(item["id"]) if item.get("id") else []
+        item["attached_accounts"] = len(attached_accounts)
+        item["attached_account_items"] = attached_accounts
         return item
 
     def _snapshot_out(self, row) -> dict[str, Any]:
@@ -1574,7 +1903,9 @@ def monthly_pension(amount: float, factor: float = 200) -> float:
 
 
 def age_from_birth_date(value: str, on_date: date | None = None) -> float:
-    birth_date = date.fromisoformat(value)
+    birth_date = _parse_date(value)
+    if not birth_date:
+        raise ValueError("Birth date must use DD/MM/YYYY")
     today = on_date or date.today()
     if birth_date > today:
         raise ValueError("Birth date cannot be in the future")
@@ -1585,13 +1916,12 @@ def _clean_birth_date(value: Any) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
-    try:
-        parsed = date.fromisoformat(text)
-    except ValueError as exc:
-        raise ValueError("Birth date must use YYYY-MM-DD") from exc
+    parsed = _parse_date(text)
+    if not parsed:
+        raise ValueError("Birth date must use DD/MM/YYYY")
     if parsed > date.today():
         raise ValueError("Birth date cannot be in the future")
-    return text
+    return parsed.isoformat()
 
 
 def _clean_persons(value: Any) -> list[dict[str, Any]]:
@@ -1610,9 +1940,42 @@ def _clean_persons(value: Any) -> list[dict[str, Any]]:
         birth_date = _clean_birth_date(item.get("birth_date") or item.get("birthday"))
         if not birth_date:
             continue
-        name = str(item.get("name") or f"Person {index}").strip() or f"Person {index}"
-        persons.append({"name": name, "birth_date": birth_date, "age": age_from_birth_date(birth_date)})
+        first_name = str(item.get("first_name") or "").strip()
+        last_name = str(item.get("last_name") or "").strip()
+        if not first_name and not last_name:
+            first_name, last_name = _split_person_name(item.get("name") or f"Person {index}")
+        name = _full_person_name(first_name, last_name) or f"Person {index}"
+        person = {
+            "name": name,
+            "first_name": first_name or name,
+            "last_name": last_name,
+            "birth_date": birth_date,
+            "age": age_from_birth_date(birth_date),
+        }
+        member_id = str(item.get("member_id") or item.get("id") or "").strip()
+        if member_id:
+            person["member_id"] = member_id
+        gender = str(item.get("gender") or "").strip()
+        if gender:
+            person["gender"] = gender
+        retire_age = _optional_number(item.get("retire_age"))
+        if retire_age is not None:
+            person["retire_age"] = retire_age
+        persons.append(person)
     return persons
+
+
+def _split_person_name(value: Any) -> tuple[str, str]:
+    parts = str(value or "").strip().split()
+    if not parts:
+        return "", ""
+    if len(parts) == 1:
+        return parts[0], ""
+    return " ".join(parts[:-1]), parts[-1]
+
+
+def _full_person_name(first_name: Any, last_name: Any) -> str:
+    return " ".join(part for part in [str(first_name or "").strip(), str(last_name or "").strip()] if part)
 
 
 def _income_periods(scenario: dict[str, Any], current_age: float, retire_age: float) -> list[dict[str, Any]]:
@@ -1687,6 +2050,8 @@ def _asset_class_for_instrument(instrument_type: str, requested: Any = "") -> st
         "BOND": "BOND",
         "OPTION": "OPTION",
         "FUTURE": "FUTURE",
+        "RSU": "RSU",
+        "STOCK_OPTION": "STOCK_OPTION",
     }
     requested_text = str(requested or "").upper().strip()
     if requested_text in ASSET_CLASSES and instrument_type not in mapping:
@@ -1709,6 +2074,15 @@ def _number(value: Any, default: float = 0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _optional_number(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _date_string(value: Any) -> str:
@@ -1735,8 +2109,17 @@ def _fill_trend_dates(points: list[dict[str, Any]], dates: list[str]) -> list[di
 def _parse_date(value: Any) -> date | None:
     if not value:
         return None
+    text = str(value).strip()
+    if "/" in text:
+        parts = text.split("/")
+        if len(parts) == 3:
+            try:
+                day, month, year = (int(part) for part in parts)
+                return date(year, month, day)
+            except ValueError:
+                return None
     try:
-        return date.fromisoformat(str(value)[:10])
+        return date.fromisoformat(text[:10])
     except ValueError:
         return None
 
@@ -1758,6 +2141,15 @@ def _location_key(location: str) -> str:
 
 def _currency_for_location(location: str) -> str:
     return "ILS" if _location_key(location) == "israel" else "USD"
+
+
+def _broker_country(location: Any) -> str:
+    key = _location_key(str(location or "USA"))
+    if key == "israel":
+        return "Israel"
+    if key == "usa":
+        return "USA"
+    return "USA"
 
 
 def _cash_delta(tx: dict[str, Any]) -> float:

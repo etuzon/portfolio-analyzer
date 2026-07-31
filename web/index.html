@@ -6,16 +6,9 @@
     <meta name="theme-color" content="#080d25" />
     <title>Portfolio Analyzer</title>
     <link rel="icon" type="image/svg+xml" href="/assets/app-icon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=0.4.5" />
+    <link rel="stylesheet" href="/styles.css?v=0.4.35" />
   </head>
   <body>
-    <div id="loadingOverlay" class="loading-overlay" role="status" aria-live="polite">
-      <div class="loading-panel">
-        <span class="loading-spinner" aria-hidden="true"></span>
-        <b id="loadingTitle">Loading portfolio</b>
-        <small id="loadingDetail">Reading cached analytics</small>
-      </div>
-    </div>
     <div class="app-shell">
       <aside class="sidebar" aria-label="Main navigation">
         <div class="brand">
@@ -23,17 +16,45 @@
           <span>Portfolio</span>
         </div>
         <nav class="nav">
-          <button class="nav-item active" type="button">Overview</button>
-          <button class="nav-item" type="button" data-modal="accountsModal">Accounts</button>
-          <button class="nav-item" type="button" data-modal="securitiesModal">Securities</button>
-          <button class="nav-item" type="button" data-modal="pricesModal">Prices</button>
-          <button class="nav-item" type="button" data-modal="reportsModal">Reports</button>
-          <button class="nav-item" type="button" data-modal="fundsModal">Pension/Funds</button>
-          <button class="nav-item" type="button" data-modal="marketModal">Market screener</button>
-          <button class="nav-item" type="button" data-modal="alertsModal">Alerts</button>
-          <button class="nav-item" type="button" data-modal="bannerModal">Banner</button>
-          <button class="nav-item" type="button" data-modal="settingsModal">Settings</button>
-          <button class="nav-item" type="button" data-modal="aboutModal">About</button>
+          <div class="nav-title">Main Menu</div>
+          <details class="nav-menu" open>
+            <summary>Dashboard</summary>
+            <div class="nav-children">
+              <button class="nav-item active" type="button">Overview</button>
+              <button class="nav-item" type="button" data-modal="reportsModal">Reports</button>
+            </div>
+          </details>
+          <details class="nav-menu">
+            <summary>Portfolio Data</summary>
+            <div class="nav-children">
+              <button class="nav-item" type="button" data-modal="accountsModal">Accounts</button>
+              <button class="nav-item" type="button" data-modal="brokersModal">Brokers</button>
+              <button class="nav-item" type="button" data-modal="securitiesModal">Securities</button>
+              <button class="nav-item" type="button" data-modal="pricesModal">Prices</button>
+            </div>
+          </details>
+          <details class="nav-menu">
+            <summary>Household & Retirement</summary>
+            <div class="nav-children">
+              <button class="nav-item" type="button" data-modal="familyModal">Family Members</button>
+              <button class="nav-item" type="button" data-modal="fundsModal">Pension/Funds</button>
+            </div>
+          </details>
+          <details class="nav-menu">
+            <summary>Markets & Alerts</summary>
+            <div class="nav-children">
+              <button class="nav-item" type="button" data-modal="marketModal">Market Screener</button>
+              <button class="nav-item" type="button" data-modal="alertsModal">Alerts</button>
+              <button class="nav-item" type="button" data-modal="bannerModal">Market Banner</button>
+            </div>
+          </details>
+          <details class="nav-menu">
+            <summary>System</summary>
+            <div class="nav-children">
+              <button class="nav-item" type="button" data-modal="settingsModal">Settings</button>
+              <button class="nav-item" type="button" data-modal="aboutModal">About</button>
+            </div>
+          </details>
         </nav>
       </aside>
 
@@ -44,7 +65,16 @@
             <h1>Portfolio analyzer</h1>
             <p id="status">Loading portfolio</p>
           </div>
-          <button id="refresh" class="icon-button" title="Refresh" aria-label="Refresh">↻</button>
+          <div class="topbar-actions">
+            <div id="loadingOverlay" class="loading-indicator" role="status" aria-live="polite" hidden>
+              <span class="loading-spinner" aria-hidden="true"></span>
+              <span>
+                <b id="loadingTitle">Loading portfolio</b>
+                <small id="loadingDetail">Reading cached analytics</small>
+              </span>
+            </div>
+            <button id="refresh" class="icon-button" title="Refresh" aria-label="Refresh">↻</button>
+          </div>
         </header>
 
         <section class="ticker-panel">
@@ -110,6 +140,8 @@
               <option value="MUTUALFUND">Fund</option>
               <option value="OPTION">Option</option>
               <option value="FUTURE">Future</option>
+              <option value="RSU">RSU</option>
+              <option value="STOCK_OPTION">Stock Option</option>
             </select>
             <select id="currency">
               <option value="">Any currency</option>
@@ -163,26 +195,142 @@
           Imported accounts are linked to local securities. Manual accounts stay separate and can be edited here.
         </div>
         <div id="accountsSummary" class="report-grid account-summary"></div>
-        <div class="management-form account-form">
-          <label class="field"><span>Type</span><select id="localAccountType" title="Investment, long-term savings, or bank account"></select></label>
-          <label class="field"><span>Country</span><input id="localAccountLocation" list="countryOptions" placeholder="Location" title="Account country. Israel uses agorot for security prices; USA bonds use cents." /></label>
-          <label class="field"><span>Currency</span><select id="localAccountCurrency" title="Account base currency"></select></label>
-          <label class="field"><span>Initial cash</span><input id="localInitialCash" type="number" step="0.01" placeholder="0" title="Opening cash balance. Buy/sell/short transactions affect cash; add/remove security does not." /></label>
-          <label class="field"><span>Username</span><input id="localUsername" placeholder="Owner / login" title="Owner or username shown in account reports" /></label>
-          <label class="field"><span>Account id</span><input id="localAccountId" placeholder="Account id" title="External account id from broker, bank, pension company, or import sync" /></label>
-          <label class="field"><span>Management company</span><input id="localManagementCompany" placeholder="Broker / bank / fund" title="Broker, bank, pension company, or platform" /></label>
-          <label class="field"><span>Comments</span><input id="localAccountComments" placeholder="Comments" title="Optional operational notes for finance managers" /></label>
-          <label class="field"><span>Person</span><input id="localPersonName" placeholder="Family member name" /></label>
-          <label class="field"><span>Birthday</span><input id="localPersonBirthDate" type="date" title="Birthday for long-term savings age calculations" /></label>
-          <button id="addLocalAccountPerson" class="secondary" type="button">Add person</button>
-          <div id="localAccountPersons" class="person-list"></div>
-          <div class="form-actions">
-            <button id="saveLocalAccount" type="button" title="Create or update a manual account">Save account</button>
-            <button id="importSource" class="secondary" type="button" title="Refresh account and security links from the configured import source">Sync import</button>
+        <div class="tab-bar" role="tablist" aria-label="Account workflows">
+          <button type="button" data-account-tab="new">New account</button>
+          <button class="active" type="button" data-account-tab="existing">Existing accounts</button>
+        </div>
+        <div id="accountNewPanel" class="account-panel" hidden>
+          <div class="panel-title">
+            <b>New account</b>
+            <span>Create a manual account and attach existing family members.</span>
+          </div>
+          <div class="management-form account-form">
+            <label class="field"><span>Type</span><select id="localAccountType" title="Investment, long-term savings, or bank account"></select></label>
+            <label class="field"><span>Country</span><select id="localAccountLocation" title="Account country. Israel uses agorot for security prices; USA bonds use cents."></select></label>
+            <label class="field"><span>Currency</span><select id="localAccountCurrency" title="Account base currency"></select></label>
+            <label class="field"><span>Initial cash</span><input id="localInitialCash" type="number" step="0.01" placeholder="0" title="Opening cash balance. Buy/sell/short transactions affect cash; add/remove security does not." /></label>
+            <label class="field"><span>Username</span><input id="localUsername" placeholder="Owner / login" title="Owner or username shown in account reports" /></label>
+            <label class="field"><span>Account id</span><input id="localAccountId" placeholder="Account id" title="External account id from broker, bank, pension company, or import sync" /></label>
+            <label class="field"><span>Broker</span><select id="localAccountBroker" title="Broker, bank, pension company, or platform"></select></label>
+            <label class="field"><span>Comments</span><input id="localAccountComments" placeholder="Comments" title="Optional operational notes for finance managers" /></label>
+            <label class="field"><span>Existing person</span><select id="localAccountFamilyMember"></select></label>
+            <button id="attachLocalAccountPerson" class="secondary" type="button">Add existing person</button>
+            <button class="secondary" type="button" data-modal="brokersModal">Manage brokers</button>
+            <button class="secondary" type="button" data-modal="familyModal">Manage people</button>
+            <div id="localAccountPersons" class="person-list"></div>
+            <div class="form-actions">
+              <button id="saveLocalAccount" type="button" title="Create a manual account">Create account</button>
+            </div>
           </div>
         </div>
+        <div id="accountExistingPanel" class="account-panel">
+          <div class="account-panel-head">
+            <div class="panel-title">
+              <b>Existing accounts</b>
+              <span>Review accounts here. Use Edit to change account values.</span>
+            </div>
+            <button id="importSource" class="secondary compact-button" type="button" title="Refresh account and security links from the configured import source">Sync import</button>
+          </div>
+          <div id="accountsList" class="stack management-list"></div>
+        </div>
         <p id="accountsStatus" class="status-line"></p>
-        <div id="accountsList" class="stack management-list"></div>
+      </section>
+    </div>
+
+    <div id="accountEditModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="accountEditTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Existing account</p>
+            <h2 id="accountEditTitle">Edit account</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="management-form account-form">
+          <label class="field"><span>Type</span><select id="editAccountType" title="Investment, long-term savings, or bank account"></select></label>
+          <label class="field"><span>Country</span><select id="editAccountLocation" title="Account country. Israel uses agorot for security prices; USA bonds use cents."></select></label>
+          <label class="field"><span>Currency</span><select id="editAccountCurrency" title="Account base currency"></select></label>
+          <label class="field"><span>Initial cash</span><input id="editInitialCash" type="number" step="0.01" placeholder="0" title="Opening cash balance. Buy/sell/short transactions affect cash; add/remove security does not." /></label>
+          <label class="field"><span>Username</span><input id="editUsername" placeholder="Owner / login" title="Owner or username shown in account reports" /></label>
+          <label class="field"><span>Account id</span><input id="editAccountId" placeholder="Account id" title="External account id from broker, bank, pension company, or import sync" /></label>
+          <label class="field"><span>Broker</span><select id="editAccountBroker" title="Broker, bank, pension company, or platform"></select></label>
+          <label class="field"><span>Comments</span><input id="editAccountComments" placeholder="Comments" title="Optional operational notes for finance managers" /></label>
+          <label class="field"><span>Existing person</span><select id="editAccountFamilyMember"></select></label>
+          <button id="attachEditAccountPerson" class="secondary" type="button">Add existing person</button>
+          <button class="secondary" type="button" data-modal="brokersModal">Manage brokers</button>
+          <button class="secondary" type="button" data-modal="familyModal">Manage people</button>
+          <div id="editAccountPersons" class="person-list"></div>
+          <div class="form-actions">
+            <button id="saveEditAccount" type="button" title="Update this account after confirmation">Save changes</button>
+            <button class="secondary" type="button" data-close>Cancel</button>
+          </div>
+        </div>
+        <p id="editAccountStatus" class="status-line"></p>
+      </section>
+    </div>
+
+    <div id="brokersModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="brokersTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Account setup</p>
+            <h2 id="brokersTitle">Brokers</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="management-form">
+          <input id="brokerName" placeholder="Broker / bank / fund name" />
+          <select id="brokerCountry"></select>
+          <select id="brokerCurrency"></select>
+          <input id="brokerComments" placeholder="Comments" />
+          <button id="saveBroker" type="button">Save broker</button>
+          <button id="clearBrokerForm" class="secondary" type="button">Clear form</button>
+        </div>
+        <p id="brokerStatus" class="status-line"></p>
+        <div id="brokersList" class="stack management-list"></div>
+      </section>
+    </div>
+
+    <div id="familyModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="familyTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Household</p>
+            <h2 id="familyTitle">Family members</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="management-form">
+          <input id="familyMemberFirstName" placeholder="First name" />
+          <input id="familyMemberLastName" placeholder="Last name" />
+          <select id="familyMemberGender">
+            <option value="">Gender</option>
+            <option value="Female">Female</option>
+            <option value="Male">Male</option>
+            <option value="Other">Other</option>
+          </select>
+          <input id="familyMemberBirthDate" class="date-field" inputmode="numeric" placeholder="Birthday dd/mm/yyyy" />
+          <input id="familyMemberRetireAge" type="number" min="0" step="0.1" placeholder="Retire age optional" />
+          <input id="familyMemberComments" placeholder="Comments" />
+          <button id="saveFamilyMember" type="button">Save person</button>
+          <button id="clearFamilyMemberForm" class="secondary" type="button">Clear form</button>
+        </div>
+        <div class="management-section">
+          <p class="form-caption">Attach account to member</p>
+          <div class="management-form">
+            <select id="familyAttachAccount"></select>
+            <select id="familyAttachMember"></select>
+            <button id="attachAccountToMember" class="secondary" type="button">Attach account</button>
+          </div>
+          <div class="info-strip">
+            Investment and bank accounts can have multiple members. Pension and long-term savings accounts use one member.
+          </div>
+        </div>
+        <p id="familyStatus" class="status-line"></p>
+        <div id="familyMembersList" class="stack management-list"></div>
       </section>
     </div>
 
@@ -207,7 +355,7 @@
             <input id="manualSecurityLocation" list="countryOptions" placeholder="Location" />
             <input id="manualUnderlyingSymbol" data-derivative-field placeholder="Underlying" />
             <select id="manualOptionType" data-option-field></select>
-            <input id="manualExpirationDate" data-derivative-field type="date" />
+            <input id="manualExpirationDate" class="date-field" data-derivative-field inputmode="numeric" placeholder="dd/mm/yyyy" />
             <input id="manualStrikePrice" data-option-field type="number" step="0.0001" placeholder="Strike" />
             <input id="manualContractMultiplier" data-derivative-field type="number" step="0.0001" placeholder="Multiplier" />
             <input id="manualSecurityComments" placeholder="Comments" />
@@ -233,7 +381,7 @@
             <select id="securityAssetClass"></select>
             <input id="securityQuantity" type="number" step="0.0001" placeholder="Amount" />
             <input id="securityPrice" type="number" step="0.0001" placeholder="Buy/short price" />
-            <input id="securityDate" type="date" />
+            <input id="securityDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
             <label class="check"><input id="securityAllowManual" type="checkbox" /> Manual if not found</label>
             <input id="securityComments" placeholder="Comments" />
             <button id="saveSecurity" type="button">Save transaction</button>
@@ -262,7 +410,7 @@
           <input id="priceLocation" list="countryOptions" placeholder="Location" />
           <select id="priceCurrency"></select>
           <input id="priceInput" type="number" step="0.0001" placeholder="Historic price" />
-          <input id="priceDate" type="date" />
+          <input id="priceDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
           <input id="priceComments" placeholder="Comments" />
           <button id="savePrice" type="button">Save</button>
         </div>
@@ -303,7 +451,7 @@
               <p class="form-caption">Price chart</p>
             </div>
             <div class="security-chart-controls">
-              <label class="chart-date-field"><span>From</span><input id="securityChartStartDate" type="date" /></label>
+              <label class="chart-date-field"><span>From</span><input id="securityChartStartDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
               <div class="dashboard-view-toggle security-chart-toggle" aria-label="Security chart period">
                 <button type="button" data-security-chart-period="1m">1M</button>
                 <button type="button" data-security-chart-period="1y">1Y</button>
@@ -318,7 +466,7 @@
           <p class="form-caption">Update price history</p>
           <div class="management-form detail-price-form">
             <input id="detailPriceInput" type="number" step="0.0001" placeholder="Historic price" />
-            <input id="detailPriceDate" type="date" />
+            <input id="detailPriceDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
             <input id="detailPriceComments" placeholder="Comments" />
             <button id="saveDetailPrice" type="button">Save price</button>
             <button id="openFocusedPrices" class="secondary" type="button">Open prices</button>
@@ -352,8 +500,8 @@
           <select id="reportAccount"></select>
           <select id="reportAccountType"></select>
           <input id="reportLocation" list="countryOptions" placeholder="Location" />
-          <input id="reportFrom" type="date" />
-          <input id="reportTo" type="date" />
+          <input id="reportFrom" class="date-field" inputmode="numeric" placeholder="From dd/mm/yyyy" />
+          <input id="reportTo" class="date-field" inputmode="numeric" placeholder="To dd/mm/yyyy" />
           <button id="loadReports" type="button">Run report</button>
         </div>
         <div id="reportsSummary" class="report-grid"></div>
@@ -368,7 +516,7 @@
           </div>
           <div class="history-form">
             <select id="historyAccount"></select>
-            <input id="historyDate" type="date" />
+            <input id="historyDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
             <input id="historyValue" type="number" step="0.01" placeholder="Total value" />
             <input id="historyCash" type="number" step="0.01" placeholder="Cash" />
             <input id="historyProfit" type="number" step="0.01" placeholder="Profit" />
@@ -393,14 +541,13 @@
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
         <div class="management-form">
-          <select id="fundKind"></select>
-          <input id="fundPensionId" placeholder="Pension / fund id" />
-          <input id="fundAmount" type="number" step="0.01" placeholder="Amount saved" />
-          <input id="fundFactor" type="number" step="0.01" value="200" placeholder="Factor" />
-          <input id="fundComments" placeholder="Comments" />
-          <input id="fundPersonName" placeholder="Family member name" />
-          <input id="fundPersonBirthDate" type="date" title="Birthday for automatic age calculation" />
-          <button id="addFundPerson" class="secondary" type="button">Add person</button>
+          <label class="field"><span class="field-label">Fund type <em title="Choose whether this is a Pension, Provident Fund, or Savings Fund.">?</em></span><select id="fundKind"></select></label>
+          <label class="field"><span class="field-label">Fund name <em title="The pension company or fund display name, for example Mashlima.">?</em></span><input id="fundName" placeholder="Pension fund name" /></label>
+          <label class="field"><span class="field-label">Fund ID <em title="The official pension, provident, or savings fund identifier. Required.">?</em></span><input id="fundPensionId" placeholder="Pension / fund id" /></label>
+          <label class="field"><span class="field-label">Saved amount <em title="Current saved balance in the selected fund. Required.">?</em></span><input id="fundAmount" type="number" step="0.01" placeholder="Amount saved" /></label>
+          <label class="field"><span class="field-label">Long-term account <em title="Optional link to an existing account whose type is Long-Term Savings.">?</em></span><select id="fundAccount"></select></label>
+          <label class="field"><span class="field-label">Comments <em title="Optional note shown only inside this dashboard.">?</em></span><input id="fundComments" placeholder="Comments" /></label>
+          <label class="field connected-field"><span class="field-label">Family member <em title="Attach the saved fund to one existing family member.">?</em></span><span class="connected-control"><select id="fundFamilyMember"></select><button id="attachFundPerson" class="secondary" type="button">Attach person</button></span></label>
           <div id="fundPersons" class="person-list"></div>
           <button id="saveFund" type="button">Save</button>
         </div>
@@ -419,7 +566,7 @@
             <input id="simName" placeholder="Scenario name" />
             <select id="simKind"></select>
             <select id="simPersonSource"></select>
-            <input id="simBirthDate" type="date" title="User birthday for automatic current age" />
+            <input id="simBirthDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" title="User birthday for automatic current age" />
             <input id="simCurrentAge" type="number" min="0" step="0.1" placeholder="Current age" />
             <input id="simRetireAge" type="number" min="0" step="0.1" placeholder="Retire age" />
             <input id="simAmount" type="number" min="0" step="0.01" placeholder="Current amount" />
@@ -443,6 +590,34 @@
           <div id="pensionScenarios" class="simulator-list"></div>
           <div id="pensionSimulationResults" class="simulator-results"></div>
         </div>
+      </section>
+    </div>
+
+    <div id="fundEditModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="fundEditTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Saved fund</p>
+            <h2 id="fundEditTitle">Edit pension fund</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="management-form">
+          <label class="field"><span class="field-label">Fund type <em title="Choose whether this is a Pension, Provident Fund, or Savings Fund.">?</em></span><select id="editFundKind"></select></label>
+          <label class="field"><span class="field-label">Fund name <em title="The pension company or fund display name, for example Mashlima.">?</em></span><input id="editFundName" placeholder="Pension fund name" /></label>
+          <label class="field"><span class="field-label">Fund ID <em title="The official pension, provident, or savings fund identifier. Required.">?</em></span><input id="editFundPensionId" placeholder="Pension / fund id" /></label>
+          <label class="field"><span class="field-label">Saved amount <em title="Current saved balance in the selected fund. Required.">?</em></span><input id="editFundAmount" type="number" step="0.01" placeholder="Amount saved" /></label>
+          <label class="field"><span class="field-label">Long-term account <em title="Optional link to an existing account whose type is Long-Term Savings.">?</em></span><select id="editFundAccount"></select></label>
+          <label class="field"><span class="field-label">Comments <em title="Optional note shown only inside this dashboard.">?</em></span><input id="editFundComments" placeholder="Comments" /></label>
+          <label class="field connected-field"><span class="field-label">Family member <em title="Attach the saved fund to one existing family member.">?</em></span><span class="connected-control"><select id="editFundFamilyMember"></select><button id="attachEditFundPerson" class="secondary" type="button">Attach person</button></span></label>
+          <div id="editFundPersons" class="person-list"></div>
+          <div class="form-actions">
+            <button id="saveEditFund" type="button">Save changes</button>
+            <button class="secondary" type="button" data-close>Cancel</button>
+          </div>
+        </div>
+        <p id="editFundStatus" class="status-line"></p>
       </section>
     </div>
 
@@ -559,16 +734,25 @@
         </div>
         <div class="settings-section">
           <div class="settings-section-title">
-            <h3>Table display</h3>
+            <h3 data-i18n="display">Display</h3>
           </div>
           <div class="management-form settings-form">
-          <label class="field"><span>Table MA period</span><select id="tableMaPeriod"><option value="7">MA 7</option><option value="15">MA 15</option><option value="30">MA 30</option></select></label>
-            <button id="saveTableSettings" type="button">Save table settings</button>
+            <label class="field"><span data-i18n="appLanguage">App language</span><select id="appLanguage"><option value="en">English</option><option value="he">עברית</option></select></label>
+            <button id="saveDisplaySettings" type="button" data-i18n="saveDisplaySettings">Save display settings</button>
           </div>
         </div>
         <div class="settings-section">
           <div class="settings-section-title">
-            <h3>Data</h3>
+            <h3 data-i18n="tableDisplay">Table display</h3>
+          </div>
+          <div class="management-form settings-form">
+          <label class="field"><span data-i18n="tableMaPeriod">Table MA period</span><select id="tableMaPeriod"><option value="7">MA 7</option><option value="15">MA 15</option><option value="30">MA 30</option></select></label>
+            <button id="saveTableSettings" type="button" data-i18n="saveTableSettings">Save table settings</button>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-section-title">
+            <h3 data-i18n="data">Data</h3>
           </div>
           <div class="settings-actions">
             <button id="exportData" type="button">Export data</button>
@@ -579,7 +763,7 @@
         </div>
         <div class="settings-section">
           <div class="settings-section-title">
-            <h3>Backup schedule</h3>
+            <h3 data-i18n="backupSchedule">Backup schedule</h3>
           </div>
           <div class="management-form settings-form">
             <label class="field"><span>Backup enabled</span><select id="backupEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
@@ -607,7 +791,7 @@
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
         <div class="schedule-form">
-          <label class="field"><span>Frequency</span><select id="backupScheduleFrequency"><option value="weekly">Days each week</option><option value="monthly">Days each month</option><option value="daily">Every day</option></select></label>
+          <label class="field"><span>Frequency</span><select id="backupScheduleFrequency"><option value="weekly">Days each week</option><option value="monthly">Days each month</option><option value="daily">Every day</option><option value="none">No automatic backup</option></select></label>
           <label class="field"><span>Hour</span><input id="backupScheduleHour" type="number" min="0" max="23" step="1" /></label>
           <label class="field"><span>Minute</span><input id="backupScheduleMinute" type="number" min="0" max="59" step="1" /></label>
           <label class="field"><span>Passed time</span><select id="backupMissedPolicy"><option value="wait">Wait for next time</option><option value="run">Backup now</option></select></label>
@@ -621,6 +805,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=0.4.5"></script>
+    <script src="/app.js?v=0.4.35"></script>
   </body>
 </html>

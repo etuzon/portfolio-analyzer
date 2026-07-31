@@ -31,6 +31,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def add_web_cache_headers(request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path == "/" or path.endswith((".html", ".js", ".css")):
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
 config = load_config()
 alert_store = AlertStore()
 local_store = LocalPortfolioStore()
@@ -46,8 +56,17 @@ _portfolio_cache: dict[str, Any] | None = None
 def _parse_query_date(value: str) -> date | None:
     if not value:
         return None
+    text = str(value).strip()
+    if "/" in text:
+        parts = text.split("/")
+        if len(parts) == 3:
+            try:
+                day, month, year = (int(part) for part in parts)
+                return date(year, month, day)
+            except ValueError:
+                return None
     try:
-        return date.fromisoformat(str(value)[:10])
+        return date.fromisoformat(text[:10])
     except ValueError:
         return None
 
@@ -467,10 +486,63 @@ def list_local_accounts():
     return {"items": local_store.list_accounts(), "status": local_store.status()}
 
 
+@app.get("/api/local/brokers")
+def list_brokers():
+    return {"items": local_store.list_brokers()}
+
+
+@app.post("/api/local/brokers")
+def save_broker(payload: dict[str, Any]):
+    try:
+        result = local_store.save_broker(payload or {})
+        clear_portfolio_cache()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/local/brokers/{broker_id}")
+def delete_broker(broker_id: str):
+    try:
+        deleted = local_store.delete_broker(broker_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Broker not found")
+    clear_portfolio_cache()
+    return {"deleted": True}
+
+
+@app.get("/api/local/family-members")
+def list_family_members():
+    return {"items": local_store.list_family_members()}
+
+
+@app.post("/api/local/family-members")
+def save_family_member(payload: dict[str, Any]):
+    try:
+        return local_store.save_family_member(payload or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/local/family-members/{member_id}")
+def delete_family_member(member_id: str):
+    try:
+        deleted = local_store.delete_family_member(member_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Family member not found")
+    return {"deleted": True}
+
+
 @app.post("/api/local/accounts")
 def save_local_account(payload: dict[str, Any]):
     try:
-        return local_store.save_account(payload or {})
+        result = local_store.save_account(payload or {})
+        clear_portfolio_cache()
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -479,6 +551,7 @@ def save_local_account(payload: dict[str, Any]):
 def delete_local_account(account_id: str):
     if not local_store.delete_account(account_id):
         raise HTTPException(status_code=404, detail="Account not found")
+    clear_portfolio_cache()
     return {"deleted": True}
 
 
@@ -657,7 +730,9 @@ def list_local_funds():
 @app.post("/api/local/funds")
 def save_local_fund(payload: dict[str, Any]):
     try:
-        return local_store.save_fund(payload or {})
+        result = local_store.save_fund(payload or {})
+        clear_portfolio_cache()
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -674,6 +749,7 @@ def simulate_pension(payload: dict[str, Any]):
 def delete_local_fund(fund_id: str):
     if not local_store.delete_fund(fund_id):
         raise HTTPException(status_code=404, detail="Fund record not found")
+    clear_portfolio_cache()
     return {"deleted": True}
 
 
