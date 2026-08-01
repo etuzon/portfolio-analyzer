@@ -13,12 +13,19 @@ const state = {
   localAccounts: [],
   manualSecurities: [],
   localTransactions: [],
+  localEvents: [],
+  focusedEventId: "",
   localPrices: [],
+  equityCompQuotes: {},
   priceFocus: null,
   securityDetail: null,
   securityChartPeriod: "1y",
+  securityChartMode: "line",
+  securityChartLevelPeriods: ["1y"],
+  securityChartMaWindows: ["30"],
   securityChartStartDate: HISTORY_START_DATE,
   securityHistory: [],
+  securityHistoryMeta: {},
   localFunds: [],
   longTermView: "total",
   brokers: [],
@@ -31,9 +38,15 @@ const state = {
   editingBrokerId: "",
   editingFamilyMemberId: "",
   editingFundId: "",
-  pensionIncomePeriods: [],
+  editingTransactionId: "",
   pensionScenarios: [],
   pensionSimulationResults: [],
+  pensionSimulationGrid: null,
+  pensionSimulationKey: "",
+  pensionSimulationAutoRunningKey: "",
+  pensionSimulationErrorKey: "",
+  pensionSimulationError: "",
+  activePensionScenarioIndex: null,
   localOptions: {
     account_types: ["Investment", "Long-Term Savings", "Bank", "ESOP"],
     fund_kinds: ["Pension", "Provident Fund", "Savings Fund"],
@@ -51,13 +64,16 @@ const state = {
 const $ = (id) => document.getElementById(id);
 
 const DASHBOARD_WIDGETS = [
+  { id: "portfolio_value", title: "Portfolio value", view: "basic", size: "wide" },
+  { id: "long_term_savings", title: "Long-term savings", view: "basic", size: "wide" },
   { id: "account_trend", title: "Account value trend", view: "basic", size: "wide" },
   { id: "long_term", title: "Long-term funds", view: "basic", size: "wide" },
   { id: "market_cost", title: "Market vs cost basis", view: "basic", size: "wide" },
   { id: "asset_mix", title: "Asset mix", view: "basic", size: "compact" },
   { id: "top_holdings", title: "Top holdings", view: "basic", size: "compact" },
   { id: "coverage", title: "Provider data coverage", view: "expanded", size: "medium" },
-  { id: "currency", title: "Currency allocation", view: "expanded", size: "medium" },
+  { id: "currency", title: "Currency allocation", view: "expanded", size: "compact" },
+  { id: "equity_comp", title: "Equity compensation", view: "expanded", size: "wide" },
   { id: "profit", title: "Unrealized P/L by holding", view: "expanded", size: "wide" },
   { id: "snapshot", title: "Portfolio snapshot", view: "expanded", size: "wide" },
 ];
@@ -67,17 +83,37 @@ const DASHBOARD_ACCOUNT_STORAGE_KEY = "portfolioAnalyzer.dashboard.accountTrend"
 const DASHBOARD_LONG_TERM_STORAGE_KEY = "portfolioAnalyzer.dashboard.longTerm";
 const TABLE_SETTINGS_STORAGE_KEY = "portfolioAnalyzer.tableSettings";
 const LANGUAGE_STORAGE_KEY = "portfolioAnalyzer.language";
+const PENSION_SIMULATION_STORAGE_KEY = "portfolioAnalyzer.pensionSimulation";
 const LOG_PREFIX = "[Portfolio Analyzer]";
 const MIN_LOADING_VISIBLE_MS = 700;
 const SENSITIVE_LOG_KEY = /(password|passwd|secret|token|api[_-]?key|authorization|credential|connection|string)/i;
+const PENSION_INSURANCE_TRACKS = {
+  comprehensive: { label: "Comprehensive", disability: 75, spouse: 60, children: 40 },
+  savings_30: { label: "Savings 30/20", disability: 75, spouse: 30, children: 20 },
+  savings_40: { label: "Savings 40/30", disability: 75, spouse: 40, children: 30 },
+  survivors_oriented: { label: "Survivors-oriented", disability: 37.5, spouse: 60, children: 40 },
+  single: { label: "Single status", disability: 75, spouse: 0, children: 0 },
+  custom: { label: "Custom", disability: "", spouse: "", children: "" },
+};
+const DISABILITY_COVERAGE_OPTIONS = [75, 37.5];
+const SPOUSE_SURVIVORS_OPTIONS = [60, 40, 30, 0];
+const CHILDREN_SURVIVORS_OPTIONS = [40, 30, 20, 0];
 const DASHBOARD_SECTIONS = [
   { view: "basic", label: "Glance" },
   { view: "expanded", label: "Full" },
   { view: "hidden", label: "Hidden" },
 ];
+const SUPPORT_RESISTANCE_PERIODS = [
+  { key: "5y", label: "5Y" },
+  { key: "3y", label: "3Y" },
+  { key: "1y", label: "1Y" },
+  { key: "6m", label: "6M" },
+  { key: "1m", label: "1M" },
+];
 
 const REGION_CODES = "AF AX AL DZ AS AD AO AI AQ AG AR AM AW AU AT AZ BS BH BD BB BY BE BZ BJ BM BT BO BQ BA BW BV BR IO BN BG BF BI CV KH CM CA KY CF TD CL CN CX CC CO KM CG CD CK CR CI HR CU CW CY CZ DK DJ DM DO EC EG SV GQ ER EE SZ ET FK FO FJ FI FR GF PF TF GA GM GE DE GH GI GR GL GD GP GU GT GG GN GW GY HT HM VA HN HK HU IS IN ID IR IQ IE IM IL IT JM JP JE JO KZ KE KI KP KR KW KG LA LV LB LS LR LY LI LT LU MO MG MW MY MV ML MT MH MQ MR MU YT MX FM MD MC MN ME MS MA MZ MM NA NR NP NL NC NZ NI NE NG NU NF MK MP NO OM PK PW PS PA PG PY PE PH PN PL PT PR QA RE RO RU RW BL SH KN LC MF PM VC WS SM ST SA SN RS SC SL SG SX SK SI SB SO ZA GS SS ES LK SD SR SJ SE CH SY TW TJ TZ TH TL TG TK TO TT TN TR TM TC TV UG UA AE GB US UM UY UZ VU VE VN VG VI WF EH YE ZM ZW".split(" ");
 const ACCOUNT_COUNTRIES = ["USA", "Israel"];
+const MARKET_OPTIONS = ["NASDAQ", "NYSE", "AMEX", "NYSEARCA", "OTC", "TASE"];
 const FALLBACK_CURRENCIES = "USD ILS EUR GBP JPY CHF CAD AUD NZD CNY HKD SGD INR KRW MXN BRL ARS CLP COP ZAR AED SAR TRY PLN CZK HUF SEK NOK DKK ISK RUB UAH RON BGN HRK RSD THB IDR MYR PHP VND TWD ILS".split(" ");
 const countryNames = typeof Intl.DisplayNames === "function" ? new Intl.DisplayNames([navigator.language || "en"], { type: "region" }) : null;
 const TRANSLATIONS = {
@@ -95,6 +131,7 @@ const TRANSLATIONS = {
     brokers: "Brokers",
     securities: "Securities",
     prices: "Prices",
+    events: "Events",
     householdRetirement: "Household & Retirement",
     familyMembers: "Family Members",
     pensionFunds: "Pension/Funds",
@@ -114,6 +151,7 @@ const TRANSLATIONS = {
     provident: "provident",
     savingsFund: "savings fund",
     longTermAccounts: "long-term accounts",
+    accountHoldingsCash: "account holdings/cash",
     pensionMonthlyEstimate: "pension monthly estimate",
     notApplicable: "Not applicable",
     language: "Language",
@@ -141,6 +179,7 @@ const TRANSLATIONS = {
     brokers: "ברוקרים",
     securities: "ניירות ערך",
     prices: "מחירים",
+    events: "אירועים",
     householdRetirement: "משפחה ופרישה",
     familyMembers: "בני משפחה",
     pensionFunds: "פנסיה וקופות",
@@ -160,6 +199,7 @@ const TRANSLATIONS = {
     provident: "גמל",
     savingsFund: "קרן השתלמות",
     longTermAccounts: "חשבונות לטווח ארוך",
+    accountHoldingsCash: "יתרת חשבון/ניירות ערך",
     pensionMonthlyEstimate: "אומדן קצבה חודשית",
     notApplicable: "לא רלוונטי",
     language: "שפה",
@@ -403,6 +443,8 @@ async function api(path, options = {}) {
 let loadingRequests = 0;
 let loadingStartedAt = 0;
 let loadingHideTimer = null;
+let loadingPreviousFocus = null;
+let clientStateSyncTimer = null;
 
 function setLoading(active, detail = "") {
   const overlay = $("loadingOverlay");
@@ -414,7 +456,10 @@ function setLoading(active, detail = "") {
   }
   if (active && loadingRequests === 0) {
     loadingStartedAt = performance.now();
+    loadingPreviousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     overlay.hidden = false;
+    overlay.focus({ preventScroll: true });
+    document.body.classList.add("is-loading-portfolio");
     appLog("loading.start", { detail: loadingDetailText });
   }
   loadingRequests = Math.max(0, loadingRequests + (active ? 1 : -1));
@@ -425,6 +470,11 @@ function setLoading(active, detail = "") {
   const elapsed = performance.now() - loadingStartedAt;
   const hide = () => {
     overlay.hidden = true;
+    document.body.classList.remove("is-loading-portfolio");
+    if (loadingPreviousFocus?.isConnected) {
+      loadingPreviousFocus.focus({ preventScroll: true });
+    }
+    loadingPreviousFocus = null;
     appLog("loading.end", { elapsed_ms: Math.round(performance.now() - loadingStartedAt) });
   };
   if (elapsed >= MIN_LOADING_VISIBLE_MS) {
@@ -480,6 +530,51 @@ function setDateField(id, value) {
   if (input) input.value = formatDate(value || "");
 }
 
+function nativeDatePicker() {
+  let picker = $("nativeDatePicker");
+  if (picker) return picker;
+  picker = document.createElement("input");
+  picker.id = "nativeDatePicker";
+  picker.type = "date";
+  picker.className = "native-date-picker";
+  picker.tabIndex = -1;
+  document.body.appendChild(picker);
+  return picker;
+}
+
+function pickerBoundsForDateField(input) {
+  const min = ["reportFrom", "historyDate", "securityChartStartDate"].includes(input.id) ? HISTORY_START_DATE : "";
+  const max = ["familyMemberBirthDate", "simBirthDate"].includes(input.id) ? todayString() : "";
+  return { min, max };
+}
+
+function openDatePickerFor(input) {
+  if (!input || input.hidden || input.disabled || input.readOnly) return;
+  const now = Date.now();
+  if (Number(input.dataset.lastPickerOpen || 0) + 450 > now) return;
+  input.dataset.lastPickerOpen = String(now);
+  const picker = nativeDatePicker();
+  const { min, max } = pickerBoundsForDateField(input);
+  picker.min = min;
+  picker.max = max;
+  picker.value = parseDateInput(input.value) || (min && todayString() < min ? min : todayString());
+  picker.onchange = () => {
+    if (!picker.value) return;
+    input.value = formatDate(picker.value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+  try {
+    if (typeof picker.showPicker === "function") {
+      picker.showPicker();
+    } else {
+      picker.click();
+    }
+  } catch (_error) {
+    picker.click();
+  }
+}
+
 function ensureHierarchicalNav() {
   const nav = document.querySelector(".nav");
   if (!nav) return;
@@ -492,13 +587,14 @@ function ensureHierarchicalNav() {
         <button class="nav-item" type="button" data-modal="reportsModal">${esc(t("reports"))}</button>
       </div>
     </details>
-    <details class="nav-menu">
+    <details class="nav-menu" open>
       <summary>${esc(t("portfolioData"))}</summary>
       <div class="nav-children">
         <button class="nav-item" type="button" data-modal="accountsModal">${esc(t("accounts"))}</button>
         <button class="nav-item" type="button" data-modal="brokersModal">${esc(t("brokers"))}</button>
         <button class="nav-item" type="button" data-modal="securitiesModal">${esc(t("securities"))}</button>
         <button class="nav-item" type="button" data-modal="pricesModal">${esc(t("prices"))}</button>
+        <button class="nav-item" type="button" data-modal="eventsModal">${esc(t("events"))}</button>
       </div>
     </details>
     <details class="nav-menu">
@@ -658,6 +754,7 @@ function loadDashboardSettings() {
 function saveDashboardSettings() {
   if (!state.dashboard) return;
   localStorage.setItem(DASHBOARD_STORAGE_KEY, JSON.stringify({ ...state.dashboard, longTermView: state.longTermView }));
+  scheduleClientStateSync();
 }
 
 function loadTableSettings() {
@@ -673,6 +770,7 @@ function loadTableSettings() {
 
 function saveTableSettings() {
   localStorage.setItem(TABLE_SETTINGS_STORAGE_KEY, JSON.stringify({ maPeriod: state.tableMaPeriod }));
+  scheduleClientStateSync();
 }
 
 function loadLanguageSettings() {
@@ -682,6 +780,88 @@ function loadLanguageSettings() {
 
 function saveLanguageSettings() {
   localStorage.setItem(LANGUAGE_STORAGE_KEY, state.language);
+  scheduleClientStateSync();
+}
+
+function readLocalJson(key, fallback = null) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function collectClientState() {
+  return {
+    version: 1,
+    saved_at: new Date().toISOString(),
+    dashboard: state.dashboard ? { ...state.dashboard, longTermView: state.longTermView } : readLocalJson(DASHBOARD_STORAGE_KEY, {}),
+    table: { maPeriod: state.tableMaPeriod || "30" },
+    language: state.language || "en",
+    bannerItems: Array.isArray(state.bannerItems) ? state.bannerItems : readLocalJson("portfolioAnalyzer.bannerItems", []),
+    pensionSimulation: readLocalJson(PENSION_SIMULATION_STORAGE_KEY, {}),
+  };
+}
+
+function applyClientState(clientState) {
+  if (!clientState || typeof clientState !== "object") return false;
+  if (clientState.dashboard && typeof clientState.dashboard === "object") {
+    localStorage.setItem(DASHBOARD_STORAGE_KEY, JSON.stringify(clientState.dashboard));
+    if (clientState.dashboard.longTermView) localStorage.setItem(DASHBOARD_LONG_TERM_STORAGE_KEY, clientState.dashboard.longTermView);
+  }
+  if (clientState.table?.maPeriod) {
+    localStorage.setItem(TABLE_SETTINGS_STORAGE_KEY, JSON.stringify({ maPeriod: clientState.table.maPeriod }));
+  }
+  if (clientState.language) {
+    localStorage.setItem(LANGUAGE_STORAGE_KEY, clientState.language === "he" ? "he" : "en");
+  }
+  if (Array.isArray(clientState.bannerItems)) {
+    localStorage.setItem("portfolioAnalyzer.bannerItems", JSON.stringify(clientState.bannerItems));
+  }
+  if (clientState.pensionSimulation && typeof clientState.pensionSimulation === "object") {
+    localStorage.setItem(PENSION_SIMULATION_STORAGE_KEY, JSON.stringify(clientState.pensionSimulation));
+  }
+  return true;
+}
+
+function loadClientStateFromStorage() {
+  loadLanguageSettings();
+  loadDashboardSettings();
+  loadTableSettings();
+  loadPensionSimulationState();
+  renderPensionInsuranceControls();
+  applyLanguage();
+}
+
+function clientStateFromExportPayload(payload) {
+  const rows = payload?.data?.app_preferences || payload?.app_preferences || [];
+  const row = Array.isArray(rows) ? rows.find((item) => item?.key === "client_state") : null;
+  if (!row?.value) return null;
+  try {
+    return typeof row.value === "string" ? JSON.parse(row.value) : row.value;
+  } catch {
+    return null;
+  }
+}
+
+async function syncClientStateToServer() {
+  await api("/api/settings/client-state", {
+    method: "PUT",
+    body: JSON.stringify(collectClientState()),
+  });
+}
+
+function scheduleClientStateSync() {
+  clearTimeout(clientStateSyncTimer);
+  clientStateSyncTimer = setTimeout(() => {
+    syncClientStateToServer().catch((error) => appWarn("client_state.sync_failed", { message: error.message }));
+  }, 500);
+}
+
+async function loadClientStateFromServer() {
+  const data = await api("/api/settings/client-state");
+  applyClientState(data.state);
 }
 
 function applyAutoDirection() {
@@ -738,9 +918,14 @@ function widgetMeta(id) {
 
 function visibleDashboardWidgets() {
   const dashboard = state.dashboard || defaultDashboard();
-  return dashboard.widgets
-    .filter((widget) => widget.view === "basic" || (dashboard.mode === "expanded" && widget.view === "expanded"))
-    .sort((a, b) => a.order - b.order);
+  const sections = DASHBOARD_SECTIONS.filter((section) => (
+    section.view === "basic" || (dashboard.mode === "expanded" && section.view === "expanded")
+  ));
+  return sections.flatMap((section) => (
+    dashboard.widgets
+      .filter((widget) => widget.view === section.view)
+      .sort((a, b) => a.order - b.order)
+  ));
 }
 
 function dashboardWidgetConfig(id) {
@@ -823,6 +1008,41 @@ function appendDashboardWidgetToSection(sourceId, view) {
   renderAnalytics(state.items || []);
 }
 
+function moveDashboardWidgetToPosition(sourceId, view, index) {
+  const source = dashboardWidgetConfig(sourceId);
+  if (!source || !DASHBOARD_SECTIONS.some((section) => section.view === view)) return;
+  source.view = view;
+  const widgets = state.dashboard.widgets
+    .filter((widget) => widget.view === view && widget.id !== sourceId)
+    .sort((a, b) => a.order - b.order);
+  const targetIndex = Math.max(0, Math.min(Number(index || 0), widgets.length));
+  widgets.splice(targetIndex, 0, source);
+  widgets.forEach((widget, order) => { widget.order = order; });
+  normalizeDashboardOrders();
+  saveDashboardSettings();
+  renderAnalytics(state.items || []);
+}
+
+function dashboardDropIndex(grid, event) {
+  const widgets = [...(grid?.querySelectorAll(".dashboard-widget:not(.dragging)") || [])]
+    .sort((a, b) => {
+      const aRect = a.getBoundingClientRect();
+      const bRect = b.getBoundingClientRect();
+      return Math.abs(aRect.top - bRect.top) > 8 ? aRect.top - bRect.top : aRect.left - bRect.left;
+    });
+  if (!widgets.length) return 0;
+  const pointerX = event.clientX;
+  const pointerY = event.clientY;
+  for (let index = 0; index < widgets.length; index += 1) {
+    const rect = widgets[index].getBoundingClientRect();
+    const sameRow = pointerY >= rect.top - 8 && pointerY <= rect.bottom + 8;
+    if ((sameRow && pointerX < rect.left + rect.width / 2) || pointerY < rect.top + rect.height / 2) {
+      return index;
+    }
+  }
+  return widgets.length;
+}
+
 function renderDashboardEditor(renderers) {
   return DASHBOARD_SECTIONS.map((section) => {
     const widgets = state.dashboard.widgets
@@ -832,10 +1052,10 @@ function renderDashboardEditor(renderers) {
       <div class="dashboard-section" data-dashboard-section="${esc(section.view)}">
         <div class="dashboard-section-head">
           <h3>${esc(section.label)}</h3>
-          <span>${widgets.length} graphs</span>
+          <span>${widgets.length} cards</span>
         </div>
         <div class="dashboard-section-grid">
-          ${widgets.length ? widgets.map((widget) => withDashboardToolbar(widget, renderers[widget.id]())).join("") : '<div class="empty">Drop graphs here</div>'}
+          ${widgets.length ? widgets.map((widget) => withDashboardToolbar(widget, renderers[widget.id]())).join("") : '<div class="empty">Drop cards here</div>'}
         </div>
       </div>
     `;
@@ -878,7 +1098,7 @@ function withDashboardToolbar(widget, html) {
   const draggable = state.dashboard?.edit ? ' draggable="true"' : "";
   return html.replace(
     /<div class="chart-card ([^"]*)">/,
-    `<div class="chart-card $1 dashboard-widget dashboard-widget-${esc(size)}${editClass}" data-widget="${esc(widget.id)}"${draggable} style="order:${Number(widget.order || 0)}">${dashboardWidgetToolbar(widget)}`,
+    `<div class="chart-card $1 dashboard-widget dashboard-widget-${esc(size)}${editClass}" data-widget="${esc(widget.id)}"${draggable}>${dashboardWidgetToolbar(widget)}`,
   );
 }
 
@@ -1455,6 +1675,10 @@ function criteriaFromForm() {
     sector: $("sector").value.trim(),
     minHoldingValue: $("minHoldingValue").value,
     maxHoldingValue: $("maxHoldingValue").value,
+    technicalPeriod: $("technicalPeriod").value,
+    technicalLevel: $("technicalLevel").value,
+    technicalDirection: $("technicalDirection").value,
+    technicalDistancePct: $("technicalDistancePct").value,
     includeMissing: $("includeMissing").checked,
   };
 }
@@ -1476,6 +1700,10 @@ function setOptions(id, values, label = "") {
   const current = select.value;
   select.innerHTML = (label ? `<option value="">${esc(label)}</option>` : "") + values.map((value) => `<option value="${esc(value)}">${esc(optionLabel(value))}</option>`).join("");
   if (values.includes(current)) select.value = current;
+}
+
+function refreshMarketOptions() {
+  $("marketOptions").innerHTML = MARKET_OPTIONS.map((market) => `<option value="${esc(market)}"></option>`).join("");
 }
 
 function setCurrencyOptions(id) {
@@ -1502,6 +1730,7 @@ function populateStaticOptions() {
       return `<option value="${esc(name)}" label="${esc(flagFor(code))} ${esc(name)}"></option>`;
     })
     .join("");
+  refreshMarketOptions();
   ["localAccountCurrency", "editAccountCurrency", "priceCurrency", "manualSecurityCurrency"].forEach(setCurrencyOptions);
   const assetClasses = state.localOptions.asset_classes || ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"];
   setOptions("localAccountType", state.localOptions.account_types);
@@ -1529,6 +1758,7 @@ function populateStaticOptions() {
   setDateField("reportTo", todayString());
   setDateField("reportFrom", HISTORY_START_DATE);
   toggleManualInstrumentFields();
+  toggleTransactionCompFields();
 }
 
 function todayString() {
@@ -1541,7 +1771,7 @@ function clampedHistoryDate(value) {
 }
 
 function startDateForPeriod(period) {
-  const days = { "1m": 31, "1y": 366, "3y": 366 * 3, "5y": 366 * 5 }[period] || 366;
+  const days = { "1m": 31, "6m": 183, "1y": 366, "3y": 366 * 3, "5y": 366 * 5 }[period] || 366;
   return clampedHistoryDate(new Date(Date.now() - days * 86400000).toISOString().slice(0, 10));
 }
 
@@ -1573,6 +1803,10 @@ function missingStats(items) {
 
 function renderSummary(items) {
   state.riskSnapshot = portfolioRiskSnapshot(items);
+}
+
+function renderPortfolioValueDashboard(items) {
+  state.riskSnapshot = portfolioRiskSnapshot(items);
   const primaryValue = sum(items.map((item) => normalizedField(item, "market_value")));
   const primaryProfit = sum(items.map((item) => normalizedField(item, "unrealized_profit")));
   const accountTotals = groupByAccount(items).sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
@@ -1581,11 +1815,7 @@ function renderSummary(items) {
   const equities = items.filter((item) => item.holding.asset_class === "EQUITY").length;
   const gaps = missingStats(items);
 
-  $("balanceValue").textContent = money(primaryValue, state.baseCurrency);
-  $("profitBadge").className = `delta ${primaryProfit > 0 ? "up" : primaryProfit < 0 ? "down" : "neutral"}`;
-  $("profitBadge").textContent = `Holding Profit ${signedMoney(primaryProfit, state.baseCurrency)}`;
-  $("profitBadge").title = `Holding profit converted to ${state.baseCurrency} using displayed FX rates when available`;
-  $("currencyBreakdown").innerHTML = accountTotals
+  const accountsHtml = accountTotals
     .map((account) => {
       const accountRisk = state.riskSnapshot.accounts.find((entry) => entry.account === account.account)?.risk;
       const symbolsText = account.symbols.slice(0, 12).join(", ");
@@ -1600,25 +1830,108 @@ function renderSummary(items) {
     })
     .join("");
 
-  $("summary").innerHTML = [
-    ["Risk", state.riskSnapshot.total.score, riskTooltip(state.riskSnapshot.total), riskBand(state.riskSnapshot.total.score).label, riskBadge(state.riskSnapshot.total, true)],
-    ["Positions", items.length, "Number of open positions shown after filters"],
-    ["Securities", symbols, "Unique security symbols"],
-    ["Equities", equities, "Open equity positions"],
-    ["Bonds", bonds, "Open bond positions"],
-    ["Data gaps", gaps.total, gaps.topLabels || "No missing analytics fields", `${gaps.positions}/${items.length} positions`],
-  ].map(([label, value, tooltip, detail]) => `
-    <div class="stat" title="${esc(tooltip || "")}">
-      ${detail && String(detail).includes("risk-badge") ? detail : `<b>${esc(value)}</b>`}
-      <span>${esc(label)}</span>
-      ${detail && !String(detail).includes("risk-badge") ? `<small>${esc(detail)}</small>` : ""}
+  const totalRiskBand = riskBand(state.riskSnapshot.total.score);
+  const statsHtml = [
+    { label: "Risk", value: state.riskSnapshot.total.score, tooltip: riskTooltip(state.riskSnapshot.total), detail: totalRiskBand.label, className: `risk-${totalRiskBand.key}` },
+    { label: "Positions", value: items.length, tooltip: "Number of open positions shown after filters" },
+    { label: "Securities", value: symbols, tooltip: "Unique security symbols" },
+    { label: "Equities", value: equities, tooltip: "Open equity positions" },
+    { label: "Bonds", value: bonds, tooltip: "Open bond positions" },
+    { label: "Data gaps", value: gaps.total, tooltip: gaps.topLabels || "No missing analytics fields", detail: `${gaps.positions}/${items.length} positions` },
+  ].map((item) => `
+    <div class="stat summary-stat ${esc(item.className || "")}" title="${esc(item.tooltip || "")}">
+      <b>${esc(item.value)}</b>
+      <span>${esc(item.label)}</span>
+      ${item.detail ? `<small>${esc(item.detail)}</small>` : ""}
     </div>
   `).join("");
+  const profitClass = primaryProfit > 0 ? "up" : primaryProfit < 0 ? "down" : "neutral";
+  return `
+    <div class="chart-card portfolio-value-card">
+      <div class="balance-panel">
+        <p class="eyebrow">Portfolio value</p>
+        <div class="balance-value">${money(primaryValue, state.baseCurrency)}</div>
+        <div class="delta ${profitClass}" title="Holding profit converted to ${esc(state.baseCurrency)} using displayed FX rates when available">Holding Profit ${signedMoney(primaryProfit, state.baseCurrency)}</div>
+        <details class="summary-drawer">
+          <summary>Portfolio stats</summary>
+          <div class="summary">${statsHtml}</div>
+        </details>
+        <div class="currency-strip">${accountsHtml}</div>
+      </div>
+    </div>
+  `;
 }
 
-function renderFundsOverview() {
-  const frame = $("fundsOverview");
-  if (!frame) return;
+function renderPensionDashboardTable(monthlyEstimate) {
+  const grid = state.pensionSimulationGrid;
+  const hasResults = Boolean(grid && state.pensionSimulationResults.length);
+  const currentKey = pensionScenarioKey();
+  const simulationError = state.pensionSimulationErrorKey === currentKey ? state.pensionSimulationError : "";
+  const canAutoRun = state.pensionScenarios.length && state.pensionScenarios.every((scenario) => (
+    scenario.current_age && scenario.retire_age && scenario.retire_age > scenario.current_age && scenarioHasProfitRates(scenario) && !scenarioNeedsGenderForInsurance(scenario)
+  ));
+  const scenarios = hasResults ? (grid.baseScenarios || []) : state.pensionScenarios;
+  const resultFor = (rowIndex) => hasResults ? (state.pensionSimulationResults[rowIndex] || null) : null;
+  if (scenarios.length) {
+    if (!hasResults && canAutoRun) schedulePensionSimulationAutoRun();
+    return `
+      <div class="dashboard-projection-table">
+        <table class="projection-result-table compact-projection-table">
+          <thead>
+            <tr>
+              <th>Pension Scenario</th>
+              <th>Age Range</th>
+              <th>Monthly Pension</th>
+              <th>Final Amount</th>
+              <th>Deposits</th>
+              <th>Profit</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${scenarios.map((scenario, rowIndex) => {
+              const result = resultFor(rowIndex);
+              const rowNeedsGender = scenarioNeedsGenderForInsurance(scenario);
+              const statusText = simulationError || (rowNeedsGender ? "Set gender" : (canAutoRun ? "Calculating" : "Add profit rate"));
+              const statusTitle = simulationError || (rowNeedsGender ? "Set Male/Female gender to calculate pension insurance cost" : "");
+              return `
+                <tr>
+                  <td><b>${esc(scenario.name)}</b><small>${esc(scenario.person_name || "Manual")}</small></td>
+                  <td>${fmt(scenario.current_age, 1)}-${fmt(scenario.retire_age, 1)}</td>
+                  <td>${result ? `<b>${money(result.monthly_pension || 0, state.baseCurrency, 0)}</b>` : `<span class="muted-inline" title="${esc(statusTitle)}">${esc(statusText)}</span>`}</td>
+                  <td>${result ? money(result.final_amount || 0, state.baseCurrency, 0) : ""}</td>
+                  <td>${result ? money(result.total_deposits || 0, state.baseCurrency, 0) : ""}</td>
+                  <td>${result ? money(result.investment_gain || 0, state.baseCurrency, 0) : ""}</td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+  return `
+    <div class="dashboard-projection-table">
+      <table class="projection-result-table compact-projection-table">
+        <thead>
+          <tr>
+            <th>Pension Scenario</th>
+            <th>Monthly Estimate</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><b>Saved Funds Estimate</b><small>Pension records only</small></td>
+            <td><b>${monthlyEstimate ? money(monthlyEstimate, state.baseCurrency, 0) : t("notApplicable")}</b></td>
+            <td><span class="muted-inline">Add scenarios in Manage</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderFundsOverviewDashboard() {
   const funds = state.localFunds || [];
   const longTermLocalAccounts = (state.localAccounts || []).filter((account) => account.type === "Long-Term Savings");
   const longTermAccountItems = (state.items || []).filter((item) => item.holding.account_type === "Long-Term Savings");
@@ -1634,6 +1947,7 @@ function renderFundsOverview() {
   const accountSaved = securitiesValue + accountCash;
   const pensionMonthlyFunds = funds.filter((fund) => fund.kind === "Pension" && fund.monthly_estimate !== null && fund.monthly_estimate !== undefined);
   const monthly = sum(pensionMonthlyFunds.map((fund) => fund.monthly_estimate));
+  const hasAccountOnlyValue = Math.abs(accountSaved) > 0.005;
   const fundTitle = funds.map((fund) => {
     const label = [fund.kind, fund.fund_name || "", fund.pension_id].filter(Boolean).join(" ");
     const monthlyText = fund.kind === "Pension" && fund.monthly_estimate !== null && fund.monthly_estimate !== undefined
@@ -1642,25 +1956,38 @@ function renderFundsOverview() {
     return `${label}: saved ${fmt(fund.amount, 0)}${monthlyText}`;
   }).join("; ");
   const accountTitle = [...longTermAccounts].join(", ");
-  const savedBreakdown = `${t("pension")} ${money(pensionSaved, state.baseCurrency, 0)}; ${t("provident")} ${money(providentSaved, state.baseCurrency, 0)}; ${t("savingsFund")} ${money(savingsSaved, state.baseCurrency, 0)}; ${t("longTermAccounts")} ${money(accountSaved, state.baseCurrency, 0)}`;
+  const savedBreakdown = [
+    `${t("pension")} ${money(pensionSaved, state.baseCurrency, 0)}`,
+    `${t("provident")} ${money(providentSaved, state.baseCurrency, 0)}`,
+    `${t("savingsFund")} ${money(savingsSaved, state.baseCurrency, 0)}`,
+    hasAccountOnlyValue ? `${t("accountHoldingsCash")} ${money(accountSaved, state.baseCurrency, 0)}` : "",
+  ].filter(Boolean).join("; ");
   const title = [accountTitle ? `Long-term accounts: ${accountTitle}` : "", fundTitle, savedBreakdown].filter(Boolean).join("; ");
-  const monthlyLabel = pensionMonthlyFunds.length ? `${fmt(monthly, 0)} ${t("pensionMonthlyEstimate")}` : t("notApplicable");
-  frame.innerHTML = `
-    <div>
-      <p class="eyebrow">${esc(t("longTermSavings"))}</p>
-      <h2>${esc(t("pensionAccountsFunds"))}</h2>
+  const projectionTable = renderPensionDashboardTable(pensionMonthlyFunds.length ? monthly : 0);
+  return `
+    <div class="chart-card long-term-savings-card">
+      <div class="funds-overview-panel">
+        <div>
+          <p class="eyebrow">${esc(t("longTermSavings"))}</p>
+          <h2>${esc(t("pensionAccountsFunds"))}</h2>
+        </div>
+        <div class="funds-overview-stats" title="${esc(title || "No pension fund records")}">
+          <span><b>${esc(longTermAccounts.size)}</b> ${esc(t("accounts"))}</span>
+          <span><b>${esc(funds.length)}</b> ${esc(t("pensionFunds"))}</span>
+          <span title="Pension fund saved balance"><b>${money(pensionSaved, state.baseCurrency, 0)}</b> ${esc(t("pension"))}</span>
+          <span title="Provident fund saved balance"><b>${money(providentSaved, state.baseCurrency, 0)}</b> ${esc(t("provident"))}</span>
+          <span title="Savings fund saved balance"><b>${money(savingsSaved, state.baseCurrency, 0)}</b> ${esc(t("savingsFund"))}</span>
+          ${hasAccountOnlyValue ? `<span title="Account-level securities and cash not recorded as pension, provident, or savings fund balances"><b>${money(accountSaved, state.baseCurrency, 0)}</b> ${esc(t("accountHoldingsCash"))}</span>` : ""}
+        </div>
+        ${projectionTable}
+        <button class="secondary" type="button" data-modal="fundsModal">${esc(t("manage"))}</button>
+      </div>
     </div>
-    <div class="funds-overview-stats" title="${esc(title || "No pension fund records")}">
-      <span><b>${esc(longTermAccounts.size)}</b> ${esc(t("accounts"))}</span>
-      <span><b>${esc(funds.length)}</b> ${esc(t("pensionFunds"))}</span>
-      <span title="Pension fund saved balance"><b>${money(pensionSaved, state.baseCurrency, 0)}</b> ${esc(t("pension"))}</span>
-      <span title="Provident fund saved balance"><b>${money(providentSaved, state.baseCurrency, 0)}</b> ${esc(t("provident"))}</span>
-      <span title="Savings fund saved balance"><b>${money(savingsSaved, state.baseCurrency, 0)}</b> ${esc(t("savingsFund"))}</span>
-      <span title="Long-term account securities plus initial cash"><b>${money(accountSaved, state.baseCurrency, 0)}</b> ${esc(t("longTermAccounts"))}</span>
-      <span class="${pensionMonthlyFunds.length ? "" : "muted-metric"}" title="Estimated monthly pension payout from pension records only. Provident and savings funds do not use pension factor."><b>${esc(monthlyLabel)}</b></span>
-    </div>
-    <button class="secondary" type="button" data-modal="fundsModal">${esc(t("manage"))}</button>
   `;
+}
+
+function renderFundsOverview() {
+  renderAnalytics(state.items || []);
 }
 
 function renderRows(items) {
@@ -1955,6 +2282,10 @@ function addLongTermValue(groups, key, dates, valueByDate) {
   });
 }
 
+function longTermSeriesHasValue(values, dates) {
+  return dates.some((date) => Math.abs(Number(values[date] || 0)) > 0.005);
+}
+
 function longTermAccountSeries(dates) {
   const trendsById = new Map((state.accountTrend.accounts || []).map((entry) => [entry.account.id, entry]));
   return (state.localAccounts || [])
@@ -1995,9 +2326,7 @@ function longTermData() {
     people.forEach((person) => {
       addLongTermValue(byPerson, longTermPersonKey(person), dates, Object.fromEntries(dates.map((date) => [date, share])));
     });
-    if (fund.kind !== "Pension") {
-      addLongTermValue(byCategory, fund.kind || "Fund", dates, values);
-    }
+    addLongTermValue(byCategory, fund.kind || "Fund", dates, values);
     const monthlyEstimate = fund.kind === "Pension" && fund.monthly_estimate !== null && fund.monthly_estimate !== undefined
       ? Number(fund.monthly_estimate || 0)
       : null;
@@ -2006,6 +2335,7 @@ function longTermData() {
   });
 
   longTermAccountSeries(dates).forEach(({ account, values }) => {
+    if (!longTermSeriesHasValue(values, dates)) return;
     const people = (account.persons || []).length ? account.persons : [{ name: "Unassigned" }];
     dates.forEach((date) => { total[date] += Number(values[date] || 0); });
     people.forEach((person) => {
@@ -2016,8 +2346,8 @@ function longTermData() {
         Object.fromEntries(dates.map((date) => [date, Number(values[date] || 0) / Math.max(people.length, 1)])),
       );
     });
-    addLongTermValue(byCategory, "Long-Term Savings accounts", dates, values);
-    details.push({ label: accountLabel(account), value: Number(values[today] || 0), monthly: 0, type: "Long-Term Savings account" });
+    addLongTermValue(byCategory, t("accountHoldingsCash"), dates, values);
+    details.push({ label: accountLabel(account), value: Number(values[today] || 0), monthly: 0, type: t("accountHoldingsCash") });
   });
 
   const sortByLatest = (left, right) => Number(right.values[today] || 0) - Number(left.values[today] || 0);
@@ -2080,6 +2410,9 @@ function renderLongTermDashboard() {
       `).join("")}
     `;
   }).join("");
+  const lineLegend = lines.map((line, index) => `
+    <span title="${esc(`${line.label}\n${money(Number(line.values[data.today] || 0), state.baseCurrency, 0)}`)}"><i style="background:${colorAt(index)}"></i>${esc(line.label)}</span>
+  `).join("");
   const personStats = Object.entries(data.byPerson)
     .sort(([, left], [, right]) => Number(right[data.today] || 0) - Number(left[data.today] || 0))
     .slice(0, 4);
@@ -2090,10 +2423,13 @@ function renderLongTermDashboard() {
           <div class="chart-title">Long-term funds</div>
           <small class="chart-subtitle">Saved ${money(latest, state.baseCurrency, 0)} · <span class="${data.monthly ? "" : "muted-inline"}">Monthly pension estimate ${data.monthly ? fmt(data.monthly, 0) : "N/A"}</span></small>
         </div>
-        <div class="dashboard-view-toggle long-term-toggle" aria-label="Long-term dashboard view">
-          <button type="button" data-long-term-view="total" class="${view === "total" ? "active" : ""}">Total</button>
-          <button type="button" data-long-term-view="people" class="${view === "people" ? "active" : ""}">People</button>
-          <button type="button" data-long-term-view="funds" class="${view === "funds" ? "active" : ""}">Funds</button>
+        <div class="long-term-controls">
+          <div class="dashboard-view-toggle long-term-toggle" aria-label="Long-term dashboard view">
+            <button type="button" data-long-term-view="total" class="${view === "total" ? "active" : ""}">Total</button>
+            <button type="button" data-long-term-view="people" class="${view === "people" ? "active" : ""}">People</button>
+            <button type="button" data-long-term-view="funds" class="${view === "funds" ? "active" : ""}">Funds</button>
+          </div>
+          <div class="chart-legend long-term-legend">${lineLegend}</div>
         </div>
       </div>
       <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Long-term funds line graph">
@@ -2124,11 +2460,11 @@ function renderLongTermDashboard() {
 function renderMarketCostBars(items) {
   const top = [...items].sort((a, b) => normalizedField(b, "market_value") - normalizedField(a, "market_value")).slice(0, 7);
   const width = 360;
-  const height = 182;
+  const height = 242;
   const padLeft = 28;
   const padRight = 22;
   const padTop = 22;
-  const padBottom = 42;
+  const padBottom = 74;
   const plotHeight = height - padTop - padBottom;
   const rows = top.map((item) => ({
     symbol: item.holding.symbol,
@@ -2176,6 +2512,8 @@ function renderMarketCostBars(items) {
           const costHeight = barHeight(row.cost);
           const marketX = center - barWidth - gap / 2;
           const costX = center + gap / 2;
+          const labelX = center + 6;
+          const labelY = baseline + 16;
           const localTooltip = row.currency !== state.baseCurrency
             ? `\nLocal market: ${money(row.localMarket, row.currency, 0)}\nLocal cost: ${money(row.localCost, row.currency, 0)}`
             : "";
@@ -2185,7 +2523,7 @@ function renderMarketCostBars(items) {
               <title>${esc(tooltip)}</title>
               <rect class="comparison-bar market-bar" x="${marketX.toFixed(1)}" y="${(baseline - marketHeight).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${marketHeight.toFixed(1)}" rx="4" fill="url(#barMarket)"></rect>
               <rect class="comparison-bar cost-bar" x="${costX.toFixed(1)}" y="${(baseline - costHeight).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${costHeight.toFixed(1)}" rx="4" fill="url(#barCost)"></rect>
-              <text x="${center.toFixed(1)}" y="${height - 12}" text-anchor="middle">${esc(row.symbol.slice(0, 5))}</text>
+              <text class="tilted-axis-label comparison-axis-label" x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" transform="rotate(-25 ${labelX.toFixed(1)} ${labelY.toFixed(1)})">${esc(row.symbol)}</text>
             </g>
           `;
         }).join("")}
@@ -2193,11 +2531,15 @@ function renderMarketCostBars(items) {
     </div>`;
 }
 
-function renderDonut(groups, title, centerLabel, total, centerSub = ["TOP", "ASSET"]) {
+function renderDonut(groups, title, centerLabel, total, centerSub = ["TOP", "ASSET"], extraClass = "") {
   const circumference = 2 * Math.PI * 42;
   let offset = 0;
+  const centerSubLines = (centerSub || []).filter(Boolean);
+  const centerSubText = centerSubLines.length <= 1
+    ? `<text x="65" y="82" class="donut-sub single">${esc(centerSubLines[0] || "")}</text>`
+    : centerSubLines.slice(0, 2).map((line, index) => `<text x="65" y="${76 + index * 12}" class="donut-sub">${esc(line)}</text>`).join("");
   return `
-    <div class="chart-card donut-card">
+    <div class="chart-card donut-card ${esc(extraClass)}">
       <div class="chart-title">${esc(title)}</div>
       <svg viewBox="0 0 130 130" role="img" aria-label="${esc(title)}">
         <circle cx="65" cy="65" r="42" fill="none" stroke="#202a3f" stroke-width="14"></circle>
@@ -2209,20 +2551,19 @@ function renderDonut(groups, title, centerLabel, total, centerSub = ["TOP", "ASS
         }).join("")}
         <circle cx="65" cy="65" r="28" fill="#171c24" stroke="#2f3848" stroke-width="2"></circle>
         <text x="65" y="60" class="donut-center">${esc(centerLabel)}</text>
-        <text x="65" y="76" class="donut-sub">${esc(centerSub[0] || "")}</text>
-        <text x="65" y="88" class="donut-sub">${esc(centerSub[1] || "")}</text>
+        ${centerSubText}
       </svg>
       <div class="donut-legend">
         ${groups.slice(0, 3).map((group, index) => `
-          <span><i style="background:${colorAt(index)}"></i>${esc(group.label)} ${Math.round(group.value / total * 100)}%</span>
+          <span><i style="background:${colorAt(index)}"></i>${esc(group.label)} ${total ? Math.round(group.value / total * 100) : 0}%</span>
         `).join("")}
       </div>
     </div>`;
 }
 
 function renderCurrencyAllocation(groups, total) {
-  const topPercent = Math.round((groups[0]?.value || 0) / total * 100);
-  return renderDonut(groups, "Currency allocation", `${topPercent}%`, total, ["TOP", "CURRENCY"]);
+  const topPercent = total ? Math.round((groups[0]?.value || 0) / total * 100) : 0;
+  return renderDonut(groups, "Currency allocation", `${topPercent}%`, total, [groups[0]?.label || state.baseCurrency], "currency-allocation-card");
 }
 
 function renderMiniBars(items) {
@@ -2294,7 +2635,7 @@ function renderProfitBars(items) {
   const total = sum(items.map((item) => normalizedField(item, "unrealized_profit")));
   const maxAbs = Math.max(...top.map((item) => Math.abs(normalizedField(item, "unrealized_profit"))), 1);
   const width = 430;
-  const height = 200;
+  const height = 252;
   const padLeft = 38;
   const padRight = 26;
   const baseline = 102;
@@ -2334,7 +2675,11 @@ function renderProfitBars(items) {
           </g>
         `;
         }).join("")}
-        ${top.map((item, index) => `<text x="${(padLeft + index * barSlot + barSlot / 2).toFixed(1)}" y="184">${esc(item.holding.symbol.slice(0, 5))}</text>`).join("")}
+        ${top.map((item, index) => {
+          const x = padLeft + index * barSlot + barSlot / 2 + 10;
+          const y = height - 32;
+          return `<text class="tilted-axis-label" x="${x.toFixed(1)}" y="${y}" transform="rotate(-25 ${x.toFixed(1)} ${y})">${esc(item.holding.symbol)}</text>`;
+        }).join("")}
       </svg>
     </div>`;
 }
@@ -2380,6 +2725,301 @@ function renderBubbles(items) {
     </div>`;
 }
 
+function txMarketKey(symbol, stockMarket = "") {
+  return `${String(symbol || "").toUpperCase().trim()}|${String(stockMarket || "").toUpperCase().trim()}`;
+}
+
+function txInstrumentType(tx) {
+  return String(tx.instrument_type || tx.asset_class || "").toUpperCase().trim();
+}
+
+function equityCompKind(tx) {
+  const type = txInstrumentType(tx);
+  const asset = String(tx.asset_class || "").toUpperCase().trim();
+  if (type === "RSU" || asset === "RSU") return "rsu";
+  if (["OPTION", "STOCK_OPTION"].includes(type) || ["OPTION", "STOCK_OPTION"].includes(asset)) return "option";
+  return "";
+}
+
+function transactionSignedQuantity(tx) {
+  const quantity = Number(tx.quantity || 0);
+  const action = String(tx.action || "").toUpperCase();
+  return ["SELL", "REMOVE", "SHORT"].includes(action) ? -quantity : quantity;
+}
+
+function compensationPriceMap(items) {
+  const prices = new Map();
+  [...(state.localPrices || [])]
+    .sort((a, b) => String(a.price_date || "").localeCompare(String(b.price_date || "")))
+    .forEach((priceRow) => {
+      const price = Number(priceRow.price || 0);
+      if (!priceRow.symbol || !Number.isFinite(price) || price <= 0) return;
+      const entry = { price, currency: priceRow.currency || state.baseCurrency, source: "saved price" };
+      prices.set(txMarketKey(priceRow.symbol, priceRow.stock_market), entry);
+      prices.set(txMarketKey(priceRow.symbol), entry);
+    });
+  Object.values(state.equityCompQuotes || {}).forEach((quoteRow) => {
+    const price = Number(quoteRow.value || 0);
+    if (!quoteRow.symbol || !Number.isFinite(price) || price <= 0) return;
+    const entry = { price, currency: quoteRow.currency || state.baseCurrency, source: "market quote" };
+    prices.set(txMarketKey(quoteRow.symbol), entry);
+  });
+  items.forEach((item) => {
+    const h = item.holding || {};
+    const quantity = Math.abs(Number(h.quantity || 0));
+    if (!h.symbol || !quantity) return;
+    const price = Math.abs(Number(h.market_value || 0)) / quantity;
+    if (!Number.isFinite(price) || price <= 0) return;
+    const entry = { price, currency: h.currency || state.baseCurrency, source: "current holding price" };
+    prices.set(txMarketKey(h.symbol, h.stock_market), entry);
+    if (!prices.has(txMarketKey(h.symbol))) prices.set(txMarketKey(h.symbol), entry);
+  });
+  return prices;
+}
+
+function publicStockMarket(stockMarket) {
+  const market = String(stockMarket || "").toUpperCase().trim();
+  return Boolean(market && !["PRIVATE", "MANUAL", "LOCAL", "UNKNOWN", "N/A", "NONE"].includes(market));
+}
+
+function equityCompQuoteSymbols() {
+  return [...new Set((state.localTransactions || [])
+    .filter((tx) => equityCompKind(tx) && publicStockMarket(tx.stock_market))
+    .map((tx) => equityCompKind(tx) === "option" ? (tx.underlying_symbol || tx.symbol) : tx.symbol)
+    .map(cleanSecuritySymbol)
+    .filter(Boolean))];
+}
+
+async function loadEquityCompQuotes() {
+  const symbols = equityCompQuoteSymbols();
+  if (!symbols.length) {
+    state.equityCompQuotes = {};
+    if (state.items?.length) renderAnalytics(state.items);
+    return;
+  }
+  const data = await api("/api/banner/resolve", {
+    method: "POST",
+    body: JSON.stringify({ items: symbols.map((symbol) => ({ symbol, type: "quote", label: symbol })) }),
+  });
+  state.equityCompQuotes = Object.fromEntries((data.items || [])
+    .filter((item) => item.symbol && Number(item.value || 0) > 0)
+    .map((item) => [cleanSecuritySymbol(item.symbol), item]));
+  if (state.items?.length) renderAnalytics(state.items);
+}
+
+function equityCompLots(kind, items) {
+  const prices = compensationPriceMap(items);
+  const lots = [];
+  [...(state.localTransactions || [])]
+    .filter((tx) => equityCompKind(tx) === kind)
+    .sort((a, b) => String(a.trade_date || "").localeCompare(String(b.trade_date || "")) || String(a.created_at || "").localeCompare(String(b.created_at || "")))
+    .forEach((tx) => {
+      const quantity = transactionSignedQuantity(tx);
+      const key = txMarketKey(tx.symbol, tx.stock_market);
+      if (quantity > 0) {
+        const priceSymbol = kind === "option" ? (tx.underlying_symbol || tx.symbol) : tx.symbol;
+        const marketPrice = prices.get(txMarketKey(priceSymbol, tx.stock_market)) || prices.get(txMarketKey(priceSymbol)) || prices.get(key);
+        const txPrice = Number(tx.price || tx.price_input || 0);
+        lots.push({
+          key,
+          symbol: tx.symbol || "Unknown",
+          underlyingSymbol: tx.underlying_symbol || tx.symbol || "",
+          stockMarket: tx.stock_market || "",
+          quantity,
+          vestDate: parseDateInput(tx.vest_date),
+          strikePrice: Number(tx.strike_price || 0),
+          optionType: tx.option_type || "",
+          publicMarket: publicStockMarket(tx.stock_market),
+          currentPrice: Number(marketPrice?.price || 0),
+          hasMarketPrice: Number(marketPrice?.price || 0) > 0,
+          priceSource: marketPrice?.source || "",
+          currency: marketPrice?.currency || tx.currency || state.baseCurrency,
+          unitPrice: kind === "rsu" ? Number(marketPrice?.price || txPrice || 0) : Number(marketPrice?.price || 0),
+        });
+        return;
+      }
+      let remaining = Math.abs(quantity);
+      lots
+        .filter((lot) => lot.key === key && lot.quantity > 0)
+        .sort((a, b) => String(a.vestDate || "9999-12-31").localeCompare(String(b.vestDate || "9999-12-31")))
+        .forEach((lot) => {
+          if (remaining <= 0) return;
+          const used = Math.min(lot.quantity, remaining);
+          lot.quantity -= used;
+          remaining -= used;
+        });
+    });
+  return lots.filter((lot) => lot.quantity > 0.000001);
+}
+
+function lotVestingStatus(lot) {
+  const vestDate = parseDateInput(lot.vestDate);
+  return vestDate && vestDate <= todayString() ? "vested" : "unvested";
+}
+
+function lotBaseValue(lot) {
+  return normalizedAmount(Number(lot.quantity || 0) * Number(lot.unitPrice || 0), lot.currency || state.baseCurrency);
+}
+
+function optionLotValue(lot) {
+  if (!lot.publicMarket || !lot.hasMarketPrice) return 0;
+  return normalizedAmount(Math.max(Number(lot.currentPrice || 0) - Number(lot.strikePrice || 0), 0) * Number(lot.quantity || 0), lot.currency || state.baseCurrency);
+}
+
+function equityCompLotValue(kind, lot) {
+  return kind === "option" ? optionLotValue(lot) : lotBaseValue(lot);
+}
+
+function equityCompLotLocalValue(kind, lot) {
+  if (kind === "option") {
+    if (!lot.publicMarket || !lot.hasMarketPrice) return 0;
+    return Math.max(Number(lot.currentPrice || 0) - Number(lot.strikePrice || 0), 0) * Number(lot.quantity || 0);
+  }
+  return Number(lot.quantity || 0) * Number(lot.unitPrice || 0);
+}
+
+function localCurrencyValueText(kind, lots) {
+  const byCurrency = lots.reduce((acc, lot) => {
+    const currency = lot.currency || state.baseCurrency;
+    acc[currency] = (acc[currency] || 0) + equityCompLotLocalValue(kind, lot);
+    return acc;
+  }, {});
+  return Object.entries(byCurrency)
+    .filter(([, value]) => Math.abs(Number(value || 0)) > 0.005)
+    .map(([currency, value]) => money(value, currency, 0))
+    .join(" / ");
+}
+
+function equityCompValueHtml(kind, lots) {
+  const quantity = sum(lots.map((lot) => lot.quantity));
+  if (!quantity) return '<span class="muted-inline">∅</span>';
+  if (kind === "rsu" && lots.every((lot) => Number(lot.unitPrice || 0) <= 0)) return '<span class="muted-inline">Missing market price</span>';
+  if (kind === "option" && lots.every((lot) => !lot.publicMarket)) return '<span class="muted-inline">Private company</span>';
+  if (kind === "option" && lots.every((lot) => !lot.hasMarketPrice)) return '<span class="muted-inline">Missing stock price</span>';
+  const baseValue = sum(lots.map((lot) => equityCompLotValue(kind, lot)));
+  const localText = localCurrencyValueText(kind, lots);
+  const baseText = money(baseValue, state.baseCurrency, 0);
+  return `
+    <span class="dual-currency-value">
+      <b>${esc(baseText)}</b>
+      ${localText && localText !== baseText ? `<small>${esc(localText)}</small>` : ""}
+    </span>
+  `;
+}
+
+function weightedAverageStrike(lots) {
+  const quantity = sum(lots.map((lot) => lot.quantity));
+  if (!quantity) return 0;
+  return sum(lots.map((lot) => Number(lot.strikePrice || 0) * Number(lot.quantity || 0))) / quantity;
+}
+
+function vestingDetailsTitle(lots, unitLabel) {
+  if (!lots.length) return "";
+  return lots.map((lot) => {
+    const date = lot.vestDate ? formatDate(lot.vestDate) : "Missing vest date";
+    return `${fmt(lot.quantity, 2)} ${unitLabel} - Vest Date: ${date}`;
+  }).join("\n");
+}
+
+function equityCompRows(rsuLots, optionLots) {
+  return [
+    ...rsuLots.map((lot) => ({ ...lot, kind: "rsu" })),
+    ...optionLots.map((lot) => ({ ...lot, kind: "option" })),
+  ].reduce((acc, lot) => {
+    const key = [
+      lot.kind,
+      lot.symbol,
+      lot.stockMarket,
+      lot.kind === "option" ? lot.underlyingSymbol : "",
+      lot.kind === "option" ? lot.strikePrice : "",
+      lot.kind === "option" ? lot.optionType : "",
+    ].join("|");
+    acc[key] = acc[key] || { ...lot, vested: [], unvested: [] };
+    acc[key][lotVestingStatus(lot)].push(lot);
+    return acc;
+  }, {});
+}
+
+function equityCompPriceText(group) {
+  if (group.kind === "rsu") {
+    const price = Number(group.unitPrice || group.currentPrice || 0);
+    return price > 0 ? money(price, group.currency || state.baseCurrency, 2) : "Missing market price";
+  }
+  if (!group.publicMarket) return "Private company";
+  const current = Number(group.currentPrice || 0);
+  const currentText = current > 0 ? money(current, group.currency || state.baseCurrency, 2) : "Missing stock price";
+  return `${currentText} / ${money(group.strikePrice || 0, group.currency || state.baseCurrency, 2)}`;
+}
+
+function renderEquityCompTable(rsuLots, optionLots) {
+  const groups = Object.values(equityCompRows(rsuLots, optionLots)).sort((a, b) => (
+    a.kind.localeCompare(b.kind) || a.symbol.localeCompare(b.symbol) || Number(a.strikePrice || 0) - Number(b.strikePrice || 0)
+  ));
+  if (!groups.length) return '<div class="empty compact-empty">No RSU or stock option grants</div>';
+  return `
+    <div class="equity-comp-table-wrap">
+      <table class="equity-comp-table">
+        <thead>
+          <tr>
+            <th>Instrument</th>
+            <th>Type</th>
+            <th>Vested</th>
+            <th>Vested value</th>
+            <th>Unvested</th>
+            <th>Unvested value</th>
+            <th>Current / Strike</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${groups.map((group) => {
+            const vestedQty = sum(group.vested.map((lot) => lot.quantity));
+            const unvestedQty = sum(group.unvested.map((lot) => lot.quantity));
+            const unitLabel = group.kind === "rsu" ? "RSU" : "options";
+            const unvestedTitle = vestingDetailsTitle(group.unvested, unitLabel);
+            const instrumentDetail = group.kind === "option"
+              ? `${group.stockMarket || "No market"}${group.underlyingSymbol ? ` · Underlying ${group.underlyingSymbol}` : ""}${group.optionType ? ` · ${group.optionType}` : ""}`
+              : (group.stockMarket || "No market");
+            return `
+              <tr>
+                <td><b>${esc(group.symbol)}</b><small>${esc(instrumentDetail)}</small></td>
+                <td><span class="equity-kind ${group.kind}">${group.kind === "rsu" ? "RSU" : "Option"}</span></td>
+                <td>${fmt(vestedQty, 2)}</td>
+                <td>${equityCompValueHtml(group.kind, group.vested)}</td>
+                <td class="${unvestedQty ? "vesting-tooltip-cell" : ""}" title="${esc(unvestedTitle)}">${fmt(unvestedQty, 2)}</td>
+                <td>${equityCompValueHtml(group.kind, group.unvested)}</td>
+                <td>${esc(equityCompPriceText(group))}</td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderEquityCompDashboard(items) {
+  const rsuLots = equityCompLots("rsu", items);
+  const optionLots = equityCompLots("option", items);
+  const rsuQuantity = sum(rsuLots.map((lot) => lot.quantity));
+  const optionQuantity = sum(optionLots.map((lot) => lot.quantity));
+  const hasData = rsuLots.length || optionLots.length;
+  return `
+    <div class="chart-card equity-comp-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">RSU and stock options</div>
+          <span class="chart-subtitle">RSU value uses the app market price. Public options use current stock price minus strike.</span>
+        </div>
+        <div class="chart-legend">
+          ${rsuLots.length ? `<span><i style="background:#2ee59d"></i>${fmt(rsuQuantity, 2)} RSU shares</span>` : ""}
+          ${optionLots.length ? `<span><i style="background:#21a7ff"></i>${fmt(optionQuantity, 2)} stock options</span>` : ""}
+        </div>
+      </div>
+      ${hasData ? renderEquityCompTable(rsuLots, optionLots) : '<div class="empty compact-empty">No RSU or stock option grants</div>'}
+    </div>
+  `;
+}
+
 function renderAnalytics(items) {
   const board = $("analyticsBoard");
   if (!board) return;
@@ -2393,6 +3033,8 @@ function renderAnalytics(items) {
   const assetGroups = groupValues(items, (item) => item.holding.asset_class);
   const currencyGroups = groupValues(items, (item) => item.holding.currency);
   const renderers = {
+    portfolio_value: () => renderPortfolioValueDashboard(items),
+    long_term_savings: () => renderFundsOverviewDashboard(),
     account_trend: () => renderAccountValueTrend(),
     long_term: () => renderLongTermDashboard(),
     market_cost: () => renderMarketCostBars(items),
@@ -2400,6 +3042,7 @@ function renderAnalytics(items) {
     top_holdings: () => renderMiniBars(items),
     coverage: () => renderCompleteness(items),
     currency: () => renderCurrencyAllocation(currencyGroups, total),
+    equity_comp: () => renderEquityCompDashboard(items),
     profit: () => renderProfitBars(items),
     snapshot: () => renderBubbles(items),
   };
@@ -2415,7 +3058,6 @@ function renderAnalytics(items) {
 
 function renderPortfolio(items) {
   renderSummary(items);
-  renderFundsOverview();
   renderAnalytics(items);
   renderRows(items);
 }
@@ -2897,7 +3539,8 @@ async function importSourceToLocal() {
 function transactionCashImpact(tx) {
   const value = Number(tx.quantity || 0) * Number(tx.price || 0);
   if (tx.action === "BUY") return -value;
-  if (tx.action === "SELL" || tx.action === "SHORT") return value;
+  if (tx.action === "SELL" || tx.action === "SHORT" || tx.action === "DIVIDEND" || tx.action === "INTEREST") return value;
+  if (tx.action === "FEE") return -value;
   return 0;
 }
 
@@ -2920,6 +3563,29 @@ function instrumentById(id) {
   return state.manualSecurities.find((item) => item.id === id);
 }
 
+function selectedTransactionInstrumentType() {
+  const instrument = instrumentById(valueOf("securityKnownInstrument"));
+  return String(instrument?.instrument_type || valueOf("securityAssetClass") || "").toUpperCase();
+}
+
+function toggleTransactionCompFields() {
+  const type = selectedTransactionInstrumentType();
+  const isRsu = type === "RSU";
+  const isOptionGrant = type === "OPTION" || type === "STOCK_OPTION";
+  const isEquityComp = isRsu || isOptionGrant;
+  document.querySelectorAll("[data-equity-comp-field]").forEach((node) => { node.hidden = !isEquityComp; });
+  document.querySelectorAll("[data-option-grant-field]").forEach((node) => { node.hidden = !isOptionGrant; });
+  $("securityPrice").hidden = isEquityComp;
+  $("securityStrikePrice").required = isOptionGrant;
+  $("securityPrice").placeholder = "Price";
+  $("securityPurchasePrice").placeholder = isOptionGrant ? "Exercise/purchase price" : "Purchase price (optional)";
+  if (isRsu && valueOf("securityAction") === "BUY") $("securityAction").value = "ADD";
+  if (isEquityComp) $("securityPrice").value = "";
+  if (!isEquityComp) {
+    ["securityVestDate", "securityPurchasePrice", "securityStrikePrice"].forEach((id) => { $(id).value = ""; });
+  }
+}
+
 function refreshManualSecuritySelects() {
   const options = '<option value="">Free symbol / not defined</option>' + state.manualSecurities
     .map((item) => `<option value="${esc(item.id)}">${esc(instrumentLabel(item))}</option>`)
@@ -2931,6 +3597,7 @@ function refreshManualSecuritySelects() {
     select.innerHTML = options;
     if ([...select.options].some((option) => option.value === current)) select.value = current;
   });
+  refreshMarketOptions();
 }
 
 function applyInstrumentToForm(item, prefix) {
@@ -2944,7 +3611,47 @@ function applyInstrumentToForm(item, prefix) {
   }
   if (prefix === "security") {
     $("securityAllowManual").checked = true;
+    if (item.strike_price) $("securityStrikePrice").value = item.strike_price;
+    toggleTransactionCompFields();
   }
+}
+
+function setSecurityEditMode(tx = null) {
+  state.editingTransactionId = tx?.id || "";
+  const saveButton = $("saveSecurity");
+  const cancelButton = $("cancelSecurityEdit");
+  if (saveButton) saveButton.textContent = tx ? "Update transaction" : "Save transaction";
+  if (cancelButton) cancelButton.hidden = !tx;
+}
+
+function clearSecurityForm() {
+  ["securitySymbol", "securityMarket", "securityQuantity", "securityPrice", "securityVestDate", "securityPurchasePrice", "securityStrikePrice", "securityComments"].forEach((id) => { $(id).value = ""; });
+  $("securityAllowManual").checked = false;
+  $("securityKnownInstrument").value = "";
+  setSecurityEditMode(null);
+  toggleTransactionCompFields();
+}
+
+function editSecurityTransaction(transactionId) {
+  const tx = state.localTransactions.find((item) => item.id === transactionId);
+  if (!tx) return;
+  $("securityAccount").value = tx.account_db_id || "";
+  $("securityKnownInstrument").value = state.manualSecurities.find((item) => item.symbol === tx.symbol && item.stock_market === tx.stock_market)?.id || "";
+  $("securityAction").value = tx.action || "BUY";
+  $("securitySymbol").value = tx.symbol || "";
+  $("securityMarket").value = tx.stock_market || "";
+  $("securityAssetClass").value = tx.asset_class || "EQUITY";
+  $("securityQuantity").value = tx.quantity || "";
+  $("securityPrice").value = tx.price_input || "";
+  setDateField("securityDate", tx.trade_date || "");
+  setDateField("securityVestDate", tx.vest_date || "");
+  $("securityPurchasePrice").value = tx.purchase_price || "";
+  $("securityStrikePrice").value = tx.strike_price || "";
+  $("securityComments").value = tx.comments || "";
+  $("securityAllowManual").checked = true;
+  setSecurityEditMode(tx);
+  toggleTransactionCompFields();
+  $("securityStatus").textContent = `Editing ${tx.action} ${tx.symbol}`;
 }
 
 function fillPriceFormFromFocus() {
@@ -3040,6 +3747,7 @@ async function loadSecurityDetail() {
     stock_market: detail.market_key,
     period: state.securityChartPeriod || "1y",
   });
+  if (state.securityChartLevelPeriods?.length) params.set("level_periods", state.securityChartLevelPeriods.join(","));
   if (state.securityChartStartDate) params.set("date_from", state.securityChartStartDate);
   const [transactions, prices, history] = await Promise.all([
     api("/api/local/securities"),
@@ -3049,6 +3757,7 @@ async function loadSecurityDetail() {
   state.localTransactions = transactions.items || [];
   state.localPrices = prices.items || [];
   state.securityHistory = history.points || [];
+  state.securityHistoryMeta = history;
   renderSecurityDetail();
 }
 
@@ -3075,6 +3784,8 @@ function renderSecurityDetail() {
     <div class="stack-item management-item">
       <b>${esc(tx.action)} ${fmt(tx.quantity, 4)}</b>
     <span>${esc(formatDate(tx.trade_date))} · input ${fmt(tx.price_input, 4)} · ${esc(tx.currency)} ${fmt(tx.price, 4)}</span>
+      <button class="secondary compact-button" type="button" data-edit-security="${esc(tx.id)}">Edit</button>
+      <button class="secondary compact-button" type="button" data-delete-security="${esc(tx.id)}">Delete</button>
       <div class="sub">${transactionCashImpact(tx) ? `Cash ${signedMoney(transactionCashImpact(tx), tx.currency)}` : "No cash movement"} · ${esc(cleanSourceLabel(tx.management_company || ""))} ${esc(cleanSourceLabel(tx.account_id || ""))}${tx.comments ? ` · ${esc(cleanSourceLabel(tx.comments))}` : ""}</div>
     </div>
   `).join("") : '<div class="empty">No transactions for this security</div>';
@@ -3094,25 +3805,59 @@ function renderSecurityChart() {
   document.querySelectorAll("[data-security-chart-period]").forEach((button) => {
     button.classList.toggle("active", button.dataset.securityChartPeriod === state.securityChartPeriod);
   });
+  document.querySelectorAll("[data-security-chart-mode]").forEach((button) => {
+    button.classList.toggle("active", button.dataset.securityChartMode === state.securityChartMode);
+  });
+  document.querySelectorAll(".security-sr-toggle").forEach((input) => {
+    input.checked = (state.securityChartLevelPeriods || []).includes(input.value);
+  });
+  document.querySelectorAll(".security-ma-toggle").forEach((input) => {
+    input.checked = state.securityChartMaWindows.includes(input.value);
+  });
   setDateField("securityChartStartDate", clampedHistoryDate(state.securityChartStartDate));
   const frame = $("securityDetailChart");
   const points = (state.securityHistory || [])
-    .map((point) => ({ date: point.date, price: Number(point.price || 0) }))
+    .map((point) => {
+      const close = Number(point.adjusted_close || point.close || point.price || 0);
+      return {
+        date: point.date,
+        price: close,
+        open: Number(point.open || close),
+        high: Number(point.high || close),
+        low: Number(point.low || close),
+        close: Number(point.close || close),
+        adjustedClose: close,
+        volume: Number(point.volume || 0),
+      };
+    })
     .filter((point) => point.date && Number.isFinite(point.price) && point.price > 0);
   if (!points.length) {
     frame.innerHTML = '<div class="empty">No price history for this period</div>';
     return;
   }
-  const width = 760;
-  const height = 230;
+  const meta = state.securityHistoryMeta || {};
+  const showCandles = state.securityChartMode === "candles" && meta.has_candles;
+  const hasVolume = points.some((point) => point.volume > 0);
+  const width = 820;
+  const height = hasVolume ? 340 : 270;
   const padTop = 24;
-  const padRight = 30;
+  const padRight = 36;
   const padBottom = 36;
   const padLeft = 58;
+  const volumeGap = hasVolume ? 20 : 0;
+  const volumeHeight = hasVolume ? 58 : 0;
   const plotWidth = width - padLeft - padRight;
-  const plotHeight = height - padTop - padBottom;
-  const min = Math.min(...points.map((point) => point.price));
-  const max = Math.max(...points.map((point) => point.price));
+  const plotHeight = height - padTop - padBottom - volumeGap - volumeHeight;
+  const selectedMaWindows = state.securityChartMaWindows || [];
+  const maSeries = Object.fromEntries(selectedMaWindows.map((window) => [window, movingAverageSeries(points, Number(window))]));
+  const selectedLevelPeriods = state.securityChartLevelPeriods || [];
+  const chartLevels = selectedLevelPeriods.flatMap((period) => supportResistanceChartLevels(meta.support_resistance || {}, period, points));
+  const levelPrices = chartLevels.map((level) => level.price).filter(Number.isFinite);
+  const priceValues = points.flatMap((point) => [point.high, point.low, point.price])
+    .concat(Object.values(maSeries).flat().map((point) => point.value))
+    .concat(levelPrices);
+  const min = Math.min(...priceValues);
+  const max = Math.max(...priceValues);
   const span = max - min || 1;
   const mid = min + span / 2;
   const x = (index) => padLeft + (index / Math.max(points.length - 1, 1)) * plotWidth;
@@ -3134,14 +3879,75 @@ function renderSecurityChart() {
     ? Math.min(height - padBottom - calloutHeight - 4, lastY + 18)
     : Math.max(padTop + 4, lastY - calloutHeight - 18);
   const calloutTextColor = change > 0 ? "#45e38a" : change < 0 ? "#ff5b73" : "#58a6ff";
+  const candleWidth = Math.max(3, Math.min(11, plotWidth / Math.max(points.length, 1) * 0.62));
+  const volumeBase = height - padBottom;
+  const volumeTop = volumeBase - volumeHeight;
+  const maxVolume = Math.max(...points.map((point) => point.volume), 1);
+  const maColors = { 7: "#ffae18", 10: "#9b4dff", 15: "#5f67ff", 30: "#f7f9ff" };
+  const maPaths = Object.entries(maSeries)
+    .filter(([, series]) => series.length)
+    .map(([window, series]) => {
+      const path = series.map((point, index) => `${index ? "L" : "M"} ${x(point.index).toFixed(1)} ${y(point.value).toFixed(1)}`).join(" ");
+      return `<path d="${path}" fill="none" stroke="${maColors[window] || "#aab4cf"}" stroke-width="1.8" opacity="0.9" />`;
+    }).join("");
+  const levelMarkers = chartLevels.map((level, index) => {
+    const px = x(level.index);
+    const py = y(level.price);
+    const markerX = Math.max(padLeft + 2, Math.min(width - padRight - 48, px + (level.kind === "support" ? 7 : -42)));
+    const markerY = Math.max(padTop + 2, Math.min(padTop + plotHeight - 14, py - 7 + (index % 3) * 13));
+    const color = level.kind === "support" ? "#2dde98" : "#ff5b73";
+    return `
+      <g>
+        <title>${esc(level.label)} ${esc(level.kind)} ${esc(fmt(level.price, 4))}</title>
+        <rect x="${markerX.toFixed(1)}" y="${markerY.toFixed(1)}" width="9" height="9" rx="1.5" fill="${color}" />
+        <text x="${(markerX + 13).toFixed(1)}" y="${(markerY + 8.5).toFixed(1)}" fill="${color}" font-size="11" font-weight="900">${esc(level.label)}</text>
+      </g>
+    `;
+  }).join("");
+  const candles = points.map((point, index) => {
+    const px = x(index);
+    const up = point.close >= point.open;
+    const color = up ? "#2dde98" : "#ff5b73";
+    const bodyTop = Math.min(y(point.open), y(point.close));
+    const bodyHeight = Math.max(Math.abs(y(point.close) - y(point.open)), 2);
+    return `
+      <line x1="${px.toFixed(1)}" y1="${y(point.high).toFixed(1)}" x2="${px.toFixed(1)}" y2="${y(point.low).toFixed(1)}" stroke="${color}" stroke-width="1.4" />
+      <rect x="${(px - candleWidth / 2).toFixed(1)}" y="${bodyTop.toFixed(1)}" width="${candleWidth.toFixed(1)}" height="${bodyHeight.toFixed(1)}" rx="1.5" fill="${up ? "rgba(45,222,152,0.34)" : "rgba(255,91,115,0.34)"}" stroke="${color}" stroke-width="1" />
+    `;
+  }).join("");
+  const volumeBars = hasVolume ? points.map((point, index) => {
+    const px = x(index);
+    const previous = points[index - 1] || point;
+    const up = point.close >= previous.close;
+    const barHeight = Math.max(1, (point.volume / maxVolume) * volumeHeight);
+    const barWidth = Math.max(2, Math.min(9, plotWidth / Math.max(points.length, 1) * 0.72));
+    return `<rect x="${(px - barWidth / 2).toFixed(1)}" y="${(volumeBase - barHeight).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" rx="1.5" fill="${up ? "#2dde98" : "#ff5b73"}" opacity="0.72" />`;
+  }).join("") : "";
+  const legend = [
+    showCandles ? '<span><i style="background:#2dde98"></i>Up candle</span><span><i style="background:#ff5b73"></i>Down candle</span>' : '<span><i style="background:#21a7ff"></i>Adjusted close</span>',
+    ...selectedMaWindows.map((window) => `<span><i style="background:${maColors[window] || "#aab4cf"}"></i>MA ${esc(window)}</span>`),
+    ...selectedLevelPeriods.flatMap((period) => [
+      `<span><i style="background:#2dde98"></i>${esc(levelPeriodLabel(period))} support</span>`,
+      `<span><i style="background:#ff5b73"></i>${esc(levelPeriodLabel(period))} resistance</span>`,
+    ]),
+    hasVolume ? '<span><i style="background:#2dde98"></i>Volume up</span><span><i style="background:#ff5b73"></i>Volume down</span>' : "",
+  ].filter(Boolean).join("");
+  const volumeText = hasVolume
+    ? `Volume ${fmt(meta.volume?.latest || last.volume, 0)} · Avg 20D ${meta.volume?.average_20d ? fmt(meta.volume.average_20d, 0) : "N/A"} · Avg 90D ${meta.volume?.average_90d ? fmt(meta.volume.average_90d, 0) : "N/A"}`
+    : "No volume data from provider for this period";
+  const chartNotice = state.securityChartMode === "candles" && !meta.has_candles ? '<div class="chart-notice">Candles need OHLC data. Showing line chart for this source.</div>' : "";
   frame.innerHTML = `
+    ${chartNotice}
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Security price history">
       ${[max, mid, min].map((value) => `<line x1="${padLeft}" y1="${y(value).toFixed(1)}" x2="${width - padRight}" y2="${y(value).toFixed(1)}" stroke="#1e2835" stroke-dasharray="5 7" />`).join("")}
       <line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}" stroke="#344052" />
-      <line x1="${padLeft}" y1="${height - padBottom}" x2="${width - padRight}" y2="${height - padBottom}" stroke="#344052" />
+      <line x1="${padLeft}" y1="${(padTop + plotHeight).toFixed(1)}" x2="${width - padRight}" y2="${(padTop + plotHeight).toFixed(1)}" stroke="#344052" />
+      ${hasVolume ? `<line x1="${padLeft}" y1="${volumeTop.toFixed(1)}" x2="${width - padRight}" y2="${volumeTop.toFixed(1)}" stroke="#26303d" stroke-dasharray="5 7" /><line x1="${padLeft}" y1="${volumeBase.toFixed(1)}" x2="${width - padRight}" y2="${volumeBase.toFixed(1)}" stroke="#344052" />${volumeBars}<text x="${padLeft}" y="${(volumeTop - 6).toFixed(1)}" fill="#9cacc2" font-size="11" font-weight="800">Volume</text>` : ""}
       <line x1="${middleX.toFixed(1)}" y1="${height - padBottom}" x2="${middleX.toFixed(1)}" y2="${(height - padBottom + 5).toFixed(1)}" stroke="#344052" />
       ${[max, mid, min].map((value) => `<text x="${padLeft - 8}" y="${(y(value) + 4).toFixed(1)}" fill="#9cacc2" font-size="11" font-weight="700" text-anchor="end">${esc(fmt(value, 4))}</text>`).join("")}
-      <path d="${d}" fill="none" stroke="#21a7ff" stroke-width="3" />
+      ${showCandles ? candles : `<path d="${d}" fill="none" stroke="#21a7ff" stroke-width="3" />`}
+      ${maPaths}
+      ${levelMarkers}
       <g data-security-hover-marker hidden>
         <line data-security-hover-line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}" stroke="#8fb7e8" stroke-width="1" stroke-dasharray="4 5" opacity="0.75" />
         <circle data-security-hover-point cx="${padLeft}" cy="${height - padBottom}" r="4.5" fill="#f7f9ff" stroke="#21a7ff" stroke-width="2" />
@@ -3153,12 +3959,50 @@ function renderSecurityChart() {
       <text x="${padLeft}" y="${height - 10}" fill="#9cacc2" font-size="11" font-weight="700">${esc(formatDate(first.date))}</text>
       <text x="${middleX.toFixed(1)}" y="${height - 10}" fill="#9cacc2" font-size="11" font-weight="700" text-anchor="middle">${esc(formatDate(middle.date))}</text>
       <text x="${width - padRight}" y="${height - 10}" fill="#9cacc2" font-size="11" font-weight="700" text-anchor="end">${esc(formatDate(last.date))}</text>
-      <rect data-security-chart-hitbox x="${padLeft}" y="${padTop}" width="${plotWidth}" height="${plotHeight}" fill="transparent" />
+      <rect data-security-chart-hitbox x="${padLeft}" y="${padTop}" width="${plotWidth}" height="${height - padTop - padBottom}" fill="transparent" />
     </svg>
     <div class="chart-hover-tip" hidden></div>
-    <div class="sub ${cls}">${points.length} price points</div>
+    <div class="security-chart-footer">
+      <div class="chart-legend">${legend}</div>
+      <div class="sub ${cls}">${points.length} price points · ${esc(volumeText)}</div>
+    </div>
   `;
   attachSecurityChartHover(frame, points, { width, height, padLeft, padRight, padTop, padBottom, plotWidth, plotHeight, min, max });
+}
+
+function levelPeriodLabel(period) {
+  return SUPPORT_RESISTANCE_PERIODS.find((item) => item.key === period)?.label || String(period || "").toUpperCase();
+}
+
+function supportResistanceChartLevels(levels, period, points) {
+  const sr = levels?.[period] || {};
+  if (sr.state !== "ok") return [];
+  return ["support", "resistance"].map((kind) => {
+    const level = sr[kind] || {};
+    const price = Number(level.price);
+    if (!Number.isFinite(price) || price <= 0) return null;
+    const dateIndex = points.findIndex((point) => point.date === level.date);
+    const priceIndex = points.reduce((best, point, index) => {
+      const diff = Math.abs(point.price - price);
+      return diff < best.diff ? { index, diff } : best;
+    }, { index: Math.max(points.length - 1, 0), diff: Number.POSITIVE_INFINITY }).index;
+    return {
+      kind,
+      period,
+      label: levelPeriodLabel(period),
+      price,
+      index: dateIndex >= 0 ? dateIndex : priceIndex,
+    };
+  }).filter(Boolean);
+}
+
+function movingAverageSeries(points, window) {
+  if (!window || points.length < window) return [];
+  return points.map((point, index) => {
+    if (index + 1 < window) return null;
+    const slice = points.slice(index + 1 - window, index + 1);
+    return { index, value: slice.reduce((total, item) => total + item.price, 0) / window };
+  }).filter(Boolean);
 }
 
 function attachSecurityChartHover(frame, points, dims) {
@@ -3191,7 +4035,12 @@ function attachSecurityChartHover(frame, points, dims) {
     point.setAttribute("cx", px.toFixed(1));
     point.setAttribute("cy", py.toFixed(1));
     tip.hidden = false;
-    tip.innerHTML = `<b>${esc(formatDate(selected.date))}</b><span>${esc(money(selected.price, state.securityDetail?.currency || "USD", 4))}</span>`;
+    tip.innerHTML = `
+      <b>${esc(formatDate(selected.date))}</b>
+      <span>Close ${esc(money(selected.price, state.securityDetail?.currency || "USD", 4))}</span>
+      <span>Open ${esc(fmt(selected.open, 4))} · High ${esc(fmt(selected.high, 4))} · Low ${esc(fmt(selected.low, 4))}</span>
+      <span>Volume ${esc(fmt(selected.volume || 0, 0))}</span>
+    `;
     const tipLeft = Math.max(8, Math.min(rect.width - tip.offsetWidth - 8, (px / dims.width) * rect.width - tip.offsetWidth / 2));
     const tipTop = Math.max(8, Math.min(rect.height - tip.offsetHeight - 8, (py / dims.height) * rect.height - tip.offsetHeight - 12));
     tip.style.left = `${tipLeft}px`;
@@ -3275,14 +4124,18 @@ async function loadLocalSecurities() {
   await loadManualSecurities();
   const data = await api("/api/local/securities");
   state.localTransactions = data.items || [];
+  refreshMarketOptions();
+  if (state.items?.length) renderAnalytics(state.items);
   $("securitiesList").innerHTML = state.localTransactions.length ? state.localTransactions.map((tx) => `
     <div class="stack-item management-item">
       <b>${esc(tx.action)} ${esc(tx.symbol)}</b>
       <span>${fmt(tx.quantity, 4)} @ ${fmt(tx.price_input, 4)} (${esc(tx.currency)} ${fmt(tx.price, 4)})${tx.instrument_type ? ` · ${esc(tx.instrument_type)}` : ""}</span>
-      <button class="secondary compact-button" type="button" data-delete-security="${esc(tx.id)}">Remove</button>
-      <div class="sub">${esc(tx.stock_market)} · ${esc(tx.asset_class)}${tx.option_type ? ` · ${esc(tx.option_type)}` : ""}${tx.expiration_date ? ` · Exp ${esc(formatDate(tx.expiration_date))}` : ""}${tx.strike_price ? ` · Strike ${fmt(tx.strike_price, 4)}` : ""} · ${esc(formatDate(tx.trade_date))} · ${transactionCashImpact(tx) ? `Cash ${signedMoney(transactionCashImpact(tx), tx.currency)}` : "No cash movement"} · ${esc(tx.management_company || "")} ${esc(tx.account_id || "")}</div>
+      <button class="secondary compact-button" type="button" data-edit-security="${esc(tx.id)}">Edit</button>
+      <button class="secondary compact-button" type="button" data-delete-security="${esc(tx.id)}">Delete</button>
+      <div class="sub">${esc(tx.stock_market)} · ${esc(tx.asset_class)}${tx.option_type ? ` · ${esc(tx.option_type)}` : ""}${tx.expiration_date ? ` · Exp ${esc(formatDate(tx.expiration_date))}` : ""}${tx.vest_date ? ` · Vested ${esc(formatDate(tx.vest_date))}` : ""}${tx.strike_price ? ` · Strike ${fmt(tx.strike_price, 4)}` : ""}${tx.purchase_price ? ` · Purchase ${fmt(tx.purchase_price, 4)}` : ""} · ${esc(formatDate(tx.trade_date))} · ${transactionCashImpact(tx) ? `Cash ${signedMoney(transactionCashImpact(tx), tx.currency)}` : "No cash movement"} · ${esc(tx.management_company || "")} ${esc(tx.account_id || "")}</div>
     </div>
   `).join("") : '<div class="empty">No manual securities yet</div>';
+  loadEquityCompQuotes().catch(reportBackgroundError);
 }
 
 async function saveSecurity() {
@@ -3294,19 +4147,146 @@ async function saveSecurity() {
     asset_class: valueOf("securityAssetClass"),
     quantity: valueOf("securityQuantity"),
     price_input: valueOf("securityPrice"),
+    vest_date: dateValue("securityVestDate"),
+    purchase_price: valueOf("securityPurchasePrice"),
+    strike_price: valueOf("securityStrikePrice"),
     trade_date: dateValue("securityDate") || todayString(),
     allow_manual: $("securityAllowManual").checked,
     comments: valueOf("securityComments"),
   };
   try {
-    await api("/api/local/securities", { method: "POST", body: JSON.stringify(payload) });
-    $("securityStatus").textContent = "Security transaction saved";
-    ["securitySymbol", "securityMarket", "securityQuantity", "securityPrice", "securityComments"].forEach((id) => { $(id).value = ""; });
+    const editingId = state.editingTransactionId;
+    const path = editingId ? `/api/local/securities/${encodeURIComponent(editingId)}` : "/api/local/securities";
+    await api(path, { method: editingId ? "PUT" : "POST", body: JSON.stringify(payload) });
+    $("securityStatus").textContent = editingId ? "Security transaction updated" : "Security transaction saved";
+    clearSecurityForm();
     await loadLocalSecurities();
     await loadPortfolio();
   } catch (error) {
     $("securityStatus").textContent = `Error: ${error.message}. Check "Manual if not found" to save a symbol without provider validation.`;
   }
+}
+
+async function loadEvents() {
+  const data = await api("/api/local/events");
+  state.localEvents = data.items || [];
+  const settings = data.dividends || {};
+  const status = $("eventsStatus");
+  if (status) {
+    status.textContent = `Dividend scan starts ${formatDate(settings.start_date || "")} · tax ${pct(Number(settings.tax_rate || 0) * 100)} · next ${settings.next_run ? formatDate(String(settings.next_run).slice(0, 10)) : "not scheduled"}`;
+  }
+  const list = $("eventsList");
+  if (!list) return;
+  list.innerHTML = state.localEvents.length ? state.localEvents.map((event) => `
+    <div class="stack-item management-item event-item ${state.focusedEventId === event.id ? "focused-event" : ""}" data-event-id="${esc(event.id)}">
+      <b>${esc(event.type)} ${esc(event.symbol || "")}</b>
+      <span>${esc(formatDate(event.event_date))} · ${esc(event.status)} · Net ${money(event.net_amount || 0, event.currency || state.baseCurrency, 2)}</span>
+      ${event.transaction_id ? `<button class="secondary compact-button" type="button" data-edit-security="${esc(event.transaction_id)}">Edit transaction</button>` : ""}
+      <div class="sub">${esc(event.account_label || event.account_db_id || "")} · Gross ${money(event.gross_amount || 0, event.currency || state.baseCurrency, 2)} · Tax ${money(event.tax_amount || 0, event.currency || state.baseCurrency, 2)} · ${esc(event.source_key || "")}</div>
+    </div>
+  `).join("") : '<div class="empty">No events yet</div>';
+  renderAlarms();
+  focusEventRow();
+}
+
+async function runDividendEvents() {
+  $("eventsStatus").textContent = "Scanning dividends";
+  const result = await api("/api/local/events/dividends/run", { method: "POST", body: "{}" });
+  state.localEvents = result.items || [];
+  $("eventsStatus").textContent = `Checked ${result.checked} holdings · ${result.processed} processed · ${result.pending} pending · ${result.skipped} skipped`;
+  await Promise.all([loadEvents(), loadLocalSecurities(), loadPortfolio({ refresh: true })]);
+}
+
+function eventDaysFromToday(eventDate) {
+  const iso = parseDateInput(eventDate);
+  if (!iso) return 0;
+  const [year, month, day] = iso.split("-").map(Number);
+  const eventUtc = Date.UTC(year, month - 1, day);
+  const todayIso = todayString();
+  const [todayYear, todayMonth, todayDay] = todayIso.split("-").map(Number);
+  const todayUtc = Date.UTC(todayYear, todayMonth - 1, todayDay);
+  return Math.round((eventUtc - todayUtc) / 86400000);
+}
+
+function dividendAlarmMessage(event) {
+  const details = event.details || {};
+  const currency = event.currency || state.baseCurrency;
+  const perShare = Number(details.gross_per_share || 0);
+  const shares = Number(details.shares || 0);
+  const perShareText = perShare > 0 ? `${money(perShare, currency, 4)} per share` : "per-share amount not available";
+  const shareText = shares > 0 ? `${fmt(shares, 3)} shares` : "shares not available";
+  const netText = money(event.net_amount || 0, currency, 2);
+  const grossText = money(event.gross_amount || 0, currency, 2);
+  const taxText = money(event.tax_amount || 0, currency, 2);
+  const days = eventDaysFromToday(event.event_date);
+  if (event.status === "pending") {
+    const dueText = days > 0 ? `in ${days} day${days === 1 ? "" : "s"}` : `on ${formatDate(event.event_date)}`;
+    return {
+      tone: "future",
+      title: `${event.symbol} dividend is expected ${dueText}`,
+      body: `Expected ${perShareText}. Estimated net total ${netText} after ${taxText} tax for ${shareText}.`,
+      meta: `Payment date ${formatDate(event.event_date)} · Gross ${grossText}`,
+    };
+  }
+  return {
+    tone: "paid",
+    title: `${event.symbol} dividend was paid`,
+    body: `Added ${netText} to cash from ${perShareText} for ${shareText}.`,
+    meta: `Paid ${formatDate(event.event_date)} · Gross ${grossText} · Tax ${taxText}`,
+  };
+}
+
+function dividendAlarms() {
+  return (state.localEvents || [])
+    .filter((event) => event.type === "DIVIDEND")
+    .map((event) => ({ event, ...dividendAlarmMessage(event) }))
+    .sort((a, b) => {
+      if (a.event.status !== b.event.status) return a.event.status === "pending" ? -1 : 1;
+      return String(a.event.event_date || "").localeCompare(String(b.event.event_date || ""));
+    });
+}
+
+function renderAlarms() {
+  const alarms = dividendAlarms();
+  const count = $("alarmsCount");
+  if (count) count.textContent = String(alarms.length);
+  const button = $("alarmsButton");
+  if (button) button.classList.toggle("has-alarms", alarms.length > 0);
+  const status = $("alarmsStatus");
+  if (status) {
+    const future = alarms.filter((alarm) => alarm.event.status === "pending").length;
+    const paid = alarms.filter((alarm) => alarm.event.status === "processed").length;
+    status.textContent = alarms.length
+      ? `${future} future dividend${future === 1 ? "" : "s"} · ${paid} paid dividend${paid === 1 ? "" : "s"}`
+      : "No dividend alarms yet. Run Scan dividends from Events to discover dividends.";
+  }
+  const list = $("alarmsList");
+  if (!list) return;
+  list.innerHTML = alarms.length ? alarms.map((alarm) => `
+    <button class="alarm-item ${esc(alarm.tone)}" type="button" data-open-dividend-alarm="${esc(alarm.event.id)}">
+      <span class="alarm-kind">${alarm.tone === "future" ? "Future dividend" : "Dividend paid"}</span>
+      <b>${esc(alarm.title)}</b>
+      <span>${esc(alarm.body)}</span>
+      <small>${esc(alarm.meta)}</small>
+    </button>
+  `).join("") : '<div class="empty">No dividend alarms</div>';
+}
+
+function focusEventRow() {
+  if (!state.focusedEventId) return;
+  const row = [...document.querySelectorAll("[data-event-id]")]
+    .find((item) => item.dataset.eventId === state.focusedEventId);
+  if (!row) return;
+  row.classList.add("focused-event");
+  row.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+function openDividendAlarm(eventId) {
+  state.focusedEventId = eventId;
+  const alarmsModal = $("alarmsModal");
+  if (alarmsModal && !alarmsModal.hidden) closeModal(alarmsModal);
+  openModal("eventsModal");
+  setTimeout(focusEventRow, 100);
 }
 
 async function loadLocalPrices() {
@@ -3315,6 +4295,7 @@ async function loadLocalPrices() {
   state.localPrices = data.items || [];
   fillPriceFormFromFocus();
   renderPriceFocusBar();
+  if (state.items?.length) renderAnalytics(state.items);
   const visiblePrices = state.localPrices.filter(priceMatchesFocus);
   $("pricesList").innerHTML = visiblePrices.length ? visiblePrices.map((price) => `
     <div class="stack-item management-item">
@@ -3588,189 +4569,868 @@ function renderPersonLists() {
 }
 
 function renderPensionSimulatorControls() {
-  setOptions("simKind", state.localOptions.fund_kinds || ["Pension", "Provident Fund", "Savings Fund"]);
-  const fundSelect = $("simFundSource");
-  if (fundSelect) {
-    const current = fundSelect.value;
-    fundSelect.innerHTML = '<option value="">Custom amount</option>' + state.localFunds.map((fund) => (
-      `<option value="${esc(fund.id)}">${esc([fund.kind, fund.fund_name || "", fund.pension_id].filter(Boolean).join(" · "))} · ${money(fund.amount, state.baseCurrency, 0)}</option>`
-    )).join("");
-    fundSelect.value = state.localFunds.some((fund) => fund.id === current) ? current : "";
-  }
   renderSimulationPersonOptions();
+  renderPensionInsuranceControls();
   renderPensionPeriods();
+  renderPensionRates();
   renderPensionScenarios();
   renderPensionSimulationResults();
+  renderPensionProjectionSummary();
   syncSimulationFactorState();
+  syncPensionPeriodFromMode();
+  syncPensionRateFromMode();
+  syncScenarioDerivedFields();
+  updatePensionActionStates();
 }
 
-function selectedSimulationFund() {
-  const id = valueOf("simFundSource");
-  return state.localFunds.find((fund) => fund.id === id);
+function coverageOptionsHtml(values, selected, emptyLabel = "No coverage") {
+  const current = selected === undefined || selected === null ? "" : String(selected);
+  return `<option value=""${current === "" ? " selected" : ""}>${esc(emptyLabel)}</option>` + values.map((value) => (
+    `<option value="${esc(value)}"${String(value) === current ? " selected" : ""}>${esc(value)}%</option>`
+  )).join("");
 }
 
-function applySimulationFund() {
-  const fund = selectedSimulationFund();
-  if (!fund) return;
-  $("simKind").value = fund.kind;
-  $("simAmount").value = fund.amount;
-  $("simFactor").value = fund.factor || 200;
-  syncSimulationFactorState();
-  renderSimulationPersonOptions();
-  applySimulationPerson();
-  if (!$("simName").value) $("simName").value = fund.fund_name || fund.pension_id;
+function renderPensionInsuranceControls() {
+  const disability = $("simDisabilityCoverage");
+  const spouse = $("simSpouseSurvivorsCoverage");
+  const children = $("simChildrenSurvivorsCoverage");
+  if (!disability || !spouse || !children) return;
+  disability.innerHTML = coverageOptionsHtml(DISABILITY_COVERAGE_OPTIONS, disability.value);
+  spouse.innerHTML = coverageOptionsHtml(SPOUSE_SURVIVORS_OPTIONS, spouse.value);
+  children.innerHTML = coverageOptionsHtml(CHILDREN_SURVIVORS_OPTIONS, children.value);
+  syncPensionInsuranceTrack({ force: true });
+}
+
+function syncPensionInsuranceTrack({ force = false } = {}) {
+  const trackId = valueOf("simInsuranceTrack") || "comprehensive";
+  const track = PENSION_INSURANCE_TRACKS[trackId];
+  if (!track || trackId === "custom") return;
+  const fields = [
+    ["simDisabilityCoverage", track.disability],
+    ["simSpouseSurvivorsCoverage", track.spouse],
+    ["simChildrenSurvivorsCoverage", track.children],
+  ];
+  fields.forEach(([id, value]) => {
+    const input = $(id);
+    if (input && (force || input.value === "")) input.value = String(value);
+  });
+  const factor = $("simSurvivorsFactor");
+  if (factor && !factor.value) factor.value = "200";
+}
+
+function pensionInsuranceTrackFor(period) {
+  const disability = Number(period?.disability_coverage_percent ?? 0);
+  const spouse = Number(period?.spouse_survivors_coverage_percent ?? 0);
+  const children = Number(period?.children_survivors_coverage_percent ?? 0);
+  const match = Object.entries(PENSION_INSURANCE_TRACKS).find(([, track]) => (
+    track.disability === disability && track.spouse === spouse && track.children === children
+  ));
+  return match?.[0] || "custom";
 }
 
 function syncSimulationFactorState() {
   const factorInput = $("simFactor");
   if (!factorInput) return;
-  const isPension = (valueOf("simKind") || selectedSimulationFund()?.kind || "Pension") === "Pension";
-  factorInput.disabled = !isPension;
-  factorInput.classList.toggle("muted-control", !isPension);
-  factorInput.placeholder = isPension ? "Payout factor" : "Not applicable";
-  factorInput.title = isPension ? "Pension payout factor" : "Provident and savings funds do not use pension payout factor";
-  if (!isPension) factorInput.value = "";
-  if (isPension && !factorInput.value) factorInput.value = "200";
+  factorInput.disabled = false;
+  factorInput.classList.remove("muted-control");
+  factorInput.placeholder = "Payout factor";
+  factorInput.title = "Pension payout factor";
+  if (!factorInput.value) factorInput.value = "200";
 }
 
 function renderSimulationPersonOptions() {
   const select = $("simPersonSource");
   if (!select) return;
   const current = select.value;
-  const fundPeople = selectedSimulationFund()?.persons || [];
-  const people = fundPeople.length ? fundPeople : state.familyMembers;
-  select.innerHTML = '<option value="">Custom person</option>' + people.map((person, index) => (
+  const people = state.familyMembers;
+  select.innerHTML = '<option value="">Choose person</option>' + people.map((person, index) => (
     `<option value="${index}">${esc(personLabel(person))}</option>`
   )).join("");
   select.value = [...select.options].some((option) => option.value === current) ? current : (people.length === 1 ? "0" : "");
+  if (select.value) applySimulationPerson();
 }
 
 function selectedSimulationPerson() {
-  const fundPeople = selectedSimulationFund()?.persons || [];
-  const people = fundPeople.length ? fundPeople : state.familyMembers;
+  const people = state.familyMembers;
   const raw = valueOf("simPersonSource");
   if (raw === "") return null;
   const index = Number(raw);
   return Number.isInteger(index) ? people[index] : null;
 }
 
-function applySimulationPerson() {
+function sameSimulationPerson(left, right) {
+  if (!left || !right) return false;
+  const leftMember = String(left.member_id || left.id || "").trim();
+  const rightMember = String(right.member_id || right.id || "").trim();
+  if (leftMember && rightMember) return leftMember === rightMember;
+  const leftBirth = parseDateInput(left.birth_date || "");
+  const rightBirth = parseDateInput(right.birth_date || "");
+  if (!leftBirth || leftBirth !== rightBirth) return false;
+  const leftName = personFullName(left).toLowerCase();
+  const rightName = personFullName(right).toLowerCase();
+  if (leftName === rightName) return true;
+  return [leftName, rightName].some((name) => /^person \d+$/.test(name) || name === "family member");
+}
+
+function scenarioPerson(scenario) {
+  const raw = scenario?.person_index;
+  if (raw !== "" && raw !== undefined && raw !== null) {
+    const index = Number(raw);
+    if (Number.isInteger(index) && state.familyMembers[index]) return state.familyMembers[index];
+  }
+  return state.familyMembers.find((person) => sameSimulationPerson(person, {
+    name: scenario?.person_name,
+    birth_date: scenario?.birth_date,
+  })) || null;
+}
+
+function scenarioGender(scenario) {
+  return String(scenario?.gender || scenarioPerson(scenario)?.gender || "").trim();
+}
+
+function scenarioInsuranceSex(scenario) {
+  const text = scenarioGender(scenario).toLowerCase();
+  if (["male", "m", "man", "זכר", "גבר"].includes(text)) return "male";
+  if (["female", "f", "woman", "נקבה", "אישה", "אשה"].includes(text)) return "female";
+  return "";
+}
+
+function scenarioNeedsGenderForInsurance(scenario) {
+  const rows = scenario?.income_periods || [];
+  const hasInsurance = rows.some((period) => (
+    Number(period?.disability_coverage_percent || 0) > 0
+    || Number(period?.spouse_survivors_coverage_percent || 0) > 0
+    || Number(period?.children_survivors_coverage_percent || 0) > 0
+  ));
+  return hasInsurance && !scenarioInsuranceSex(scenario);
+}
+
+function pensionSimulationPayloadScenarios() {
+  return state.pensionScenarios.map((scenario) => ({
+    ...scenario,
+    gender: scenarioInsuranceSex(scenario) || scenarioGender(scenario),
+  }));
+}
+
+function simulationFundsForPerson(person, kind = "Pension") {
+  if (!person) return [];
+  return state.localFunds.filter((fund) => {
+    if ((fund.kind || "Pension") !== kind) return false;
+    return (fund.persons || []).some((fundPerson) => sameSimulationPerson(person, fundPerson));
+  });
+}
+
+function simulationPersonAmount(person, kind = "Pension") {
+  return sum(simulationFundsForPerson(person, kind).map((fund) => Number(fund.amount || 0)));
+}
+
+function applySimulationPersonAmount() {
   const person = selectedSimulationPerson();
   if (!person) return;
-  setDateField("simBirthDate", person.birth_date || "");
-  $("simCurrentAge").value = ageFromBirthDate(person.birth_date);
-  if (person.retire_age) $("simRetireAge").value = person.retire_age;
+  const amount = simulationPersonAmount(person, "Pension");
+  $("simAmount").value = amount || "";
+}
+
+function syncScenarioDerivedFields() {
+  document.querySelectorAll(".scenario-internal-field").forEach((node) => {
+    node.hidden = true;
+  });
+}
+
+function applySimulationPerson() {
+  const person = selectedSimulationPerson();
+  if (person) {
+    setDateField("simBirthDate", person.birth_date || "");
+    $("simCurrentAge").value = ageFromBirthDate(person.birth_date);
+    if (person.retire_age) $("simRetireAge").value = person.retire_age;
+    applySimulationPersonAmount();
+  }
+  syncScenarioDerivedFields();
+}
+
+function syncPensionPeriodFromMode() {
+  const custom = valueOf("simPeriodFromMode") === "custom";
+  const input = $("simPeriodFrom");
+  if (!input) return;
+  input.hidden = !custom;
+  if (!custom) input.value = "";
+}
+
+function syncPensionRateFromMode() {
+  const custom = valueOf("simRateFromMode") === "custom";
+  const input = $("simRateFrom");
+  if (!input) return;
+  input.hidden = !custom;
+  if (!custom) input.value = "";
+}
+
+function pensionPeriodSummary() {
+  const scenario = activePensionScenario();
+  const rows = scenario?.income_periods || [];
+  if (!scenario) return "No scenario selected";
+  if (!rows.length) return "No salary rows";
+  return `${rows.length} salary row${rows.length === 1 ? "" : "s"}`;
+}
+
+function renderPensionProjectionSummary() {
+  const frame = $("pensionProjectionSummary");
+  if (!frame) return;
+  const scenario = activePensionScenario();
+  frame.innerHTML = `
+    <span><b>Selected scenario</b>${esc(scenario?.name || "None")}</span>
+    <span><b>Saved scenarios</b>${esc(state.pensionScenarios.length)}</span>
+    <span><b>Profit rates</b>${esc(scenario?.return_periods?.length || 0)}</span>
+  `;
+}
+
+function activePensionScenario() {
+  const index = state.activePensionScenarioIndex;
+  return Number.isInteger(index) && state.pensionScenarios[index] ? state.pensionScenarios[index] : null;
+}
+
+function selectedPensionScenarioRows() {
+  const scenario = activePensionScenario();
+  return scenario?.income_periods || [];
+}
+
+function selectedPensionReturnRows() {
+  const scenario = activePensionScenario();
+  return scenario?.return_periods || [];
+}
+
+function projectionFormValid() {
+  const person = selectedSimulationPerson();
+  const currentAge = numberValue("simCurrentAge") || ageFromBirthDate(dateValue("simBirthDate"));
+  const retireAge = numberValue("simRetireAge");
+  const factor = numberValue("simFactor") || 200;
+  return Boolean(person)
+    && Boolean(valueOf("simName"))
+    && Number.isFinite(Number(currentAge))
+    && Number(currentAge) > 0
+    && Number.isFinite(Number(retireAge))
+    && Number(retireAge) > Number(currentAge)
+    && Number.isFinite(Number(factor))
+    && Number(factor) > 0;
+}
+
+function pensionPeriodFormValid() {
+  const scenario = activePensionScenario();
+  if (!scenario) return false;
+  const fromAge = valueOf("simPeriodFromMode") === "now" ? scenario.current_age : numberValue("simPeriodFrom");
+  const toAge = numberValue("simPeriodTo");
+  const income = numberValue("simPeriodIncome") || 0;
+  const contribution = numberValue("simPeriodContribution") || 0;
+  const deposit = numberValue("simPeriodDeposit") || 0;
+  const spouse = numberValue("simSpouseSurvivorsCoverage") || 0;
+  const children = numberValue("simChildrenSurvivorsCoverage") || 0;
+  const survivorsFactor = numberValue("simSurvivorsFactor");
+  const hasContribution = (income > 0 && contribution > 0) || deposit > 0;
+  return Number.isFinite(Number(fromAge))
+    && Number.isFinite(Number(toAge))
+    && Number(toAge) > Number(fromAge)
+    && hasContribution
+    && (!(spouse > 0 || children > 0) || (Number.isFinite(Number(survivorsFactor)) && Number(survivorsFactor) > 0));
+}
+
+function pensionRateFormValid() {
+  const scenario = activePensionScenario();
+  if (!scenario) return false;
+  const fromAge = valueOf("simRateFromMode") === "now" ? scenario.current_age : numberValue("simRateFrom");
+  const toAge = numberValue("simRateTo");
+  const annualReturn = numberValue("simRateAnnual");
+  return Number.isFinite(Number(fromAge))
+    && Number.isFinite(Number(toAge))
+    && Number(toAge) > Number(fromAge)
+    && annualReturn !== ""
+    && Number.isFinite(Number(annualReturn));
+}
+
+function scenarioHasProfitRates(scenario) {
+  return Array.isArray(scenario?.return_periods)
+    && scenario.return_periods.some((period) => (
+      Number(period?.to_age) > Number(period?.from_age)
+      && period?.annual_return !== ""
+      && period?.annual_return !== null
+      && period?.annual_return !== undefined
+      && Number.isFinite(Number(period.annual_return))
+    ));
+}
+
+function pensionScenarioKey() {
+  return JSON.stringify(state.pensionScenarios.map((scenario) => ({
+    name: scenario.name,
+    kind: scenario.kind,
+    gender: scenarioInsuranceSex(scenario) || scenarioGender(scenario),
+    current_age: scenario.current_age,
+    retire_age: scenario.retire_age,
+    amount: scenario.amount,
+    factor: scenario.factor,
+    income_periods: scenario.income_periods || [],
+    return_periods: scenario.return_periods || [],
+  })));
+}
+
+function schedulePensionSimulationAutoRun() {
+  const key = pensionScenarioKey();
+  if (!key || key === state.pensionSimulationKey || key === state.pensionSimulationAutoRunningKey || key === state.pensionSimulationErrorKey) return;
+  state.pensionSimulationAutoRunningKey = key;
+  setTimeout(() => {
+    if (state.pensionSimulationAutoRunningKey !== key || key !== pensionScenarioKey()) return;
+    runPensionSimulation({ silent: true }).catch((error) => {
+      state.pensionSimulationAutoRunningKey = "";
+      state.pensionSimulationErrorKey = key;
+      state.pensionSimulationError = error.message;
+      $("pensionSimulationStatus").textContent = `Error: ${error.message}`;
+      savePensionSimulationState();
+      renderPensionSimulationResults();
+      renderFundsOverview();
+    });
+  }, 0);
+}
+
+function savePensionSimulationState() {
+  try {
+    localStorage.setItem(PENSION_SIMULATION_STORAGE_KEY, JSON.stringify({
+      scenarios: state.pensionScenarios,
+      results: state.pensionSimulationResults,
+      grid: state.pensionSimulationGrid,
+      key: state.pensionSimulationKey,
+      errorKey: state.pensionSimulationErrorKey,
+      error: state.pensionSimulationError,
+      activeIndex: state.activePensionScenarioIndex,
+    }));
+    scheduleClientStateSync();
+  } catch (error) {
+    appWarn("pension.storage.save_failed", { message: error.message });
+  }
+}
+
+function loadPensionSimulationState() {
+  try {
+    const raw = localStorage.getItem(PENSION_SIMULATION_STORAGE_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    state.pensionScenarios = Array.isArray(saved.scenarios) ? saved.scenarios : [];
+    state.activePensionScenarioIndex = Number.isInteger(saved.activeIndex) && state.pensionScenarios[saved.activeIndex]
+      ? saved.activeIndex
+      : null;
+    const key = pensionScenarioKey();
+    if (saved.errorKey && saved.errorKey === key) {
+      state.pensionSimulationErrorKey = saved.errorKey;
+      state.pensionSimulationError = saved.error || "";
+    }
+    if (saved.key && saved.key === key && Array.isArray(saved.results)) {
+      state.pensionSimulationResults = saved.results;
+      state.pensionSimulationGrid = saved.grid || { baseScenarios: state.pensionScenarios };
+      state.pensionSimulationKey = saved.key;
+    }
+  } catch (error) {
+    appWarn("pension.storage.load_failed", { message: error.message });
+  }
+}
+
+function updatePensionActionStates() {
+  const hasActiveScenario = Boolean(activePensionScenario());
+  const projectionButton = $("addPensionScenario");
+  if (projectionButton) {
+    projectionButton.disabled = !projectionFormValid();
+    projectionButton.textContent = hasActiveScenario ? "Update scenario" : "Add scenario";
+  }
+  const periodButton = $("addPensionPeriod");
+  if (periodButton) periodButton.disabled = !pensionPeriodFormValid();
+  const rateButton = $("addPensionRate");
+  if (rateButton) rateButton.disabled = !pensionRateFormValid();
+  const stopButton = $("pensionStopWorkNow");
+  if (stopButton) stopButton.disabled = !hasActiveScenario;
+  const runButton = $("runPensionSimulation");
+  if (runButton) runButton.disabled = !state.pensionScenarios.length || state.pensionScenarios.some((scenario) => !scenarioHasProfitRates(scenario));
+}
+
+function resetPensionPeriodForm() {
+  ["simPeriodFrom", "simPeriodTo", "simPeriodIncome", "simPeriodContribution", "simPeriodDeposit"].forEach((id) => {
+    const input = $(id);
+    if (input) input.value = "";
+  });
+  const mode = $("simPeriodFromMode");
+  if (mode) mode.value = "now";
+  const track = $("simInsuranceTrack");
+  if (track) track.value = "comprehensive";
+  syncPensionInsuranceTrack({ force: true });
+  const factor = $("simSurvivorsFactor");
+  if (factor) factor.value = "200";
+  syncPensionPeriodFromMode();
+  updatePensionActionStates();
+}
+
+function resetPensionRateForm() {
+  ["simRateFrom", "simRateTo", "simRateAnnual"].forEach((id) => {
+    const input = $(id);
+    if (input) input.value = "";
+  });
+  const mode = $("simRateFromMode");
+  if (mode) mode.value = "now";
+  syncPensionRateFromMode();
+  updatePensionActionStates();
+}
+
+function openPensionPeriodModal(index = state.activePensionScenarioIndex) {
+  if (Number.isInteger(index) && state.pensionScenarios[index]) {
+    state.activePensionScenarioIndex = index;
+  }
+  const scenario = activePensionScenario();
+  if (!scenario) {
+    $("pensionProjectionStatus").textContent = "Add or edit a scenario before adding salary rows";
+    return;
+  }
+  resetPensionPeriodForm();
+  const name = $("pensionPeriodProjectionName");
+  if (name) name.textContent = scenario.name;
+  const status = $("pensionPeriodStatus");
+  if (status) status.textContent = "";
+  renderPensionScenarios();
+  renderPensionPeriods();
+  renderPensionRates();
+  openModal("pensionPeriodModal");
 }
 
 function currentPensionScenario() {
-  const fund = selectedSimulationFund();
   const person = selectedSimulationPerson();
   const birthDate = dateValue("simBirthDate") || person?.birth_date || "";
-  const kind = valueOf("simKind") || fund?.kind || "Pension";
+  const kind = "Pension";
+  const personAmount = simulationPersonAmount(person, kind);
+  const existing = activePensionScenario();
   return {
-    name: valueOf("simName") || [fund?.fund_name || fund?.pension_id, person?.name].filter(Boolean).join(" ") || `Scenario ${state.pensionScenarios.length + 1}`,
+    name: valueOf("simName"),
     kind,
     birth_date: birthDate,
+    gender: person?.gender || "",
     person_name: person?.name || "",
+    person_index: valueOf("simPersonSource"),
     current_age: numberValue("simCurrentAge") || ageFromBirthDate(birthDate),
     retire_age: numberValue("simRetireAge") || person?.retire_age,
-    amount: numberValue("simAmount") || fund?.amount || 0,
-    annual_return: numberValue("simAnnualReturn") || 0,
-    monthly_income: numberValue("simMonthlyIncome") || 0,
-    contribution_percent: numberValue("simContributionPercent") || 0,
-    monthly_deposit: numberValue("simMonthlyDeposit") || 0,
-    factor: kind === "Pension" ? (numberValue("simFactor") || fund?.factor || 200) : null,
-    income_periods: state.pensionIncomePeriods.map((period) => ({ ...period })),
+    amount: personAmount || numberValue("simAmount") || 0,
+    annual_return: 0,
+    monthly_income: 0,
+    contribution_percent: 0,
+    monthly_deposit: 0,
+    factor: numberValue("simFactor") || 200,
+    income_periods: (existing?.income_periods || []).map((period) => ({ ...period })),
+    return_periods: (existing?.return_periods || []).map((period) => ({ ...period })),
   };
 }
 
+function pensionPeriodCoverageSelect(index, field, values, selected) {
+  return `<select data-pension-period-index="${index}" data-pension-period-field="${esc(field)}">${coverageOptionsHtml(values, selected)}</select>`;
+}
+
+function pensionPeriodTrackSelect(index, period) {
+  const selected = period?.insurance_track || pensionInsuranceTrackFor(period);
+  return `
+    <select data-pension-period-index="${index}" data-pension-period-field="insurance_track">
+      ${Object.entries(PENSION_INSURANCE_TRACKS).map(([id, track]) => (
+        `<option value="${esc(id)}"${id === selected ? " selected" : ""}>${esc(track.label)}</option>`
+      )).join("")}
+    </select>
+  `;
+}
+
 function renderPensionPeriods() {
-  const frame = $("pensionPeriods");
+  const frame = $("pensionPeriodRows");
   if (!frame) return;
-  frame.innerHTML = state.pensionIncomePeriods.length ? state.pensionIncomePeriods.map((period, index) => `
-    <div class="simulator-chip">
-      <b>${fmt(period.from_age, 1)}-${fmt(period.to_age, 1)}</b>
-      <span>Income ${money(period.monthly_income, state.baseCurrency, 0)} · ${fmt(period.contribution_percent, 2)}%${period.monthly_deposit ? ` · ${money(period.monthly_deposit, state.baseCurrency, 0)}` : ""}</span>
-      <button class="secondary compact-button" type="button" data-delete-pension-period="${index}">Remove</button>
-    </div>
-  `).join("") : '<div class="empty compact-empty">No custom income periods. The scenario monthly income/deposit fields will be used.</div>';
+  const scenario = activePensionScenario();
+  const rows = selectedPensionScenarioRows();
+  if (!scenario) {
+    frame.innerHTML = '<div class="empty compact-empty">Choose a scenario before adding salary rows</div>';
+    renderPensionProjectionSummary();
+    updatePensionActionStates();
+    return;
+  }
+  frame.innerHTML = rows.length ? `
+    <table class="projection-table pension-period-table">
+      <thead>
+        <tr>
+          <th>From Age</th>
+          <th>To Age</th>
+          <th>Monthly Salary</th>
+          <th>Pension Deposit %</th>
+          <th>Extra Deposit</th>
+          <th>Insurance Track</th>
+          <th>Disability</th>
+          <th>Spouse Survivors</th>
+          <th>Children Survivors</th>
+          <th>Survivors Factor</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((period, index) => `
+          <tr>
+            <td><input data-pension-period-index="${index}" data-pension-period-field="from_age" type="number" min="0" step="0.1" value="${esc(period.from_age ?? "")}" /></td>
+            <td><input data-pension-period-index="${index}" data-pension-period-field="to_age" type="number" min="0" step="0.1" value="${esc(period.to_age ?? "")}" /></td>
+            <td><input data-pension-period-index="${index}" data-pension-period-field="monthly_income" type="number" min="0" step="0.01" value="${esc(period.monthly_income ?? 0)}" /></td>
+            <td><input data-pension-period-index="${index}" data-pension-period-field="contribution_percent" type="number" min="0" step="0.01" value="${esc(period.contribution_percent ?? 0)}" /></td>
+            <td><input data-pension-period-index="${index}" data-pension-period-field="monthly_deposit" type="number" min="0" step="0.01" value="${esc(period.monthly_deposit ?? 0)}" /></td>
+            <td>${pensionPeriodTrackSelect(index, period)}</td>
+            <td>${pensionPeriodCoverageSelect(index, "disability_coverage_percent", DISABILITY_COVERAGE_OPTIONS, period.disability_coverage_percent)}</td>
+            <td>${pensionPeriodCoverageSelect(index, "spouse_survivors_coverage_percent", SPOUSE_SURVIVORS_OPTIONS, period.spouse_survivors_coverage_percent)}</td>
+            <td>${pensionPeriodCoverageSelect(index, "children_survivors_coverage_percent", CHILDREN_SURVIVORS_OPTIONS, period.children_survivors_coverage_percent)}</td>
+            <td><input data-pension-period-index="${index}" data-pension-period-field="survivors_capitalization_factor" type="number" min="1" step="0.01" value="${esc(period.survivors_capitalization_factor ?? 200)}" /></td>
+            <td><button class="secondary compact-button" type="button" data-delete-pension-period="${index}">Remove</button></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  ` : '<div class="empty compact-empty">No salary rows for the selected scenario</div>';
+  renderPensionProjectionSummary();
+  updatePensionActionStates();
+}
+
+function renderPensionRates() {
+  const frame = $("pensionRateRows");
+  if (!frame) return;
+  const scenario = activePensionScenario();
+  const rows = selectedPensionReturnRows();
+  if (!scenario) {
+    frame.innerHTML = '<div class="empty compact-empty">Choose a scenario before adding profit rates</div>';
+    updatePensionActionStates();
+    return;
+  }
+  frame.innerHTML = rows.length ? `
+    <table class="projection-table">
+      <thead>
+        <tr>
+          <th>From Age</th>
+          <th>To Age</th>
+          <th>Annual Profit %</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((period, index) => `
+          <tr>
+            <td><input data-pension-rate-index="${index}" data-pension-rate-field="from_age" type="number" min="0" step="0.1" value="${esc(period.from_age ?? "")}" /></td>
+            <td><input data-pension-rate-index="${index}" data-pension-rate-field="to_age" type="number" min="0" step="0.1" value="${esc(period.to_age ?? "")}" /></td>
+            <td><input data-pension-rate-index="${index}" data-pension-rate-field="annual_return" type="number" step="0.01" value="${esc(period.annual_return ?? 0)}" /></td>
+            <td><button class="secondary compact-button" type="button" data-delete-pension-rate="${index}">Remove</button></td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  ` : '<div class="empty compact-empty">No profit rate rows. Scenario uses 0% annual profit unless rates are added.</div>';
+  updatePensionActionStates();
 }
 
 function renderPensionScenarios() {
   const frame = $("pensionScenarios");
   if (!frame) return;
-  frame.innerHTML = state.pensionScenarios.length ? state.pensionScenarios.map((scenario, index) => `
-    <div class="simulator-chip">
-      <b>${esc(scenario.name)}</b>
-      <span>${esc(scenario.kind)} · ${fmt(scenario.current_age, 1)} to ${fmt(scenario.retire_age, 1)} · ${fmt(scenario.annual_return, 2)}% return · ${money(scenario.amount, state.baseCurrency, 0)}</span>
-      <button class="secondary compact-button" type="button" data-delete-pension-scenario="${index}">Remove</button>
+  frame.innerHTML = state.pensionScenarios.length ? `
+    <div class="projection-table-wrap">
+      <table class="projection-table pension-scenario-table">
+        <thead>
+          <tr>
+            <th>Scenario</th>
+            <th>Person</th>
+            <th>Age Range</th>
+            <th>Pension Total</th>
+            <th>Salary Rows</th>
+            <th>Profit Rates</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${state.pensionScenarios.map((scenario, index) => `
+            <tr class="${state.activePensionScenarioIndex === index ? "selected-row" : ""}">
+              <td><b>${esc(scenario.name)}</b></td>
+              <td>${esc(scenario.person_name || "Manual")}</td>
+              <td>${fmt(scenario.current_age, 1)} to ${fmt(scenario.retire_age, 1)}</td>
+              <td>${money(scenario.amount, state.baseCurrency, 0)}</td>
+              <td>${esc(scenario.income_periods?.length || 0)}</td>
+              <td>${esc(scenario.return_periods?.length || 0)}</td>
+              <td class="row-actions">
+                <button class="secondary compact-button" type="button" data-edit-pension-scenario="${index}">Edit</button>
+                <button class="secondary compact-button" type="button" data-schedule-pension-scenario="${index}">Salary schedule</button>
+                <button class="secondary compact-button" type="button" data-delete-pension-scenario="${index}">Remove</button>
+              </td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
     </div>
-  `).join("") : '<div class="empty compact-empty">No scenarios added yet</div>';
+  ` : '<div class="empty compact-empty">No pension scenarios saved yet</div>';
+  renderPensionProjectionSummary();
+  updatePensionActionStates();
 }
 
 function renderPensionSimulationResults() {
   const frame = $("pensionSimulationResults");
   if (!frame) return;
-  frame.innerHTML = state.pensionSimulationResults.length ? state.pensionSimulationResults.map((result) => {
-    const lastPoints = (result.timeline || []).slice(-4);
-    return `
-      <div class="simulation-result-card">
-        <div class="metric-head">
-          <span class="metric-name">${esc(result.name)}</span>
-          <span class="metric-pill ${result.kind === "Pension" ? "ok" : "neutral"}">${esc(result.kind)}</span>
-        </div>
-        <strong>${money(result.final_amount, state.baseCurrency, 0)}</strong>
-        <div class="simulation-grid">
-          <span>Deposits <b>${money(result.total_deposits, state.baseCurrency, 0)}</b></span>
-          <span>Gain <b class="${Number(result.investment_gain) >= 0 ? "positive" : "negative"}">${money(result.investment_gain, state.baseCurrency, 0)}</b></span>
-          <span>Years <b>${fmt(result.years, 1)}</b></span>
-          <span>${result.kind === "Pension" ? "Monthly pension" : "Projected amount"} <b>${result.monthly_pension ? money(result.monthly_pension, state.baseCurrency, 0) : money(result.final_amount, state.baseCurrency, 0)}</b></span>
-        </div>
-        <div class="simulation-timeline">
-          ${lastPoints.map((point) => `<span>Age ${fmt(point.age, 1)} <b>${money(point.amount, state.baseCurrency, 0)}</b></span>`).join("")}
-        </div>
-      </div>`;
-  }).join("") : "";
+  const grid = state.pensionSimulationGrid;
+  if (!state.pensionSimulationResults.length || !grid) {
+    frame.innerHTML = '<div class="empty compact-empty">Run scenarios to create the pension simulation table</div>';
+    return;
+  }
+  const rows = grid.baseScenarios || [];
+  frame.innerHTML = `
+    <div class="projection-result-wrap">
+      <table class="projection-result-table">
+        <thead>
+          <tr>
+            <th>Scenario</th>
+            <th>Profit Rates</th>
+            <th>Monthly Pension</th>
+            <th>Final Amount</th>
+            <th>Deposits</th>
+            <th>Insurance Cost</th>
+            <th>Profit</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((scenario, rowIndex) => {
+            const result = state.pensionSimulationResults[rowIndex] || {};
+            return `
+              <tr>
+                <td>
+                  <b>${esc(scenario.name)}</b>
+                  <small>${esc(scenario.kind)} · Age ${fmt(scenario.current_age, 1)}-${fmt(scenario.retire_age, 1)} · ${scenario.income_periods?.length || 0} salary rows</small>
+                </td>
+                <td>${esc(scenario.return_periods?.length || 0)}</td>
+                <td><b>${money(result.monthly_pension || 0, state.baseCurrency, 0)}</b></td>
+                <td>${money(result.final_amount || 0, state.baseCurrency, 0)}</td>
+                <td>${money(result.total_deposits || 0, state.baseCurrency, 0)}</td>
+                <td>${money(result.total_insurance_cost || 0, state.baseCurrency, 0)}</td>
+                <td>${money(result.investment_gain || 0, state.baseCurrency, 0)}</td>
+              </tr>
+            `;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function invalidatePensionSimulation() {
+  state.pensionSimulationResults = [];
+  state.pensionSimulationGrid = null;
+  state.pensionSimulationKey = "";
+  state.pensionSimulationAutoRunningKey = "";
+  state.pensionSimulationErrorKey = "";
+  state.pensionSimulationError = "";
+  savePensionSimulationState();
+  renderPensionSimulationResults();
+}
+
+function editPensionScenario(index) {
+  const scenario = state.pensionScenarios[index];
+  if (!scenario) return;
+  state.activePensionScenarioIndex = index;
+  $("simPersonSource").value = scenario.person_index ?? "";
+  $("simName").value = scenario.name || "";
+  setDateField("simBirthDate", scenario.birth_date || "");
+  $("simCurrentAge").value = scenario.current_age || "";
+  $("simRetireAge").value = scenario.retire_age || "";
+  $("simAmount").value = scenario.amount || "";
+  $("simFactor").value = scenario.factor || 200;
+  $("pensionProjectionStatus").textContent = `Editing ${scenario.name}`;
+  syncScenarioDerivedFields();
+  savePensionSimulationState();
+  renderPensionScenarios();
+  renderPensionPeriods();
+  renderPensionRates();
+}
+
+function newPensionScenario() {
+  state.activePensionScenarioIndex = null;
+  ["simName", "simBirthDate", "simCurrentAge", "simRetireAge", "simAmount"].forEach((id) => { $(id).value = ""; });
+  $("simFactor").value = "200";
+  const people = state.familyMembers || [];
+  $("simPersonSource").value = people.length === 1 ? "0" : "";
+  if ($("simPersonSource").value) applySimulationPerson();
+  syncScenarioDerivedFields();
+  $("pensionProjectionStatus").textContent = "New pension scenario";
+  savePensionSimulationState();
+  renderPensionScenarios();
+  renderPensionPeriods();
+  renderPensionRates();
+  updatePensionActionStates();
 }
 
 function addPensionPeriod() {
+  const scenario = activePensionScenario();
+  if (!scenario) {
+    $("pensionPeriodStatus").textContent = "Add or edit a pension scenario first";
+    updatePensionActionStates();
+    return;
+  }
+  const fromAge = valueOf("simPeriodFromMode") === "now" ? scenario.current_age : numberValue("simPeriodFrom");
   const period = {
-    from_age: numberValue("simPeriodFrom"),
+    from_age: fromAge,
     to_age: numberValue("simPeriodTo"),
     monthly_income: numberValue("simPeriodIncome") || 0,
     contribution_percent: numberValue("simPeriodContribution") || 0,
     monthly_deposit: numberValue("simPeriodDeposit") || 0,
+    insurance_track: valueOf("simInsuranceTrack") || "comprehensive",
+    disability_coverage_percent: numberValue("simDisabilityCoverage") || 0,
+    spouse_survivors_coverage_percent: numberValue("simSpouseSurvivorsCoverage") || 0,
+    children_survivors_coverage_percent: numberValue("simChildrenSurvivorsCoverage") || 0,
+    survivors_capitalization_factor: numberValue("simSurvivorsFactor") || 200,
   };
-  if (!period.from_age || !period.to_age || period.to_age <= period.from_age) {
-    $("pensionSimulationStatus").textContent = "Income period needs valid from/to ages";
+  if (!pensionPeriodFormValid()) {
+    $("pensionPeriodStatus").textContent = "Fill To Age, deposit fields, and survivors factor when survivors coverage is selected";
     return;
   }
-  state.pensionIncomePeriods.push(period);
-  ["simPeriodFrom", "simPeriodTo", "simPeriodIncome", "simPeriodContribution", "simPeriodDeposit"].forEach((id) => { $(id).value = ""; });
-  $("pensionSimulationStatus").textContent = "Income period added";
+  scenario.income_periods = [...(scenario.income_periods || []), period];
+  invalidatePensionSimulation();
+  $("pensionPeriodStatus").textContent = "Salary row added";
+  resetPensionPeriodForm();
+  renderPensionScenarios();
   renderPensionPeriods();
+  renderFundsOverview();
+}
+
+function addPensionRate() {
+  const scenario = activePensionScenario();
+  if (!scenario) {
+    $("pensionPeriodStatus").textContent = "Add or edit a pension scenario first";
+    updatePensionActionStates();
+    return;
+  }
+  const fromAge = valueOf("simRateFromMode") === "now" ? scenario.current_age : numberValue("simRateFrom");
+  const period = {
+    from_age: fromAge,
+    to_age: numberValue("simRateTo"),
+    annual_return: numberValue("simRateAnnual"),
+  };
+  if (!pensionRateFormValid()) {
+    $("pensionPeriodStatus").textContent = "Fill To Age and Annual Profit %";
+    return;
+  }
+  scenario.return_periods = [...(scenario.return_periods || []), period];
+  invalidatePensionSimulation();
+  $("pensionPeriodStatus").textContent = "Profit rate row added";
+  resetPensionRateForm();
+  renderPensionScenarios();
+  renderPensionRates();
+  renderFundsOverview();
+}
+
+function stopPensionWorkNow() {
+  const scenario = activePensionScenario();
+  if (!scenario) {
+    $("pensionProjectionStatus").textContent = "Add or edit a pension scenario first";
+    return;
+  }
+  const currentAge = scenario.current_age || 0;
+  const retireAge = scenario.retire_age || currentAge;
+  scenario.income_periods = currentAge && retireAge > currentAge
+    ? [{ from_age: currentAge, to_age: retireAge, monthly_income: 0, contribution_percent: 0, monthly_deposit: 0 }]
+    : [];
+  invalidatePensionSimulation();
+  $("pensionPeriodStatus").textContent = "Scenario set to no future salary deposits";
+  renderPensionScenarios();
+  renderPensionPeriods();
+  renderPensionRates();
 }
 
 function addPensionScenario() {
-  const scenario = currentPensionScenario();
-  if (!scenario.current_age || !scenario.retire_age || scenario.retire_age <= scenario.current_age) {
-    $("pensionSimulationStatus").textContent = "Scenario needs current age and retire age";
+  if (!projectionFormValid()) {
+    $("pensionSimulationStatus").textContent = "Fill scenario name, age range, and payout factor";
+    updatePensionActionStates();
     return;
   }
-  state.pensionScenarios.push(scenario);
-  $("pensionSimulationStatus").textContent = "Scenario added";
+  const scenario = currentPensionScenario();
+  if (activePensionScenario()) {
+    state.pensionScenarios[state.activePensionScenarioIndex] = scenario;
+    $("pensionSimulationStatus").textContent = "Scenario updated";
+  } else {
+    state.pensionScenarios.push(scenario);
+    state.activePensionScenarioIndex = state.pensionScenarios.length - 1;
+    $("pensionSimulationStatus").textContent = "Scenario added";
+  }
+  invalidatePensionSimulation();
   renderPensionScenarios();
+  renderPensionPeriods();
+  renderPensionRates();
+  renderFundsOverview();
+  if (state.activePensionScenarioIndex !== null) openPensionPeriodModal(state.activePensionScenarioIndex);
 }
 
-async function runPensionSimulation() {
-  const scenarios = state.pensionScenarios.length ? state.pensionScenarios : [currentPensionScenario()];
-  const data = await api("/api/local/pension-simulate", {
-    method: "POST",
-    body: JSON.stringify({ scenarios }),
-  });
+async function runPensionSimulation({ silent = false } = {}) {
+  const baseScenarios = pensionSimulationPayloadScenarios();
+  if (!baseScenarios.length || baseScenarios.some((scenario) => !scenario.current_age || !scenario.retire_age || scenario.retire_age <= scenario.current_age)) {
+    if (!silent) $("pensionSimulationStatus").textContent = "Add at least one valid pension scenario before running";
+    renderPensionSimulationResults();
+    return;
+  }
+  if (baseScenarios.some((scenario) => !scenarioHasProfitRates(scenario))) {
+    if (!silent) $("pensionSimulationStatus").textContent = "Add at least one profit rate row for every scenario before running";
+    renderPensionSimulationResults();
+    return;
+  }
+  if (state.pensionScenarios.some((scenario) => scenarioNeedsGenderForInsurance(scenario))) {
+    const message = "Set Male/Female gender before running scenarios with pension insurance coverage";
+    if (!silent) $("pensionSimulationStatus").textContent = message;
+    state.pensionSimulationErrorKey = pensionScenarioKey();
+    state.pensionSimulationError = message;
+    savePensionSimulationState();
+    renderPensionSimulationResults();
+    renderFundsOverview();
+    return;
+  }
+  const key = pensionScenarioKey();
+  state.pensionSimulationAutoRunningKey = silent ? state.pensionSimulationAutoRunningKey : "";
+  state.pensionSimulationErrorKey = "";
+  state.pensionSimulationError = "";
+  let data;
+  try {
+    data = await api("/api/local/pension-simulate", {
+      method: "POST",
+      body: JSON.stringify({ scenarios: baseScenarios }),
+    });
+  } catch (error) {
+    const message = error.message || "Pension simulation failed";
+    state.pensionSimulationAutoRunningKey = "";
+    state.pensionSimulationErrorKey = key;
+    state.pensionSimulationError = message;
+    savePensionSimulationState();
+    if (!silent) $("pensionSimulationStatus").textContent = `Error: ${message}`;
+    renderPensionSimulationResults();
+    renderFundsOverview();
+    return;
+  }
   state.pensionSimulationResults = data.results || [];
-  $("pensionSimulationStatus").textContent = `${state.pensionSimulationResults.length} simulation result${state.pensionSimulationResults.length === 1 ? "" : "s"}`;
+  state.pensionSimulationGrid = { baseScenarios };
+  state.pensionSimulationKey = key;
+  state.pensionSimulationAutoRunningKey = "";
+  state.pensionSimulationErrorKey = "";
+  state.pensionSimulationError = "";
+  savePensionSimulationState();
+  if (!silent) $("pensionSimulationStatus").textContent = `${baseScenarios.length} scenario${baseScenarios.length === 1 ? "" : "s"} calculated`;
   renderPensionSimulationResults();
+  renderFundsOverview();
+}
+
+function clearFundCreateForm() {
+  ["fundName", "fundPensionId", "fundAmount", "fundAccount", "fundComments", "fundFamilyMember"].forEach((id) => { $(id).value = ""; });
+  state.fundPersons = [];
+  renderPersonLists();
+  updateFundActionStates();
+}
+
+function updateFundActionStates() {
+  const button = $("saveFund");
+  if (!button) return;
+  button.disabled = !valueOf("fundPensionId") || Number(valueOf("fundAmount") || 0) <= 0;
+}
+
+function showFundCreate() {
+  $("fundCreateSection").hidden = false;
+  $("fundStatus").textContent = "";
+  updateFundActionStates();
+}
+
+function hideFundCreate({ clear = false } = {}) {
+  $("fundCreateSection").hidden = true;
+  if (clear) clearFundCreateForm();
 }
 
 async function saveFund() {
@@ -3795,9 +5455,7 @@ async function saveFund() {
     }),
   });
   $("fundStatus").textContent = "Fund saved";
-  ["fundName", "fundPensionId", "fundAmount", "fundAccount", "fundComments", "fundFamilyMember"].forEach((id) => { $(id).value = ""; });
-  state.fundPersons = [];
-  renderPersonLists();
+  hideFundCreate({ clear: true });
   await loadFunds();
 }
 
@@ -3856,7 +5514,7 @@ async function saveEditFund() {
 }
 
 async function loadPortfolio({ refresh = false } = {}) {
-  $("status").textContent = "Loading portfolio";
+  $("status").textContent = refresh ? "Refreshing analytics" : "Preparing dashboard";
   setLoading(true, refresh ? "Refreshing portfolio analytics" : "Loading portfolio analytics");
   appLog("portfolio.load.start", { refresh });
   try {
@@ -3929,6 +5587,7 @@ function loadSavedBannerItems() {
 
 function saveBannerItems() {
   localStorage.setItem("portfolioAnalyzer.bannerItems", JSON.stringify(state.bannerItems));
+  scheduleClientStateSync();
 }
 
 async function resolveBannerItems() {
@@ -4080,7 +5739,7 @@ async function loadCacheStatus() {
   $("tableMaPeriod").value = state.tableMaPeriod || "30";
   $("backupEnabled").value = String(backup.enabled !== false);
   $("backupTimezone").value = backup.timezone || "";
-  $("backupKeep").value = backup.keep || 30;
+  $("backupKeep").value = backup.keep || 100;
   updateBackupScheduleSummary();
   syncBackupEnabledControls();
   $("cacheStatus").innerHTML = [
@@ -4091,22 +5750,27 @@ async function loadCacheStatus() {
     ["Max size", `${data.max_mb} MB`],
     ["TTL", `${data.ttl_hours} hours`],
   ].map(([label, value]) => `<div class="setting-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
-  $("backupStatus").innerHTML = [
+  const backupRows = [
     ["Backup directory", backup.directory || ""],
     ["Schedule", backup.enabled === false ? "Disabled" : backup.schedule_summary || backupScheduleSummary(backup.schedule_config)],
     ["Next run", backup.next_run || "Disabled"],
     ["Latest backup", backup.latest?.filename || "None"],
-    ["Backup files", (backup.backups || []).length],
+    ["Backup files", backup.backup_count ?? (backup.backups || []).length],
   ].map(([label, value]) => `<div class="setting-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
+  const backupFiles = (backup.backups || []).map((file) => `
+    <div class="setting-row backup-file-row">
+      <span>${esc(file.filename)}<small>${esc(file.modified_at || "")} · ${esc(file.size_kb || 0)} KB</small></span>
+      <button class="secondary compact-button" type="button" data-download-backup="${esc(file.filename)}">Download</button>
+    </div>
+  `).join("");
+  $("backupStatus").innerHTML = backupRows + backupFiles;
 }
 
-async function exportLocalData() {
-  $("settingsStatus").textContent = "Exporting data";
-  const response = await fetch("/api/local/export");
+async function downloadResponse(response, defaultFilename) {
   if (!response.ok) throw new Error(await response.text());
   const blob = await response.blob();
   const disposition = response.headers.get("Content-Disposition") || "";
-  const filename = disposition.match(/filename="([^"]+)"/)?.[1] || "portfolio-data.json";
+  const filename = disposition.match(/filename="([^"]+)"/)?.[1] || defaultFilename;
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -4115,6 +5779,13 @@ async function exportLocalData() {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+async function exportLocalData() {
+  $("settingsStatus").textContent = "Exporting data";
+  await syncClientStateToServer();
+  const response = await fetch("/api/local/export");
+  await downloadResponse(response, "portfolio-data.json");
   $("settingsStatus").textContent = "Data exported";
 }
 
@@ -4125,16 +5796,37 @@ async function importLocalData(file) {
   if (!confirm("Import will replace the local portfolio data. Continue?")) return;
   $("settingsStatus").textContent = "Importing data";
   const result = await api("/api/local/import", { method: "POST", body: JSON.stringify(payload) });
+  if (applyClientState(clientStateFromExportPayload(payload))) {
+    loadClientStateFromStorage();
+  } else {
+    await loadClientStateFromServer().catch(() => {});
+    loadClientStateFromStorage();
+  }
   const total = Object.values(result.imported || {}).reduce((count, value) => count + Number(value || 0), 0);
   $("settingsStatus").textContent = `Imported ${total} records`;
-  await Promise.all([loadLocalAccounts(), loadPortfolio(), loadCacheStatus()]);
+  await Promise.all([loadLocalAccounts(), loadPortfolio(), loadCacheStatus(), loadBanner()]);
 }
 
 async function runBackupNow() {
   $("settingsStatus").textContent = "Creating backup";
+  await syncClientStateToServer();
   const result = await api("/api/local/backups", { method: "POST", body: "{}" });
   $("settingsStatus").textContent = `Backup saved: ${result.filename}`;
   await loadCacheStatus();
+}
+
+async function downloadBackup(filename) {
+  $("settingsStatus").textContent = `Downloading ${filename}`;
+  const response = await fetch(`/api/local/backups/${encodeURIComponent(filename)}`);
+  await downloadResponse(response, filename);
+  $("settingsStatus").textContent = `Downloaded ${filename}`;
+}
+
+async function downloadBackupsZip() {
+  $("settingsStatus").textContent = "Downloading backup ZIP";
+  const response = await fetch("/api/local/backups.zip");
+  await downloadResponse(response, "portfolio-backups.zip");
+  $("settingsStatus").textContent = "Backup ZIP downloaded";
 }
 
 function defaultBackupScheduleConfig() {
@@ -4302,8 +5994,18 @@ function openModal(id) {
   if (id === "familyModal") Promise.all([loadLocalAccounts(), loadFamilyMembers()]);
   if (id === "securitiesModal") Promise.all([loadLocalAccounts(), loadLocalSecurities()]);
   if (id === "pricesModal") loadLocalPrices();
+  if (id === "eventsModal") {
+    loadEvents().catch((error) => { $("eventsStatus").textContent = `Error: ${error.message}`; });
+  }
+  if (id === "alarmsModal") {
+    renderAlarms();
+    loadEvents().catch((error) => { $("alarmsStatus").textContent = `Error: ${error.message}`; });
+  }
   if (id === "reportsModal") Promise.all([loadLocalAccounts(), loadReports()]);
-  if (id === "fundsModal") Promise.all([loadLocalAccounts(), loadFamilyMembers(), loadFunds()]);
+  if (id === "fundsModal") {
+    hideFundCreate({ clear: true });
+    Promise.all([loadLocalAccounts(), loadFamilyMembers(), loadFunds()]);
+  }
   if (id === "alertsModal") loadAlerts();
   if (id === "bannerModal") renderBannerSettings();
   if (id === "settingsModal") loadCacheStatus();
@@ -4318,6 +6020,9 @@ function closeModal(modal) {
 document.addEventListener("click", (event) => {
   const modalId = event.target.closest("[data-modal]")?.dataset.modal;
   if (modalId) openModal(modalId);
+
+  const dividendAlarmId = event.target.closest("[data-open-dividend-alarm]")?.dataset.openDividendAlarm;
+  if (dividendAlarmId) openDividendAlarm(dividendAlarmId);
 
   const accountTab = event.target.closest("[data-account-tab]")?.dataset.accountTab;
   if (accountTab) setAccountsTab(accountTab);
@@ -4361,6 +6066,12 @@ document.addEventListener("click", (event) => {
     loadSecurityDetail().catch((error) => { $("securityDetailStatus").textContent = `Error: ${error.message}`; });
   }
 
+  const securityChartMode = event.target.closest("[data-security-chart-mode]")?.dataset.securityChartMode;
+  if (securityChartMode) {
+    state.securityChartMode = securityChartMode === "candles" ? "candles" : "line";
+    renderSecurityChart();
+  }
+
   if (event.target.id === "openFocusedPrices" && state.securityDetail) {
     openPriceHistoryForSecurity({
       securityDetailSymbol: state.securityDetail.symbol,
@@ -4382,6 +6093,21 @@ document.addEventListener("click", (event) => {
   const securityId = event.target.closest("[data-delete-security]")?.dataset.deleteSecurity;
   if (securityId) {
     api(`/api/local/securities/${securityId}`, { method: "DELETE" }).then(() => Promise.all([loadLocalSecurities(), loadPortfolio()]));
+  }
+
+  const editSecurityId = event.target.closest("[data-edit-security]")?.dataset.editSecurity;
+  if (editSecurityId) {
+    if ($("securitiesModal")?.hidden) {
+      openModal("securitiesModal");
+      Promise.resolve(loadLocalSecurities()).then(() => editSecurityTransaction(editSecurityId));
+    } else {
+      editSecurityTransaction(editSecurityId);
+    }
+  }
+
+  if (event.target.id === "cancelSecurityEdit") {
+    clearSecurityForm();
+    $("securityStatus").textContent = "Transaction edit cancelled";
   }
 
   const editAccountId = event.target.closest("[data-edit-account]")?.dataset.editAccount;
@@ -4486,14 +6212,50 @@ document.addEventListener("click", (event) => {
 
   const periodIndex = event.target.closest("[data-delete-pension-period]")?.dataset.deletePensionPeriod;
   if (periodIndex !== undefined) {
-    state.pensionIncomePeriods.splice(Number(periodIndex), 1);
+    const scenario = activePensionScenario();
+    if (scenario) scenario.income_periods.splice(Number(periodIndex), 1);
+    invalidatePensionSimulation();
+    renderPensionScenarios();
     renderPensionPeriods();
+  }
+
+  const rateIndex = event.target.closest("[data-delete-pension-rate]")?.dataset.deletePensionRate;
+  if (rateIndex !== undefined) {
+    const scenario = activePensionScenario();
+    if (scenario) scenario.return_periods.splice(Number(rateIndex), 1);
+    invalidatePensionSimulation();
+    renderPensionScenarios();
+    renderPensionRates();
+    renderFundsOverview();
+  }
+
+  if (event.target.id === "pensionStopWorkNow") {
+    stopPensionWorkNow();
+  }
+
+  const scheduleScenarioIndex = event.target.closest("[data-schedule-pension-scenario]")?.dataset.schedulePensionScenario;
+  if (scheduleScenarioIndex !== undefined) {
+    openPensionPeriodModal(Number(scheduleScenarioIndex));
+  }
+
+  const editScenarioIndex = event.target.closest("[data-edit-pension-scenario]")?.dataset.editPensionScenario;
+  if (editScenarioIndex !== undefined) {
+    editPensionScenario(Number(editScenarioIndex));
   }
 
   const scenarioIndex = event.target.closest("[data-delete-pension-scenario]")?.dataset.deletePensionScenario;
   if (scenarioIndex !== undefined) {
-    state.pensionScenarios.splice(Number(scenarioIndex), 1);
+    const removed = Number(scenarioIndex);
+    state.pensionScenarios.splice(removed, 1);
+    if (state.activePensionScenarioIndex === removed) {
+      state.activePensionScenarioIndex = null;
+    } else if (Number.isInteger(state.activePensionScenarioIndex) && state.activePensionScenarioIndex > removed) {
+      state.activePensionScenarioIndex -= 1;
+    }
+    invalidatePensionSimulation();
     renderPensionScenarios();
+    renderPensionPeriods();
+    renderFundsOverview();
   }
 
   const moveButton = event.target.closest("[data-dashboard-move]");
@@ -4510,9 +6272,65 @@ document.addEventListener("click", (event) => {
   if (modeButton) {
     setDashboardMode(modeButton.dataset.dashboardMode);
   }
+
+  const backupDownload = event.target.closest("[data-download-backup]")?.dataset.downloadBackup;
+  if (backupDownload) {
+    downloadBackup(backupDownload).catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; });
+  }
 });
 
 document.addEventListener("change", (event) => {
+  const pensionPeriodInput = event.target.closest("[data-pension-period-index][data-pension-period-field]");
+  if (pensionPeriodInput) {
+    const index = Number(pensionPeriodInput.dataset.pensionPeriodIndex);
+    const field = pensionPeriodInput.dataset.pensionPeriodField;
+    const scenario = activePensionScenario();
+    const period = scenario?.income_periods?.[index];
+    const numericFields = [
+      "from_age", "to_age", "monthly_income", "contribution_percent", "monthly_deposit",
+      "disability_coverage_percent", "spouse_survivors_coverage_percent", "children_survivors_coverage_percent",
+      "survivors_capitalization_factor",
+    ];
+    if (period && field === "insurance_track") {
+      const track = PENSION_INSURANCE_TRACKS[pensionPeriodInput.value];
+      period.insurance_track = pensionPeriodInput.value;
+      if (track && pensionPeriodInput.value !== "custom") {
+        period.disability_coverage_percent = track.disability;
+        period.spouse_survivors_coverage_percent = track.spouse;
+        period.children_survivors_coverage_percent = track.children;
+        if (!period.survivors_capitalization_factor) period.survivors_capitalization_factor = 200;
+      }
+      invalidatePensionSimulation();
+      renderPensionScenarios();
+      renderPensionPeriods();
+      renderPensionProjectionSummary();
+      renderFundsOverview();
+    } else if (period && numericFields.includes(field)) {
+      period[field] = pensionPeriodInput.value === "" ? 0 : Number(pensionPeriodInput.value);
+      period.insurance_track = pensionInsuranceTrackFor(period);
+      invalidatePensionSimulation();
+      renderPensionScenarios();
+      renderPensionPeriods();
+      renderPensionProjectionSummary();
+      renderFundsOverview();
+    }
+  }
+
+  const pensionRateInput = event.target.closest("[data-pension-rate-index][data-pension-rate-field]");
+  if (pensionRateInput) {
+    const index = Number(pensionRateInput.dataset.pensionRateIndex);
+    const field = pensionRateInput.dataset.pensionRateField;
+    const scenario = activePensionScenario();
+    if (scenario?.return_periods?.[index] && ["from_age", "to_age", "annual_return"].includes(field)) {
+      scenario.return_periods[index][field] = pensionRateInput.value === "" ? "" : Number(pensionRateInput.value);
+      invalidatePensionSimulation();
+      renderPensionScenarios();
+      renderPensionRates();
+      renderPensionProjectionSummary();
+      renderFundsOverview();
+    }
+  }
+
   const accountTrendSelect = event.target.closest("[data-account-trend-select]");
   if (accountTrendSelect) {
     state.dashboard.accountTrendAccountId = accountTrendSelect.value;
@@ -4543,6 +6361,11 @@ document.addEventListener("change", (event) => {
 
   if (event.target.id === "securityKnownInstrument") {
     applyInstrumentToForm(instrumentById(event.target.value), "security");
+    toggleTransactionCompFields();
+  }
+
+  if (event.target.id === "securityAssetClass" || event.target.id === "securityAction") {
+    toggleTransactionCompFields();
   }
 
   if (event.target.id === "priceKnownInstrument") {
@@ -4555,20 +6378,47 @@ document.addEventListener("change", (event) => {
     loadSecurityDetail().catch((error) => { $("securityDetailStatus").textContent = `Error: ${error.message}`; });
   }
 
-  if (event.target.id === "simFundSource") {
-    applySimulationFund();
+  if (event.target.classList?.contains("security-sr-toggle")) {
+    state.securityChartLevelPeriods = [...document.querySelectorAll(".security-sr-toggle:checked")]
+      .map((input) => input.value);
+    loadSecurityDetail().catch((error) => { $("securityDetailStatus").textContent = `Error: ${error.message}`; });
   }
 
-  if (event.target.id === "simKind") {
-    syncSimulationFactorState();
+  if (event.target.classList?.contains("security-ma-toggle")) {
+    state.securityChartMaWindows = [...document.querySelectorAll(".security-ma-toggle:checked")]
+      .map((input) => input.value);
+    renderSecurityChart();
   }
 
   if (event.target.id === "simPersonSource") {
     applySimulationPerson();
+    updatePensionActionStates();
+  }
+
+  if (event.target.id === "simPeriodFromMode") {
+    syncPensionPeriodFromMode();
+    updatePensionActionStates();
+  }
+
+  if (event.target.id === "simRateFromMode") {
+    syncPensionRateFromMode();
+    updatePensionActionStates();
+  }
+
+  if (event.target.id === "simInsuranceTrack") {
+    syncPensionInsuranceTrack({ force: true });
+    updatePensionActionStates();
+  }
+
+  if (["simDisabilityCoverage", "simSpouseSurvivorsCoverage", "simChildrenSurvivorsCoverage"].includes(event.target.id)) {
+    const track = $("simInsuranceTrack");
+    if (track) track.value = "custom";
+    updatePensionActionStates();
   }
 
   if (event.target.id === "simBirthDate" && !$("simCurrentAge").value) {
     $("simCurrentAge").value = ageFromBirthDate(dateValue("simBirthDate"));
+    updatePensionActionStates();
   }
 
   if (event.target.id === "backupScheduleFrequency") {
@@ -4587,6 +6437,29 @@ document.addEventListener("change", (event) => {
   }
 });
 
+document.addEventListener("input", (event) => {
+  const pensionIds = [
+    "simName", "simBirthDate", "simCurrentAge", "simRetireAge", "simAmount", "simFactor",
+    "simPeriodFrom", "simPeriodTo", "simPeriodIncome", "simPeriodContribution", "simPeriodDeposit",
+    "simSurvivorsFactor",
+    "simRateFrom", "simRateTo", "simRateAnnual",
+  ];
+  if (pensionIds.includes(event.target.id)) updatePensionActionStates();
+  if (["fundKind", "fundPensionId", "fundAmount"].includes(event.target.id)) updateFundActionStates();
+});
+
+document.addEventListener("focusin", (event) => {
+  if (event.target.classList?.contains("date-field")) {
+    openDatePickerFor(event.target);
+  }
+});
+
+document.addEventListener("click", (event) => {
+  if (event.target.classList?.contains("date-field")) {
+    openDatePickerFor(event.target);
+  }
+});
+
 document.addEventListener("dragstart", (event) => {
   const widget = event.target.closest(".dashboard-widget");
   if (!widget || !state.dashboard?.edit) return;
@@ -4597,25 +6470,28 @@ document.addEventListener("dragstart", (event) => {
 
 document.addEventListener("dragend", (event) => {
   event.target.closest(".dashboard-widget")?.classList.remove("dragging");
+  document.querySelectorAll(".dashboard-section-grid.drag-over").forEach((grid) => grid.classList.remove("drag-over"));
 });
 
 document.addEventListener("dragover", (event) => {
-  if (!state.dashboard?.edit || !event.target.closest(".dashboard-widget, .dashboard-section")) return;
+  const grid = event.target.closest(".dashboard-section-grid");
+  if (!state.dashboard?.edit || !grid) return;
   event.preventDefault();
   event.dataTransfer.dropEffect = "move";
+  document.querySelectorAll(".dashboard-section-grid.drag-over").forEach((item) => {
+    if (item !== grid) item.classList.remove("drag-over");
+  });
+  grid.classList.add("drag-over");
 });
 
 document.addEventListener("drop", (event) => {
-  const target = event.target.closest(".dashboard-widget");
+  const grid = event.target.closest(".dashboard-section-grid");
   const section = event.target.closest(".dashboard-section");
-  if (!state.dashboard?.edit || (!target && !section)) return;
+  if (!state.dashboard?.edit || !grid || !section) return;
   event.preventDefault();
   const sourceId = event.dataTransfer.getData("text/plain");
-  if (target) {
-    reorderDashboardWidgets(sourceId, target.dataset.widget);
-  } else if (section) {
-    appendDashboardWidgetToSection(sourceId, section.dataset.dashboardSection);
-  }
+  grid.classList.remove("drag-over");
+  moveDashboardWidgetToPosition(sourceId, section.dataset.dashboardSection, dashboardDropIndex(grid, event));
 });
 
 $("refresh").addEventListener("click", () => {
@@ -4641,6 +6517,7 @@ $("exportData").addEventListener("click", () => exportLocalData().catch((error) 
 $("chooseImportData").addEventListener("click", () => $("importDataFile").click());
 $("importDataFile").addEventListener("change", (event) => importLocalData(event.target.files?.[0]).catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }).finally(() => { event.target.value = ""; }));
 $("runBackupNow").addEventListener("click", () => runBackupNow().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }));
+$("downloadBackupsZip").addEventListener("click", () => downloadBackupsZip().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }));
 $("saveBackupSettings").addEventListener("click", () => saveBackupSettings().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }));
 $("saveTableSettings").addEventListener("click", () => {
   state.tableMaPeriod = $("tableMaPeriod").value;
@@ -4661,17 +6538,22 @@ $("dashboardEdit").addEventListener("click", () => setDashboardEdit(!state.dashb
 $("dashboardReset").addEventListener("click", resetDashboard);
 $("saveManualSecurity").addEventListener("click", () => saveManualSecurity().catch((error) => { $("manualSecurityStatus").textContent = `Error: ${error.message}`; }));
 $("saveSecurity").addEventListener("click", () => saveSecurity().catch((error) => { $("securityStatus").textContent = `Error: ${error.message}`; }));
+$("runDividendEvents").addEventListener("click", () => runDividendEvents().catch((error) => { $("eventsStatus").textContent = `Error: ${error.message}`; }));
 $("savePrice").addEventListener("click", () => savePrice().catch((error) => { $("priceStatus").textContent = `Error: ${error.message}`; }));
 $("saveDetailPrice").addEventListener("click", () => saveSecurityDetailPrice().catch((error) => { $("securityDetailStatus").textContent = `Error: ${error.message}`; }));
 $("loadReports").addEventListener("click", () => loadReports().catch((error) => { $("reportsDetails").innerHTML = `<div class="empty">Error: ${esc(error.message)}</div>`; }));
 $("saveHistorySnapshot").addEventListener("click", () => saveHistorySnapshot().catch((error) => { $("historyStatus").textContent = `Error: ${error.message}`; }));
 $("captureHistorySnapshot").addEventListener("click", () => captureHistorySnapshot().catch((error) => { $("historyStatus").textContent = `Error: ${error.message}`; }));
+$("showFundCreate").addEventListener("click", showFundCreate);
+$("cancelFundCreate").addEventListener("click", () => hideFundCreate({ clear: true }));
 $("saveFund").addEventListener("click", () => saveFund().catch((error) => { $("fundStatus").textContent = `Error: ${error.message}`; }));
 $("saveEditFund").addEventListener("click", () => saveEditFund().catch((error) => { $("editFundStatus").textContent = `Error: ${error.message}`; }));
 $("attachFundPerson").addEventListener("click", () => attachFamilyMember("fundPersons", "fundFamilyMember", "fundStatus", { single: true }));
 $("attachEditFundPerson").addEventListener("click", () => attachFamilyMember("editFundPersons", "editFundFamilyMember", "editFundStatus", { single: true }));
 $("addPensionPeriod").addEventListener("click", addPensionPeriod);
+$("addPensionRate").addEventListener("click", addPensionRate);
 $("addPensionScenario").addEventListener("click", addPensionScenario);
+$("newPensionScenario").addEventListener("click", newPensionScenario);
 $("runPensionSimulation").addEventListener("click", () => runPensionSimulation().catch((error) => { $("pensionSimulationStatus").textContent = `Error: ${error.message}`; }));
 $("applyBackupSchedule").addEventListener("click", applyBackupSchedule);
 $("localAccountLocation").addEventListener("change", () => syncCurrencyFromLocation("localAccountLocation", "localAccountCurrency"));
@@ -4682,16 +6564,20 @@ $("priceLocation").addEventListener("change", () => syncCurrencyFromLocation("pr
   $(id).addEventListener("blur", () => { $(id).value = cleanSecuritySymbol($(id).value); });
 });
 
-loadLanguageSettings();
-loadDashboardSettings();
-loadTableSettings();
-applyLanguage();
+async function initializeApp() {
+  await loadClientStateFromServer().catch((error) => appWarn("client_state.load_failed", { message: error.message }));
+  loadClientStateFromStorage();
+  loadPortfolio().catch(reportBackgroundError);
+  loadBanner().catch(() => {});
+  loadAlerts().catch(() => {});
+  loadLocalOptions().catch(reportBackgroundError);
+  loadBrokers().catch(reportBackgroundError);
+  loadFamilyMembers().catch(reportBackgroundError);
+  loadLocalAccounts().catch(reportBackgroundError);
+  loadLocalSecurities().catch(reportBackgroundError);
+  loadLocalPrices().catch(reportBackgroundError);
+  loadEvents().catch(reportBackgroundError);
+  loadFunds().catch(reportBackgroundError);
+}
 
-loadPortfolio().catch(reportBackgroundError);
-loadBanner().catch(() => {});
-loadAlerts().catch(() => {});
-loadLocalOptions().catch(reportBackgroundError);
-loadBrokers().catch(reportBackgroundError);
-loadFamilyMembers().catch(reportBackgroundError);
-loadLocalAccounts().catch(reportBackgroundError);
-loadFunds().catch(reportBackgroundError);
+initializeApp().catch(reportBackgroundError);

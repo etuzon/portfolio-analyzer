@@ -3,7 +3,7 @@ from datetime import date, timedelta
 
 from app.models import Ohlcv
 from app import providers
-from app.providers import MarketDataHub, SecCompanyFactsProvider, SqliteCache, YahooChartProvider
+from app.providers import MarketDataHub, NasdaqQuoteProvider, SecCompanyFactsProvider, SqliteCache, YahooChartProvider
 
 
 def test_sqlite_cache_round_trips_and_reports_limit(tmp_path):
@@ -87,6 +87,55 @@ def test_market_screener_falls_back_to_sec_ticker_lookup(monkeypatch, tmp_path):
     assert status["sec_company_tickers"] == "ok"
     assert rows[0]["symbol"] == "CSCO"
     assert rows[0]["name"] == "CISCO SYSTEMS, INC."
+
+
+def test_nasdaq_quote_provider_maps_public_stock_quote(monkeypatch, tmp_path):
+    provider = NasdaqQuoteProvider({}, SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1))
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "data": {
+                    "symbol": "CSCO",
+                    "companyName": "Cisco Systems, Inc.",
+                    "exchange": "NASDAQ-GS",
+                    "isNasdaqListed": True,
+                    "primaryData": {
+                        "lastSalePrice": "$115.99",
+                        "netChange": "+2.43",
+                        "percentageChange": "+2.14%",
+                        "lastTradeTimestamp": "Jul 30, 2026",
+                    },
+                }
+            }
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            self.kwargs = kwargs
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def get(self, url, params):
+            assert url.endswith("/CSCO/info")
+            assert params == {"assetclass": "stocks"}
+            return Response()
+
+    monkeypatch.setattr(providers.httpx, "Client", Client)
+
+    quote = provider.quote("csco")
+
+    assert quote["symbol"] == "CSCO"
+    assert quote["price"] == 115.99
+    assert quote["currency"] == "USD"
+    assert quote["change"] == 2.43
+    assert quote["changes_percentage"] == 2.14
 
 
 def test_yahoo_summary_maps_fundamentals_and_profile(monkeypatch, tmp_path):

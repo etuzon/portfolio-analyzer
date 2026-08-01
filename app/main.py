@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from datetime import date, datetime, time as clock_time, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -12,6 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -19,7 +22,8 @@ from .alerts import AlertStore, start_scheduler
 from .config import data_dir, load_config
 from .ghostfolio import GhostfolioClient
 from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, OPTION_TYPES, LocalPortfolioStore
-from .metrics import analyze_holding, screen, to_dict
+from .metrics import analyze_holding, moving_averages, screen, support_resistance, to_dict, volume_metrics
+from .models import Ohlcv
 from .providers import MarketDataHub
 
 
@@ -46,9 +50,15 @@ alert_store = AlertStore()
 local_store = LocalPortfolioStore()
 scheduler = None
 BACKUP_JOB_ID = "local-data-backup"
+DIVIDEND_JOB_ID = "local-dividend-scan"
+DIVIDEND_DEFAULT_START_DATE = date(2026, 8, 1)
 WEEKDAY_CRON = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 PORTFOLIO_CACHE_FILE = "portfolio-analysis-cache.json"
 HISTORY_START_DATE = date(2026, 4, 14)
+US_STOCK_MARKETS = {"NASDAQ", "NYSE", "AMEX", "NYSEARCA", "OTC"}
+SUPPORTED_STOCK_MARKETS = {*US_STOCK_MARKETS, "TASE"}
+CLIENT_STATE_PREF_KEY = "client_state"
+BACKUP_SETTINGS_PREF_KEY = "backup_settings"
 _portfolio_cache_lock = RLock()
 _portfolio_cache: dict[str, Any] | None = None
 
@@ -74,6 +84,140 @@ def _parse_query_date(value: str) -> date | None:
 def _clamped_history_start(value: str, fallback: date | None = None) -> date:
     requested = _parse_query_date(value) or fallback or HISTORY_START_DATE
     return max(requested, HISTORY_START_DATE)
+
+
+def _local_price_ohlcv(row: dict[str, Any]) -> Ohlcv:
+    price = float(row.get("price") or 0)
+    return Ohlcv(
+        date=date.fromisoformat(str(row["price_date"])),
+        open=price,
+        high=price,
+        low=price,
+        close=price,
+        adjusted_close=price,
+        volume=0,
+    )
+
+
+def _security_history_point(row: Ohlcv) -> dict[str, Any]:
+    return {
+        "date": row.date.isoformat(),
+        "price": row.adjusted_close,
+        "open": row.open,
+        "high": row.high,
+        "low": row.low,
+        "close": row.close,
+        "adjusted_close": row.adjusted_close,
+        "volume": row.volume,
+    }
+
+
+def _security_history_response(
+    symbol: str,
+    stock_market: str,
+    period: str,
+    source: str,
+    prices: list[Ohlcv],
+    level_prices: list[Ohlcv] | None = None,
+    status: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    level_source = level_prices if level_prices is not None else prices
+    return {
+        "symbol": symbol,
+        "stock_market": stock_market,
+        "period": period,
+        "source": source,
+        "status": status or {},
+        "points": [_security_history_point(row) for row in prices],
+        "moving_averages": moving_averages(prices),
+        "support_resistance": support_resistance(level_source),
+        "volume": volume_metrics(prices),
+        "has_candles": any(
+            row.open != row.close or row.high != row.low or row.high != row.close or row.low != row.close
+            for row in prices
+        ),
+        "has_volume": any(row.volume > 0 for row in prices),
+    }
+
+
+def _stock_market_key(value: Any) -> str:
+    text = str(value or "").upper().strip().replace(" ", "").replace("-", "").replace("_", "")
+    aliases = {
+        "NASDAQGS": "NASDAQ",
+        "NASDAQGM": "NASDAQ",
+        "NASDAQCM": "NASDAQ",
+        "NAS": "NASDAQ",
+        "NMS": "NASDAQ",
+        "NYSEAMERICAN": "AMEX",
+        "NYSEMKT": "AMEX",
+        "NYSEARCA": "NYSEARCA",
+        "ARCA": "NYSEARCA",
+        "AMEX": "AMEX",
+        "NYSE": "NYSE",
+        "OTC": "OTC",
+        "OTCMKTS": "OTC",
+        "TASE": "TASE",
+        "TLV": "TASE",
+        "TELAVIV": "TASE",
+    }
+    return aliases.get(text, text)
+
+
+def _quote_market(quote: dict[str, Any]) -> str:
+    exchange = _stock_market_key(quote.get("exchange") or quote.get("stock_exchange") or "")
+    return exchange if exchange in SUPPORTED_STOCK_MARKETS else ""
+
+
+def _exact_screener_match(symbol: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+    symbol_key = str(symbol or "").upper().strip()
+    for row in rows:
+        if str(row.get("symbol") or "").upper().strip() == symbol_key:
+            return row
+    return {}
+
+
+def _resolve_supported_stock_market(symbol: str, stock_market: str, allow_manual: bool, known_manual: bool) -> tuple[str, dict[str, str]]:
+    selected = _stock_market_key(stock_market)
+    if selected not in SUPPORTED_STOCK_MARKETS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported stock market '{stock_market}'. Supported markets are: {', '.join(sorted(SUPPORTED_STOCK_MARKETS))}",
+        )
+    if allow_manual or known_manual:
+        return selected, {"manual": "accepted"}
+    if selected == "TASE":
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "TASE symbols currently need a defined manual instrument or 'Manual if not found'.",
+                "manual_allowed": True,
+                "provider_status": {"tase": "manual validation required"},
+            },
+        )
+
+    market_hub = hub()
+    quote, status = market_hub.quote(symbol)
+    detected = _quote_market(quote)
+    if quote and (quote.get("price") is not None or detected):
+        return detected or selected, status
+
+    rows, screener_status = market_hub.market_screener({"query": symbol, "limit": 10})
+    status = {**status, **{f"screener_{key}": value for key, value in screener_status.items()}}
+    match = _exact_screener_match(symbol, rows)
+    if match:
+        detected = _stock_market_key(match.get("exchange"))
+        if detected in US_STOCK_MARKETS:
+            return detected, status
+        return selected, status
+
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "message": "Symbol was not found in supported US market data. Enable manual add to save it anyway.",
+            "manual_allowed": True,
+            "provider_status": status,
+        },
+    )
 
 
 @lru_cache(maxsize=1)
@@ -103,7 +247,7 @@ def default_backup_settings() -> dict[str, Any]:
         "schedule_config": backup_schedule_config(backup.get("schedule_config"), schedule),
         "missed_policy": str(backup.get("missed_policy") or "wait"),
         "timezone": timezone_name,
-        "keep": int(backup.get("keep", 30) or 30),
+        "keep": int(backup.get("keep", 100) or 100),
     }
 
 
@@ -156,6 +300,21 @@ def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
     return min(max(number, minimum), maximum)
 
 
+def _bounded_float(value: Any, default: float, minimum: float, maximum: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    return min(max(number, minimum), maximum)
+
+
+def _float(value: Any, default: float = 0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _int_list(value: Any, minimum: int, maximum: int) -> list[int]:
     items = value if isinstance(value, list) else str(value or "").split(",")
     numbers = []
@@ -178,6 +337,12 @@ def _weekday_list(value: Any) -> list[int]:
 
 def load_runtime_settings() -> dict[str, Any]:
     settings = {"backup": default_backup_settings()}
+    try:
+        backup_preference = local_store.get_preference(BACKUP_SETTINGS_PREF_KEY)
+        if isinstance(backup_preference, dict):
+            settings["backup"].update(backup_preference)
+    except Exception:
+        pass
     path = runtime_settings_path()
     if path.exists():
         try:
@@ -195,6 +360,47 @@ def save_runtime_settings(settings: dict[str, Any]) -> None:
     path.write_text(json.dumps(settings, indent=2, default=str))
 
 
+def backup_download_path(filename: str) -> Path:
+    clean = Path(str(filename or "")).name
+    if clean != filename or not clean.startswith("portfolio-data-") or not clean.endswith(".json"):
+        raise HTTPException(status_code=400, detail="Invalid backup filename")
+    path = local_store.backup_dir() / clean
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Backup file not found")
+    return path
+
+
+def backup_archive_response() -> Response:
+    buffer = io.BytesIO()
+    backups = local_store.list_backups()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for backup in backups:
+            path = backup_download_path(str(backup.get("filename") or ""))
+            archive.write(path, arcname=path.name)
+    filename = f"portfolio-backups-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.zip"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def restore_backup_settings_from_preferences() -> None:
+    backup_preference = local_store.get_preference(BACKUP_SETTINGS_PREF_KEY)
+    if not isinstance(backup_preference, dict):
+        return
+    settings = load_runtime_settings()
+    settings["backup"] = {**default_backup_settings(), **backup_preference}
+    save_runtime_settings(settings)
+    configure_backup_job()
+
+
+def write_runtime_backup(keep: int | None = None) -> dict[str, Any]:
+    backup = load_runtime_settings()["backup"]
+    local_store.set_preference(BACKUP_SETTINGS_PREF_KEY, backup)
+    return local_store.write_backup(int(keep or backup.get("keep") or 100))
+
+
 def configure_backup_job() -> None:
     if scheduler is None:
         return
@@ -210,7 +416,7 @@ def configure_backup_job() -> None:
     except ValueError as exc:
         raise ValueError("Backup schedule must be a 5-field cron expression") from exc
     scheduler.add_job(
-        lambda: local_store.write_backup(int(backup.get("keep") or 30)),
+        lambda: write_runtime_backup(int(backup.get("keep") or 100)),
         trigger,
         id=BACKUP_JOB_ID,
         replace_existing=True,
@@ -230,7 +436,7 @@ def maybe_run_missed_backup(backup: dict[str, Any]) -> dict[str, Any] | None:
     latest = backups[0] if backups else None
     if latest and _parse_backup_modified_at(latest.get("modified_at"), backup.get("timezone") or "UTC") >= due_at:
         return None
-    return local_store.write_backup(int(backup.get("keep") or 30))
+    return write_runtime_backup(int(backup.get("keep") or 100))
 
 
 def latest_due_backup_time(backup: dict[str, Any]) -> datetime | None:
@@ -274,7 +480,137 @@ def backup_status() -> dict[str, Any]:
         "directory": str(local_store.backup_dir()),
         "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
         "latest": backups[0] if backups else None,
+        "backup_count": len(backups),
         "backups": backups[:10],
+    }
+
+
+def dividend_settings() -> dict[str, Any]:
+    raw = config.raw.get("dividends", {}) if isinstance(config.raw.get("dividends"), dict) else {}
+    tax_rate = _bounded_float(raw.get("tax_rate"), 0.25, 0, 1)
+    start_date = _parse_query_date(str(raw.get("start_date") or "")) or DIVIDEND_DEFAULT_START_DATE
+    schedule = str(raw.get("schedule") or "15 8 * * *")
+    if len(schedule.split()) != 5:
+        schedule = "15 8 * * *"
+    return {
+        "enabled": bool(raw.get("enabled", True)),
+        "tax_rate": tax_rate,
+        "start_date": start_date.isoformat(),
+        "lookahead_days": max(int(raw.get("lookahead_days") or 180), 1),
+        "schedule": schedule,
+        "timezone": str(raw.get("timezone") or config.alerts.get("timezone") or "UTC"),
+    }
+
+
+def configure_dividend_job() -> None:
+    if scheduler is None:
+        return
+    try:
+        scheduler.remove_job(DIVIDEND_JOB_ID)
+    except Exception:
+        pass
+    settings = dividend_settings()
+    if not settings.get("enabled", True):
+        return
+    trigger = CronTrigger.from_crontab(str(settings["schedule"]), timezone=settings["timezone"])
+    scheduler.add_job(
+        lambda: process_portfolio_dividends(force_refresh=True),
+        trigger,
+        id=DIVIDEND_JOB_ID,
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=60 * 60 * 24,
+    )
+
+
+def dividend_status() -> dict[str, Any]:
+    settings = dividend_settings()
+    job = scheduler.get_job(DIVIDEND_JOB_ID) if scheduler else None
+    return {**settings, "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None}
+
+
+def process_portfolio_dividends(force_refresh: bool = True) -> dict[str, Any]:
+    settings = dividend_settings()
+    start_date = _parse_query_date(settings["start_date"]) or DIVIDEND_DEFAULT_START_DATE
+    today = date.today()
+    to_date = today + timedelta(days=int(settings["lookahead_days"]))
+    tax_rate = float(settings["tax_rate"])
+    checked = 0
+    discovered = 0
+    processed = 0
+    pending = 0
+    skipped = 0
+    statuses: dict[str, dict[str, str]] = {}
+
+    holdings = [
+        item.holding
+        for item in local_store.holdings()
+        if item.holding.quantity > 0 and item.holding.account_id and item.holding.asset_class in {"EQUITY", "ETF", "MUTUALFUND"}
+    ]
+    for holding in holdings:
+        checked += 1
+        dividends, status = hub().dividends(holding.symbol, force_refresh=force_refresh, to_date=to_date)
+        statuses[f"{holding.account_id}:{holding.symbol}"] = status
+        for row in dividends:
+            event_date = _parse_query_date(str(row.get("date") or ""))
+            gross_per_share = _float(row.get("amount"), 0)
+            if not event_date or event_date < start_date or event_date > to_date or gross_per_share <= 0:
+                continue
+            gross = gross_per_share * float(holding.quantity or 0)
+            tax = gross * tax_rate
+            net = gross - tax
+            source_key = ":".join(
+                [
+                    "dividend",
+                    holding.account_id,
+                    holding.symbol.upper(),
+                    str(holding.stock_market or "").upper(),
+                    event_date.isoformat(),
+                    f"{gross_per_share:.10f}",
+                ]
+            )
+            event = local_store.record_dividend_event(
+                {
+                    "event_date": event_date.isoformat(),
+                    "symbol": holding.symbol,
+                    "stock_market": holding.stock_market,
+                    "account_db_id": holding.account_id,
+                    "gross_amount": gross,
+                    "tax_amount": tax,
+                    "net_amount": net,
+                    "currency": holding.currency,
+                    "source": "dividend_scan",
+                    "source_key": source_key,
+                    "details": {
+                        "gross_per_share": gross_per_share,
+                        "shares": holding.quantity,
+                        "tax_rate": tax_rate,
+                        "asset_class": holding.asset_class,
+                        "location": holding.location,
+                        "provider_status": status,
+                    },
+                },
+                due=event_date <= today,
+            )
+            if event.get("skipped"):
+                skipped += 1
+                continue
+            discovered += int(bool(event.get("created")))
+            if event.get("status") == "processed":
+                processed += 1
+            else:
+                pending += 1
+    if processed:
+        clear_portfolio_cache()
+    return {
+        "settings": settings,
+        "checked": checked,
+        "discovered": discovered,
+        "processed": processed,
+        "pending": pending,
+        "skipped": skipped,
+        "status": statuses,
     }
 
 
@@ -410,6 +746,7 @@ def startup():
     if scheduler is None:
         scheduler = start_scheduler(alert_store, analyze_all, config.alerts, local_store.capture_daily_snapshots)
     configure_backup_job()
+    configure_dividend_job()
 
 
 @app.on_event("shutdown")
@@ -567,21 +904,30 @@ def add_local_security(payload: dict[str, Any]):
     stock_market = str(payload.get("stock_market") or "").strip()
     allow_manual = bool(payload.get("allow_manual"))
     known_manual = local_store.manual_security_exists(symbol, stock_market)
-    if symbol and not allow_manual and not known_manual:
-        quote, status = hub().quote(symbol)
-        if not quote.get("price"):
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "message": "Symbol was not found through configured providers. Enable manual add to save it anyway.",
-                    "manual_allowed": True,
-                    "provider_status": status,
-                },
-            )
+    if symbol and stock_market:
+        payload["stock_market"], _status = _resolve_supported_stock_market(symbol, stock_market, allow_manual, known_manual)
     try:
         return local_store.add_transaction(payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/local/securities/{transaction_id}")
+def update_local_security(transaction_id: str, payload: dict[str, Any]):
+    payload = payload or {}
+    symbol = str(payload.get("symbol") or "").strip()
+    stock_market = str(payload.get("stock_market") or "").strip()
+    allow_manual = bool(payload.get("allow_manual"))
+    known_manual = local_store.manual_security_exists(symbol, stock_market)
+    if symbol and stock_market:
+        payload["stock_market"], _status = _resolve_supported_stock_market(symbol, stock_market, allow_manual, known_manual)
+    try:
+        return local_store.update_transaction(transaction_id, payload)
+    except ValueError as exc:
+        message = str(exc)
+        if "not found" in message.lower():
+            raise HTTPException(status_code=404, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
 
 
 @app.get("/api/local/manual-securities")
@@ -611,42 +957,50 @@ def delete_local_security(transaction_id: str):
     return {"deleted": True}
 
 
+@app.get("/api/local/events")
+def list_local_events():
+    return {"items": local_store.list_events(), "dividends": dividend_status()}
+
+
+@app.post("/api/local/events/dividends/run")
+def run_dividend_events():
+    try:
+        result = process_portfolio_dividends(force_refresh=True)
+        return {**result, "items": local_store.list_events()}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/local/prices")
 def list_local_prices():
     return {"items": local_store.list_prices()}
 
 
 @app.get("/api/security/history")
-def security_history(symbol: str, stock_market: str = "", period: str = "1y", date_from: str = ""):
-    days_by_period = {"1m": 31, "1y": 366, "3y": 366 * 3, "5y": 366 * 5}
+def security_history(symbol: str, stock_market: str = "", period: str = "1y", date_from: str = "", level_periods: str = ""):
+    days_by_period = {"1m": 31, "6m": 183, "1y": 366, "3y": 366 * 3, "5y": 366 * 5}
     days = days_by_period.get(period, days_by_period["1y"])
+    requested_level_periods = [item.strip().lower() for item in level_periods.split(",") if item.strip()]
+    level_days = [days_by_period[item] for item in requested_level_periods if item in days_by_period]
+    analysis_days = max([days, *level_days])
     to_date = date.today()
     period_start = to_date - timedelta(days=days)
     from_date = _clamped_history_start(date_from, HISTORY_START_DATE if not date_from else period_start)
-    local_rows = local_store.price_history(symbol, stock_market, from_date, to_date)
+    analysis_from_date = _clamped_history_start((to_date - timedelta(days=analysis_days)).isoformat())
+    fetch_from_date = min(from_date, analysis_from_date)
+    local_rows = local_store.price_history(symbol, stock_market, fetch_from_date, to_date)
+    local_prices = [_local_price_ohlcv(row) for row in local_rows]
+    local_chart_prices = [row for row in local_prices if row.date >= from_date]
     if local_store.manual_security_exists(symbol, stock_market):
-        return {
-            "symbol": symbol,
-            "stock_market": stock_market,
-            "period": period,
-            "source": "manual",
-            "points": [{"date": row["price_date"], "price": row["price"], "price_input": row["price_input"]} for row in local_rows],
-        }
-    prices, status = hub().prices(symbol, from_date, to_date)
-    provider_points = [{"date": row.date.isoformat(), "price": row.adjusted_close} for row in prices]
-    local_points = [{"date": row["price_date"], "price": row["price"], "price_input": row["price_input"]} for row in local_rows]
-    if len(local_points) >= len(provider_points):
-        return {"symbol": symbol, "stock_market": stock_market, "period": period, "source": "local", "points": local_points}
-    by_date = {point["date"]: point for point in provider_points}
-    by_date.update({point["date"]: point for point in local_points})
-    return {
-        "symbol": symbol,
-        "stock_market": stock_market,
-        "period": period,
-        "source": "merged",
-        "status": status,
-        "points": [by_date[day] for day in sorted(by_date)],
-    }
+        return _security_history_response(symbol, stock_market, period, "manual", local_chart_prices, local_prices)
+    prices, status = hub().prices(symbol, fetch_from_date, to_date)
+    if len(local_prices) >= len(prices):
+        return _security_history_response(symbol, stock_market, period, "local", local_chart_prices, local_prices)
+    by_date = {row.date.isoformat(): row for row in prices}
+    by_date.update({row.date.isoformat(): row for row in local_prices})
+    merged = [by_date[day] for day in sorted(by_date)]
+    chart_prices = [row for row in merged if row.date >= from_date]
+    return _security_history_response(symbol, stock_market, period, "merged", chart_prices, merged, status)
 
 
 @app.post("/api/local/prices")
@@ -796,6 +1150,7 @@ def _resolve_banner_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "type": item_type,
                 "symbol": symbol,
                 "value": value,
+                "currency": quote.get("currency"),
                 "change": quote.get("change"),
                 "changes_percentage": quote.get("changes_percentage"),
                 "time": timestamp,
@@ -830,6 +1185,7 @@ def settings_status():
         "cache": hub().cache_status(),
         "local_db": local_store.status(),
         "backup": backup_status(),
+        "dividends": dividend_status(),
     }
 
 
@@ -858,11 +1214,25 @@ def update_backup_settings(payload: dict[str, Any]):
         backup["keep"] = max(int(payload.get("keep") or 1), 1)
     settings["backup"] = backup
     save_runtime_settings(settings)
+    local_store.set_preference(BACKUP_SETTINGS_PREF_KEY, backup)
     try:
         configure_backup_job()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return backup_status()
+
+
+@app.get("/api/settings/client-state")
+def get_client_state():
+    state = local_store.get_preference(CLIENT_STATE_PREF_KEY, {})
+    return {"state": state if isinstance(state, dict) else {}}
+
+
+@app.put("/api/settings/client-state")
+def save_client_state(payload: dict[str, Any]):
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Client state must be an object")
+    return local_store.set_preference(CLIENT_STATE_PREF_KEY, payload)
 
 
 @app.get("/api/local/export")
@@ -880,6 +1250,7 @@ def export_local_data():
 def import_local_data(payload: dict[str, Any]):
     try:
         result = local_store.import_data(payload or {})
+        restore_backup_settings_from_preferences()
         local_store.capture_daily_snapshots()
         clear_portfolio_cache()
         return result
@@ -892,10 +1263,21 @@ def list_local_backups():
     return {"backup": backup_status()}
 
 
+@app.get("/api/local/backups.zip")
+def download_local_backups_zip():
+    return backup_archive_response()
+
+
+@app.get("/api/local/backups/{filename}")
+def download_local_backup(filename: str):
+    path = backup_download_path(filename)
+    return FileResponse(path, media_type="application/json", filename=path.name)
+
+
 @app.post("/api/local/backups")
 def run_local_backup():
     backup = load_runtime_settings()["backup"]
-    return local_store.write_backup(int(backup.get("keep") or 30))
+    return write_runtime_backup(int(backup.get("keep") or 100))
 
 
 @app.post("/api/market/screener")

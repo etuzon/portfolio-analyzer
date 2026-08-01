@@ -12,6 +12,7 @@ from .providers import MarketDataHub
 
 PERIODS = {
     "1m": 31,
+    "6m": 183,
     "1y": 366,
     "3y": 366 * 3,
     "5y": 366 * 5,
@@ -155,6 +156,8 @@ def support_resistance(prices: list[Ohlcv]) -> dict[str, dict]:
             "state": "ok",
             "support": _ranked_level(lows, subset),
             "resistance": _ranked_level(highs, subset),
+            "current_price": subset[-1].adjusted_close,
+            "previous_price": subset[-2].adjusted_close if len(subset) > 1 else None,
             "method": "clustered local extrema with volume weighting",
         }
     return out
@@ -255,6 +258,8 @@ def screen(items: list[SymbolAnalysis], criteria: dict[str, Any]) -> list[Symbol
         min_profit_market_cap = _number(criteria.get("minProfitMarketCap"))
         if min_profit_market_cap is not None and (item.profit_market_cap_trend.current is None or item.profit_market_cap_trend.current < min_profit_market_cap):
             continue
+        if not _passes_technical_level_filter(item, criteria):
+            continue
         if not criteria.get("includeMissing", True) and item.missing:
             continue
         results.append(item)
@@ -302,32 +307,75 @@ def _number(value: Any) -> float | None:
         return None
 
 
-def _local_extrema(prices: list[Ohlcv], attr: str) -> list[tuple[float, float]]:
+def _passes_technical_level_filter(item: SymbolAnalysis, criteria: dict[str, Any]) -> bool:
+    level_kind = str(criteria.get("technicalLevel") or "").lower().strip()
+    distance_limit = _number(criteria.get("technicalDistancePct"))
+    if not level_kind and distance_limit is None:
+        return True
+    if level_kind not in {"support", "resistance"} or distance_limit is None:
+        return True
+
+    period = str(criteria.get("technicalPeriod") or "1y").lower()
+    sr = item.support_resistance.get(period) or {}
+    if sr.get("state") != "ok":
+        return False
+    level = sr.get(level_kind) or {}
+    level_price = _number(level.get("price"))
+    current = _number(sr.get("current_price"))
+    previous = _number(sr.get("previous_price"))
+    if level_price is None or level_price <= 0 or current is None:
+        return False
+
+    distance = percent(current, level_price)
+    if distance is None:
+        return False
+    direction_filter = str(criteria.get("technicalDirection") or "near").lower()
+    limit = abs(distance_limit)
+
+    if direction_filter == "up":
+        return 0 <= distance <= limit
+    if direction_filter == "down":
+        return -limit <= distance <= 0
+    if direction_filter == "cross_up":
+        return previous is not None and previous <= level_price < current and 0 <= distance <= limit
+    if direction_filter == "cross_down":
+        return previous is not None and previous >= level_price > current and -limit <= distance <= 0
+    return abs(distance) <= limit
+
+
+def _local_extrema(prices: list[Ohlcv], attr: str) -> list[tuple[float, float, date]]:
     points = []
     for idx in range(2, len(prices) - 2):
         value = getattr(prices[idx], attr)
         neighbors = [getattr(prices[idx + offset], attr) for offset in [-2, -1, 1, 2]]
         if attr == "low" and value <= min(neighbors):
-            points.append((value, prices[idx].volume))
+            points.append((value, prices[idx].volume, prices[idx].date))
         if attr == "high" and value >= max(neighbors):
-            points.append((value, prices[idx].volume))
+            points.append((value, prices[idx].volume, prices[idx].date))
     return points
 
 
-def _ranked_level(points: list[tuple[float, float]], prices: list[Ohlcv]) -> dict:
+def _ranked_level(points: list[tuple[float, float, date]], prices: list[Ohlcv]) -> dict:
     if not points:
         values = [row.low for row in prices] + [row.high for row in prices]
-        return {"price": mean(values), "touches": 0, "confidence": "low"}
+        return {"price": mean(values), "touches": 0, "confidence": "low", "date": prices[-1].date.isoformat()}
     tolerance = mean([row.adjusted_close for row in prices]) * 0.015
     clusters = []
-    for price, volume in points:
+    for price, volume, point_date in points:
         for cluster in clusters:
             if abs(cluster["price"] - price) <= tolerance:
                 cluster["prices"].append(price)
                 cluster["volume"] += volume
+                cluster["points"].append({"price": price, "volume": volume, "date": point_date})
                 cluster["price"] = mean(cluster["prices"])
                 break
         else:
-            clusters.append({"price": price, "prices": [price], "volume": volume})
+            clusters.append({"price": price, "prices": [price], "volume": volume, "points": [{"price": price, "volume": volume, "date": point_date}]})
     best = max(clusters, key=lambda item: (len(item["prices"]), item["volume"]))
-    return {"price": best["price"], "touches": len(best["prices"]), "confidence": "high" if len(best["prices"]) >= 3 else "medium"}
+    anchor = max(best["points"], key=lambda item: (item["volume"], item["date"]))
+    return {
+        "price": best["price"],
+        "touches": len(best["prices"]),
+        "confidence": "high" if len(best["prices"]) >= 3 else "medium",
+        "date": anchor["date"].isoformat(),
+    }

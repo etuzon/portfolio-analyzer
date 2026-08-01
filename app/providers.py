@@ -53,6 +53,8 @@ class MarketDataHub:
                     providers.append(FmpProvider(provider_config, self.cache))
             elif name == "frankfurter_fx":
                 providers.append(FrankfurterFxProvider({}, self.cache))
+            elif name == "nasdaq_quote":
+                providers.append(NasdaqQuoteProvider({}, self.cache))
             elif name == "stooq":
                 providers.append(StooqProvider({}, self.cache))
             elif name == "sec_company_facts":
@@ -96,11 +98,11 @@ class MarketDataHub:
             status["fundamentals_api"] = "missing Alpha Vantage or FMP API key"
         return {}, status or {"providers": "none configured"}
 
-    def dividends(self, symbol: str) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    def dividends(self, symbol: str, force_refresh: bool = False, to_date: date | None = None) -> tuple[list[dict[str, Any]], dict[str, str]]:
         status = {}
         for provider in self.providers:
             try:
-                data = provider.dividends(symbol)
+                data = provider.dividends(symbol, force_refresh=force_refresh, to_date=to_date)
                 if data:
                     status[provider.name] = "ok"
                     return data, status
@@ -420,7 +422,7 @@ class MarketDataProvider:
     def fundamentals(self, symbol: str) -> dict[str, Any]:
         return {}
 
-    def dividends(self, symbol: str) -> list[dict[str, Any]]:
+    def dividends(self, symbol: str, force_refresh: bool = False, to_date: date | None = None) -> list[dict[str, Any]]:
         return []
 
     def profile(self, symbol: str) -> dict[str, Any]:
@@ -517,12 +519,13 @@ class AlphaVantageProvider(MarketDataProvider):
         overview = self._get_json(self.base, {"function": "OVERVIEW", "symbol": symbol, "apikey": self.api_key}, f"av:overview:{symbol}")
         return {"income_statement": income, "overview": overview}
 
-    def dividends(self, symbol: str) -> list[dict[str, Any]]:
+    def dividends(self, symbol: str, force_refresh: bool = False, to_date: date | None = None) -> list[dict[str, Any]]:
         self._require_key()
         data = self._get_json(
             self.base,
             {"function": "TIME_SERIES_DAILY_ADJUSTED", "symbol": symbol, "outputsize": "full", "apikey": self.api_key},
             f"av:prices:{symbol}",
+            force_refresh=force_refresh,
         )
         return [
             {"date": day, "amount": float(row.get("7. dividend amount", 0) or 0)}
@@ -619,9 +622,9 @@ class FmpProvider(MarketDataProvider):
         profile = self._get_json(f"{self.base}/profile", {"symbol": symbol, "apikey": self.api_key}, f"fmp:profile:{symbol}")
         return {"income_statement": {"annualReports": income}, "profile": profile[0] if profile else {}}
 
-    def dividends(self, symbol: str) -> list[dict[str, Any]]:
+    def dividends(self, symbol: str, force_refresh: bool = False, to_date: date | None = None) -> list[dict[str, Any]]:
         self._require_key()
-        data = self._get_json(f"{self.base}/dividends", {"symbol": symbol, "apikey": self.api_key}, f"fmp:dividends:{symbol}")
+        data = self._get_json(f"{self.base}/dividends", {"symbol": symbol, "apikey": self.api_key}, f"fmp:dividends:{symbol}", force_refresh=force_refresh)
         rows = data if isinstance(data, list) else data.get("historical", [])
         return [{"date": row.get("date"), "amount": float(row.get("dividend") or row.get("adjDividend") or 0)} for row in rows]
 
@@ -693,6 +696,47 @@ class FmpProvider(MarketDataProvider):
             for row in rows
             if row.get("symbol")
         ]
+
+
+class NasdaqQuoteProvider(MarketDataProvider):
+    name = "nasdaq_quote"
+    base = "https://api.nasdaq.com/api/quote"
+
+    def quote(self, symbol: str) -> dict[str, Any]:
+        normalized = str(symbol or "").upper().strip()
+        if not normalized or not all(char.isalnum() or char in ".-" for char in normalized):
+            return {}
+        cache_key = f"nasdaq:quote:{normalized}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; portfolio-analyzer/1.0)",
+            "Accept": "application/json, text/plain, */*",
+            "Origin": "https://www.nasdaq.com",
+            "Referer": "https://www.nasdaq.com/",
+        }
+        with httpx.Client(timeout=20, follow_redirects=True, headers=headers) as client:
+            response = client.get(f"{self.base}/{normalized}/info", params={"assetclass": "stocks"})
+            response.raise_for_status()
+            payload = response.json()
+        data = payload.get("data") if isinstance(payload, dict) else {}
+        primary = data.get("primaryData") if isinstance(data, dict) else {}
+        price = _float_or_none(str(primary.get("lastSalePrice") or "").replace("$", "").replace(",", ""))
+        if price is None:
+            return {}
+        result = {
+            "symbol": data.get("symbol") or normalized,
+            "name": data.get("companyName"),
+            "price": price,
+            "currency": "USD",
+            "change": _float_or_none(str(primary.get("netChange") or "").replace("+", "").replace(",", "")),
+            "changes_percentage": _float_or_none(str(primary.get("percentageChange") or "").replace("%", "").replace("+", "").replace(",", "")),
+            "exchange": data.get("exchange") or ("NASDAQ" if data.get("isNasdaqListed") else "US"),
+            "time": primary.get("lastTradeTimestamp"),
+        }
+        self.cache.set(cache_key, result)
+        return result
 
 
 class StooqProvider(MarketDataProvider):
@@ -897,7 +941,7 @@ class GhostfolioMarketDataProvider(MarketDataProvider):
 
         return _cached_or_fetch_prices(self.cache, self.name, symbol, from_date, to_date, fetch)
 
-    def dividends(self, symbol: str) -> list[dict[str, Any]]:
+    def dividends(self, symbol: str, force_refresh: bool = False, to_date: date | None = None) -> list[dict[str, Any]]:
         return []
 
     def profile(self, symbol: str) -> dict[str, Any]:
@@ -1002,17 +1046,17 @@ class YahooChartProvider(MarketDataProvider):
 
         return _cached_or_fetch_prices(self.cache, self.name, symbol, from_date, to_date, fetch)
 
-    def dividends(self, symbol: str) -> list[dict[str, Any]]:
+    def dividends(self, symbol: str, force_refresh: bool = False, to_date: date | None = None) -> list[dict[str, Any]]:
         cache_key = f"yahoo:dividends:{symbol}"
-        cached = self.cache.get(cache_key)
+        cached = self.cache.get(cache_key) if not force_refresh else None
         if cached is not None:
             return cached
-        to_date = date.today()
+        to_date = to_date or date.today()
         from_date = to_date - timedelta(days=366 * 10)
         period1 = int(time.mktime(from_date.timetuple()))
         period2 = int(time.mktime((to_date + timedelta(days=1)).timetuple()))
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
-        data = self._get_json(url, {"period1": period1, "period2": period2, "interval": "1d", "events": "div"}, f"yahoo:chart:div:{symbol}")
+        data = self._get_json(url, {"period1": period1, "period2": period2, "interval": "1d", "events": "div"}, f"yahoo:chart:div:{symbol}", force_refresh=force_refresh)
         result = (data.get("chart", {}).get("result") or [{}])[0]
         dividends = result.get("events", {}).get("dividends", {})
         rows = [

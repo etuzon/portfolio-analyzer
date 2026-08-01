@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080d25" />
     <title>Portfolio Analyzer</title>
     <link rel="icon" type="image/svg+xml" href="/assets/app-icon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=0.4.35" />
+    <link rel="stylesheet" href="/styles.css?v=0.4.63" />
   </head>
   <body>
     <div class="app-shell">
@@ -24,13 +24,14 @@
               <button class="nav-item" type="button" data-modal="reportsModal">Reports</button>
             </div>
           </details>
-          <details class="nav-menu">
+          <details class="nav-menu" open>
             <summary>Portfolio Data</summary>
             <div class="nav-children">
               <button class="nav-item" type="button" data-modal="accountsModal">Accounts</button>
               <button class="nav-item" type="button" data-modal="brokersModal">Brokers</button>
               <button class="nav-item" type="button" data-modal="securitiesModal">Securities</button>
               <button class="nav-item" type="button" data-modal="pricesModal">Prices</button>
+              <button class="nav-item" type="button" data-modal="eventsModal">Events</button>
             </div>
           </details>
           <details class="nav-menu">
@@ -63,16 +64,10 @@
           <div>
             <p class="eyebrow">Overview</p>
             <h1>Portfolio analyzer</h1>
-            <p id="status">Loading portfolio</p>
+            <p id="status">Preparing dashboard</p>
           </div>
           <div class="topbar-actions">
-            <div id="loadingOverlay" class="loading-indicator" role="status" aria-live="polite" hidden>
-              <span class="loading-spinner" aria-hidden="true"></span>
-              <span>
-                <b id="loadingTitle">Loading portfolio</b>
-                <small id="loadingDetail">Reading cached analytics</small>
-              </span>
-            </div>
+            <button id="alarmsButton" class="secondary alarm-button" type="button" data-modal="alarmsModal" title="Open portfolio alarms">Alarms <span id="alarmsCount">0</span></button>
             <button id="refresh" class="icon-button" title="Refresh" aria-label="Refresh">↻</button>
           </div>
         </header>
@@ -87,18 +82,6 @@
           </div>
           <div id="bannerItems" class="ticker-row"></div>
         </section>
-
-        <section class="overview-grid">
-          <div class="balance-panel">
-            <p class="eyebrow">Portfolio value</p>
-            <div id="balanceValue" class="balance-value">∅</div>
-            <div id="profitBadge" class="delta neutral">∅</div>
-            <div id="currencyBreakdown" class="currency-strip"></div>
-          </div>
-          <div id="summary" class="summary"></div>
-        </section>
-
-        <section id="fundsOverview" class="funds-overview-panel"></section>
 
         <section class="analytics-panel">
           <div class="section-head">
@@ -153,6 +136,26 @@
             <input id="sector" placeholder="Sector" />
             <input id="minHoldingValue" type="number" placeholder="Min value" />
             <input id="maxHoldingValue" type="number" placeholder="Max value" />
+            <select id="technicalPeriod" title="Support/resistance period">
+              <option value="1y">1Y level</option>
+              <option value="5y">5Y level</option>
+              <option value="3y">3Y level</option>
+              <option value="6m">6M level</option>
+              <option value="1m">1M level</option>
+            </select>
+            <select id="technicalLevel" title="Support or resistance">
+              <option value="">Any level</option>
+              <option value="support">Support</option>
+              <option value="resistance">Resistance</option>
+            </select>
+            <select id="technicalDirection" title="Direction relative to the selected level">
+              <option value="near">Near level</option>
+              <option value="up">Up / above</option>
+              <option value="down">Down / below</option>
+              <option value="cross_up">Cross up</option>
+              <option value="cross_down">Cross down</option>
+            </select>
+            <input id="technicalDistancePct" type="number" min="0" step="0.1" placeholder="Within %" title="Maximum distance from selected support/resistance level" />
             <label class="check"><input id="includeMissing" type="checkbox" checked /> Include missing</label>
             <button id="apply" type="button">Search</button>
           </div>
@@ -179,7 +182,18 @@
       </main>
     </div>
 
+    <div id="loadingOverlay" class="loading-overlay" role="dialog" aria-modal="true" aria-labelledby="loadingTitle" aria-describedby="loadingDetail" tabindex="-1" hidden>
+      <div class="loading-popup">
+        <span class="loading-spinner" aria-hidden="true"></span>
+        <span>
+          <b id="loadingTitle">Loading portfolio</b>
+          <small id="loadingDetail">Reading cached analytics</small>
+        </span>
+      </div>
+    </div>
+
     <datalist id="countryOptions"></datalist>
+    <datalist id="marketOptions"></datalist>
 
     <div id="accountsModal" class="modal" hidden>
       <div class="modal-backdrop" data-close></div>
@@ -349,7 +363,7 @@
           <div class="management-form instrument-form">
             <input id="manualSecuritySymbol" placeholder="ID or symbol" />
             <input id="manualSecurityName" placeholder="Name" />
-            <input id="manualSecurityMarket" placeholder="Market" />
+            <input id="manualSecurityMarket" list="marketOptions" placeholder="Market" />
             <select id="manualInstrumentType"></select>
             <select id="manualSecurityCurrency"></select>
             <input id="manualSecurityLocation" list="countryOptions" placeholder="Location" />
@@ -373,18 +387,25 @@
               <option value="BUY">Buy</option>
               <option value="SELL">Sell</option>
               <option value="SHORT">Short</option>
+              <option value="DIVIDEND">Dividend</option>
+              <option value="INTEREST">Interest</option>
+              <option value="FEE">Fee</option>
               <option value="ADD">Add security</option>
               <option value="REMOVE">Remove security</option>
             </select>
             <input id="securitySymbol" placeholder="ID or symbol" />
-            <input id="securityMarket" placeholder="Stock market" />
+            <input id="securityMarket" list="marketOptions" placeholder="Stock market" />
             <select id="securityAssetClass"></select>
             <input id="securityQuantity" type="number" step="0.0001" placeholder="Amount" />
-            <input id="securityPrice" type="number" step="0.0001" placeholder="Buy/short price" />
+            <input id="securityPrice" type="number" step="0.0001" placeholder="Price" />
             <input id="securityDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
+            <input id="securityVestDate" class="date-field" data-equity-comp-field inputmode="numeric" placeholder="Vested date" hidden />
+            <input id="securityStrikePrice" data-option-grant-field type="number" min="0" step="0.0001" placeholder="Strike price required" hidden />
+            <input id="securityPurchasePrice" data-equity-comp-field type="number" min="0" step="0.0001" placeholder="Purchase price" hidden />
             <label class="check"><input id="securityAllowManual" type="checkbox" /> Manual if not found</label>
             <input id="securityComments" placeholder="Comments" />
             <button id="saveSecurity" type="button">Save transaction</button>
+            <button id="cancelSecurityEdit" class="secondary" type="button" hidden>Cancel edit</button>
           </div>
         </div>
         <p id="securityStatus" class="status-line"></p>
@@ -405,7 +426,7 @@
         <div class="management-form">
           <select id="priceKnownInstrument"></select>
           <input id="priceSymbol" placeholder="Symbol" />
-          <input id="priceMarket" placeholder="Stock market" />
+          <input id="priceMarket" list="marketOptions" placeholder="Stock market" />
           <select id="priceAssetClass"></select>
           <input id="priceLocation" list="countryOptions" placeholder="Location" />
           <select id="priceCurrency"></select>
@@ -452,12 +473,28 @@
             </div>
             <div class="security-chart-controls">
               <label class="chart-date-field"><span>From</span><input id="securityChartStartDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+              <div class="dashboard-view-toggle security-chart-toggle" aria-label="Security chart type">
+                <button type="button" data-security-chart-mode="line">Line</button>
+                <button type="button" data-security-chart-mode="candles">Candles</button>
+              </div>
               <div class="dashboard-view-toggle security-chart-toggle" aria-label="Security chart period">
                 <button type="button" data-security-chart-period="1m">1M</button>
                 <button type="button" data-security-chart-period="1y">1Y</button>
                 <button type="button" data-security-chart-period="3y">3Y</button>
                 <button type="button" data-security-chart-period="5y">5Y</button>
               </div>
+              <div class="chart-multi-toggle" aria-label="Support and resistance periods">
+                <span>Support/resistance</span>
+                <label><input class="security-sr-toggle" type="checkbox" value="5y" /> <span>5Y</span></label>
+                <label><input class="security-sr-toggle" type="checkbox" value="3y" /> <span>3Y</span></label>
+                <label><input class="security-sr-toggle" type="checkbox" value="1y" checked /> <span>1Y</span></label>
+                <label><input class="security-sr-toggle" type="checkbox" value="6m" /> <span>6M</span></label>
+                <label><input class="security-sr-toggle" type="checkbox" value="1m" /> <span>1M</span></label>
+              </div>
+              <label class="chart-checkbox"><input class="security-ma-toggle" type="checkbox" value="7" /> <span>MA 7</span></label>
+              <label class="chart-checkbox"><input class="security-ma-toggle" type="checkbox" value="10" /> <span>MA 10</span></label>
+              <label class="chart-checkbox"><input class="security-ma-toggle" type="checkbox" value="15" /> <span>MA 15</span></label>
+              <label class="chart-checkbox"><input class="security-ma-toggle" type="checkbox" value="30" checked /> <span>MA 30</span></label>
             </div>
           </div>
           <div id="securityDetailChart" class="security-chart"></div>
@@ -483,6 +520,39 @@
             <div id="securityDetailPrices" class="stack management-list"></div>
           </div>
         </div>
+      </section>
+    </div>
+
+    <div id="alarmsModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="alarmsTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Portfolio alarms</p>
+            <h2 id="alarmsTitle">Alarms</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <p id="alarmsStatus" class="status-line">Dividend alarms from portfolio events</p>
+        <div id="alarmsList" class="stack"></div>
+      </section>
+    </div>
+
+    <div id="eventsModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="eventsTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Portfolio events</p>
+            <h2 id="eventsTitle">Events</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="settings-actions">
+          <button id="runDividendEvents" class="secondary" type="button">Scan dividends</button>
+        </div>
+        <p id="eventsStatus" class="status-line"></p>
+        <div id="eventsList" class="stack management-list"></div>
       </section>
     </div>
 
@@ -538,57 +608,140 @@
             <p class="eyebrow">Retirement calculator</p>
             <h2 id="fundsTitle">Pension, provident, and savings funds</h2>
           </div>
-          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+          <div class="settings-actions">
+            <button id="showFundCreate" class="secondary" type="button">Add pension/fund</button>
+            <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+          </div>
         </div>
-        <div class="management-form">
-          <label class="field"><span class="field-label">Fund type <em title="Choose whether this is a Pension, Provident Fund, or Savings Fund.">?</em></span><select id="fundKind"></select></label>
-          <label class="field"><span class="field-label">Fund name <em title="The pension company or fund display name, for example Mashlima.">?</em></span><input id="fundName" placeholder="Pension fund name" /></label>
-          <label class="field"><span class="field-label">Fund ID <em title="The official pension, provident, or savings fund identifier. Required.">?</em></span><input id="fundPensionId" placeholder="Pension / fund id" /></label>
-          <label class="field"><span class="field-label">Saved amount <em title="Current saved balance in the selected fund. Required.">?</em></span><input id="fundAmount" type="number" step="0.01" placeholder="Amount saved" /></label>
-          <label class="field"><span class="field-label">Long-term account <em title="Optional link to an existing account whose type is Long-Term Savings.">?</em></span><select id="fundAccount"></select></label>
-          <label class="field"><span class="field-label">Comments <em title="Optional note shown only inside this dashboard.">?</em></span><input id="fundComments" placeholder="Comments" /></label>
-          <label class="field connected-field"><span class="field-label">Family member <em title="Attach the saved fund to one existing family member.">?</em></span><span class="connected-control"><select id="fundFamilyMember"></select><button id="attachFundPerson" class="secondary" type="button">Attach person</button></span></label>
-          <div id="fundPersons" class="person-list"></div>
-          <button id="saveFund" type="button">Save</button>
+        <div id="fundCreateSection" class="management-section fund-create-section" hidden>
+          <div class="section-head compact-head">
+            <div>
+              <p class="eyebrow">New record</p>
+              <h3>Add pension or fund</h3>
+            </div>
+          </div>
+          <div class="management-form fund-form">
+            <label class="field"><span class="field-label">Fund type <em title="Choose whether this is a Pension, Provident Fund, or Savings Fund.">?</em></span><select id="fundKind"></select></label>
+            <label class="field"><span class="field-label">Fund name <em title="The pension company or fund display name, for example Mashlima.">?</em></span><input id="fundName" placeholder="Pension fund name" /></label>
+            <label class="field"><span class="field-label">Fund ID <em title="The official pension, provident, or savings fund identifier. Required.">?</em></span><input id="fundPensionId" placeholder="Pension / fund id" /></label>
+            <label class="field"><span class="field-label">Saved amount <em title="Current saved balance in the selected fund. Required.">?</em></span><input id="fundAmount" type="number" step="0.01" placeholder="Amount saved" /></label>
+            <label class="field"><span class="field-label">Long-term account <em title="Optional link to an existing account whose type is Long-Term Savings.">?</em></span><select id="fundAccount"></select></label>
+            <label class="field"><span class="field-label">Comments <em title="Optional note shown only inside this dashboard.">?</em></span><input id="fundComments" placeholder="Comments" /></label>
+            <label class="field connected-field"><span class="field-label">Family member <em title="Attach the saved fund to one existing family member.">?</em></span><span class="connected-control"><select id="fundFamilyMember"></select><button id="attachFundPerson" class="secondary" type="button">Attach person</button></span></label>
+            <div id="fundPersons" class="person-list"></div>
+            <div class="form-actions fund-actions">
+              <button id="saveFund" type="button" disabled>Add fund</button>
+              <button id="cancelFundCreate" class="secondary" type="button">Cancel</button>
+            </div>
+          </div>
         </div>
         <p id="fundStatus" class="status-line"></p>
+        <div class="section-head compact-head list-head">
+          <div>
+            <p class="eyebrow">Saved records</p>
+            <h3>Pension and fund list</h3>
+          </div>
+        </div>
         <div id="fundsList" class="stack management-list"></div>
         <div class="simulator-panel">
           <div class="section-head">
             <div>
               <p class="eyebrow">Simulation</p>
-              <h3>Pension projection</h3>
+              <h3>Pension scenarios</h3>
             </div>
-            <button id="runPensionSimulation" class="secondary" type="button">Run simulation</button>
+            <div class="settings-actions">
+              <button id="runPensionSimulation" class="secondary" type="button">Run scenarios</button>
+            </div>
           </div>
           <div class="management-form simulator-form">
-            <select id="simFundSource"></select>
-            <input id="simName" placeholder="Scenario name" />
-            <select id="simKind"></select>
             <select id="simPersonSource"></select>
-            <input id="simBirthDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" title="User birthday for automatic current age" />
-            <input id="simCurrentAge" type="number" min="0" step="0.1" placeholder="Current age" />
+            <input id="simName" placeholder="Scenario name" />
+            <input id="simBirthDate" class="date-field scenario-internal-field" inputmode="numeric" placeholder="dd/mm/yyyy" title="User birthday for automatic current age" hidden />
+            <input id="simCurrentAge" class="scenario-internal-field" type="number" min="0" step="0.1" placeholder="Current age" title="Calculated from the selected person's birth date" readonly hidden />
             <input id="simRetireAge" type="number" min="0" step="0.1" placeholder="Retire age" />
-            <input id="simAmount" type="number" min="0" step="0.01" placeholder="Current amount" />
-            <input id="simAnnualReturn" type="number" step="0.01" placeholder="Annual return %" />
-            <input id="simMonthlyIncome" type="number" min="0" step="0.01" placeholder="Monthly income" />
-            <input id="simContributionPercent" type="number" min="0" step="0.01" placeholder="Deposit %" />
-            <input id="simMonthlyDeposit" type="number" min="0" step="0.01" placeholder="Monthly deposit" />
+            <input id="simAmount" class="scenario-internal-field" type="number" min="0" step="0.01" placeholder="Pension total" title="Current pension total. For a selected person this is derived from attached pension records." hidden />
             <input id="simFactor" type="number" min="1" step="0.01" value="200" placeholder="Payout factor" />
-            <button id="addPensionScenario" type="button">Add scenario</button>
+            <button id="addPensionScenario" type="button" disabled>Add scenario</button>
+            <button id="newPensionScenario" class="secondary" type="button">Clear</button>
           </div>
-          <div class="history-form simulator-period-form">
-            <input id="simPeriodFrom" type="number" min="0" step="0.1" placeholder="From age" />
-            <input id="simPeriodTo" type="number" min="0" step="0.1" placeholder="To age" />
-            <input id="simPeriodIncome" type="number" min="0" step="0.01" placeholder="Monthly income" />
-            <input id="simPeriodContribution" type="number" min="0" step="0.01" placeholder="Deposit %" />
-            <input id="simPeriodDeposit" type="number" min="0" step="0.01" placeholder="Monthly deposit" />
-            <button id="addPensionPeriod" class="secondary" type="button">Add income period</button>
-          </div>
-          <p id="pensionSimulationStatus" class="status-line"></p>
-          <div id="pensionPeriods" class="simulator-list"></div>
+          <p id="pensionProjectionStatus" class="status-line"></p>
           <div id="pensionScenarios" class="simulator-list"></div>
-          <div id="pensionSimulationResults" class="simulator-results"></div>
+          <div id="pensionProjectionSummary" class="projection-summary"></div>
+          <p id="pensionSimulationStatus" class="status-line"></p>
+          <div class="section-head compact-head projection-subhead">
+            <div>
+              <p class="eyebrow">Scenario output</p>
+              <h3>Pension simulation table</h3>
+            </div>
+          </div>
+          <div id="pensionSimulationResults" class="simulation-results"></div>
+        </div>
+      </section>
+    </div>
+
+    <div id="pensionPeriodModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="pensionPeriodTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Scenario salary schedule</p>
+            <h2 id="pensionPeriodTitle">Salary schedule</h2>
+            <p id="pensionPeriodProjectionName" class="sub">No scenario selected</p>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="section-head compact-head projection-subhead">
+          <div>
+            <p class="eyebrow">Salary by age</p>
+            <h3>Salary schedule</h3>
+          </div>
+        </div>
+        <div id="pensionPeriodRows" class="projection-table-wrap"></div>
+        <div class="history-form simulator-period-form popup-period-form">
+          <select id="simPeriodFromMode">
+            <option value="now">From current age</option>
+            <option value="custom">Custom age</option>
+          </select>
+          <input id="simPeriodFrom" type="number" min="0" step="0.1" placeholder="From age" hidden />
+          <input id="simPeriodTo" type="number" min="0" step="0.1" placeholder="To age" />
+          <input id="simPeriodIncome" type="number" min="0" step="0.01" placeholder="Monthly salary" />
+          <input id="simPeriodContribution" type="number" min="0" step="0.01" placeholder="Pension deposit %" />
+          <input id="simPeriodDeposit" type="number" min="0" step="0.01" placeholder="Extra monthly deposit" />
+          <select id="simInsuranceTrack" title="Pension insurance track">
+            <option value="comprehensive">Comprehensive</option>
+            <option value="savings_30">Savings 30/20</option>
+            <option value="savings_40">Savings 40/30</option>
+            <option value="survivors_oriented">Survivors-oriented</option>
+            <option value="single">Single status</option>
+            <option value="custom">Custom</option>
+          </select>
+          <select id="simDisabilityCoverage" title="Disability coverage"></select>
+          <select id="simSpouseSurvivorsCoverage" title="Spouse survivors coverage"></select>
+          <select id="simChildrenSurvivorsCoverage" title="Children survivors coverage"></select>
+          <input id="simSurvivorsFactor" type="number" min="1" step="0.01" value="200" placeholder="Survivors factor" />
+        </div>
+        <div class="section-head compact-head projection-subhead">
+          <div>
+            <p class="eyebrow">Profit by age</p>
+            <h3>Profit rate schedule</h3>
+          </div>
+        </div>
+        <div id="pensionRateRows" class="projection-table-wrap"></div>
+        <div class="history-form simulator-period-form popup-period-form">
+          <select id="simRateFromMode">
+            <option value="now">From current age</option>
+            <option value="custom">Custom age</option>
+          </select>
+          <input id="simRateFrom" type="number" min="0" step="0.1" placeholder="From age" hidden />
+          <input id="simRateTo" type="number" min="0" step="0.1" placeholder="To age" />
+          <input id="simRateAnnual" type="number" step="0.01" placeholder="Annual profit %" />
+        </div>
+        <p id="pensionPeriodStatus" class="status-line"></p>
+        <div class="form-actions">
+          <button id="addPensionPeriod" type="button" disabled>Add salary row</button>
+          <button id="addPensionRate" type="button" disabled>Add profit rate</button>
+          <button id="pensionStopWorkNow" class="secondary" type="button">Stop working now</button>
+          <button class="secondary" type="button" data-close>Done</button>
         </div>
       </section>
     </div>
@@ -758,6 +911,7 @@
             <button id="exportData" type="button">Export data</button>
             <button id="chooseImportData" class="secondary" type="button">Import data</button>
             <button id="runBackupNow" class="secondary" type="button">Backup now</button>
+            <button id="downloadBackupsZip" class="secondary" type="button">Download backups ZIP</button>
             <input id="importDataFile" type="file" accept="application/json" hidden />
           </div>
         </div>
@@ -768,7 +922,7 @@
           <div class="management-form settings-form">
             <label class="field"><span>Backup enabled</span><select id="backupEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
             <label class="field"><span>Timezone</span><input id="backupTimezone" placeholder="Asia/Jerusalem" /></label>
-            <label class="field"><span>Keep files</span><input id="backupKeep" type="number" min="1" step="1" placeholder="30" /></label>
+            <label class="field"><span>Keep files</span><input id="backupKeep" type="number" min="1" step="1" placeholder="100" /></label>
             <div id="backupScheduleSummary" class="schedule-summary"></div>
             <button id="editBackupSchedule" class="secondary" type="button" data-modal="backupScheduleModal">Edit schedule</button>
             <button id="saveBackupSettings" type="button">Save backup</button>
@@ -805,6 +959,6 @@
       </section>
     </div>
 
-    <script src="/app.js?v=0.4.35"></script>
+    <script src="/app.js?v=0.4.63"></script>
   </body>
 </html>

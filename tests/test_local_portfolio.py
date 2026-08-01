@@ -1,7 +1,7 @@
 from datetime import date
 import sqlite3
 
-from app.local_portfolio import LocalPortfolioStore, monthly_pension, normalize_price
+from app.local_portfolio import LocalPortfolioStore, age_from_birth_date, monthly_pension, normalize_price
 from app.models import Holding
 
 
@@ -306,6 +306,15 @@ def test_export_import_and_backup_round_trip(tmp_path, monkeypatch):
         }
     )
     store.save_account_snapshot({"account_id": account["id"], "snapshot_date": "2026-03-01", "value": 300, "cash": 250})
+    store.set_preference(
+        "client_state",
+        {
+            "dashboard": {"mode": "expanded", "widgets": [{"id": "asset_mix", "view": "basic", "order": 0}]},
+            "table": {"maPeriod": "15"},
+            "language": "he",
+            "pensionSimulation": {"scenarios": [{"name": "Retire"}]},
+        },
+    )
 
     exported = store.export_data()
     backup = store.write_backup()
@@ -314,9 +323,13 @@ def test_export_import_and_backup_round_trip(tmp_path, monkeypatch):
     result = restored.import_data(exported)
 
     assert exported["counts"]["accounts"] == 1
+    assert exported["counts"]["app_preferences"] == 1
     assert result["imported"]["account_snapshots"] == 1
+    assert result["imported"]["app_preferences"] == 1
     assert restored.list_accounts()[0]["initial_cash"] == 250
     assert restored.list_account_snapshots()[0]["value"] == 300
+    assert restored.get_preference("client_state")["table"]["maPeriod"] == "15"
+    assert restored.get_preference("client_state")["pensionSimulation"]["scenarios"][0]["name"] == "Retire"
     assert backup["filename"].startswith("portfolio-data-")
     assert store.list_backups()[0]["filename"] == backup["filename"]
 
@@ -427,7 +440,9 @@ def test_esop_account_supports_rsu_and_stock_options(tmp_path):
             "symbol": "AAPL-RSU",
             "stock_market": "ESOP",
             "quantity": 10,
-            "price_input": 180,
+            "price_input": 0,
+            "vest_date": "31/07/2026",
+            "purchase_price": 0,
             "trade_date": "31/07/2026",
         }
     )
@@ -453,6 +468,36 @@ def test_esop_account_supports_rsu_and_stock_options(tmp_path):
     assert holdings["AAPL-RSU"].asset_class == "RSU"
     assert holdings["AAPL-OPT-50"].asset_class == "STOCK_OPTION"
     assert holdings["AAPL-OPT-50"].asset_sub_class == "STOCK_OPTION"
+    tx = {item["symbol"]: item for item in store.list_transactions()}
+    assert tx["AAPL-RSU"]["vest_date"] == "2026-07-31"
+    assert tx["AAPL-RSU"]["purchase_price"] == 0
+    assert tx["AAPL-OPT-50"]["strike_price"] == 50
+
+
+def test_free_option_transaction_requires_strike_price(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = store.save_account({"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
+    payload = {
+        "account_db_id": account["id"],
+        "action": "ADD",
+        "symbol": "CSCO-OPT",
+        "stock_market": "ESOP",
+        "asset_class": "STOCK_OPTION",
+        "quantity": 100,
+        "price_input": 0,
+        "trade_date": "31/07/2026",
+    }
+    try:
+        store.add_transaction(payload)
+    except ValueError as exc:
+        assert "Strike price" in str(exc)
+    else:
+        raise AssertionError("Stock option transaction should require strike price")
+
+    saved = store.add_transaction({**payload, "strike_price": 42.5, "vest_date": "31/07/2026", "purchase_price": 42.5})
+    assert saved["strike_price"] == 42.5
+    assert saved["vest_date"] == "2026-07-31"
+    assert saved["purchase_price"] == 42.5
 
 
 def test_manual_securities_round_trip_in_export(tmp_path):
@@ -662,6 +707,7 @@ def test_pension_simulation_uses_income_percent_and_factor(tmp_path):
                     "annual_return": 0,
                     "monthly_income": 10000,
                     "contribution_percent": 10,
+                    "return_periods": [{"from_age": 40, "to_age": 41, "annual_return": 0}],
                     "factor": 200,
                 }
             ]
@@ -671,6 +717,251 @@ def test_pension_simulation_uses_income_percent_and_factor(tmp_path):
     assert result["total_deposits"] == 12000
     assert result["final_amount"] == 13000
     assert result["monthly_pension"] == 65
+
+
+def test_pension_simulation_adds_extra_deposit_to_salary_contribution(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+
+    result = store.simulate_pension(
+        {
+            "scenarios": [
+                {
+                    "name": "Salary plus extra",
+                    "kind": "Pension",
+                    "current_age": 40,
+                    "retire_age": 41,
+                    "amount": 0,
+                    "annual_return": 0,
+                    "monthly_income": 10000,
+                    "contribution_percent": 10,
+                    "monthly_deposit": 250,
+                    "return_periods": [{"from_age": 40, "to_age": 41, "annual_return": 0}],
+                    "factor": 200,
+                }
+            ]
+        }
+    )["results"][0]
+
+    assert result["timeline"][0]["monthly_deposit"] == 1250
+    assert result["total_deposits"] == 15000
+    assert result["final_amount"] == 15000
+    assert result["monthly_pension"] == 75
+
+
+def test_pension_simulation_deducts_insurance_from_pension_deposit(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+
+    result = store.simulate_pension(
+        {
+            "scenarios": [
+                {
+                    "name": "Insurance",
+                    "kind": "Pension",
+                    "gender": "Male",
+                    "current_age": 34,
+                    "retire_age": 34 + 1 / 12,
+                    "amount": 0,
+                    "return_periods": [{"from_age": 34, "to_age": 35, "annual_return": 0}],
+                    "income_periods": [
+                        {
+                            "from_age": 34,
+                            "to_age": 35,
+                            "monthly_income": 10000,
+                            "contribution_percent": 10,
+                            "disability_coverage_percent": 75,
+                            "spouse_survivors_coverage_percent": 60,
+                            "children_survivors_coverage_percent": 40,
+                            "survivors_capitalization_factor": 200,
+                        }
+                    ],
+                    "factor": 200,
+                }
+            ]
+        }
+    )["results"][0]
+
+    assert round(result["total_gross_deposits"], 2) == 1000
+    assert round(result["total_insurance_cost"], 2) == 30.63
+    assert round(result["total_deposits"], 2) == 969.37
+    assert round(result["final_amount"], 2) == 969.37
+    assert round(result["timeline"][0]["insurance_cost"], 2) == 30.63
+
+
+def test_pension_survivors_insurance_uses_savings_balance_offset(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+
+    result = store.simulate_pension(
+        {
+            "scenarios": [
+                {
+                    "name": "Savings offset",
+                    "kind": "Pension",
+                    "gender": "Female",
+                    "current_age": 34,
+                    "retire_age": 34 + 1 / 12,
+                    "amount": 3_000_000,
+                    "return_periods": [{"from_age": 34, "to_age": 35, "annual_return": 0}],
+                    "income_periods": [
+                        {
+                            "from_age": 34,
+                            "to_age": 35,
+                            "monthly_income": 10000,
+                            "contribution_percent": 10,
+                            "spouse_survivors_coverage_percent": 60,
+                            "children_survivors_coverage_percent": 40,
+                            "survivors_capitalization_factor": 200,
+                        }
+                    ],
+                    "factor": 200,
+                }
+            ]
+        }
+    )["results"][0]
+
+    assert result["total_insurance_cost"] == 0
+    assert result["total_deposits"] == 1000
+    assert result["final_amount"] == 3_001_000
+
+
+def test_pension_insurance_requires_gender(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+
+    try:
+        store.simulate_pension(
+            {
+                "name": "Missing gender",
+                "kind": "Pension",
+                "current_age": 34,
+                "retire_age": 35,
+                "amount": 0,
+                "return_periods": [{"from_age": 34, "to_age": 35, "annual_return": 0}],
+                "income_periods": [
+                    {
+                        "from_age": 34,
+                        "to_age": 35,
+                        "monthly_income": 10000,
+                        "contribution_percent": 10,
+                        "disability_coverage_percent": 75,
+                    }
+                ],
+            }
+        )
+    except ValueError as exc:
+        assert "Gender is required" in str(exc)
+    else:
+        raise AssertionError("Pension insurance cost should require gender")
+
+
+def test_pension_simulation_supports_return_periods(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+
+    result = store.simulate_pension(
+        {
+            "scenarios": [
+                {
+                    "name": "Rate steps",
+                    "kind": "Pension",
+                    "current_age": 40,
+                    "retire_age": 42,
+                    "amount": 1000,
+                    "return_periods": [
+                        {"from_age": 40, "to_age": 41, "annual_return": 12},
+                        {"from_age": 41, "to_age": 42, "annual_return": 0},
+                    ],
+                    "factor": 200,
+                }
+            ]
+        }
+    )["results"][0]
+
+    assert result["return_periods"][0]["annual_return"] == 12
+    assert round(result["final_amount"], 2) == 1120
+    assert round(result["monthly_pension"], 2) == 5.6
+    assert result["timeline"][0]["annual_return"] == 12
+    assert result["timeline"][-1]["annual_return"] == 0
+
+
+def test_pension_simulation_rejects_missing_profit_rate_schedule(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+
+    try:
+        store.simulate_pension(
+            {
+                "name": "Missing rate",
+                "kind": "Pension",
+                "current_age": 40,
+                "retire_age": 41,
+                "amount": 1000,
+                "factor": 200,
+            }
+        )
+    except ValueError as exc:
+        assert "Profit rate schedule is required" in str(exc)
+    else:
+        raise AssertionError("Missing profit rate schedule should be rejected")
+
+
+def test_pension_simulation_rejects_invalid_profit_rate_rows(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+
+    invalid_payloads = [
+        (
+            {"from_age": 41, "to_age": 40, "annual_return": 5},
+            "valid from/to ages",
+        ),
+        (
+            {"from_age": 40, "to_age": 41},
+            "Annual profit is required",
+        ),
+        (
+            {"from_age": 40, "to_age": 41, "annual_return": "bad"},
+            "Annual profit must be numeric",
+        ),
+    ]
+    for row, message in invalid_payloads:
+        try:
+            store.simulate_pension(
+                {
+                    "name": "Bad rate",
+                    "kind": "Pension",
+                    "current_age": 40,
+                    "retire_age": 41,
+                    "amount": 1000,
+                    "return_periods": [row],
+                    "factor": 200,
+                }
+            )
+        except ValueError as exc:
+            assert message in str(exc)
+        else:
+            raise AssertionError("Invalid profit rate row should be rejected")
+
+
+def test_pension_simulation_infers_current_age_from_birth_date(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    current_age = age_from_birth_date("31/07/1990")
+
+    result = store.simulate_pension(
+        {
+            "scenarios": [
+                {
+                    "name": "Birth date",
+                    "kind": "Pension",
+                    "birth_date": "31/07/1990",
+                    "retire_age": current_age + 1,
+                    "amount": 1000,
+                    "annual_return": 0,
+                    "monthly_deposit": 100,
+                    "return_periods": [{"from_age": current_age, "to_age": current_age + 1, "annual_return": 0}],
+                    "factor": 200,
+                }
+            ]
+        }
+    )["results"][0]
+
+    assert result["current_age"] == current_age
+    assert result["total_deposits"] == 1200
+    assert result["final_amount"] == 2200
 
 
 def test_non_pension_simulation_has_no_factor_or_monthly_pension(tmp_path):
@@ -686,6 +977,7 @@ def test_non_pension_simulation_has_no_factor_or_monthly_pension(tmp_path):
                     "retire_age": 41,
                     "amount": 1000,
                     "annual_return": 0,
+                    "return_periods": [{"from_age": 40, "to_age": 41, "annual_return": 0}],
                     "factor": 200,
                 }
             ]
@@ -706,6 +998,7 @@ def test_pension_simulation_supports_income_periods(tmp_path):
             "current_age": 30,
             "retire_age": 31,
             "annual_return": 0,
+            "return_periods": [{"from_age": 30, "to_age": 31, "annual_return": 0}],
             "income_periods": [
                 {"from_age": 30, "to_age": 30.5, "monthly_income": 10000, "contribution_percent": 10},
                 {"from_age": 30.5, "to_age": 31, "monthly_deposit": 1500},

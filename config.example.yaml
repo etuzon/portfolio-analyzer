@@ -10,7 +10,7 @@ ghostfolio:
 market_data:
   primary: "alpha_vantage"
   fallback: ["financial_modeling_prep", "frankfurter_fx", "external_import_market_data"]
-  experimental_fallback: ["stooq", "sec_company_facts", "yahoo_finance"]
+  experimental_fallback: ["nasdaq_quote", "stooq", "sec_company_facts", "yahoo_finance"]
   cache_ttl_hours: 24
   max_cache_mb: 1000
   alpha_vantage:
@@ -45,8 +45,16 @@ alerts:
   notification:
     channels: ["dashboard"]
 
+dividends:
+  enabled: true
+  schedule: "15 8 * * *"
+  timezone: "Asia/Jerusalem"
+  start_date: "2026-08-01"
+  tax_rate: 0.25
+  lookahead_days: 180
+
 backup:
   enabled: true
   schedule: "45 23 * * *"
   timezone: "Asia/Jerusalem"
-  keep: 30
+  keep: 100

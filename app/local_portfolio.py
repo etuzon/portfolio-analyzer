@@ -6,9 +6,12 @@ from dataclasses import asdict
 from datetime import date, datetime, timedelta
 import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+import yaml
 
 from .config import data_dir
 from .metrics import moving_averages, price_range_metrics, support_resistance, volume_metrics
@@ -20,7 +23,11 @@ FUND_KINDS = ["Pension", "Provident Fund", "Savings Fund"]
 ASSET_CLASSES = ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"]
 INSTRUMENT_TYPES = ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"]
 OPTION_TYPES = ["CALL", "PUT"]
+TRANSACTION_ACTIONS = ["ADD", "REMOVE", "BUY", "SELL", "SHORT", "DIVIDEND", "INTEREST", "FEE"]
+PENSION_INSURANCE_RATES_PATH = Path(__file__).resolve().parent.parent / "reference-data" / "pension-insurance-rates.yaml"
+PENSION_INSURANCE_RATES: dict[int, dict[str, Any]] | None = None
 EXPORT_TABLES = {
+    "app_preferences": ["key", "value", "updated_at"],
     "brokers": ["id", "name", "country", "currency", "comments", "created_at"],
     "family_members": ["id", "name", "first_name", "last_name", "gender", "birth_date", "retire_age", "comments", "created_at"],
     "accounts": [
@@ -63,6 +70,9 @@ EXPORT_TABLES = {
         "quantity",
         "price_input",
         "price",
+        "vest_date",
+        "purchase_price",
+        "strike_price",
         "currency",
         "location",
         "trade_date",
@@ -96,6 +106,25 @@ EXPORT_TABLES = {
         "created_at",
         "updated_at",
     ],
+    "events": [
+        "id",
+        "type",
+        "event_date",
+        "symbol",
+        "stock_market",
+        "account_db_id",
+        "gross_amount",
+        "tax_amount",
+        "net_amount",
+        "currency",
+        "source",
+        "source_key",
+        "status",
+        "transaction_id",
+        "details",
+        "created_at",
+        "updated_at",
+    ],
 }
 
 
@@ -118,6 +147,15 @@ class LocalPortfolioStore:
         try:
             with self._connect() as conn:
                 conn.execute("pragma journal_mode=wal")
+                conn.execute(
+                    """
+                    create table if not exists app_preferences (
+                        key text primary key,
+                        value text not null,
+                        updated_at text not null
+                    )
+                    """
+                )
                 conn.execute(
                     """
                     create table if not exists brokers (
@@ -196,6 +234,9 @@ class LocalPortfolioStore:
                         quantity real not null,
                         price_input real not null,
                         price real not null,
+                        vest_date text not null default '',
+                        purchase_price real not null default 0,
+                        strike_price real not null default 0,
                         currency text not null,
                         location text not null,
                         trade_date text not null,
@@ -257,7 +298,32 @@ class LocalPortfolioStore:
                     )
                     """
                 )
+                conn.execute(
+                    """
+                    create table if not exists events (
+                        id text primary key,
+                        type text not null,
+                        event_date text not null,
+                        symbol text not null default '',
+                        stock_market text not null default '',
+                        account_db_id text not null default '',
+                        gross_amount real not null default 0,
+                        tax_amount real not null default 0,
+                        net_amount real not null default 0,
+                        currency text not null default '',
+                        source text not null default '',
+                        source_key text not null unique,
+                        status text not null default 'pending',
+                        transaction_id text not null default '',
+                        details text not null default '{}',
+                        created_at text not null,
+                        updated_at text not null
+                    )
+                    """
+                )
                 conn.execute("create index if not exists idx_account_snapshots_date on account_snapshots(snapshot_date)")
+                conn.execute("create index if not exists idx_events_date on events(event_date)")
+                conn.execute("create index if not exists idx_events_status on events(status)")
                 self._ensure_column(conn, "accounts", "persons", "text not null default '[]'")
                 self._ensure_column(conn, "family_members", "first_name", "text not null default ''")
                 self._ensure_column(conn, "family_members", "last_name", "text not null default ''")
@@ -265,6 +331,9 @@ class LocalPortfolioStore:
                 self._ensure_column(conn, "funds", "persons", "text not null default '[]'")
                 self._ensure_column(conn, "funds", "fund_name", "text not null default ''")
                 self._ensure_column(conn, "funds", "account_id", "text not null default ''")
+                self._ensure_column(conn, "transactions", "vest_date", "text not null default ''")
+                self._ensure_column(conn, "transactions", "purchase_price", "real not null default 0")
+                self._ensure_column(conn, "transactions", "strike_price", "real not null default 0")
                 self._split_existing_family_names(conn)
                 self._normalize_existing_symbols(conn)
                 self._seed_brokers_from_accounts(conn)
@@ -371,7 +440,39 @@ class LocalPortfolioStore:
                 "brokers": conn.execute("select count(*) from brokers").fetchone()[0],
                 "funds": conn.execute("select count(*) from funds").fetchone()[0],
                 "snapshots": conn.execute("select count(*) from account_snapshots").fetchone()[0],
+                "events": conn.execute("select count(*) from events").fetchone()[0],
+                "app_preferences": conn.execute("select count(*) from app_preferences").fetchone()[0],
             }
+
+    def get_preference(self, key: str, default: Any = None) -> Any:
+        with self._connect() as conn:
+            row = conn.execute("select value from app_preferences where key = ?", (key,)).fetchone()
+        if not row:
+            return default
+        try:
+            return json.loads(row["value"])
+        except json.JSONDecodeError:
+            return default
+
+    def set_preference(self, key: str, value: Any) -> dict[str, Any]:
+        clean_key = str(key or "").strip()
+        if not clean_key:
+            raise ValueError("Preference key is required")
+        encoded = json.dumps(value if value is not None else {}, default=str)
+        updated_at = _now()
+        with self._sync_lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    insert into app_preferences (key, value, updated_at)
+                    values (?, ?, ?)
+                    on conflict(key) do update set
+                      value = excluded.value,
+                      updated_at = excluded.updated_at
+                    """,
+                    (clean_key, encoded, updated_at),
+                )
+        return {"key": clean_key, "value": value if value is not None else {}, "updated_at": updated_at}
 
     def export_data(self) -> dict[str, Any]:
         with self._connect() as conn:
@@ -405,6 +506,7 @@ class LocalPortfolioStore:
         with self._sync_lock:
             with self._connect() as conn:
                 conn.execute("delete from account_snapshots")
+                conn.execute("delete from events")
                 conn.execute("delete from funds")
                 conn.execute("delete from price_history")
                 conn.execute("delete from transactions")
@@ -412,7 +514,8 @@ class LocalPortfolioStore:
                 conn.execute("delete from accounts")
                 conn.execute("delete from family_members")
                 conn.execute("delete from brokers")
-                for table in ["brokers", "family_members", "accounts", "manual_securities", "transactions", "price_history", "funds", "account_snapshots"]:
+                conn.execute("delete from app_preferences")
+                for table in ["app_preferences", "brokers", "family_members", "accounts", "manual_securities", "transactions", "price_history", "funds", "account_snapshots", "events"]:
                     columns = EXPORT_TABLES[table]
                     placeholders = ", ".join([":" + column for column in columns])
                     conn.executemany(
@@ -425,14 +528,23 @@ class LocalPortfolioStore:
         if not isinstance(row, dict):
             raise ValueError("Backup rows must be objects")
         record = {column: row.get(column) for column in columns}
-        for key in ["id", "account_db_id", "symbol", "stock_market", "asset_class", "instrument_type", "option_type", "underlying_symbol", "currency", "location", "trade_date", "price_date", "snapshot_date", "expiration_date"]:
+        if columns == EXPORT_TABLES["app_preferences"]:
+            value = record.get("value")
+            return {
+                "key": str(record.get("key") or "").strip(),
+                "value": value if isinstance(value, str) else json.dumps(value if value is not None else {}, default=str),
+                "updated_at": str(record.get("updated_at") or _now()),
+            }
+        for key in ["id", "key", "account_db_id", "symbol", "stock_market", "asset_class", "instrument_type", "option_type", "underlying_symbol", "currency", "location", "trade_date", "price_date", "snapshot_date", "event_date", "expiration_date", "vest_date", "source_key", "transaction_id", "status"]:
             if key in record and record[key] is not None:
                 record[key] = str(record[key])
         if "symbol" in record:
             record["symbol"] = _clean_security_symbol(record["symbol"])
         if "underlying_symbol" in record:
             record["underlying_symbol"] = _clean_security_symbol(record["underlying_symbol"])
-        for key in ["type", "name", "first_name", "last_name", "gender", "username", "account_id", "management_company", "comments", "source", "kind", "fund_name", "pension_id", "created_at", "updated_at", "birth_date", "country", "currency"]:
+        if "value" in record:
+            record["value"] = record["value"] if isinstance(record.get("value"), str) else json.dumps(record.get("value") if record.get("value") is not None else {}, default=str)
+        for key in ["type", "name", "first_name", "last_name", "gender", "username", "account_id", "management_company", "comments", "source", "kind", "fund_name", "pension_id", "created_at", "updated_at", "birth_date", "vest_date", "country", "currency", "details"]:
             if key in record:
                 record[key] = str(record.get(key) or "")
         if "first_name" in record and "last_name" in record and not (record["first_name"] or record["last_name"]):
@@ -440,7 +552,7 @@ class LocalPortfolioStore:
             record["name"] = _full_person_name(record["first_name"], record["last_name"]) or record.get("name", "")
         if "persons" in record:
             record["persons"] = json.dumps(_clean_persons(record.get("persons")))
-        for key in ["initial_cash", "quantity", "price_input", "price", "amount", "factor", "value", "cash", "profit", "profit_percent", "strike_price", "contract_multiplier", "retire_age"]:
+        for key in ["initial_cash", "quantity", "price_input", "price", "amount", "factor", "value", "cash", "profit", "profit_percent", "strike_price", "purchase_price", "contract_multiplier", "retire_age", "gross_amount", "tax_amount", "net_amount"]:
             if key in record:
                 record[key] = _number(record.get(key), 0)
         return record
@@ -826,7 +938,7 @@ class LocalPortfolioStore:
                        s.option_type,
                        s.underlying_symbol,
                        s.expiration_date,
-                       s.strike_price,
+                       s.strike_price as instrument_strike_price,
                        s.contract_multiplier
                 from transactions t
                 join accounts a on a.id = t.account_db_id
@@ -834,25 +946,47 @@ class LocalPortfolioStore:
                 order by t.trade_date desc, t.created_at desc
                 """
             ).fetchall()
-        return [_dict(row) for row in rows]
+        items = []
+        for row in rows:
+            item = _dict(row)
+            if not item.get("strike_price") and item.get("instrument_strike_price"):
+                item["strike_price"] = item["instrument_strike_price"]
+            item.pop("instrument_strike_price", None)
+            items.append(item)
+        return items
 
     def add_transaction(self, payload: dict[str, Any]) -> dict[str, Any]:
+        record = self._transaction_record(payload)
+        with self._connect() as conn:
+            self._insert_transaction(conn, record)
+        return record
+
+    def _transaction_record(self, payload: dict[str, Any]) -> dict[str, Any]:
         account = self._account(payload.get("account_db_id"))
-        action = _choice(payload.get("action"), ["ADD", "REMOVE", "BUY", "SELL", "SHORT"], "BUY")
+        action = _choice(payload.get("action"), TRANSACTION_ACTIONS, "BUY")
         symbol = _clean_security_symbol(payload.get("symbol"))
         stock_market = str(payload.get("stock_market") or "").upper().strip()
         metadata = self.manual_security(symbol, stock_market)
         asset_class = str(payload.get("asset_class") or (metadata or {}).get("asset_class") or "EQUITY").upper().strip()
         quantity = abs(_number(payload.get("quantity"), 0))
         price_input = _number(payload.get("price_input"), 0)
+        purchase_price = _number(payload.get("purchase_price"), 0)
+        strike_price = _number(payload.get("strike_price"), _number((metadata or {}).get("strike_price"), 0))
         location = str(payload.get("location") or (metadata or {}).get("location") or account["location"] or "USA").strip()
         currency = str(payload.get("currency") or (metadata or {}).get("currency") or account["currency"] or _currency_for_location(location)).upper().strip()
         if quantity <= 0:
             raise ValueError("Quantity must be greater than zero")
         if price_input < 0:
             raise ValueError("Price cannot be negative")
+        if purchase_price < 0:
+            raise ValueError("Purchase price cannot be negative")
+        if strike_price < 0:
+            raise ValueError("Strike price cannot be negative")
+        instrument_type = str((metadata or {}).get("instrument_type") or asset_class).upper().strip()
+        if instrument_type in {"OPTION", "STOCK_OPTION"} and strike_price <= 0:
+            raise ValueError("Strike price is required for options")
         record = {
-            "id": str(uuid4()),
+            "id": str(payload.get("id") or uuid4()),
             "account_db_id": account["id"],
             "action": action,
             "symbol": symbol,
@@ -860,25 +994,62 @@ class LocalPortfolioStore:
             "asset_class": asset_class,
             "quantity": quantity,
             "price_input": price_input,
-            "price": normalize_price(price_input, location, asset_class),
+            "price": price_input if action in {"DIVIDEND", "INTEREST", "FEE"} else normalize_price(price_input, location, asset_class),
+            "vest_date": _optional_date_string(payload.get("vest_date")),
+            "purchase_price": purchase_price,
+            "strike_price": strike_price,
             "currency": currency,
             "location": location,
             "trade_date": _date_string(payload.get("trade_date")),
             "source": str(payload.get("source") or "manual").strip(),
             "comments": str(payload.get("comments") or "").strip(),
-            "created_at": _now(),
+            "created_at": str(payload.get("created_at") or _now()),
         }
         if not record["symbol"]:
             raise ValueError("Symbol is required")
         if not record["stock_market"]:
             raise ValueError("Stock market is required")
+        return record
+
+    def _insert_transaction(self, conn: sqlite3.Connection, record: dict[str, Any]) -> None:
+        conn.execute(
+            """
+            insert into transactions
+              (id, account_db_id, action, symbol, stock_market, asset_class, quantity, price_input, price, vest_date, purchase_price, strike_price, currency, location, trade_date, source, comments, created_at)
+            values
+              (:id, :account_db_id, :action, :symbol, :stock_market, :asset_class, :quantity, :price_input, :price, :vest_date, :purchase_price, :strike_price, :currency, :location, :trade_date, :source, :comments, :created_at)
+            """,
+            record,
+        )
+
+    def update_transaction(self, transaction_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._connect() as conn:
+            existing = conn.execute("select * from transactions where id = ?", (transaction_id,)).fetchone()
+        if not existing:
+            raise ValueError("Security transaction not found")
+        merged = {**_dict(existing), **(payload or {}), "id": transaction_id, "created_at": existing["created_at"]}
+        record = self._transaction_record(merged)
         with self._connect() as conn:
             conn.execute(
                 """
-                insert into transactions
-                  (id, account_db_id, action, symbol, stock_market, asset_class, quantity, price_input, price, currency, location, trade_date, source, comments, created_at)
-                values
-                  (:id, :account_db_id, :action, :symbol, :stock_market, :asset_class, :quantity, :price_input, :price, :currency, :location, :trade_date, :source, :comments, :created_at)
+                update transactions
+                set account_db_id = :account_db_id,
+                    action = :action,
+                    symbol = :symbol,
+                    stock_market = :stock_market,
+                    asset_class = :asset_class,
+                    quantity = :quantity,
+                    price_input = :price_input,
+                    price = :price,
+                    vest_date = :vest_date,
+                    purchase_price = :purchase_price,
+                    strike_price = :strike_price,
+                    currency = :currency,
+                    location = :location,
+                    trade_date = :trade_date,
+                    source = :source,
+                    comments = :comments
+                where id = :id
                 """,
                 record,
             )
@@ -889,6 +1060,108 @@ class LocalPortfolioStore:
             before = conn.execute("select count(*) from transactions where id = ?", (transaction_id,)).fetchone()[0]
             conn.execute("delete from transactions where id = ?", (transaction_id,))
         return bool(before)
+
+    def list_events(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                select e.*, a.username, a.account_id, a.management_company
+                from events e
+                left join accounts a on a.id = e.account_db_id
+                order by e.event_date desc, e.created_at desc
+                """
+            ).fetchall()
+        return [self._event_out(row) for row in rows]
+
+    def record_dividend_event(self, payload: dict[str, Any], due: bool) -> dict[str, Any]:
+        source_key = str(payload.get("source_key") or "").strip()
+        if not source_key:
+            raise ValueError("Dividend event source key is required")
+        now = _now()
+        event_id = str(payload.get("id") or uuid4())
+        details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+        event = {
+            "id": event_id,
+            "type": "DIVIDEND",
+            "event_date": _date_string(payload.get("event_date")),
+            "symbol": _clean_security_symbol(payload.get("symbol")),
+            "stock_market": str(payload.get("stock_market") or "").upper().strip(),
+            "account_db_id": str(payload.get("account_db_id") or "").strip(),
+            "gross_amount": _number(payload.get("gross_amount"), 0),
+            "tax_amount": _number(payload.get("tax_amount"), 0),
+            "net_amount": _number(payload.get("net_amount"), 0),
+            "currency": str(payload.get("currency") or "").upper().strip(),
+            "source": str(payload.get("source") or "dividend_scan").strip(),
+            "source_key": source_key,
+            "status": "processed" if due else "pending",
+            "transaction_id": "",
+            "details": json.dumps(details, default=str, separators=(",", ":")),
+            "created_at": now,
+            "updated_at": now,
+        }
+        if not event["account_db_id"]:
+            raise ValueError("Dividend event account is required")
+        if not event["symbol"]:
+            raise ValueError("Dividend event symbol is required")
+        if event["gross_amount"] <= 0:
+            raise ValueError("Dividend gross amount must be greater than zero")
+
+        transaction = None
+        if due and event["net_amount"] > 0:
+            shares = max(_number(details.get("shares"), 0), 1)
+            transaction = self._transaction_record(
+                {
+                    "account_db_id": event["account_db_id"],
+                    "action": "DIVIDEND",
+                    "symbol": event["symbol"],
+                    "stock_market": event["stock_market"],
+                    "asset_class": str(details.get("asset_class") or "EQUITY"),
+                    "quantity": shares,
+                    "price_input": event["net_amount"] / shares,
+                    "currency": event["currency"],
+                    "location": str(details.get("location") or "USA"),
+                    "trade_date": event["event_date"],
+                    "source": event["source"],
+                    "comments": f"Dividend event {source_key}",
+                }
+            )
+            event["transaction_id"] = transaction["id"]
+
+        with self._sync_lock:
+            with self._connect() as conn:
+                existing = conn.execute("select * from events where source_key = ?", (source_key,)).fetchone()
+                if existing and existing["status"] == "processed":
+                    return {**self._event_out(existing), "created": False, "skipped": True}
+                if transaction:
+                    self._insert_transaction(conn, transaction)
+                if existing:
+                    event["id"] = existing["id"]
+                    event["created_at"] = existing["created_at"]
+                conn.execute(
+                    """
+                    insert into events
+                      (id, type, event_date, symbol, stock_market, account_db_id, gross_amount, tax_amount, net_amount, currency, source, source_key, status, transaction_id, details, created_at, updated_at)
+                    values
+                      (:id, :type, :event_date, :symbol, :stock_market, :account_db_id, :gross_amount, :tax_amount, :net_amount, :currency, :source, :source_key, :status, :transaction_id, :details, :created_at, :updated_at)
+                    on conflict(source_key) do update set
+                      event_date = excluded.event_date,
+                      symbol = excluded.symbol,
+                      stock_market = excluded.stock_market,
+                      account_db_id = excluded.account_db_id,
+                      gross_amount = excluded.gross_amount,
+                      tax_amount = excluded.tax_amount,
+                      net_amount = excluded.net_amount,
+                      currency = excluded.currency,
+                      source = excluded.source,
+                      status = excluded.status,
+                      transaction_id = excluded.transaction_id,
+                      details = excluded.details,
+                      updated_at = excluded.updated_at
+                    """,
+                    event,
+                )
+                row = conn.execute("select * from events where source_key = ?", (source_key,)).fetchone()
+        return {**self._event_out(row or event), "created": not bool(existing), "skipped": False}
 
     def list_prices(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -1194,32 +1467,46 @@ class LocalPortfolioStore:
             if retire_age <= current_age:
                 raise ValueError("Retirement age must be greater than current age")
             factor = (_number(scenario.get("factor"), 200) or 200) if kind == "Pension" else None
-            annual_return = _number(scenario.get("annual_return"), _number(scenario.get("annual_return_percent"), 0)) / 100
-            monthly_return = (1 + annual_return) ** (1 / 12) - 1 if annual_return > -1 else -1
+            default_annual_return = _number(scenario.get("annual_return"), _number(scenario.get("annual_return_percent"), 0))
             amount = _number(scenario.get("amount"), _number(scenario.get("current_amount"), 0))
+            sex = _insurance_sex(scenario.get("gender") or scenario.get("sex"))
             periods = _income_periods(scenario, current_age, retire_age)
+            return_periods = _return_periods(scenario, current_age, retire_age)
             timeline = []
             total_deposits = 0.0
+            total_gross_deposits = 0.0
+            total_insurance_cost = 0.0
             months = int(round((retire_age - current_age) * 12))
             for month in range(months):
                 age = current_age + month / 12
                 period = _period_for_age(periods, age) or {}
+                return_period = _period_for_age(return_periods, age) or {}
+                annual_return_pct = _number(return_period.get("annual_return"), default_annual_return)
+                annual_return = annual_return_pct / 100
+                monthly_return = (1 + annual_return) ** (1 / 12) - 1 if annual_return > -1 else -1
                 income = _number(period.get("monthly_income"), _number(scenario.get("monthly_income"), 0))
                 contribution_percent = _number(period.get("contribution_percent"), _number(scenario.get("contribution_percent"), 0))
-                monthly_deposit = _number(period.get("monthly_deposit"), _number(scenario.get("monthly_deposit"), 0))
-                if monthly_deposit <= 0 and income > 0 and contribution_percent > 0:
-                    monthly_deposit = income * contribution_percent / 100
+                salary_contribution = income * contribution_percent / 100 if income > 0 and contribution_percent > 0 else 0
+                extra_deposit = _number(period.get("monthly_deposit"), _number(scenario.get("monthly_deposit"), 0))
+                gross_monthly_deposit = salary_contribution + extra_deposit
+                insurance_cost = _pension_insurance_cost(period, age, sex, income, amount) if kind == "Pension" else 0
+                monthly_deposit = gross_monthly_deposit - insurance_cost
                 if monthly_return == -1:
                     amount = 0
                 else:
                     amount = amount * (1 + monthly_return) + monthly_deposit
                 total_deposits += monthly_deposit
+                total_gross_deposits += gross_monthly_deposit
+                total_insurance_cost += insurance_cost
                 if month == 0 or (month + 1) % 12 == 0 or month == months - 1:
                     timeline.append(
                         {
                             "age": round(current_age + (month + 1) / 12, 2),
                             "amount": amount,
                             "monthly_deposit": monthly_deposit,
+                            "gross_monthly_deposit": gross_monthly_deposit,
+                            "insurance_cost": insurance_cost,
+                            "annual_return": annual_return_pct,
                         }
                     )
             monthly_payout = monthly_pension(amount, factor or 200) if kind == "Pension" else None
@@ -1230,10 +1517,14 @@ class LocalPortfolioStore:
                     "birth_date": birth_date,
                     "current_age": current_age,
                     "retire_age": retire_age,
+                    "gender": str(scenario.get("gender") or scenario.get("sex") or "").strip(),
                     "years": retire_age - current_age,
-                    "annual_return": annual_return * 100,
+                    "annual_return": default_annual_return,
+                    "return_periods": return_periods,
                     "starting_amount": _number(scenario.get("amount"), _number(scenario.get("current_amount"), 0)),
                     "total_deposits": total_deposits,
+                    "total_gross_deposits": total_gross_deposits,
+                    "total_insurance_cost": total_insurance_cost,
                     "final_amount": amount,
                     "investment_gain": amount - total_deposits - _number(scenario.get("amount"), _number(scenario.get("current_amount"), 0)),
                     "factor": factor,
@@ -1644,6 +1935,10 @@ class LocalPortfolioStore:
                 average = abs(position["cost_basis"] / current_qty) if current_qty else 0
                 position["quantity"] += covered
                 position["cost_basis"] += average * covered
+        elif action in {"DIVIDEND", "INTEREST"}:
+            position["realized_profit"] += _cash_delta(tx)
+        elif action == "FEE":
+            position["realized_profit"] -= float(tx["quantity"] or 0) * float(tx["price"] or 0)
 
     def _analysis(self, position: dict[str, Any]) -> SymbolAnalysis:
         account = position["account"] or {}
@@ -1839,6 +2134,18 @@ class LocalPortfolioStore:
                 item["account_label"] = _account_label(item["account"])
         return item
 
+    def _event_out(self, row) -> dict[str, Any]:
+        item = _dict(row)
+        details = item.get("details")
+        if isinstance(details, str):
+            try:
+                item["details"] = json.loads(details) if details else {}
+            except json.JSONDecodeError:
+                item["details"] = {}
+        account_bits = [item.get("management_company"), item.get("username"), item.get("account_id")]
+        item["account_label"] = " ".join(_clean_source_label(value) for value in account_bits if _clean_source_label(value))
+        return item
+
     def _account_out(self, row) -> dict[str, Any]:
         item = _dict(row)
         item["persons"] = _clean_persons(item.get("persons"))
@@ -1988,6 +2295,10 @@ def _income_periods(scenario: dict[str, Any], current_age: float, retire_age: fl
                 "monthly_income": scenario.get("monthly_income"),
                 "contribution_percent": scenario.get("contribution_percent"),
                 "monthly_deposit": scenario.get("monthly_deposit"),
+                "disability_coverage_percent": scenario.get("disability_coverage_percent"),
+                "spouse_survivors_coverage_percent": scenario.get("spouse_survivors_coverage_percent"),
+                "children_survivors_coverage_percent": scenario.get("children_survivors_coverage_percent"),
+                "survivors_capitalization_factor": scenario.get("survivors_capitalization_factor"),
             }
         ]
     periods = []
@@ -2005,8 +2316,89 @@ def _income_periods(scenario: dict[str, Any], current_age: float, retire_age: fl
                 "monthly_income": item.get("monthly_income"),
                 "contribution_percent": item.get("contribution_percent"),
                 "monthly_deposit": item.get("monthly_deposit"),
+                "disability_coverage_percent": item.get("disability_coverage_percent"),
+                "spouse_survivors_coverage_percent": item.get("spouse_survivors_coverage_percent"),
+                "children_survivors_coverage_percent": item.get("children_survivors_coverage_percent"),
+                "survivors_capitalization_factor": item.get("survivors_capitalization_factor"),
             }
         )
+    return sorted(periods, key=lambda item: item["from_age"])
+
+
+def _load_pension_insurance_rates() -> dict[int, dict[str, Any]]:
+    global PENSION_INSURANCE_RATES
+    if PENSION_INSURANCE_RATES is not None:
+        return PENSION_INSURANCE_RATES
+    if not PENSION_INSURANCE_RATES_PATH.exists():
+        raise ValueError("Pension insurance rates file is missing")
+    data = yaml.safe_load(PENSION_INSURANCE_RATES_PATH.read_text()) or {}
+    rows = data.get("rates") or []
+    PENSION_INSURANCE_RATES = {int(row["age"]): row for row in rows if isinstance(row, dict) and row.get("age") is not None}
+    return PENSION_INSURANCE_RATES
+
+
+def _insurance_sex(value: Any) -> str | None:
+    text = str(value or "").strip().lower()
+    if text in {"male", "m", "man", "זכר", "גבר"}:
+        return "male"
+    if text in {"female", "f", "woman", "נקבה", "אישה", "אשה"}:
+        return "female"
+    return None
+
+
+def _pension_insurance_cost(period: dict[str, Any], age: float, sex: str | None, insured_salary: float, savings_balance: float) -> float:
+    if insured_salary <= 0:
+        return 0.0
+    disability_coverage = max(_number(period.get("disability_coverage_percent"), 0), 0)
+    spouse_survivors_coverage = max(_number(period.get("spouse_survivors_coverage_percent"), 0), 0)
+    children_survivors_coverage = max(_number(period.get("children_survivors_coverage_percent"), 0), 0)
+    if not any([disability_coverage, spouse_survivors_coverage, children_survivors_coverage]):
+        return 0.0
+    if sex not in {"male", "female"}:
+        raise ValueError("Gender is required for pension insurance cost")
+    completed_age = math.floor(age)
+    rate_row = _load_pension_insurance_rates().get(completed_age)
+    if not rate_row:
+        raise ValueError(f"Pension insurance rate is missing for age {completed_age}")
+    disability_rate = _number(rate_row.get(f"disability_{sex}"), 0)
+    survivors_rate = _number(rate_row.get(f"survivors_{sex}"), 0)
+    disability_factor = 0.95 * (disability_coverage / 75) if disability_coverage > 0 else 0
+    disability_cost = (insured_salary * disability_factor * disability_rate) / 1000
+    survivors_coverage = (spouse_survivors_coverage + children_survivors_coverage) / 100
+    capitalization_factor = _number(period.get("survivors_capitalization_factor"), 200) or 200
+    net_capital_at_risk = max((insured_salary * survivors_coverage * capitalization_factor) - max(savings_balance, 0), 0)
+    survivors_cost = (net_capital_at_risk * survivors_rate) / 100000 if survivors_coverage > 0 else 0
+    return disability_cost + survivors_cost
+
+
+def _return_periods(scenario: dict[str, Any], current_age: float, retire_age: float) -> list[dict[str, Any]]:
+    raw = scenario.get("return_periods")
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("Profit rate schedule is required")
+    periods = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        from_age = _number(item.get("from_age"), current_age)
+        to_age = _number(item.get("to_age"), retire_age)
+        if to_age <= from_age:
+            raise ValueError("Profit rate row needs valid from/to ages")
+        raw_return = item.get("annual_return", item.get("annual_return_percent"))
+        if raw_return in (None, ""):
+            raise ValueError("Annual profit is required")
+        try:
+            annual_return = float(raw_return)
+        except (TypeError, ValueError):
+            raise ValueError("Annual profit must be numeric") from None
+        periods.append(
+            {
+                "from_age": max(from_age, current_age),
+                "to_age": min(to_age, retire_age),
+                "annual_return": annual_return,
+            }
+        )
+    if not periods:
+        raise ValueError("Profit rate schedule is required")
     return sorted(periods, key=lambda item: item["from_age"])
 
 
@@ -2090,6 +2482,15 @@ def _date_string(value: Any) -> str:
     return (parsed or date.today()).isoformat()
 
 
+def _optional_date_string(value: Any) -> str:
+    if not value:
+        return ""
+    parsed = _parse_date(value)
+    if not parsed:
+        raise ValueError("Date must use DD/MM/YYYY")
+    return parsed.isoformat()
+
+
 def _fill_trend_dates(points: list[dict[str, Any]], dates: list[str]) -> list[dict[str, Any]]:
     by_date = {point["date"]: point for point in points}
     last: dict[str, Any] | None = None
@@ -2156,8 +2557,10 @@ def _cash_delta(tx: dict[str, Any]) -> float:
     value = float(tx["quantity"] or 0) * float(tx["price"] or 0)
     if tx["action"] == "BUY":
         return -value
-    if tx["action"] in {"SELL", "SHORT"}:
+    if tx["action"] in {"SELL", "SHORT", "DIVIDEND", "INTEREST"}:
         return value
+    if tx["action"] == "FEE":
+        return -value
     return 0.0
 
 

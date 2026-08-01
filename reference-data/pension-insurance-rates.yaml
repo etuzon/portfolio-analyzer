@@ -1,0 +1,302 @@
+metadata:
+  name: pension_insurance_rates
+  description: Pension insurance cost coefficient table by age, disability coverage, and survivors coverage.
+  units: risk coefficients
+  calculation:
+    core_formula: disability uses divisor 1,000; survivors uses divisor 100,000
+    disability:
+      description: Loss of earned income insurance.
+      salary_replacement_factor: 0.75
+      contribution_waiver_factor: 0.20
+      total_coverage_factor: 0.95
+      formulas:
+        male: monthly_disability_cost = ((insured_salary * 0.95) * disability_male) / 1000
+        female: monthly_disability_cost = ((insured_salary * 0.95) * disability_female) / 1000
+      examples:
+        - age: 34
+          insured_salary: 10000
+          sex: male
+          risk_rate_column: disability_male
+          risk_rate: 1.94
+          net_amount_at_risk: 9500
+          monthly_cost: 18.43
+        - age: 34
+          insured_salary: 10000
+          sex: female
+          risk_rate_column: disability_female
+          risk_rate: 3.12
+          net_amount_at_risk: 9500
+          monthly_cost: 29.64
+    survivors:
+      description: Death benefit insurance.
+      spouse_coverage_factor: 0.60
+      formulas:
+        net_capital_at_risk: net_capital_at_risk = max((insured_salary * (spouse_survivors_coverage_percent + children_survivors_coverage_percent) / 100 * actuarial_capitalization_factor) - savings_balance, 0)
+        male: monthly_survivors_cost = (net_capital_at_risk * survivors_male) / 100000
+        female: monthly_survivors_cost = (net_capital_at_risk * survivors_female) / 100000
+      variables:
+        savings_balance: Total accumulated pension savings balance. Acts as an offset.
+        actuarial_capitalization_factor: Converts monthly spouse pension liability into lump sum. Typically 150-220.
+      examples:
+        - age: 34
+          insured_salary: 10000
+          savings_balance: 0
+          actuarial_capitalization_factor: 200
+          sex: male
+          risk_rate_column: survivors_male
+          risk_rate: 0.61
+          net_capital_at_risk: 1200000
+          monthly_cost: 7.32
+    total_monthly_insurance_deduction: total_monthly_cost = monthly_disability_cost + monthly_survivors_cost
+  columns:
+    - age
+    - disability_male
+    - disability_female
+    - survivors_male
+    - survivors_female
+
+rates:
+  - age: 21
+    disability_male: 0.63
+    disability_female: 1.09
+    survivors_male: 0.36
+    survivors_female: 0.11
+  - age: 22
+    disability_male: 0.68
+    disability_female: 1.18
+    survivors_male: 0.38
+    survivors_female: 0.12
+  - age: 23
+    disability_male: 0.74
+    disability_female: 1.29
+    survivors_male: 0.40
+    survivors_female: 0.13
+  - age: 24
+    disability_male: 0.81
+    disability_female: 1.40
+    survivors_male: 0.42
+    survivors_female: 0.14
+  - age: 25
+    disability_male: 0.89
+    disability_female: 1.53
+    survivors_male: 0.44
+    survivors_female: 0.15
+  - age: 26
+    disability_male: 0.98
+    disability_female: 1.67
+    survivors_male: 0.46
+    survivors_female: 0.16
+  - age: 27
+    disability_male: 1.08
+    disability_female: 1.83
+    survivors_male: 0.48
+    survivors_female: 0.17
+  - age: 28
+    disability_male: 1.19
+    disability_female: 2.01
+    survivors_male: 0.50
+    survivors_female: 0.19
+  - age: 29
+    disability_male: 1.31
+    disability_female: 2.21
+    survivors_male: 0.52
+    survivors_female: 0.21
+  - age: 30
+    disability_male: 1.44
+    disability_female: 2.41
+    survivors_male: 0.54
+    survivors_female: 0.23
+  - age: 31
+    disability_male: 1.55
+    disability_female: 2.56
+    survivors_male: 0.56
+    survivors_female: 0.24
+  - age: 32
+    disability_male: 1.67
+    disability_female: 2.73
+    survivors_male: 0.58
+    survivors_female: 0.25
+  - age: 33
+    disability_male: 1.80
+    disability_female: 2.92
+    survivors_male: 0.59
+    survivors_female: 0.26
+  - age: 34
+    disability_male: 1.94
+    disability_female: 3.12
+    survivors_male: 0.61
+    survivors_female: 0.28
+  - age: 35
+    disability_male: 2.10
+    disability_female: 3.35
+    survivors_male: 0.64
+    survivors_female: 0.30
+  - age: 36
+    disability_male: 2.26
+    disability_female: 3.60
+    survivors_male: 0.67
+    survivors_female: 0.33
+  - age: 37
+    disability_male: 2.45
+    disability_female: 3.88
+    survivors_male: 0.71
+    survivors_female: 0.37
+  - age: 38
+    disability_male: 2.65
+    disability_female: 4.19
+    survivors_male: 0.76
+    survivors_female: 0.42
+  - age: 39
+    disability_male: 2.87
+    disability_female: 4.53
+    survivors_male: 0.83
+    survivors_female: 0.47
+  - age: 40
+    disability_male: 3.11
+    disability_female: 4.90
+    survivors_male: 0.90
+    survivors_female: 0.53
+  - age: 41
+    disability_male: 3.35
+    disability_female: 5.25
+    survivors_male: 0.98
+    survivors_female: 0.58
+  - age: 42
+    disability_male: 3.61
+    disability_female: 5.62
+    survivors_male: 1.07
+    survivors_female: 0.64
+  - age: 43
+    disability_male: 3.89
+    disability_female: 6.03
+    survivors_male: 1.18
+    survivors_female: 0.71
+  - age: 44
+    disability_male: 4.19
+    disability_female: 6.47
+    survivors_male: 1.30
+    survivors_female: 0.79
+  - age: 45
+    disability_male: 4.51
+    disability_female: 6.94
+    survivors_male: 1.43
+    survivors_female: 0.88
+  - age: 46
+    disability_male: 4.85
+    disability_female: 7.45
+    survivors_male: 1.58
+    survivors_female: 0.98
+  - age: 47
+    disability_male: 5.15
+    disability_female: 7.91
+    survivors_male: 1.76
+    survivors_female: 1.10
+  - age: 48
+    disability_male: 5.46
+    disability_female: 8.39
+    survivors_male: 1.95
+    survivors_female: 1.23
+  - age: 49
+    disability_male: 5.79
+    disability_female: 8.88
+    survivors_male: 2.17
+    survivors_female: 1.38
+  - age: 50
+    disability_male: 6.13
+    disability_female: 9.38
+    survivors_male: 2.42
+    survivors_female: 1.55
+  - age: 51
+    disability_male: 6.43
+    disability_female: 9.77
+    survivors_male: 2.71
+    survivors_female: 1.75
+  - age: 52
+    disability_male: 6.72
+    disability_female: 10.13
+    survivors_male: 3.03
+    survivors_female: 1.97
+  - age: 53
+    disability_male: 6.99
+    disability_female: 10.45
+    survivors_male: 3.39
+    survivors_female: 2.23
+  - age: 54
+    disability_male: 7.22
+    disability_female: 10.69
+    survivors_male: 3.80
+    survivors_female: 2.53
+    notes:
+      disability_male: Peak
+      disability_female: Peak
+  - age: 55
+    disability_male: 7.15
+    disability_female: 10.51
+    survivors_male: 4.26
+    survivors_female: 2.87
+  - age: 56
+    disability_male: 6.92
+    disability_female: 10.10
+    survivors_male: 4.79
+    survivors_female: 3.26
+  - age: 57
+    disability_male: 6.55
+    disability_female: 9.45
+    survivors_male: 5.39
+    survivors_female: 3.71
+  - age: 58
+    disability_male: 6.03
+    disability_female: 8.57
+    survivors_male: 6.07
+    survivors_female: 4.23
+  - age: 59
+    disability_male: 5.38
+    disability_female: 7.48
+    survivors_male: 6.84
+    survivors_female: 4.83
+  - age: 60
+    disability_male: 4.60
+    disability_female: 6.22
+    survivors_male: 7.72
+    survivors_female: 5.51
+  - age: 61
+    disability_male: 3.78
+    disability_female: 4.96
+    survivors_male: 8.70
+    survivors_female: 6.29
+  - age: 62
+    disability_male: 2.97
+    disability_female: 3.79
+    survivors_male: 9.80
+    survivors_female: 7.18
+  - age: 63
+    disability_male: 2.22
+    disability_female: 2.76
+    survivors_male: 11.02
+    survivors_female: 8.20
+  - age: 64
+    disability_male: 1.54
+    disability_female: 1.86
+    survivors_male: 12.38
+    survivors_female: 9.35
+  - age: 65
+    disability_male: 0.96
+    disability_female: 1.13
+    survivors_male: 13.88
+    survivors_female: 10.65
+  - age: 66
+    disability_male: 0.50
+    disability_female: 0.57
+    survivors_male: 15.54
+    survivors_female: 12.11
+    notes:
+      survivors_male: Peak
+      survivors_female: Peak
+  - age: 67
+    disability_male: 0.00
+    disability_female: 0.00
+    survivors_male: 17.37
+    survivors_female: 13.76
+    notes:
+      survivors_male: Extensions only
+      survivors_female: Extensions only
