@@ -9,6 +9,8 @@ const state = {
   configuredBannerItems: [],
   historySnapshots: [],
   fxRates: {},
+  coreFxRates: {},
+  bannerFxRates: {},
   baseCurrency: "ILS",
   localAccounts: [],
   manualSecurities: [],
@@ -19,6 +21,8 @@ const state = {
   equityCompQuotes: {},
   priceFocus: null,
   securityDetail: null,
+  positionTransactionsDetail: null,
+  editingPositionTransactionId: "",
   securityChartPeriod: "1y",
   securityChartMode: "line",
   securityChartLevelPeriods: ["1y"],
@@ -27,6 +31,9 @@ const state = {
   securityHistory: [],
   securityHistoryMeta: {},
   localFunds: [],
+  fundAmountHistory: [],
+  fundHistoryFundId: "",
+  editingFundHistoryId: "",
   longTermView: "total",
   brokers: [],
   familyMembers: [],
@@ -39,6 +46,8 @@ const state = {
   editingFamilyMemberId: "",
   editingFundId: "",
   editingTransactionId: "",
+  activeEmployeeListingSecurityId: "",
+  activeEmployeeExerciseSecurityId: "",
   pensionScenarios: [],
   pensionSimulationResults: [],
   pensionSimulationGrid: null,
@@ -46,15 +55,26 @@ const state = {
   pensionSimulationAutoRunningKey: "",
   pensionSimulationErrorKey: "",
   pensionSimulationError: "",
+  financeReport: null,
+  companyOutlook: null,
+  companyOutlookHistory: [],
+  researchSection: "finance",
+  alertData: null,
+  alertOptions: { metrics: [], operators: [], signals: [], match_modes: [] },
+  alertConditions: [],
+  editingAlertId: "",
+  vestingAlertDays: 30,
   activePensionScenarioIndex: null,
   localOptions: {
     account_types: ["Investment", "Long-Term Savings", "Bank", "ESOP"],
     fund_kinds: ["Pension", "Provident Fund", "Savings Fund"],
-    asset_classes: ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"],
-    instrument_types: ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"],
+    asset_classes: ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"],
+    instrument_types: ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"],
     option_types: ["CALL", "PUT"],
+    issuer_listing_statuses: ["PRIVATE", "PUBLIC"],
   },
   optionsReady: false,
+  portfolioReady: false,
   tableMaPeriod: "30",
   backupSettings: null,
   riskSnapshot: null,
@@ -70,7 +90,8 @@ const DASHBOARD_WIDGETS = [
   { id: "long_term", title: "Long-term funds", view: "basic", size: "wide" },
   { id: "market_cost", title: "Market vs cost basis", view: "basic", size: "wide" },
   { id: "asset_mix", title: "Asset mix", view: "basic", size: "compact" },
-  { id: "top_holdings", title: "Top holdings", view: "basic", size: "compact" },
+  { id: "industry_split", title: "Industry split", view: "basic", size: "wide" },
+  { id: "top_holdings", title: "Top holdings", view: "basic", size: "wide" },
   { id: "coverage", title: "Provider data coverage", view: "expanded", size: "medium" },
   { id: "currency", title: "Currency allocation", view: "expanded", size: "compact" },
   { id: "equity_comp", title: "Equity compensation", view: "expanded", size: "wide" },
@@ -84,6 +105,7 @@ const DASHBOARD_LONG_TERM_STORAGE_KEY = "portfolioAnalyzer.dashboard.longTerm";
 const TABLE_SETTINGS_STORAGE_KEY = "portfolioAnalyzer.tableSettings";
 const LANGUAGE_STORAGE_KEY = "portfolioAnalyzer.language";
 const PENSION_SIMULATION_STORAGE_KEY = "portfolioAnalyzer.pensionSimulation";
+const VESTING_ALERT_SETTINGS_STORAGE_KEY = "portfolioAnalyzer.vestingAlerts";
 const LOG_PREFIX = "[Portfolio Analyzer]";
 const MIN_LOADING_VISIBLE_MS = 700;
 const SENSITIVE_LOG_KEY = /(password|passwd|secret|token|api[_-]?key|authorization|credential|connection|string)/i;
@@ -126,6 +148,10 @@ const TRANSLATIONS = {
     mainMenu: "Main Menu",
     dashboard: "Dashboard",
     reports: "Reports",
+    research: "Research",
+    companyReports: "Company Reports",
+    companyOutlook: "Company Outlook",
+    signalRules: "Portfolio Signals",
     portfolioData: "Portfolio Data",
     accounts: "Accounts",
     brokers: "Brokers",
@@ -135,7 +161,7 @@ const TRANSLATIONS = {
     householdRetirement: "Household & Retirement",
     familyMembers: "Family Members",
     pensionFunds: "Pension/Funds",
-    marketsAlerts: "Markets & Alerts",
+    marketsAlerts: "Markets",
     marketScreener: "Market Screener",
     alerts: "Alerts",
     marketBanner: "Market Banner",
@@ -174,6 +200,10 @@ const TRANSLATIONS = {
     mainMenu: "תפריט ראשי",
     dashboard: "דשבורד",
     reports: "דוחות",
+    research: "מחקר",
+    companyReports: "דוחות חברות",
+    companyOutlook: "תחזית חברה",
+    signalRules: "איתותי תיק ההשקעות",
     portfolioData: "נתוני תיק",
     accounts: "חשבונות",
     brokers: "ברוקרים",
@@ -183,7 +213,7 @@ const TRANSLATIONS = {
     householdRetirement: "משפחה ופרישה",
     familyMembers: "בני משפחה",
     pensionFunds: "פנסיה וקופות",
-    marketsAlerts: "שווקים והתראות",
+    marketsAlerts: "שווקים",
     marketScreener: "סורק שוק",
     alerts: "התראות",
     marketBanner: "סרגל שוק",
@@ -224,7 +254,10 @@ function t(key) {
 }
 const OPTION_LABELS = {
   MUTUALFUND: "Mutual Fund",
-  STOCK_OPTION: "Stock Option",
+  OPTION: "Exchange-Traded Option",
+  EMPLOYEE_STOCK_OPTION: "Employee Stock Option",
+  PRIVATE_STOCK: "Private Company Shares",
+  STOCK_OPTION: "Stock Option (Legacy)",
   RSU: "RSU",
 };
 
@@ -521,6 +554,19 @@ function formatDate(value) {
   return `${day}/${month}/${year}`;
 }
 
+function formatDateTime(value) {
+  if (!value) return "Not run";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat(state.language === "he" ? "he-IL" : "en-GB", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function dateValue(id) {
   return parseDateInput(valueOf(id));
 }
@@ -605,10 +651,17 @@ function ensureHierarchicalNav() {
       </div>
     </details>
     <details class="nav-menu">
+      <summary>${esc(t("research"))}</summary>
+      <div class="nav-children">
+        <button class="nav-item" type="button" data-modal="researchModal" data-research-section="finance">${esc(t("companyReports"))}</button>
+        <button class="nav-item" type="button" data-modal="researchModal" data-research-section="outlook">${esc(t("companyOutlook"))}</button>
+        <button class="nav-item" type="button" data-modal="researchModal" data-research-section="signals">${esc(t("signalRules"))}</button>
+      </div>
+    </details>
+    <details class="nav-menu">
       <summary>${esc(t("marketsAlerts"))}</summary>
       <div class="nav-children">
         <button class="nav-item" type="button" data-modal="marketModal">${esc(t("marketScreener"))}</button>
-        <button class="nav-item" type="button" data-modal="alertsModal">${esc(t("alerts"))}</button>
         <button class="nav-item" type="button" data-modal="bannerModal">${esc(t("marketBanner"))}</button>
       </div>
     </details>
@@ -703,6 +756,19 @@ function normalizedAmount(value, currency) {
   return number;
 }
 
+function updateFxRates() {
+  state.fxRates = { ...(state.coreFxRates || {}), ...(state.bannerFxRates || {}) };
+}
+
+function setCoreFxRates(data) {
+  state.coreFxRates = (data?.quotes || []).reduce((rates, item) => {
+    const rate = Number(item?.quote?.rate || 0);
+    if (item?.pair && rate > 0) rates[item.pair] = rate;
+    return rates;
+  }, {});
+  updateFxRates();
+}
+
 function groupValues(items, keyFn, valueFn = (item) => normalizedField(item, "market_value")) {
   return Object.entries(items.reduce((groups, item) => {
     const key = keyFn(item) || "Unknown";
@@ -783,6 +849,25 @@ function saveLanguageSettings() {
   scheduleClientStateSync();
 }
 
+function normalizedVestingAlertDays(value) {
+  const days = Math.round(Number(value));
+  return Number.isFinite(days) ? Math.min(Math.max(days, 1), 365) : 30;
+}
+
+function loadVestingAlertSettings() {
+  const settings = readLocalJson(VESTING_ALERT_SETTINGS_STORAGE_KEY, {});
+  state.vestingAlertDays = normalizedVestingAlertDays(settings?.leadDays);
+}
+
+function saveVestingAlertSettings() {
+  state.vestingAlertDays = normalizedVestingAlertDays(valueOf("vestingAlertDays"));
+  localStorage.setItem(VESTING_ALERT_SETTINGS_STORAGE_KEY, JSON.stringify({ leadDays: state.vestingAlertDays }));
+  $("vestingAlertDays").value = String(state.vestingAlertDays);
+  $("alarmSettingsStatus").textContent = `Vesting alerts will appear ${state.vestingAlertDays} day${state.vestingAlertDays === 1 ? "" : "s"} before vesting.`;
+  scheduleClientStateSync();
+  renderAlarms();
+}
+
 function readLocalJson(key, fallback = null) {
   try {
     const raw = localStorage.getItem(key);
@@ -801,6 +886,7 @@ function collectClientState() {
     language: state.language || "en",
     bannerItems: Array.isArray(state.bannerItems) ? state.bannerItems : readLocalJson("portfolioAnalyzer.bannerItems", []),
     pensionSimulation: readLocalJson(PENSION_SIMULATION_STORAGE_KEY, {}),
+    alarms: { vestingLeadDays: state.vestingAlertDays },
   };
 }
 
@@ -822,6 +908,11 @@ function applyClientState(clientState) {
   if (clientState.pensionSimulation && typeof clientState.pensionSimulation === "object") {
     localStorage.setItem(PENSION_SIMULATION_STORAGE_KEY, JSON.stringify(clientState.pensionSimulation));
   }
+  if (clientState.alarms && typeof clientState.alarms === "object") {
+    localStorage.setItem(VESTING_ALERT_SETTINGS_STORAGE_KEY, JSON.stringify({
+      leadDays: normalizedVestingAlertDays(clientState.alarms.vestingLeadDays),
+    }));
+  }
   return true;
 }
 
@@ -830,6 +921,7 @@ function loadClientStateFromStorage() {
   loadDashboardSettings();
   loadTableSettings();
   loadPensionSimulationState();
+  loadVestingAlertSettings();
   renderPensionInsuranceControls();
   applyLanguage();
 }
@@ -1115,12 +1207,35 @@ function groupByCurrency(items, field) {
   }, {});
 }
 
+function isEquityCompAccount(account) {
+  return String(account?.type || "").toUpperCase() === "ESOP";
+}
+
+function portfolioAccounts() {
+  return (state.localAccounts || []).filter((account) => !isEquityCompAccount(account));
+}
+
+function isEquityCompHolding(item) {
+  const holding = item?.holding || {};
+  const assetClass = String(holding.asset_class || holding.asset_sub_class || "").toUpperCase();
+  const account = state.localAccounts.find((candidate) => String(candidate.id || "") === String(holding.account_id || ""));
+  return isEquityCompAccount(account)
+    || String(holding.account_type || "").toUpperCase() === "ESOP"
+    || ["RSU", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"].includes(assetClass);
+}
+
+function portfolioItems(items) {
+  return (items || []).filter((item) => !isEquityCompHolding(item));
+}
+
 function groupByAccount(items) {
-  return Object.values(items.reduce((groups, item) => {
+  const groups = items.reduce((result, item) => {
     const holding = item.holding;
     const account = cleanSourceLabel(holding.account) || "Unassigned";
-    const group = groups[account] || {
+    const key = holding.account_id || account;
+    const group = result[key] || {
       account,
+      accountId: holding.account_id || "",
       value: 0,
       profit: 0,
       localValues: {},
@@ -1135,14 +1250,48 @@ function groupByAccount(items) {
     group.localValues[currency] = (group.localValues[currency] || 0) + Number(holding.market_value || 0);
     group.symbols.push(holding.symbol);
     group.currencies.add(currency);
-    groups[account] = group;
-    return groups;
-  }, {})).map((group) => ({ ...group, currencies: [...group.currencies] }));
+    result[key] = group;
+    return result;
+  }, {});
+  portfolioAccounts().forEach((account) => {
+    const label = cleanSourceLabel(accountLabel(account)) || account.id || "Unassigned";
+    const matchingKey = groups[account.id]
+      ? account.id
+      : Object.keys(groups).find((key) => groups[key].account === label);
+    const cashLocal = accountCashBalance(account);
+    if (!matchingKey && Math.abs(cashLocal) <= 1e-9) return;
+    const key = matchingKey || account.id || label;
+    const group = groups[key] || {
+      account: label,
+      accountId: account.id || "",
+      value: 0,
+      profit: 0,
+      localValues: {},
+      symbols: [],
+      currencies: new Set(),
+      type: account.type || "",
+      location: account.location || "",
+    };
+    const currency = account.currency || state.baseCurrency;
+    group.value += normalizedAmount(cashLocal, currency);
+    group.localValues[currency] = (group.localValues[currency] || 0) + cashLocal;
+    group.cashLocal = cashLocal;
+    group.cashCurrency = currency;
+    group.currencies.add(currency);
+    groups[key] = group;
+  });
+  return Object.values(groups).map((group) => ({ ...group, currencies: [...group.currencies] }));
+}
+
+function accountCashBalance(account) {
+  if (!account) return 0;
+  const transactions = state.localTransactions.filter((tx) => String(tx.account_db_id || "") === String(account.id || ""));
+  return Number(account.initial_cash || 0) + sum(transactions.map(transactionCashImpact));
 }
 
 function accountCashValue(account) {
   if (!account) return 0;
-  return Math.max(0, normalizedAmount(account.initial_cash, account.currency));
+  return Math.max(0, normalizedAmount(accountCashBalance(account), account.currency));
 }
 
 function accountRecordForHolding(holding) {
@@ -1155,7 +1304,7 @@ function assetRiskFactor(item) {
   const asset = String(h.asset_class || h.asset_sub_class || "").toUpperCase();
   const instrument = String(h.asset_sub_class || "").toUpperCase();
   const symbol = String(h.symbol || "").toUpperCase();
-  if (["OPTION", "FUTURE", "STOCK_OPTION"].includes(asset) || ["OPTION", "FUTURE", "STOCK_OPTION"].includes(instrument)) return 1;
+  if (["OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"].includes(asset) || ["OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"].includes(instrument)) return 1;
   if (symbol.includes("3X") || symbol.includes("2X") || symbol.includes("LEVERAGED")) return 1;
   if (asset === "BOND") return 0.35;
   if (asset === "ETF" || asset === "MUTUALFUND") return 0.45;
@@ -1177,7 +1326,7 @@ function derivativeHolding(item) {
   const asset = String(h.asset_class || "").toUpperCase();
   const instrument = String(h.asset_sub_class || "").toUpperCase();
   const symbol = String(h.symbol || "").toUpperCase();
-  return ["OPTION", "FUTURE", "STOCK_OPTION"].includes(asset) || ["OPTION", "FUTURE", "STOCK_OPTION"].includes(instrument) || symbol.includes("3X") || symbol.includes("2X") || symbol.includes("LEVERAGED");
+  return ["OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"].includes(asset) || ["OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"].includes(instrument) || symbol.includes("3X") || symbol.includes("2X") || symbol.includes("LEVERAGED");
 }
 
 function diversifiedFund(item) {
@@ -1255,13 +1404,40 @@ function riskBadge(risk, compact = false) {
 }
 
 function riskTooltip(risk) {
-  const parts = risk.components || {};
-  const drivers = (risk.drivers || []).slice(0, 5).join("; ") || "No dominant driver";
+  const band = riskBand(risk.score);
+  const meaning = {
+    low: "Relatively stable, but losses are still possible.",
+    moderate: "Noticeable gains or losses are possible.",
+    elevated: "Price swings could cause meaningful losses.",
+    high: "Several factors create a high chance of large losses.",
+    extreme: "Sharp losses are possible from very strong risk factors.",
+  }[band.key];
+  const simpleDriver = (driver) => {
+    const text = String(driver || "");
+    if (text.startsWith("Top holding ")) return `one holding is a large part of the portfolio (${text.slice(12)})`;
+    if (text.startsWith("Holding weight ")) return `this holding is ${text.slice(15)} of the portfolio`;
+    if (text.startsWith("Foreign currency ")) return `${text.slice(17)} is exposed to foreign currencies`;
+    if (text.startsWith("Options/futures/leverage ")) return `${text.slice(25)} uses options, futures, or leverage`;
+    if (text.startsWith("1Y volatility proxy ")) return `its recent price movement is about ${text.slice(20)}`;
+    if (text.startsWith("Horizon ")) return `the investment horizon is ${text.slice(8)}`;
+    if (text.startsWith("Issuer concentration ")) return `one issuer represents ${text.slice(21)}`;
+    if (text.startsWith("Country concentration ")) return `one country represents ${text.slice(22)}`;
+    if (text.startsWith("Low cash ")) return `the cash buffer is low (${text.slice(9)})`;
+    if (text.startsWith("High cash ")) return `a large share is held in cash (${text.slice(10)})`;
+    if (text.startsWith("Missing industry ")) return `industry information is missing for ${text.slice(17)}`;
+    if (text.startsWith("Asset factor ")) return "its asset type carries market risk";
+    if (text === "ETF/fund treated as diversified proxy") return "the fund is treated as diversified";
+    if (text === "Option/future/leveraged instrument") return "it uses an option, future, or leveraged instrument";
+    if (text.startsWith("Missing ")) return `${text.toLowerCase()} data makes the estimate less certain`;
+    return text.toLowerCase();
+  };
+  const drivers = (risk.drivers || []).slice(0, 4).map(simpleDriver);
   return [
-    `${risk.label || "Risk"} score ${risk.score}/100 (${riskBand(risk.score).label}). Min 0, max 100.`,
-    "Advanced formula: concentration + asset mix + currency + industry + cash + options/futures/leverage + volatility + horizon suitability + issuer/country + data quality.",
-    `Components: concentration ${fmt(parts.concentration, 1)}/16, asset ${fmt(parts.asset_mix, 1)}/14, currency ${fmt(parts.currency, 1)}/10, industry ${fmt(parts.industry, 1)}/10, cash ${fmt(parts.cash, 1)}/7, derivatives ${fmt(parts.derivatives, 1)}/10, volatility ${fmt(parts.volatility, 1)}/10, horizon ${fmt(parts.horizon, 1)}/10, issuer/country ${fmt(parts.issuer_country, 1)}/8, data ${fmt(parts.data_quality, 1)}/5.`,
-    `Drivers: ${drivers}.`,
+    `${band.label} risk · ${risk.score}/100`,
+    meaning,
+    "",
+    "Main reasons:",
+    ...(drivers.length ? drivers.map((driver) => `• ${driver}`) : ["• No single factor stands out"]),
   ].join("\n");
 }
 
@@ -1426,8 +1602,8 @@ function portfolioRiskSnapshot(items) {
       risk: riskScoreForItems(rows, { label: `${cleanSourceLabel(rows[0].holding.account) || "Account"} risk`, cash, cashCurrency: account?.currency, horizonYears }),
     };
   });
-  const combinedCash = sum(state.localAccounts.map(accountCashValue));
-  const portfolioHorizons = state.localAccounts.map(accountHorizonYears).filter((value) => value !== null);
+  const combinedCash = sum(portfolioAccounts().map(accountCashValue));
+  const portfolioHorizons = portfolioAccounts().map(accountHorizonYears).filter((value) => value !== null);
   const portfolioHorizonYears = portfolioHorizons.length ? Math.min(...portfolioHorizons) : null;
   const combinedRisk = riskScoreForItems(items, { label: "Total portfolio risk", cash: combinedCash, horizonYears: portfolioHorizonYears });
   const holdingsValue = sum(items.map((item) => Math.abs(normalizedField(item, "market_value"))));
@@ -1732,7 +1908,7 @@ function populateStaticOptions() {
     .join("");
   refreshMarketOptions();
   ["localAccountCurrency", "editAccountCurrency", "priceCurrency", "manualSecurityCurrency"].forEach(setCurrencyOptions);
-  const assetClasses = state.localOptions.asset_classes || ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"];
+  const assetClasses = state.localOptions.asset_classes || ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"];
   setOptions("localAccountType", state.localOptions.account_types);
   setOptions("editAccountType", state.localOptions.account_types);
   setOptions("localAccountLocation", ACCOUNT_COUNTRIES);
@@ -1744,7 +1920,8 @@ function populateStaticOptions() {
   setOptions("editFundKind", state.localOptions.fund_kinds);
   setOptions("securityAssetClass", assetClasses);
   setOptions("priceAssetClass", assetClasses);
-  setOptions("manualInstrumentType", state.localOptions.instrument_types || ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"]);
+  setOptions("manualInstrumentType", (state.localOptions.instrument_types || ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"])
+    .filter((type) => type !== "STOCK_OPTION"));
   setOptions("manualOptionType", state.localOptions.option_types || ["CALL", "PUT"]);
   $("localAccountLocation").value = "USA";
   $("editAccountLocation").value = "USA";
@@ -1806,8 +1983,19 @@ function renderSummary(items) {
 }
 
 function renderPortfolioValueDashboard(items) {
+  if (!state.portfolioReady) {
+    return `
+      <div class="chart-card portfolio-value-card">
+        <div class="balance-panel">
+          <p class="eyebrow">Portfolio value</p>
+          <div class="balance-value portfolio-value-loading">Loading…</div>
+        </div>
+      </div>`;
+  }
   state.riskSnapshot = portfolioRiskSnapshot(items);
-  const primaryValue = sum(items.map((item) => normalizedField(item, "market_value")));
+  const securitiesValue = sum(items.map((item) => normalizedField(item, "market_value")));
+  const cashValue = sum(portfolioAccounts().map((account) => normalizedAmount(accountCashBalance(account), account.currency || state.baseCurrency)));
+  const primaryValue = securitiesValue + cashValue;
   const primaryProfit = sum(items.map((item) => normalizedField(item, "unrealized_profit")));
   const accountTotals = groupByAccount(items).sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
   const symbols = new Set(items.map((item) => item.holding.symbol)).size;
@@ -1825,7 +2013,8 @@ function renderPortfolioValueDashboard(items) {
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([currency, value]) => money(value, currency, 0));
       const localLine = localAmounts.length ? `<small>${esc(localAmounts.join(" · "))}</small>` : "";
-      const title = `Account: ${account.account}; ${account.type || "Account"}${account.location ? ` · ${account.location}` : ""}; Securities: ${symbolsText}${more}; Source currencies: ${account.currencies.join(", ")}`;
+      const cashText = account.cashCurrency ? `; Cash: ${money(account.cashLocal || 0, account.cashCurrency, 2)}` : "";
+      const title = `Account: ${account.account}; ${account.type || "Account"}${account.location ? ` · ${account.location}` : ""}; Securities: ${symbolsText || "None"}${more}; Source currencies: ${account.currencies.join(", ")}${cashText}`;
       return `<span class="account-chip" title="${esc(title)}"><b>${esc(account.account)}</b><span class="account-chip-values"><strong>${money(account.value, state.baseCurrency, 0)}</strong>${localLine}</span>${riskBadge(accountRisk, true)}</span>`;
     })
     .join("");
@@ -1850,7 +2039,7 @@ function renderPortfolioValueDashboard(items) {
     <div class="chart-card portfolio-value-card">
       <div class="balance-panel">
         <p class="eyebrow">Portfolio value</p>
-        <div class="balance-value">${money(primaryValue, state.baseCurrency)}</div>
+        <div class="balance-value" title="Securities ${money(securitiesValue, state.baseCurrency, 0)} + cash ${money(cashValue, state.baseCurrency, 0)}">${money(primaryValue, state.baseCurrency)}</div>
         <div class="delta ${profitClass}" title="Holding profit converted to ${esc(state.baseCurrency)} using displayed FX rates when available">Holding Profit ${signedMoney(primaryProfit, state.baseCurrency)}</div>
         <details class="summary-drawer">
           <summary>Portfolio stats</summary>
@@ -2007,11 +2196,19 @@ function renderRows(items) {
     const industryLine = `<div class="security-industry">Industry: ${esc(industry || "Not available")}</div>`;
     const marketLine = `${h.asset_class || "Asset"} · ${h.currency || ""} · Market: ${market} · API: ${provider}`;
     const rowRisk = state.riskSnapshot?.total?.position_risks?.get(item);
+    const averageBuyPrice = Math.abs(Number(h.quantity || 0)) > 0
+      ? Math.abs(Number(h.cost_basis || 0) / Number(h.quantity || 0))
+      : 0;
     return `<tr>
       <td data-label="Security"><div class="security-cell"><button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button><div class="security-name">${esc(companyLine)}</div>${industryLine}<div class="sub security-meta">${esc(marketLine)}</div></div></td>
       <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(cleanSourceLabel(h.account_type || h.location || h.sector || ""))}</div></td>
       <td data-label="Risk">${riskBadge(rowRisk)}</td>
-      <td data-label="Value / P&L"><div class="value-cell"><strong>${money(h.market_value, h.currency)}</strong><span>${fmt(h.quantity, 3)} units</span><b class="${Number(h.unrealized_profit) >= 0 ? "positive" : "negative"}">${signedMoney(h.unrealized_profit, h.currency)}</b></div></td>
+      <td data-label="Value / P&L"><div class="value-cell">
+        <strong>${money(h.market_value, h.currency)}</strong>
+        <button class="units-history-link" type="button" data-position-history-symbol="${esc(h.symbol)}" data-position-history-market="${esc(marketKey)}" data-position-history-account-id="${esc(h.account_id || "")}" data-position-history-account="${esc(cleanSourceLabel(h.account) || "")}" data-position-history-currency="${esc(h.currency || state.baseCurrency)}" data-position-history-quantity="${esc(h.quantity || 0)}" data-position-history-average="${esc(averageBuyPrice)}" data-position-history-asset="${esc(h.asset_class || "EQUITY")}" data-position-history-location="${esc(h.country || h.location || "")}" title="Open buy and sell history">${fmt(h.quantity, 3)} units</button>
+        <span class="average-buy-price">Avg buy ${averageBuyPrice ? money(averageBuyPrice, h.currency, 2) : "Not available"}</span>
+        <b class="${Number(h.unrealized_profit) >= 0 ? "positive" : "negative"}">${signedMoney(h.unrealized_profit, h.currency)}</b>
+      </div></td>
       <td data-label="1Y High / Low">${rangeCell(range, h.currency)}</td>
       <td data-label="Net income">${trendCell(item.profit_trend, "Net income", { currency: h.currency, marketCap: item.market_cap })}</td>
       <td data-label="Dividend Trend">${trendCell(item.dividend_trend, "Annual dividend", { kind: "dividend", currency: h.currency })}</td>
@@ -2566,6 +2763,54 @@ function renderCurrencyAllocation(groups, total) {
   return renderDonut(groups, "Currency allocation", `${topPercent}%`, total, [groups[0]?.label || state.baseCurrency], "currency-allocation-card");
 }
 
+function renderIndustrySplit(items) {
+  const groups = Object.values(items.reduce((result, item) => {
+    const label = industryLabel(item) || "Not classified";
+    const value = Math.abs(normalizedField(item, "market_value"));
+    const group = result[label] || { label, value: 0, holdings: [] };
+    group.value += value;
+    group.holdings.push({
+      symbol: item.holding.symbol || "Unknown",
+      name: item.holding.name || item.holding.symbol || "Unknown",
+      value,
+    });
+    result[label] = group;
+    return result;
+  }, {}))
+    .map((group) => ({ ...group, holdings: group.holdings.sort((a, b) => b.value - a.value) }))
+    .sort((a, b) => b.value - a.value);
+  const total = sum(groups.map((group) => group.value));
+  return `
+    <div class="chart-card industry-split-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">Industry split</div>
+          <span class="chart-subtitle">${groups.length} industries · holdings listed inside each industry</span>
+        </div>
+        <div class="chart-legend"><span><i style="background:#21a7ff"></i>Portfolio value</span></div>
+      </div>
+      <div class="industry-split-list">
+        ${groups.map((group, index) => {
+          const percent = total ? group.value / total * 100 : 0;
+          return `
+            <div class="industry-split-row">
+              <div class="industry-split-head">
+                <b>${esc(group.label)}</b>
+                <span>${money(group.value, state.baseCurrency, 0)} · ${fmt(percent, 1)}%</span>
+              </div>
+              <div class="industry-split-track" title="${esc(`${group.label}: ${fmt(percent, 1)}%`)}">
+                <i style="width:${Math.max(percent, 0.8)}%;background:${colorAt(index)}"></i>
+              </div>
+              <div class="industry-holdings">
+                ${group.holdings.map((holding) => `<span title="${esc(`${holding.name}: ${money(holding.value, state.baseCurrency, 0)}`)}">${esc(holding.symbol)}</span>`).join("")}
+              </div>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </div>`;
+}
+
 function renderMiniBars(items) {
   const top = [...items].sort((a, b) => normalizedField(b, "market_value") - normalizedField(a, "market_value")).slice(0, 12);
   const max = Math.max(...top.map((item) => normalizedField(item, "market_value")), 1);
@@ -2635,12 +2880,11 @@ function renderProfitBars(items) {
   const total = sum(items.map((item) => normalizedField(item, "unrealized_profit")));
   const maxAbs = Math.max(...top.map((item) => Math.abs(normalizedField(item, "unrealized_profit"))), 1);
   const width = 430;
-  const height = 252;
+  const height = 165;
   const padLeft = 38;
   const padRight = 26;
-  const baseline = 102;
-  const topGuide = 42;
-  const bottomGuide = 158;
+  const baseline = 78;
+  const topGuide = 25;
   const barSlot = (width - padLeft - padRight) / Math.max(1, top.length);
   const barWidth = Math.min(22, Math.max(8, barSlot * 0.54));
   const gainColor = "#726dff";
@@ -2648,25 +2892,26 @@ function renderProfitBars(items) {
   return `
     <div class="chart-card line-card">
       <div class="chart-header">
-        <div class="chart-title">Unrealized P/L by holding</div>
+        <div>
+          <div class="chart-title">Unrealized P/L by holding</div>
+          <span class="chart-subtitle profit-total-summary">Total P/L ${money(total, state.baseCurrency, 0)}</span>
+        </div>
         <div class="chart-legend"><span><i style="background:${gainColor}"></i>Gain</span><span><i style="background:${lossColor}"></i>Loss</span></div>
       </div>
       <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Unrealized profit and loss by holding">
         <line x1="${padLeft}" y1="${topGuide}" x2="${width - padRight}" y2="${topGuide}"></line>
         <line x1="${padLeft}" y1="${baseline}" x2="${width - padRight}" y2="${baseline}" class="axis-line"></line>
-        <line x1="${padLeft}" y1="${bottomGuide}" x2="${width - padRight}" y2="${bottomGuide}"></line>
-        <text x="${padLeft}" y="24" class="profit-total">Total ${fmt(total, 0)}</text>
         ${top.map((item, index) => {
           const value = normalizedField(item, "unrealized_profit");
           const localValue = Number(item.holding.unrealized_profit || 0);
           const currency = item.holding.currency || state.baseCurrency;
           const localTooltip = currency !== state.baseCurrency ? `\nLocal P/L: ${money(localValue, currency, 0)}` : "";
           const tooltip = `${item.holding.symbol}\nUnrealized P/L: ${money(value, state.baseCurrency, 0)}${localTooltip}`;
-          const barHeight = Math.max(3, Math.abs(value) / maxAbs * 56);
+          const barHeight = Math.max(3, Math.abs(value) / maxAbs * 48);
           const x = padLeft + index * barSlot + (barSlot - barWidth) / 2;
           const y = value >= 0 ? baseline - barHeight : baseline;
           const color = value >= 0 ? gainColor : lossColor;
-          const labelY = value >= 0 ? Math.max(topGuide - 8, y - 8) : Math.min(bottomGuide + 18, y + barHeight + 16);
+          const labelY = value >= 0 ? Math.max(topGuide - 6, y - 7) : Math.min(baseline + 34, y + barHeight + 13);
           return `
           <g>
             <title>${esc(tooltip)}</title>
@@ -2677,7 +2922,7 @@ function renderProfitBars(items) {
         }).join("")}
         ${top.map((item, index) => {
           const x = padLeft + index * barSlot + barSlot / 2 + 10;
-          const y = height - 32;
+          const y = baseline + 52;
           return `<text class="tilted-axis-label" x="${x.toFixed(1)}" y="${y}" transform="rotate(-25 ${x.toFixed(1)} ${y})">${esc(item.holding.symbol)}</text>`;
         }).join("")}
       </svg>
@@ -2737,7 +2982,7 @@ function equityCompKind(tx) {
   const type = txInstrumentType(tx);
   const asset = String(tx.asset_class || "").toUpperCase().trim();
   if (type === "RSU" || asset === "RSU") return "rsu";
-  if (["OPTION", "STOCK_OPTION"].includes(type) || ["OPTION", "STOCK_OPTION"].includes(asset)) return "option";
+  if (["EMPLOYEE_STOCK_OPTION", "STOCK_OPTION"].includes(type) || ["EMPLOYEE_STOCK_OPTION", "STOCK_OPTION"].includes(asset)) return "option";
   return "";
 }
 
@@ -2784,8 +3029,15 @@ function publicStockMarket(stockMarket) {
 
 function equityCompQuoteSymbols() {
   return [...new Set((state.localTransactions || [])
-    .filter((tx) => equityCompKind(tx) && publicStockMarket(tx.stock_market))
-    .map((tx) => equityCompKind(tx) === "option" ? (tx.underlying_symbol || tx.symbol) : tx.symbol)
+    .filter((tx) => {
+      if (!equityCompKind(tx)) return false;
+      const market = txInstrumentType(tx) === "EMPLOYEE_STOCK_OPTION" ? tx.public_market : tx.stock_market;
+      return publicStockMarket(market);
+    })
+    .map((tx) => {
+      if (txInstrumentType(tx) === "EMPLOYEE_STOCK_OPTION") return tx.public_symbol;
+      return equityCompKind(tx) === "option" ? (tx.underlying_symbol || tx.symbol) : tx.symbol;
+    })
     .map(cleanSecuritySymbol)
     .filter(Boolean))];
 }
@@ -2817,25 +3069,42 @@ function equityCompLots(kind, items) {
       const quantity = transactionSignedQuantity(tx);
       const key = txMarketKey(tx.symbol, tx.stock_market);
       if (quantity > 0) {
-        const priceSymbol = kind === "option" ? (tx.underlying_symbol || tx.symbol) : tx.symbol;
-        const marketPrice = prices.get(txMarketKey(priceSymbol, tx.stock_market)) || prices.get(txMarketKey(priceSymbol)) || prices.get(key);
+        const employeeOption = txInstrumentType(tx) === "EMPLOYEE_STOCK_OPTION";
+        const priceSymbol = employeeOption
+          ? (tx.public_symbol || "")
+          : kind === "option" ? (tx.underlying_symbol || tx.symbol) : tx.symbol;
+        const priceMarket = employeeOption ? tx.public_market : tx.stock_market;
+        const marketPrice = prices.get(txMarketKey(priceSymbol, priceMarket))
+          || prices.get(txMarketKey(priceSymbol))
+          || prices.get(key)
+          || (employeeOption && String(tx.listing_status || "PRIVATE") !== "PUBLIC" && Number(tx.manual_share_value || 0) > 0
+            ? { price: Number(tx.manual_share_value), currency: tx.currency || state.baseCurrency, source: "private company valuation" }
+            : null);
         const txPrice = Number(tx.price || tx.price_input || 0);
-        lots.push({
-          key,
-          symbol: tx.symbol || "Unknown",
-          underlyingSymbol: tx.underlying_symbol || tx.symbol || "",
-          stockMarket: tx.stock_market || "",
-          quantity,
-          vestDate: parseDateInput(tx.vest_date),
-          strikePrice: Number(tx.strike_price || 0),
-          optionType: tx.option_type || "",
-          publicMarket: publicStockMarket(tx.stock_market),
-          currentPrice: Number(marketPrice?.price || 0),
-          hasMarketPrice: Number(marketPrice?.price || 0) > 0,
-          priceSource: marketPrice?.source || "",
-          currency: marketPrice?.currency || tx.currency || state.baseCurrency,
-          unitPrice: kind === "rsu" ? Number(marketPrice?.price || txPrice || 0) : Number(marketPrice?.price || 0),
-        });
+        const scheduleTranches = Array.isArray(tx.vesting_schedule?.tranches) ? tx.vesting_schedule.tranches : [];
+        const tranches = scheduleTranches.length
+          ? scheduleTranches.map((tranche) => ({ quantity: Number(tranche.quantity || 0), vestDate: parseDateInput(tranche.vest_date), sequence: tranche.sequence }))
+          : [{ quantity, vestDate: parseDateInput(tx.vest_date), sequence: 1 }];
+        tranches.filter((tranche) => tranche.quantity > 0).forEach((tranche) => lots.push({
+            key,
+            transactionId: tx.id || "",
+            trancheSequence: tranche.sequence,
+            symbol: employeeOption ? (tx.company_name || tx.security_name || "Employee option") : (tx.symbol || "Unknown"),
+            internalSymbol: tx.symbol || "",
+            underlyingSymbol: employeeOption ? (tx.public_symbol || "") : (tx.underlying_symbol || tx.symbol || ""),
+            stockMarket: employeeOption ? (tx.public_market || "PRIVATE") : (tx.stock_market || ""),
+            listingStatus: employeeOption ? (tx.listing_status || "PRIVATE") : "PUBLIC",
+            quantity: tranche.quantity,
+            vestDate: tranche.vestDate,
+            strikePrice: Number(tx.strike_price || 0),
+            optionType: employeeOption ? "" : (tx.option_type || ""),
+            publicMarket: publicStockMarket(priceMarket),
+            currentPrice: Number(marketPrice?.price || 0),
+            hasMarketPrice: Number(marketPrice?.price || 0) > 0,
+            priceSource: marketPrice?.source || "",
+            currency: marketPrice?.currency || tx.currency || state.baseCurrency,
+            unitPrice: kind === "rsu" ? Number(marketPrice?.price || txPrice || 0) : Number(marketPrice?.price || 0),
+          }));
         return;
       }
       let remaining = Math.abs(quantity);
@@ -2862,7 +3131,7 @@ function lotBaseValue(lot) {
 }
 
 function optionLotValue(lot) {
-  if (!lot.publicMarket || !lot.hasMarketPrice) return 0;
+  if (!lot.hasMarketPrice) return 0;
   return normalizedAmount(Math.max(Number(lot.currentPrice || 0) - Number(lot.strikePrice || 0), 0) * Number(lot.quantity || 0), lot.currency || state.baseCurrency);
 }
 
@@ -2872,7 +3141,7 @@ function equityCompLotValue(kind, lot) {
 
 function equityCompLotLocalValue(kind, lot) {
   if (kind === "option") {
-    if (!lot.publicMarket || !lot.hasMarketPrice) return 0;
+    if (!lot.hasMarketPrice) return 0;
     return Math.max(Number(lot.currentPrice || 0) - Number(lot.strikePrice || 0), 0) * Number(lot.quantity || 0);
   }
   return Number(lot.quantity || 0) * Number(lot.unitPrice || 0);
@@ -2894,7 +3163,7 @@ function equityCompValueHtml(kind, lots) {
   const quantity = sum(lots.map((lot) => lot.quantity));
   if (!quantity) return '<span class="muted-inline">∅</span>';
   if (kind === "rsu" && lots.every((lot) => Number(lot.unitPrice || 0) <= 0)) return '<span class="muted-inline">Missing market price</span>';
-  if (kind === "option" && lots.every((lot) => !lot.publicMarket)) return '<span class="muted-inline">Private company</span>';
+  if (kind === "option" && lots.every((lot) => !lot.publicMarket && !lot.hasMarketPrice)) return '<span class="muted-inline">Private company · add share valuation</span>';
   if (kind === "option" && lots.every((lot) => !lot.hasMarketPrice)) return '<span class="muted-inline">Missing stock price</span>';
   const baseValue = sum(lots.map((lot) => equityCompLotValue(kind, lot)));
   const localText = localCurrencyValueText(kind, lots);
@@ -2945,10 +3214,11 @@ function equityCompPriceText(group) {
     const price = Number(group.unitPrice || group.currentPrice || 0);
     return price > 0 ? money(price, group.currency || state.baseCurrency, 2) : "Missing market price";
   }
-  if (!group.publicMarket) return "Private company";
+  if (!group.publicMarket && !group.hasMarketPrice) return "Private company · valuation missing";
   const current = Number(group.currentPrice || 0);
   const currentText = current > 0 ? money(current, group.currency || state.baseCurrency, 2) : "Missing stock price";
-  return `${currentText} / ${money(group.strikePrice || 0, group.currency || state.baseCurrency, 2)}`;
+  const source = !group.publicMarket && group.priceSource ? ` (${group.priceSource})` : "";
+  return `${currentText}${source} / ${money(group.strikePrice || 0, group.currency || state.baseCurrency, 2)}`;
 }
 
 function renderEquityCompTable(rsuLots, optionLots) {
@@ -2977,7 +3247,7 @@ function renderEquityCompTable(rsuLots, optionLots) {
             const unitLabel = group.kind === "rsu" ? "RSU" : "options";
             const unvestedTitle = vestingDetailsTitle(group.unvested, unitLabel);
             const instrumentDetail = group.kind === "option"
-              ? `${group.stockMarket || "No market"}${group.underlyingSymbol ? ` · Underlying ${group.underlyingSymbol}` : ""}${group.optionType ? ` · ${group.optionType}` : ""}`
+              ? `${group.publicMarket ? (group.stockMarket || "Public") : "Private company"}${group.underlyingSymbol ? ` · Linked ${group.underlyingSymbol}` : ""}${group.optionType ? ` · ${group.optionType}` : ""}`
               : (group.stockMarket || "No market");
             return `
               <tr>
@@ -3008,7 +3278,7 @@ function renderEquityCompDashboard(items) {
       <div class="chart-header">
         <div>
           <div class="chart-title">RSU and stock options</div>
-          <span class="chart-subtitle">RSU value uses the app market price. Public options use current stock price minus strike.</span>
+          <span class="chart-subtitle">RSU value uses the app market price. Options use public quotes or the latest private share valuation, minus strike.</span>
         </div>
         <div class="chart-legend">
           ${rsuLots.length ? `<span><i style="background:#2ee59d"></i>${fmt(rsuQuantity, 2)} RSU shares</span>` : ""}
@@ -3039,6 +3309,7 @@ function renderAnalytics(items) {
     long_term: () => renderLongTermDashboard(),
     market_cost: () => renderMarketCostBars(items),
     asset_mix: () => renderDonut(assetGroups, "Asset mix", `${Math.round((assetGroups[0]?.value || 0) / total * 100)}%`, total),
+    industry_split: () => renderIndustrySplit(items),
     top_holdings: () => renderMiniBars(items),
     coverage: () => renderCompleteness(items),
     currency: () => renderCurrencyAllocation(currencyGroups, total),
@@ -3057,9 +3328,10 @@ function renderAnalytics(items) {
 }
 
 function renderPortfolio(items) {
-  renderSummary(items);
-  renderAnalytics(items);
-  renderRows(items);
+  const rows = portfolioItems(items);
+  renderSummary(rows);
+  renderAnalytics(rows);
+  renderRows(rows);
 }
 
 function rerenderPortfolioIfLoaded() {
@@ -3375,11 +3647,11 @@ function isImportedAccount(account) {
 
 function refreshLocalAccountSelects() {
   const accountOptions = '<option value="">All local accounts</option>' + state.localAccounts.map(accountOptionHtml).join("");
-  ["securityAccount", "reportAccount"].forEach((id) => {
+  ["securityAccount", "reportAccount", "employeeExerciseAccount"].forEach((id) => {
     const select = $(id);
     if (!select) return;
     const current = select.value;
-    select.innerHTML = id === "securityAccount" ? state.localAccounts.map(accountOptionHtml).join("") : accountOptions;
+    select.innerHTML = ["securityAccount", "employeeExerciseAccount"].includes(id) ? state.localAccounts.map(accountOptionHtml).join("") : accountOptions;
     if ([...select.options].some((option) => option.value === current)) select.value = current;
   });
   const historySelect = $("historyAccount");
@@ -3551,12 +3823,16 @@ function cleanSecuritySymbol(value) {
 
 function instrumentLabel(item) {
   const name = item.name && item.name !== item.symbol ? ` · ${item.name}` : "";
-  const derivative = item.instrument_type === "OPTION"
+  const employeeOption = item.instrument_type === "EMPLOYEE_STOCK_OPTION";
+  const displayIdentity = employeeOption
+    ? `${item.company_name || item.name || "Employee option"}${item.grant_id ? ` · ${item.grant_id}` : ""}`
+    : item.symbol;
+  const derivative = ["OPTION", "EMPLOYEE_STOCK_OPTION", "STOCK_OPTION"].includes(item.instrument_type)
     ? ` · ${item.option_type} ${fmt(item.strike_price, 4)} · exp ${formatDate(item.expiration_date)}`
     : item.instrument_type === "FUTURE"
       ? ` · exp ${formatDate(item.expiration_date)}`
       : "";
-  return `${item.symbol}${name} · ${item.instrument_type}${derivative}`;
+  return `${displayIdentity}${name} · ${optionLabel(item.instrument_type)}${derivative}`;
 }
 
 function instrumentById(id) {
@@ -3568,22 +3844,126 @@ function selectedTransactionInstrumentType() {
   return String(instrument?.instrument_type || valueOf("securityAssetClass") || "").toUpperCase();
 }
 
+function addCalendarMonths(isoDate, months) {
+  const iso = parseDateInput(isoDate);
+  if (!iso || !Number.isInteger(Number(months))) return "";
+  const [year, month, day] = iso.split("-").map(Number);
+  const monthIndex = month - 1 + Number(months);
+  const targetYear = year + Math.floor(monthIndex / 12);
+  const targetMonthIndex = ((monthIndex % 12) + 12) % 12;
+  const lastDay = new Date(Date.UTC(targetYear, targetMonthIndex + 1, 0)).getUTCDate();
+  const targetDay = Math.min(day, lastDay);
+  return `${targetYear}-${String(targetMonthIndex + 1).padStart(2, "0")}-${String(targetDay).padStart(2, "0")}`;
+}
+
+function vestingScheduleFromForm(totalQuantity = Number(valueOf("securityQuantity") || 0)) {
+  return {
+    enabled: true,
+    mode: valueOf("securityVestingMode") || "PERCENT",
+    vesting_start_date: dateValue("securityVestingStartDate"),
+    duration_months: Number(valueOf("securityVestingDuration") || 0),
+    cliff_months: Number(valueOf("securityVestingCliffMonths") || 0),
+    cliff_value: Number(valueOf("securityVestingCliffValue") || 0),
+    interval_months: Number(valueOf("securityVestingInterval") || 0),
+    installment_value: Number(valueOf("securityVestingInstallmentValue") || 0),
+    total_quantity: Number(totalQuantity || 0),
+  };
+}
+
+function buildVestingPreview(config) {
+  const total = Number(config.total_quantity || 0);
+  const duration = Number(config.duration_months);
+  const cliffMonths = Number(config.cliff_months);
+  const interval = Number(config.interval_months);
+  const cliffValue = Number(config.cliff_value);
+  const installmentValue = Number(config.installment_value);
+  if (!parseDateInput(config.vesting_start_date)) throw new Error("Enter the Vesting Start Date");
+  if (!(total > 0)) throw new Error("Enter the total number of options");
+  if (!Number.isInteger(duration) || duration < 1 || duration > 600) throw new Error("Total period must be 1–600 months");
+  if (!Number.isInteger(cliffMonths) || cliffMonths < 0 || cliffMonths > duration) throw new Error("Cliff must be within the total period");
+  if (!Number.isInteger(interval) || interval < 1 || interval > duration) throw new Error("Recurring interval must be within the total period");
+  if (!(cliffValue > 0)) throw new Error("Cliff amount must be greater than zero");
+  if (config.mode === "PERCENT" && cliffValue > 100) throw new Error("Cliff percentage cannot exceed 100%");
+  const toQuantity = (value) => config.mode === "PERCENT" ? total * value / 100 : value;
+  const epsilon = Math.max(1e-8, Math.abs(total) * 1e-10);
+  let vested = 0;
+  const tranches = [];
+  const addTranche = (monthOffset, requested) => {
+    const quantity = Math.min(requested, total - vested);
+    if (quantity <= epsilon) return;
+    vested = Math.min(total, vested + quantity);
+    tranches.push({
+      sequence: tranches.length + 1,
+      vest_date: addCalendarMonths(config.vesting_start_date, monthOffset),
+      quantity: Number(quantity.toFixed(8)),
+      cumulative_quantity: Number(vested.toFixed(8)),
+      cumulative_percent: Number((vested / total * 100).toFixed(6)),
+    });
+  };
+  addTranche(cliffMonths, toQuantity(cliffValue));
+  if (vested < total - epsilon) {
+    if (!(installmentValue > 0)) throw new Error("Recurring amount must be greater than zero");
+    if (config.mode === "PERCENT" && installmentValue > 100) throw new Error("Recurring percentage cannot exceed 100%");
+    for (let offset = cliffMonths + interval; vested < total - epsilon && offset <= duration; offset += interval) {
+      addTranche(offset, toQuantity(installmentValue));
+    }
+  }
+  if (vested < total - epsilon) {
+    throw new Error(`${fmt(total - vested, 4)} options remain unvested by month ${duration}`);
+  }
+  return tranches;
+}
+
+function renderVestingSchedulePreview() {
+  const preview = $("vestingSchedulePreview");
+  if (!preview) return;
+  const isSchedule = valueOf("securityVestingStyle") === "SCHEDULE";
+  const isEmployeeGrantAdd = selectedTransactionInstrumentType() === "EMPLOYEE_STOCK_OPTION" && valueOf("securityAction") === "ADD";
+  $("vestingScheduleFields").hidden = !isSchedule;
+  $("securityVestDate").hidden = !isEmployeeGrantAdd || isSchedule;
+  const mode = valueOf("securityVestingMode") || "PERCENT";
+  $("securityVestingCliffValueLabel").textContent = mode === "PERCENT" ? "Cliff Amount (%)" : "Cliff Amount (options)";
+  $("securityVestingInstallmentValueLabel").textContent = mode === "PERCENT" ? "Each Installment (%)" : "Each Installment (options)";
+  if (!isSchedule) {
+    preview.classList.remove("error");
+    preview.innerHTML = '<span>Choose the single vest date above.</span>';
+    return;
+  }
+  try {
+    const tranches = buildVestingPreview(vestingScheduleFromForm());
+    const vested = tranches.filter((tranche) => tranche.vest_date <= todayString()).reduce((total, tranche) => total + tranche.quantity, 0);
+    preview.classList.remove("error");
+    preview.innerHTML = `
+      <div class="vesting-preview-summary"><b>${tranches.length} vesting dates</b><span>${fmt(vested, 4)} vested as of ${esc(formatDate(todayString()))}</span></div>
+      <div class="vesting-preview-tranches">
+        ${tranches.map((tranche) => `<span class="vesting-tranche-chip ${tranche.vest_date <= todayString() ? "vested" : "future"}" title="Cumulative ${fmt(tranche.cumulative_percent, 4)}%">${esc(formatDate(tranche.vest_date))} · ${fmt(tranche.quantity, 4)}</span>`).join("")}
+      </div>`;
+  } catch (error) {
+    preview.classList.add("error");
+    preview.innerHTML = `<span>${esc(error.message)}</span>`;
+  }
+}
+
 function toggleTransactionCompFields() {
   const type = selectedTransactionInstrumentType();
   const isRsu = type === "RSU";
-  const isOptionGrant = type === "OPTION" || type === "STOCK_OPTION";
+  const isEmployeeOption = type === "EMPLOYEE_STOCK_OPTION";
+  const isEmployeeGrantAdd = isEmployeeOption && valueOf("securityAction") === "ADD";
+  const isOptionGrant = type === "STOCK_OPTION" || isEmployeeOption;
   const isEquityComp = isRsu || isOptionGrant;
   document.querySelectorAll("[data-equity-comp-field]").forEach((node) => { node.hidden = !isEquityComp; });
   document.querySelectorAll("[data-option-grant-field]").forEach((node) => { node.hidden = !isOptionGrant; });
+  document.querySelectorAll("[data-employee-option-transaction-field]").forEach((node) => { node.hidden = !isEmployeeGrantAdd; });
   $("securityPrice").hidden = isEquityComp;
   $("securityStrikePrice").required = isOptionGrant;
   $("securityPrice").placeholder = "Price";
   $("securityPurchasePrice").placeholder = isOptionGrant ? "Exercise/purchase price" : "Purchase price (optional)";
-  if (isRsu && valueOf("securityAction") === "BUY") $("securityAction").value = "ADD";
+  if (isEquityComp && valueOf("securityAction") === "BUY") $("securityAction").value = "ADD";
   if (isEquityComp) $("securityPrice").value = "";
   if (!isEquityComp) {
     ["securityVestDate", "securityPurchasePrice", "securityStrikePrice"].forEach((id) => { $(id).value = ""; });
   }
+  if (isEmployeeOption) renderVestingSchedulePreview();
 }
 
 function refreshManualSecuritySelects() {
@@ -3612,6 +3992,12 @@ function applyInstrumentToForm(item, prefix) {
   if (prefix === "security") {
     $("securityAllowManual").checked = true;
     if (item.strike_price) $("securityStrikePrice").value = item.strike_price;
+    if (item.instrument_type === "EMPLOYEE_STOCK_OPTION") {
+      $("securityAction").value = "ADD";
+      setDateField("securityDate", item.grant_date || todayString());
+      setDateField("securityVestingStartDate", item.vesting_start_date || item.grant_date || "");
+      $("securityVestingStyle").value = "SCHEDULE";
+    }
     toggleTransactionCompFields();
   }
 }
@@ -3625,9 +4011,16 @@ function setSecurityEditMode(tx = null) {
 }
 
 function clearSecurityForm() {
-  ["securitySymbol", "securityMarket", "securityQuantity", "securityPrice", "securityVestDate", "securityPurchasePrice", "securityStrikePrice", "securityComments"].forEach((id) => { $(id).value = ""; });
+  ["securitySymbol", "securityMarket", "securityQuantity", "securityPrice", "securityVestDate", "securityPurchasePrice", "securityStrikePrice", "securityVestingStartDate", "securityComments"].forEach((id) => { $(id).value = ""; });
   $("securityAllowManual").checked = false;
   $("securityKnownInstrument").value = "";
+  $("securityVestingStyle").value = "SCHEDULE";
+  $("securityVestingMode").value = "PERCENT";
+  $("securityVestingDuration").value = "48";
+  $("securityVestingCliffMonths").value = "12";
+  $("securityVestingCliffValue").value = "25";
+  $("securityVestingInterval").value = "3";
+  $("securityVestingInstallmentValue").value = "6.25";
   setSecurityEditMode(null);
   toggleTransactionCompFields();
 }
@@ -3636,7 +4029,7 @@ function editSecurityTransaction(transactionId) {
   const tx = state.localTransactions.find((item) => item.id === transactionId);
   if (!tx) return;
   $("securityAccount").value = tx.account_db_id || "";
-  $("securityKnownInstrument").value = state.manualSecurities.find((item) => item.symbol === tx.symbol && item.stock_market === tx.stock_market)?.id || "";
+  $("securityKnownInstrument").value = tx.security_id || state.manualSecurities.find((item) => item.symbol === tx.symbol && item.stock_market === tx.stock_market)?.id || "";
   $("securityAction").value = tx.action || "BUY";
   $("securitySymbol").value = tx.symbol || "";
   $("securityMarket").value = tx.stock_market || "";
@@ -3645,6 +4038,17 @@ function editSecurityTransaction(transactionId) {
   $("securityPrice").value = tx.price_input || "";
   setDateField("securityDate", tx.trade_date || "");
   setDateField("securityVestDate", tx.vest_date || "");
+  const schedule = tx.vesting_schedule || {};
+  $("securityVestingStyle").value = schedule.enabled ? "SCHEDULE" : "SINGLE";
+  setDateField("securityVestingStartDate", schedule.vesting_start_date || tx.vesting_start_date || tx.grant_date || "");
+  if (schedule.enabled) {
+    $("securityVestingMode").value = schedule.mode || "PERCENT";
+    $("securityVestingDuration").value = schedule.duration_months ?? 48;
+    $("securityVestingCliffMonths").value = schedule.cliff_months ?? 12;
+    $("securityVestingCliffValue").value = schedule.cliff_value ?? 25;
+    $("securityVestingInterval").value = schedule.interval_months ?? 3;
+    $("securityVestingInstallmentValue").value = schedule.installment_value ?? 6.25;
+  }
   $("securityPurchasePrice").value = tx.purchase_price || "";
   $("securityStrikePrice").value = tx.strike_price || "";
   $("securityComments").value = tx.comments || "";
@@ -3708,6 +4112,212 @@ function securityMatches(item, symbol, market) {
 function transactionMatchesSecurity(tx, detail) {
   return cleanSecuritySymbol(tx.symbol) === cleanSecuritySymbol(detail.symbol)
     && String(tx.stock_market || "").toUpperCase() === String(detail.market_key || detail.stock_market || "").toUpperCase();
+}
+
+function transactionMatchesPosition(tx, detail) {
+  return transactionMatchesSecurity(tx, { symbol: detail.symbol, market_key: detail.market })
+    && (!detail.accountId || String(tx.account_db_id || "") === String(detail.accountId));
+}
+
+function positionTransactionDisplayAction(tx) {
+  const importedAction = String(tx?.comments || "").match(/^Imported source (BUY|SELL|SHORT|ADD|REMOVE)\b/i)?.[1];
+  return String(importedAction || tx?.action || "").toUpperCase();
+}
+
+function positionTransactionEditingRow() {
+  return state.localTransactions.find((tx) => tx.id === state.editingPositionTransactionId) || null;
+}
+
+function positionTransactionAvailableQuantity(action = valueOf("positionTransactionAction")) {
+  const detail = state.positionTransactionsDetail;
+  if (!detail) return 0;
+  if (positionTransactionEditingRow()) return Infinity;
+  let current = Number(detail.quantity || 0);
+  if (action === "SELL") return Math.max(0, current);
+  if (action === "BUY" && current < 0) return Math.abs(current);
+  return Infinity;
+}
+
+function syncPositionTransactionLimit() {
+  const input = $("positionTransactionQuantity");
+  const limit = $("positionTransactionLimit");
+  const detail = state.positionTransactionsDetail;
+  if (!input || !limit || !detail) return;
+  const action = valueOf("positionTransactionAction");
+  const current = Number(detail.quantity || 0);
+  const available = positionTransactionAvailableQuantity(action);
+  input.removeAttribute("max");
+  if (Number.isFinite(available)) input.max = String(available);
+  if (state.editingPositionTransactionId) {
+    limit.textContent = "The full transaction history will be checked";
+  } else if (action === "SELL") {
+    limit.textContent = available > 0 ? `Available to sell: ${fmt(available, 4)} units` : "No long units available to sell";
+  } else if (action === "BUY" && current < 0) {
+    limit.textContent = `Short cover limit: ${fmt(available, 4)} units`;
+  } else if (action === "SHORT" && current > 0 && !state.editingPositionTransactionId) {
+    limit.textContent = "Sell the long position before opening a short";
+  } else {
+    limit.textContent = current < 0 ? `${fmt(Math.abs(current), 4)} units short` : `${fmt(current, 4)} units held`;
+  }
+  if ($("positionTransactionAction").disabled) limit.textContent = `${limit.textContent} · Imported action stays unchanged`;
+}
+
+function clearPositionTransactionForm(message = "") {
+  state.editingPositionTransactionId = "";
+  $("positionTransactionFormTitle").textContent = "Add transaction";
+  $("positionTransactionAction").disabled = false;
+  $("positionTransactionAction").value = "BUY";
+  $("positionTransactionQuantity").value = "";
+  $("positionTransactionPrice").value = "";
+  $("positionTransactionComments").value = "";
+  setDateField("positionTransactionDate", todayString());
+  $("savePositionTransaction").textContent = "Save";
+  $("cancelPositionTransactionEdit").hidden = true;
+  $("positionTransactionStatus").textContent = message;
+  syncPositionTransactionLimit();
+}
+
+function editPositionTransaction(transactionId) {
+  const tx = state.localTransactions.find((item) => item.id === transactionId);
+  if (!tx) return;
+  state.editingPositionTransactionId = tx.id;
+  const actualAction = String(tx.action || "").toUpperCase();
+  const displayAction = positionTransactionDisplayAction(tx);
+  $("positionTransactionFormTitle").textContent = `Edit ${displayAction.toLowerCase()} transaction`;
+  $("positionTransactionAction").value = ["BUY", "SELL", "SHORT"].includes(displayAction) ? displayAction : "BUY";
+  $("positionTransactionAction").disabled = !["BUY", "SELL", "SHORT"].includes(actualAction);
+  $("positionTransactionQuantity").value = tx.quantity || "";
+  $("positionTransactionPrice").value = tx.price_input ?? tx.price ?? "";
+  setDateField("positionTransactionDate", tx.trade_date || "");
+  $("positionTransactionComments").value = tx.comments || "";
+  $("savePositionTransaction").textContent = "Update";
+  $("cancelPositionTransactionEdit").hidden = false;
+  $("positionTransactionStatus").textContent = `Editing ${displayAction} from ${formatDate(tx.trade_date)}`;
+  syncPositionTransactionLimit();
+  $("positionTransactionQuantity").focus();
+}
+
+function validatePositionTransactionForm() {
+  const action = valueOf("positionTransactionAction");
+  const quantity = Number(valueOf("positionTransactionQuantity"));
+  const price = Number(valueOf("positionTransactionPrice") || 0);
+  const tradeDate = dateValue("positionTransactionDate");
+  if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("Units must be greater than zero");
+  if (!Number.isFinite(price) || price < 0) throw new Error("Unit price cannot be negative");
+  if (!tradeDate) throw new Error(`Date must use ${DATE_PLACEHOLDER}`);
+  const available = positionTransactionAvailableQuantity(action);
+  if (action === "SELL" && available <= 0) throw new Error("There are no long units available to sell");
+  if (Number.isFinite(available) && quantity > available + 1e-9) {
+    throw new Error(action === "SELL" ? `You can sell at most ${fmt(available, 4)} units` : `You can buy at most ${fmt(available, 4)} units to close this short`);
+  }
+  const current = Number(state.positionTransactionsDetail?.quantity || 0);
+  if (action === "SHORT" && current > 0 && !state.editingPositionTransactionId) {
+    throw new Error("Sell the long position before opening a short");
+  }
+  return { action, quantity, price, tradeDate };
+}
+
+function refreshPositionTransactionDetail(positionQuantity) {
+  const detail = state.positionTransactionsDetail;
+  if (!detail) return;
+  const refreshed = state.items.find((item) => {
+    const holding = item.holding || {};
+    return securityMatches(item, detail.symbol, detail.market)
+      && (!detail.accountId || String(holding.account_id || "") === String(detail.accountId));
+  });
+  const holding = refreshed?.holding || {};
+  detail.quantity = Number(holding.quantity ?? positionQuantity ?? detail.quantity ?? 0);
+  detail.average = Math.abs(Number(holding.quantity || 0)) > 0
+    ? Math.abs(Number(holding.cost_basis || 0) / Number(holding.quantity || 0))
+    : 0;
+}
+
+async function savePositionTransaction() {
+  const detail = state.positionTransactionsDetail;
+  if (!detail) return;
+  const values = validatePositionTransactionForm();
+  const editing = positionTransactionEditingRow();
+  const action = editing && !["BUY", "SELL", "SHORT"].includes(String(editing.action || "").toUpperCase())
+    ? editing.action
+    : values.action;
+  const payload = {
+    account_db_id: detail.accountId,
+    action,
+    symbol: detail.symbol,
+    stock_market: detail.market,
+    asset_class: detail.assetClass || "EQUITY",
+    quantity: values.quantity,
+    price_input: values.price,
+    trade_date: values.tradeDate,
+    currency: detail.currency,
+    location: detail.location || "",
+    allow_manual: true,
+    comments: valueOf("positionTransactionComments"),
+  };
+  $("positionTransactionStatus").textContent = editing ? "Updating transaction…" : "Saving transaction…";
+  const path = editing ? `/api/local/securities/${encodeURIComponent(editing.id)}` : "/api/local/securities";
+  const result = await api(path, { method: editing ? "PUT" : "POST", body: JSON.stringify(payload) });
+  await loadPortfolio({ refresh: true });
+  if (result.position_closed) {
+    closeModal($("positionTransactionsModal"));
+    state.positionTransactionsDetail = null;
+    clearPositionTransactionForm();
+    $("positionClosedTitle").textContent = `${detail.symbol} position closed`;
+    $("positionClosedMessage").textContent = `${detail.symbol} reached 0 units and was removed from the portfolio.`;
+    openModal("positionClosedModal");
+    return;
+  }
+  refreshPositionTransactionDetail(result.position_quantity);
+  clearPositionTransactionForm(editing ? "Transaction updated" : "Transaction saved");
+  renderPositionTransactionHistory();
+}
+
+function renderPositionTransactionHistory() {
+  const detail = state.positionTransactionsDetail;
+  if (!detail) return;
+  const positionActions = new Set(["BUY", "SELL", "ADD", "REMOVE", "SHORT"]);
+  const transactions = state.localTransactions
+    .filter((tx) => positionActions.has(String(tx.action || "").toUpperCase()))
+    .filter((tx) => transactionMatchesPosition(tx, detail))
+    .sort((a, b) => String(b.trade_date || "").localeCompare(String(a.trade_date || "")));
+  $("positionTransactionsTitle").textContent = `${detail.symbol} buy / sell history`;
+  $("positionTransactionsSubtitle").textContent = [detail.account, `${fmt(detail.quantity, 3)} units`, detail.average ? `Avg buy ${money(detail.average, detail.currency, 2)}` : ""].filter(Boolean).join(" · ");
+  $("positionTransactionsRows").innerHTML = transactions.length ? transactions.map((tx) => {
+    const displayAction = positionTransactionDisplayAction(tx);
+    const sourceLabel = String(tx.source || "").toLowerCase() === "ghostfolio_import" ? "Imported" : cleanSourceLabel(tx.source || "Manual");
+    const amount = Math.abs(Number(tx.quantity || 0) * Number(tx.price || 0));
+    const actionClass = ["BUY", "ADD"].includes(displayAction) ? "positive" : "negative";
+    return `<tr>
+      <td>${esc(formatDate(tx.trade_date))}</td>
+      <td><span class="transaction-action ${actionClass}">${esc(displayAction)}</span></td>
+      <td>${fmt(tx.quantity, 4)}</td>
+      <td>${money(tx.price, tx.currency || detail.currency, 4)}</td>
+      <td>${money(amount, tx.currency || detail.currency, 2)}</td>
+      <td>${esc(sourceLabel)}</td>
+      <td>${esc(cleanSourceLabel(tx.comments || "")) || "—"}</td>
+      <td><button class="secondary compact-button" type="button" data-edit-position-transaction="${esc(tx.id)}">Edit</button></td>
+    </tr>`;
+  }).join("") : '<tr><td colspan="8" class="empty-cell">No buy or sell transactions found for this position</td></tr>';
+}
+
+async function openPositionTransactionHistory(dataset) {
+  state.positionTransactionsDetail = {
+    symbol: cleanSecuritySymbol(dataset.positionHistorySymbol),
+    market: String(dataset.positionHistoryMarket || "MANUAL").toUpperCase(),
+    accountId: dataset.positionHistoryAccountId || "",
+    account: cleanSourceLabel(dataset.positionHistoryAccount || ""),
+    currency: dataset.positionHistoryCurrency || state.baseCurrency,
+    quantity: Number(dataset.positionHistoryQuantity || 0),
+    average: Number(dataset.positionHistoryAverage || 0),
+    assetClass: dataset.positionHistoryAsset || "EQUITY",
+    location: dataset.positionHistoryLocation || "",
+  };
+  openModal("positionTransactionsModal");
+  clearPositionTransactionForm();
+  $("positionTransactionsRows").innerHTML = '<tr><td colspan="8" class="empty-cell">Loading transaction history…</td></tr>';
+  const data = await api("/api/local/securities");
+  state.localTransactions = data.items || [];
+  renderPositionTransactionHistory();
 }
 
 function priceMatchesSecurity(price, detail) {
@@ -3775,6 +4385,7 @@ function renderSecurityDetail() {
     ["Quantity", fmt(h.quantity || 0, 4)],
     ["Market value", money(h.market_value || 0, h.currency || detail.currency)],
     ["Cost basis", money(h.cost_basis || 0, h.currency || detail.currency)],
+    ["Average buy price", Math.abs(Number(h.quantity || 0)) ? money(Math.abs(Number(h.cost_basis || 0) / Number(h.quantity || 0)), h.currency || detail.currency, 2) : "Not available"],
     ["Holding profit (open)", signedMoney(h.unrealized_profit || 0, h.currency || detail.currency), "Profit/loss on the quantity still held. It changes with the current price."],
     ["Closed profit", signedMoney(h.realized_profit || 0, h.currency || detail.currency), "Profit/loss already recorded by sell, cover, dividend, interest, or fee transactions."],
     ["Account", cleanSourceLabel(h.account || "")],
@@ -4071,11 +4682,31 @@ async function saveSecurityDetailPrice() {
 
 function toggleManualInstrumentFields() {
   const type = valueOf("manualInstrumentType") || "STOCK";
-  const isOption = type === "OPTION" || type === "STOCK_OPTION";
+  const isEmployeeOption = type === "EMPLOYEE_STOCK_OPTION";
+  const isOption = type === "OPTION" || type === "STOCK_OPTION" || isEmployeeOption;
   const isDerivative = isOption || type === "FUTURE";
   document.querySelectorAll("[data-derivative-field]").forEach((node) => { node.hidden = !isDerivative; });
   document.querySelectorAll("[data-option-field]").forEach((node) => { node.hidden = !isOption; });
-  if (isOption && !valueOf("manualContractMultiplier")) $("manualContractMultiplier").value = "100";
+  document.querySelectorAll("[data-employee-option-field]").forEach((node) => { node.hidden = !isEmployeeOption; });
+  const isPrivate = isEmployeeOption && valueOf("manualIssuerStatus") !== "PUBLIC";
+  document.querySelectorAll("[data-private-issuer-field]").forEach((node) => { node.hidden = !isPrivate; });
+  $("manualSecuritySymbol").disabled = isPrivate;
+  $("manualSecurityMarket").disabled = isPrivate;
+  $("manualSecuritySymbol").placeholder = isEmployeeOption ? (isPrivate ? "Not required for a private company" : "Public symbol") : "ID or symbol";
+  $("manualSecurityMarket").placeholder = isEmployeeOption ? (isPrivate ? "Not required for a private company" : "Public stock market") : "Market";
+  $("manualUnderlyingSymbol").hidden = isEmployeeOption || !isDerivative;
+  $("manualOptionType").hidden = isEmployeeOption || !isOption;
+  $("manualContractMultiplier").hidden = isEmployeeOption || !isDerivative;
+  if (isPrivate) {
+    $("manualSecuritySymbol").value = "";
+    $("manualSecurityMarket").value = "";
+  }
+  if (isEmployeeOption) {
+    $("manualContractMultiplier").value = "1";
+    $("manualOptionType").value = "CALL";
+  } else if (isOption && !valueOf("manualContractMultiplier")) {
+    $("manualContractMultiplier").value = "100";
+  }
   if (!isDerivative) {
     ["manualUnderlyingSymbol", "manualExpirationDate", "manualStrikePrice", "manualContractMultiplier"].forEach((id) => { $(id).value = ""; });
   }
@@ -4084,25 +4715,56 @@ function toggleManualInstrumentFields() {
 async function loadManualSecurities() {
   const data = await api("/api/local/manual-securities");
   state.manualSecurities = data.items || [];
+  const companyOptions = $("employeeCompanyOptions");
+  if (companyOptions) {
+    const companies = [...new Set(state.manualSecurities
+      .filter((item) => item.instrument_type === "EMPLOYEE_STOCK_OPTION" && item.company_name)
+      .map((item) => item.company_name))].sort((a, b) => a.localeCompare(b));
+    companyOptions.innerHTML = companies.map((company) => `<option value="${esc(company)}"></option>`).join("");
+  }
   refreshManualSecuritySelects();
   const list = $("manualSecuritiesList");
   if (!list) return;
   list.innerHTML = state.manualSecurities.length ? state.manualSecurities.map((item) => `
     <div class="stack-item management-item">
-      <b>${esc(item.symbol)}</b>
-      <span>${esc(item.name || item.symbol)} · ${esc(optionLabel(item.instrument_type))} · ${esc(item.stock_market)} · ${esc(item.currency)}</span>
+      <b>${esc(item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (item.company_name || item.name) : item.symbol)}</b>
+      <div>${esc(item.name || item.symbol)} · ${esc(optionLabel(item.instrument_type))} · ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? `<span class="badge ${item.listing_status === "PUBLIC" ? "ok" : "warn"}">${esc(item.listing_status === "PUBLIC" ? `${item.public_symbol} · ${item.public_market}` : "Private Company")}</span>` : `${esc(item.stock_market)} · ${esc(item.currency)}`}</div>
       <button class="secondary compact-button" type="button" data-use-manual-security="${esc(item.id)}">Use</button>
+      ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" && item.listing_status !== "PUBLIC" ? `<button class="secondary compact-button" type="button" data-link-employee-listing="${esc(item.id)}">Link public listing</button>` : ""}
+      ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? `<button class="secondary compact-button" type="button" data-exercise-employee-option="${esc(item.id)}">Exercise</button>` : ""}
       <button class="secondary compact-button" type="button" data-delete-manual-security="${esc(item.id)}">Remove</button>
-      <div class="sub">${esc(optionLabel(item.asset_class))}${item.underlying_symbol ? ` · Underlying ${esc(item.underlying_symbol)}` : ""}${item.option_type ? ` · ${esc(item.option_type)} option` : ""}${item.expiration_date ? ` · Exp ${esc(formatDate(item.expiration_date))}` : ""}${item.strike_price ? ` · Strike ${fmt(item.strike_price, 4)}` : ""}${item.contract_multiplier ? ` · Multiplier ${fmt(item.contract_multiplier, 4)}` : ""}${item.comments ? ` · ${esc(item.comments)}` : ""}</div>
+      <div class="sub">${esc(optionLabel(item.asset_class))}${item.grant_id ? ` · Grant ID ${esc(item.grant_id)}` : ""}${item.grant_date ? ` · Grant Date ${esc(formatDate(item.grant_date))}` : ""}${item.vesting_start_date ? ` · Vesting Start ${esc(formatDate(item.vesting_start_date))}` : ""}${item.underlying_symbol ? ` · Underlying ${esc(item.underlying_symbol)}` : ""}${item.option_type && item.instrument_type !== "EMPLOYEE_STOCK_OPTION" ? ` · ${esc(item.option_type)} option` : ""}${item.expiration_date ? ` · Exp ${esc(formatDate(item.expiration_date))}` : ""}${item.strike_price ? ` · Strike ${fmt(item.strike_price, 4)}` : ""}${item.instrument_type !== "EMPLOYEE_STOCK_OPTION" && item.contract_multiplier ? ` · Multiplier ${fmt(item.contract_multiplier, 4)}` : ""}${item.manual_share_value ? ` · Valuation ${money(item.manual_share_value, item.currency, 4)} on ${esc(formatDate(item.valuation_date))}` : ""}${item.comments ? ` · ${esc(item.comments)}` : ""}</div>
     </div>
   `).join("") : '<div class="empty">No defined instruments yet</div>';
 }
 
+function syncEmployeeIssuerFromCompany() {
+  const companyName = valueOf("manualCompanyName").toLocaleLowerCase();
+  if (!companyName) return;
+  const match = state.manualSecurities.find((item) => (
+    item.instrument_type === "EMPLOYEE_STOCK_OPTION"
+    && String(item.company_name || "").toLocaleLowerCase() === companyName
+  ));
+  if (!match) return;
+  $("manualIssuerStatus").value = match.listing_status || "PRIVATE";
+  $("manualSecuritySymbol").value = match.public_symbol || "";
+  $("manualSecurityMarket").value = match.public_market || "";
+  $("manualSecurityCurrency").value = match.currency || valueOf("manualSecurityCurrency") || "USD";
+  $("manualSecurityLocation").value = match.location || valueOf("manualSecurityLocation") || "USA";
+  $("manualShareValue").value = Number(match.manual_share_value || 0) > 0 ? match.manual_share_value : "";
+  setDateField("manualValuationDate", match.valuation_date || "");
+  setDateField("manualRestrictionEndDate", match.restriction_end_date || "");
+  toggleManualInstrumentFields();
+  $("manualSecurityStatus").textContent = `Using existing issuer details for ${match.company_name}. This grant remains separate.`;
+}
+
 async function saveManualSecurity() {
+  const isEmployeeOption = valueOf("manualInstrumentType") === "EMPLOYEE_STOCK_OPTION";
+  const listingStatus = valueOf("manualIssuerStatus") || "PRIVATE";
   const payload = {
-    symbol: cleanSecuritySymbol(valueOf("manualSecuritySymbol")),
+    symbol: isEmployeeOption && listingStatus === "PRIVATE" ? "" : cleanSecuritySymbol(valueOf("manualSecuritySymbol")),
     name: valueOf("manualSecurityName"),
-    stock_market: valueOf("manualSecurityMarket"),
+    stock_market: isEmployeeOption && listingStatus === "PRIVATE" ? "" : valueOf("manualSecurityMarket"),
     instrument_type: valueOf("manualInstrumentType"),
     currency: valueOf("manualSecurityCurrency") || "USD",
     location: valueOf("manualSecurityLocation") || "USA",
@@ -4111,13 +4773,106 @@ async function saveManualSecurity() {
     expiration_date: dateValue("manualExpirationDate"),
     strike_price: valueOf("manualStrikePrice") || 0,
     contract_multiplier: valueOf("manualContractMultiplier") || 0,
+    company_name: valueOf("manualCompanyName"),
+    listing_status: listingStatus,
+    public_symbol: listingStatus === "PUBLIC" ? cleanSecuritySymbol(valueOf("manualSecuritySymbol")) : "",
+    public_market: listingStatus === "PUBLIC" ? valueOf("manualSecurityMarket") : "",
+    grant_id: valueOf("manualGrantId"),
+    grant_date: dateValue("manualGrantDate"),
+    vesting_start_date: dateValue("manualVestingStartDate") || dateValue("manualGrantDate"),
+    tax_scheme: valueOf("manualTaxScheme"),
+    early_exercise_allowed: $("manualEarlyExercise").checked,
+    manual_share_value: valueOf("manualShareValue") || undefined,
+    valuation_date: dateValue("manualValuationDate"),
+    restriction_end_date: dateValue("manualRestrictionEndDate"),
     comments: valueOf("manualSecurityComments"),
   };
   const saved = await api("/api/local/manual-securities", { method: "POST", body: JSON.stringify(payload) });
-  $("manualSecurityStatus").textContent = `Instrument saved: ${saved.symbol}`;
-  ["manualSecuritySymbol", "manualSecurityName", "manualSecurityMarket", "manualUnderlyingSymbol", "manualExpirationDate", "manualStrikePrice", "manualContractMultiplier", "manualSecurityComments"].forEach((id) => { $(id).value = ""; });
+  $("manualSecurityStatus").textContent = `Instrument saved: ${saved.company_name || saved.symbol}${saved.grant_id ? ` · ${saved.grant_id}` : ""}`;
+  ["manualSecuritySymbol", "manualSecurityName", "manualSecurityMarket", "manualCompanyName", "manualGrantId", "manualGrantDate", "manualVestingStartDate", "manualUnderlyingSymbol", "manualExpirationDate", "manualStrikePrice", "manualContractMultiplier", "manualTaxScheme", "manualShareValue", "manualValuationDate", "manualRestrictionEndDate", "manualSecurityComments"].forEach((id) => { $(id).value = ""; });
+  $("manualEarlyExercise").checked = false;
+  $("manualIssuerStatus").value = "PRIVATE";
+  toggleManualInstrumentFields();
   await loadManualSecurities();
   await loadPortfolio();
+}
+
+function openEmployeeListing(securityId) {
+  const security = instrumentById(securityId);
+  if (!security) return;
+  state.activeEmployeeListingSecurityId = securityId;
+  $("employeeListingSubtitle").textContent = `${security.company_name || security.name}${security.grant_id ? ` · Grant ${security.grant_id}` : ""}`;
+  $("employeeListingSymbol").value = security.public_symbol || "";
+  $("employeeListingMarket").value = security.public_market || "";
+  setDateField("employeeListingDate", security.listing_date || todayString());
+  setDateField("employeeListingRestrictionDate", security.restriction_end_date || "");
+  $("employeeListingAllowManual").checked = false;
+  $("employeeListingStatus").textContent = "Linking changes the issuer valuation source; the grant identity and vesting history remain unchanged.";
+  openModal("employeeListingModal");
+}
+
+async function saveEmployeeListing() {
+  const securityId = state.activeEmployeeListingSecurityId;
+  if (!securityId) return;
+  const result = await api(`/api/local/manual-securities/${encodeURIComponent(securityId)}/link-listing`, {
+    method: "POST",
+    body: JSON.stringify({
+      public_symbol: cleanSecuritySymbol(valueOf("employeeListingSymbol")),
+      public_market: valueOf("employeeListingMarket"),
+      listing_date: dateValue("employeeListingDate"),
+      restriction_end_date: dateValue("employeeListingRestrictionDate"),
+      allow_manual: $("employeeListingAllowManual").checked,
+    }),
+  });
+  $("employeeListingStatus").textContent = result.unchanged ? "This listing was already linked." : "Public listing linked. Existing grants and schedules were preserved.";
+  await Promise.all([loadManualSecurities(), loadLocalSecurities(), loadPortfolio()]);
+}
+
+function openEmployeeExercise(securityId) {
+  const security = instrumentById(securityId);
+  if (!security) return;
+  state.activeEmployeeExerciseSecurityId = securityId;
+  refreshLocalAccountSelects();
+  const esopAccount = state.localAccounts.find((account) => String(account.type || "").toUpperCase() === "ESOP");
+  if (esopAccount) $("employeeExerciseAccount").value = esopAccount.id;
+  $("employeeExerciseSubtitle").textContent = `${security.company_name || security.name}${security.grant_id ? ` · Grant ${security.grant_id}` : ""} · Strike ${money(security.strike_price || 0, security.currency || state.baseCurrency, 4)}`;
+  $("employeeExerciseQuantity").value = "";
+  $("employeeExerciseRatio").value = "1";
+  $("employeeExerciseCostBasis").value = security.strike_price || "";
+  setDateField("employeeExerciseDate", todayString());
+  $("employeeExerciseComments").value = "";
+  $("employeeExerciseStatus").textContent = security.early_exercise_allowed
+    ? "Early exercise is enabled for this grant."
+    : "Only options vested by the Exercise Date can be exercised.";
+  openModal("employeeExerciseModal");
+}
+
+async function saveEmployeeExercise() {
+  const securityId = state.activeEmployeeExerciseSecurityId;
+  if (!securityId) return;
+  const result = await api(`/api/local/manual-securities/${encodeURIComponent(securityId)}/exercise`, {
+    method: "POST",
+    body: JSON.stringify({
+      account_db_id: valueOf("employeeExerciseAccount"),
+      quantity: valueOf("employeeExerciseQuantity"),
+      share_ratio: valueOf("employeeExerciseRatio") || 1,
+      share_cost_basis: valueOf("employeeExerciseCostBasis"),
+      exercise_date: dateValue("employeeExerciseDate"),
+      comments: valueOf("employeeExerciseComments"),
+    }),
+  });
+  $("employeeExerciseStatus").textContent = `Exercise recorded: ${fmt(result.option_quantity_exercised, 4)} options became ${fmt(result.share_quantity_acquired, 4)} shares. ${fmt(result.remaining_option_quantity, 4)} options remain.`;
+  await Promise.all([loadManualSecurities(), loadLocalSecurities(), loadLocalPrices(), loadPortfolio()]);
+}
+
+function transactionVestingSummary(tx) {
+  const tranches = Array.isArray(tx.vesting_schedule?.tranches) ? tx.vesting_schedule.tranches : [];
+  if (tranches.length) {
+    const first = tranches[0];
+    const last = tranches[tranches.length - 1];
+    return ` · ${tranches.length} vesting dates, ${formatDate(first.vest_date)}–${formatDate(last.vest_date)}`;
+  }
+  return tx.vest_date ? ` · Vests ${formatDate(tx.vest_date)}` : "";
 }
 
 async function loadLocalSecurities() {
@@ -4128,26 +4883,33 @@ async function loadLocalSecurities() {
   if (state.items?.length) renderAnalytics(state.items);
   $("securitiesList").innerHTML = state.localTransactions.length ? state.localTransactions.map((tx) => `
     <div class="stack-item management-item">
-      <b>${esc(tx.action)} ${esc(tx.symbol)}</b>
+      <b>${esc(tx.action)} ${esc(tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (tx.company_name || tx.security_name || "Employee option") : tx.symbol)}</b>
       <span>${fmt(tx.quantity, 4)} @ ${fmt(tx.price_input, 4)} (${esc(tx.currency)} ${fmt(tx.price, 4)})${tx.instrument_type ? ` · ${esc(tx.instrument_type)}` : ""}</span>
-      <button class="secondary compact-button" type="button" data-edit-security="${esc(tx.id)}">Edit</button>
-      <button class="secondary compact-button" type="button" data-delete-security="${esc(tx.id)}">Delete</button>
-      <div class="sub">${esc(tx.stock_market)} · ${esc(tx.asset_class)}${tx.option_type ? ` · ${esc(tx.option_type)}` : ""}${tx.expiration_date ? ` · Exp ${esc(formatDate(tx.expiration_date))}` : ""}${tx.vest_date ? ` · Vested ${esc(formatDate(tx.vest_date))}` : ""}${tx.strike_price ? ` · Strike ${fmt(tx.strike_price, 4)}` : ""}${tx.purchase_price ? ` · Purchase ${fmt(tx.purchase_price, 4)}` : ""} · ${esc(formatDate(tx.trade_date))} · ${transactionCashImpact(tx) ? `Cash ${signedMoney(transactionCashImpact(tx), tx.currency)}` : "No cash movement"} · ${esc(tx.management_company || "")} ${esc(tx.account_id || "")}</div>
+      ${tx.transition_id
+        ? '<span class="badge ok" title="Created by an audited employee-option lifecycle action">Lifecycle transaction · read-only</span>'
+        : `<button class="secondary compact-button" type="button" data-edit-security="${esc(tx.id)}">Edit</button>
+           <button class="secondary compact-button" type="button" data-delete-security="${esc(tx.id)}">Delete</button>`}
+      <div class="sub">${esc(tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (tx.listing_status === "PUBLIC" ? `${tx.public_symbol} · ${tx.public_market}` : "Private company") : tx.stock_market)} · ${esc(tx.asset_class)}${tx.grant_id ? ` · Grant ${esc(tx.grant_id)}` : ""}${tx.option_type && tx.instrument_type !== "EMPLOYEE_STOCK_OPTION" ? ` · ${esc(tx.option_type)}` : ""}${tx.expiration_date ? ` · Exp ${esc(formatDate(tx.expiration_date))}` : ""}${transactionVestingSummary(tx)}${tx.strike_price ? ` · Strike ${fmt(tx.strike_price, 4)}` : ""}${tx.purchase_price ? ` · Purchase ${fmt(tx.purchase_price, 4)}` : ""} · ${esc(formatDate(tx.trade_date))} · ${transactionCashImpact(tx) ? `Cash ${signedMoney(transactionCashImpact(tx), tx.currency)}` : "No cash movement"} · ${esc(tx.management_company || "")} ${esc(tx.account_id || "")}</div>
     </div>
   `).join("") : '<div class="empty">No manual securities yet</div>';
+  renderAlarms();
   loadEquityCompQuotes().catch(reportBackgroundError);
 }
 
 async function saveSecurity() {
+  const instrumentType = selectedTransactionInstrumentType();
+  const usesSchedule = instrumentType === "EMPLOYEE_STOCK_OPTION" && valueOf("securityAction") === "ADD" && valueOf("securityVestingStyle") === "SCHEDULE";
   const payload = {
     account_db_id: valueOf("securityAccount"),
+    security_id: valueOf("securityKnownInstrument"),
     action: valueOf("securityAction"),
     symbol: cleanSecuritySymbol(valueOf("securitySymbol")),
     stock_market: valueOf("securityMarket"),
     asset_class: valueOf("securityAssetClass"),
     quantity: valueOf("securityQuantity"),
     price_input: valueOf("securityPrice"),
-    vest_date: dateValue("securityVestDate"),
+    vest_date: usesSchedule ? "" : dateValue("securityVestDate"),
+    vesting_schedule: usesSchedule ? vestingScheduleFromForm() : {},
     purchase_price: valueOf("securityPurchasePrice"),
     strike_price: valueOf("securityStrikePrice"),
     trade_date: dateValue("securityDate") || todayString(),
@@ -4246,30 +5008,64 @@ function dividendAlarms() {
     });
 }
 
+function vestingAlarms() {
+  const leadDays = normalizedVestingAlertDays(state.vestingAlertDays);
+  const lots = [
+    ...equityCompLots("rsu", state.items || []).map((lot) => ({ ...lot, kind: "rsu" })),
+    ...equityCompLots("option", state.items || []).map((lot) => ({ ...lot, kind: "option" })),
+  ];
+  return lots
+    .filter((lot) => lot.vestDate)
+    .map((lot) => ({ lot, days: eventDaysFromToday(lot.vestDate) }))
+    .filter(({ days }) => days >= 0 && days <= leadDays)
+    .map(({ lot, days }) => {
+      const unit = lot.kind === "rsu" ? "RSU" : "stock option";
+      const singular = Number(lot.quantity) === 1;
+      const quantityLabel = `${fmt(lot.quantity, 2)} ${unit}${singular ? "" : "s"}`;
+      const dueText = days === 0 ? "today" : `in ${days} day${days === 1 ? "" : "s"}`;
+      return {
+        kind: "vesting",
+        tone: "vesting",
+        transactionId: lot.transactionId,
+        title: `${lot.symbol} ${unit}${singular ? " vests" : "s vest"} ${dueText}`,
+        body: `${quantityLabel} ${singular ? "is" : "are"} scheduled to vest.`,
+        meta: `Vest Date: ${formatDate(lot.vestDate)} · ${leadDays}-day notice window`,
+        sortDate: lot.vestDate,
+      };
+    })
+    .sort((a, b) => String(a.sortDate).localeCompare(String(b.sortDate)) || a.title.localeCompare(b.title));
+}
+
 function renderAlarms() {
-  const alarms = dividendAlarms();
+  const dividends = dividendAlarms();
+  const vesting = vestingAlarms();
+  const alarms = [...vesting, ...dividends];
   const count = $("alarmsCount");
   if (count) count.textContent = String(alarms.length);
   const button = $("alarmsButton");
   if (button) button.classList.toggle("has-alarms", alarms.length > 0);
   const status = $("alarmsStatus");
   if (status) {
-    const future = alarms.filter((alarm) => alarm.event.status === "pending").length;
-    const paid = alarms.filter((alarm) => alarm.event.status === "processed").length;
+    const future = dividends.filter((alarm) => alarm.event.status === "pending").length;
+    const paid = dividends.filter((alarm) => alarm.event.status === "processed").length;
     status.textContent = alarms.length
-      ? `${future} future dividend${future === 1 ? "" : "s"} · ${paid} paid dividend${paid === 1 ? "" : "s"}`
-      : "No dividend alarms yet. Run Scan dividends from Events to discover dividends.";
+      ? `${vesting.length} upcoming vesting alarm${vesting.length === 1 ? "" : "s"} · ${future} future dividend${future === 1 ? "" : "s"} · ${paid} paid dividend${paid === 1 ? "" : "s"}`
+      : "No vesting or dividend alarms in the current notice window.";
+  }
+  if ($("vestingAlertDays")) $("vestingAlertDays").value = String(state.vestingAlertDays);
+  if ($("alarmSettingsStatus") && !$("alarmSettingsStatus").textContent) {
+    $("alarmSettingsStatus").textContent = `Showing vest dates up to ${state.vestingAlertDays} day${state.vestingAlertDays === 1 ? "" : "s"} in advance.`;
   }
   const list = $("alarmsList");
   if (!list) return;
   list.innerHTML = alarms.length ? alarms.map((alarm) => `
-    <button class="alarm-item ${esc(alarm.tone)}" type="button" data-open-dividend-alarm="${esc(alarm.event.id)}">
-      <span class="alarm-kind">${alarm.tone === "future" ? "Future dividend" : "Dividend paid"}</span>
+    <button class="alarm-item ${esc(alarm.tone)}" type="button" ${alarm.kind === "vesting" ? `data-open-vesting-alarm="${esc(alarm.transactionId)}"` : `data-open-dividend-alarm="${esc(alarm.event.id)}"`}>
+      <span class="alarm-kind">${alarm.kind === "vesting" ? "Upcoming vesting" : alarm.tone === "future" ? "Future dividend" : "Dividend paid"}</span>
       <b>${esc(alarm.title)}</b>
       <span>${esc(alarm.body)}</span>
       <small>${esc(alarm.meta)}</small>
     </button>
-  `).join("") : '<div class="empty">No dividend alarms</div>';
+  `).join("") : '<div class="empty">No vesting or dividend alarms</div>';
 }
 
 function focusEventRow() {
@@ -4287,6 +5083,13 @@ function openDividendAlarm(eventId) {
   if (alarmsModal && !alarmsModal.hidden) closeModal(alarmsModal);
   openModal("eventsModal");
   setTimeout(focusEventRow, 100);
+}
+
+function openVestingAlarm(transactionId) {
+  const alarmsModal = $("alarmsModal");
+  if (alarmsModal && !alarmsModal.hidden) closeModal(alarmsModal);
+  openModal("securitiesModal");
+  if (transactionId) editSecurityTransaction(transactionId);
 }
 
 async function loadLocalPrices() {
@@ -4342,6 +5145,44 @@ function renderReportSummary(report) {
       <div class="sub">${esc(data.currency || "")}</div>
     </div>
   `).join("") || '<div class="empty">No local report data</div>';
+  const breakdown = (items) => Object.entries(items || {})
+    .sort((left, right) => Number(right[1] || 0) - Number(left[1] || 0))
+    .map(([label, value]) => `<div class="report-breakdown-row"><span>${esc(label)}</span><b>${fmt(value, 0)}</b></div>`)
+    .join("") || '<div class="empty">No report data</div>';
+  $("reportsByType").innerHTML = breakdown(report.by_type);
+  $("reportsByLocation").innerHTML = breakdown(report.by_location);
+  updatePdfReportMeta();
+}
+
+function updatePdfReportMeta() {
+  const account = $("reportAccount")?.selectedOptions?.[0]?.textContent?.trim() || "All accounts";
+  const accountType = $("reportAccountType")?.selectedOptions?.[0]?.textContent?.trim() || "Any account type";
+  const location = valueOf("reportLocation") || "All locations";
+  const from = valueOf("reportFrom") || formatDate(HISTORY_START_DATE);
+  const to = valueOf("reportTo") || formatDate(todayString());
+  $("pdfReportMeta").textContent = `${account} · ${accountType} · ${location} · ${from}–${to} · Generated ${formatDate(todayString())}`;
+}
+
+async function exportReportsPdf() {
+  $("reportsExportStatus").textContent = "Preparing PDF report";
+  await loadReports();
+  updatePdfReportMeta();
+  const previousTitle = document.title;
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    document.body.classList.remove("report-print-mode");
+    document.title = previousTitle;
+    $("reportsExportStatus").textContent = "PDF export opened. Choose Save as PDF in the print dialog.";
+  };
+  window.addEventListener("afterprint", cleanup, { once: true });
+  document.body.classList.add("report-print-mode");
+  document.title = `portfolio-report-${todayString()}`;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    window.print();
+    setTimeout(cleanup, 1000);
+  }));
 }
 
 function renderAccountTrend(trend) {
@@ -4407,6 +5248,302 @@ function renderAccountTrend(trend) {
       ${accountLines}
     </svg>
     <div class="report-trend-legend">${legend}</div>`;
+}
+
+function renderFinanceReport(report) {
+  state.financeReport = report;
+  const profile = report.profile || {};
+  const summary = report.summary || {};
+  const reports = report.reports || [];
+  const company = profile.name || report.symbol || "Company";
+  $("financeReportStatus").textContent = `${company} · ${providerStatusHint(report.provider_status || {}) || "Online data loaded"}`;
+  $("financeReportSummary").innerHTML = [
+    ["Years", summary.years || 0],
+    ["Latest revenue", fmt(summary.latest_revenue, 0)],
+    ["Revenue growth", pct(summary.latest_revenue_growth_percent)],
+    ["Net income", fmt(summary.latest_net_income, 0)],
+    ["Net margin", pct(summary.latest_net_margin_percent)],
+    ["Free cash flow", fmt(summary.latest_free_cash_flow, 0)],
+    ["Long-term debt", fmt(summary.latest_long_term_debt, 0)],
+  ].map(([label, value]) => `<div class="stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`).join("");
+  if (!reports.length) {
+    $("financeReportTable").innerHTML = '<div class="empty">No annual online finance report data found for this symbol</div>';
+    return;
+  }
+  $("financeReportTable").innerHTML = `
+    <table class="holdings-table compact-report-table">
+      <thead>
+        <tr>
+          <th>Fiscal date</th>
+          <th>Revenue</th>
+          <th>Revenue growth</th>
+          <th>Net income</th>
+          <th>Net income growth</th>
+          <th>Net margin</th>
+          <th>Free cash flow</th>
+          <th>Debt</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${reports.map((row) => `
+          <tr>
+            <td data-label="Fiscal date">${esc(formatDate(row.fiscal_date))}</td>
+            <td data-label="Revenue">${fmt(row.revenue, 0)}</td>
+            <td data-label="Revenue growth">${pct(row.revenue_growth_percent)}</td>
+            <td data-label="Net income">${fmt(row.net_income, 0)}</td>
+            <td data-label="Net income growth">${pct(row.net_income_growth_percent)}</td>
+            <td data-label="Net margin">${pct(row.net_margin_percent)}</td>
+            <td data-label="Free cash flow">${fmt(row.free_cash_flow, 0)}</td>
+            <td data-label="Debt">${fmt(row.long_term_debt, 0)}</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>`;
+}
+
+function renderCompanyOutlookHistory(data) {
+  state.companyOutlookHistory = data.items || [];
+  const scorecard = data.scorecard || {};
+  const qualityGate = scorecard.quality_gate || {};
+  $("companyOutlookScorecard").innerHTML = [
+    ["Predictions", scorecard.total || 0],
+    ["Evaluated", scorecard.evaluated || 0],
+    ["Pending", scorecard.pending || 0],
+    ["Accuracy", scorecard.accuracy_percent == null ? "Not evaluated" : pct(scorecard.accuracy_percent)],
+    ["Validation", qualityGate.passed ? "75% target met" : "Not validated"],
+  ].map(([label, value]) => `<div class="stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`).join("");
+  $("companyOutlookHistory").innerHTML = state.companyOutlookHistory.length ? state.companyOutlookHistory.map((item) => {
+    const direction = item.actual_direction || "pending";
+    const stateLabel = direction === "pending" ? "Pending" : direction.charAt(0).toUpperCase() + direction.slice(1);
+    return `
+      <article class="stack-item management-item outlook-history-item">
+        <header class="outlook-history-head">
+          <div class="outlook-history-identity">
+            <b>${esc(item.symbol)} · ${fmt(item.score, 0)}/100</b>
+            <span class="outlook-history-label">${esc(item.label || "Mixed")}</span>
+          </div>
+          <span class="outlook-history-state ${esc(direction)}">${esc(stateLabel)}</span>
+        </header>
+        <div class="outlook-history-meta">
+          <span><small>Created</small><b>${esc(formatDate(String(item.created_at || "").slice(0, 10)))}</b></span>
+          <span><small>Evaluate after</small><b>${esc(formatDate(item.horizon_date))}</b></span>
+          <span><small>Confidence</small><b>${esc(item.confidence || "Low")}</b></span>
+        </div>
+        <p class="outlook-history-thesis">${esc(item.thesis || "No report-backed summary was stored for this prediction.")}</p>
+        ${direction === "pending" ? "" : `<p class="outlook-history-evaluation">${item.accuracy_score == null ? esc(item.evaluation || "Inconclusive") : `Accuracy ${fmt(item.accuracy_score, 0)}% · ${esc(item.evaluation || "")}`}</p>`}
+        <footer class="row-actions outlook-history-actions">
+          ${direction === "pending" ? `<button class="secondary compact-button" type="button" data-evaluate-company-outlook="${esc(item.id)}">Evaluate next report</button>` : ""}
+          <button class="secondary compact-button" type="button" data-delete-company-outlook="${esc(item.id)}" data-prediction-symbol="${esc(item.symbol)}">Remove</button>
+        </footer>
+      </article>
+    `;
+  }).join("") : '<div class="empty">No saved company predictions yet</div>';
+}
+
+async function loadCompanyOutlookHistory(symbol = "") {
+  const query = symbol ? `?symbol=${encodeURIComponent(symbol)}` : "";
+  const data = await api(`/api/company-outlook/predictions${query}`);
+  renderCompanyOutlookHistory(data);
+}
+
+let companyOutlookDiagramSequence = 0;
+
+function renderCompanyOutlookDiagramFallback(outlook) {
+  const graph = outlook.graph || {};
+  const nodes = graph.nodes || [];
+  const labels = Object.fromEntries(nodes.map((node) => [node.id, node.label || node.id]));
+  const edges = graph.edges || [];
+  return `
+    <div class="outlook-map-fallback">
+      <div class="outlook-map-nodes">
+        ${nodes.map((node) => `<span class="outlook-map-node ${esc(node.type || "")}">${esc(node.label || node.id)}</span>`).join("")}
+      </div>
+      <div class="outlook-map-relations">
+        ${edges.length ? edges.map((edge) => `<span><b>${esc(labels[edge.from] || edge.from)}</b> → ${esc(edge.label || "related to")} → <b>${esc(labels[edge.to] || edge.to)}</b></span>`).join("") : "<span>No report-backed relationships were available.</span>"}
+      </div>
+    </div>
+  `;
+}
+
+async function renderCompanyOutlookDiagram(outlook) {
+  const diagram = $("companyOutlookDiagram");
+  diagram.innerHTML = "";
+  if (!outlook.mermaid) {
+    diagram.innerHTML = renderCompanyOutlookDiagramFallback(outlook);
+    return;
+  }
+  if (!window.mermaid) {
+    diagram.innerHTML = renderCompanyOutlookDiagramFallback(outlook);
+    return;
+  }
+  try {
+    window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "dark" });
+    companyOutlookDiagramSequence += 1;
+    const rendered = await window.mermaid.render(`companyOutlookMap${companyOutlookDiagramSequence}`, outlook.mermaid);
+    diagram.innerHTML = rendered.svg;
+    rendered.bindFunctions?.(diagram);
+  } catch (error) {
+    diagram.innerHTML = renderCompanyOutlookDiagramFallback(outlook);
+    $("companyOutlookStatus").textContent = "Analysis loaded · Relationship map shown as a list";
+    appWarn("company_outlook.diagram_fallback", { message: error?.message || "Diagram render failed" });
+  }
+}
+
+function renderCompanyOutlook(outlook) {
+  state.companyOutlook = outlook;
+  $("companyOutlookEmpty").hidden = true;
+  $("companyOutlookResults").hidden = false;
+  const industry = outlook.industry || {};
+  const components = outlook.score_components || {};
+  $("companyOutlookStatus").textContent = `${outlook.symbol} · ${outlook.label || "Mixed"} · ${outlook.confidence || "Low"} confidence · ${outlook.peer_source || ""}`;
+  $("companyOutlookSummary").innerHTML = [
+    ["Final score", `${fmt(outlook.score, 0)}/100`],
+    ["Peer rank", `${outlook.rank || 1}/${(outlook.companies || []).length || 1}`],
+    ["Industry", industry.health || "Not available"],
+    ["Industry score", `${fmt(industry.score, 0)}/25`],
+    ["Company signals", `${fmt(components.company_fundamentals, 0)}/45`],
+    ["Related effect", `${fmt(components.related_industry_effect, 0)}/15`],
+  ].map(([label, value]) => `<div class="stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`).join("");
+  $("companyOutlookWords").innerHTML = `
+    <p>${esc(outlook.simple_words || "")}</p>
+    ${outlook.missing?.length ? `<div class="sub">Missing or limited: ${esc(outlook.missing.join(", "))}</div>` : ""}
+  `;
+  const companies = outlook.companies || [];
+  $("companyOutlookTable").innerHTML = companies.length ? `
+    <table class="holdings-table compact-report-table outlook-table">
+      <thead><tr><th>Company</th><th>Industry</th><th>Fiscal date</th><th>Revenue growth</th><th>Operating margin</th><th>Net margin</th><th>FCF margin</th><th>Current ratio</th><th>Score</th></tr></thead>
+      <tbody>${companies.map((company) => `
+        <tr>
+          <td data-label="Company"><b>${esc(company.symbol)}</b><div class="sub">${esc(company.name || "")}</div></td>
+          <td data-label="Industry">${esc(company.industry || "Not available")}</td>
+          <td data-label="Fiscal date">${esc(formatDate(company.fiscal_date))}</td>
+          <td data-label="Revenue growth">${pct(company.revenue_growth_percent)}</td>
+          <td data-label="Operating margin">${pct(company.operating_margin_percent)}</td>
+          <td data-label="Net margin">${pct(company.net_margin_percent)}</td>
+          <td data-label="FCF margin">${pct(company.free_cash_flow_margin_percent)}</td>
+          <td data-label="Current ratio">${fmt(company.current_ratio, 2)}</td>
+          <td data-label="Score">${company.symbol === outlook.symbol ? `${fmt(outlook.score, 0)}/100` : `${fmt(company.score, 0)}/32`}</td>
+        </tr>
+      `).join("")}</tbody>
+    </table>
+  ` : '<div class="empty">No company report data was available for this analysis</div>';
+  renderCompanyOutlookDiagram(outlook);
+}
+
+function setCompanyOutlookBusy(mode = "") {
+  const active = Boolean(mode);
+  const analyzeButton = $("runCompanyOutlook");
+  const backtestButton = $("runCompanyOutlookBacktest");
+  analyzeButton.disabled = active;
+  backtestButton.disabled = active;
+  analyzeButton.classList.toggle("is-working", mode === "analyze");
+  backtestButton.classList.toggle("is-working", mode === "backtest");
+  analyzeButton.textContent = mode === "analyze" ? "Analyzing reports" : "Analyze and save";
+  backtestButton.textContent = mode === "backtest" ? "Running backtest" : "Run backtest";
+  $("companyOutlookWorkbench").setAttribute("aria-busy", String(active));
+}
+
+async function loadCompanyOutlook() {
+  const symbol = cleanSecuritySymbol(valueOf("outlookSymbol"));
+  $("outlookSymbol").value = symbol;
+  if (!symbol) {
+    $("companyOutlookStatus").textContent = "Enter a target ticker symbol";
+    $("outlookSymbol").setAttribute("aria-invalid", "true");
+    $("outlookSymbol").focus();
+    return;
+  }
+  $("outlookSymbol").removeAttribute("aria-invalid");
+  $("companyOutlookStatus").textContent = "Reading company and industry reports";
+  const peers = valueOf("outlookPeers").split(",").map((item) => cleanSecuritySymbol(item)).filter(Boolean);
+  const relatedCompanies = valueOf("outlookRelated").split(",").map((item) => cleanSecuritySymbol(item)).filter(Boolean);
+  setCompanyOutlookBusy("analyze");
+  try {
+    const outlook = await api(`/api/company-outlook/${encodeURIComponent(symbol)}`, {
+      method: "POST",
+      body: JSON.stringify({
+        peers,
+        industry: valueOf("outlookIndustry"),
+        related_companies: relatedCompanies,
+        related_effect: valueOf("outlookRelatedEffect"),
+        horizon_months: Number(valueOf("outlookHorizon")) || 12,
+        save_prediction: true,
+      }),
+    });
+    renderCompanyOutlook(outlook);
+    await loadCompanyOutlookHistory(symbol);
+  } finally {
+    setCompanyOutlookBusy();
+  }
+}
+
+async function loadCompanyOutlookBacktest() {
+  const symbol = cleanSecuritySymbol(valueOf("outlookSymbol"));
+  const asOfDate = dateValue("outlookAsOfDate");
+  $("outlookSymbol").value = symbol;
+  if (!symbol || !asOfDate) {
+    $("companyOutlookStatus").textContent = "Enter a target ticker and historical backtest date";
+    if (!symbol) {
+      $("outlookSymbol").setAttribute("aria-invalid", "true");
+      $("outlookSymbol").focus();
+    } else {
+      $("outlookAsOfDate").setAttribute("aria-invalid", "true");
+      $("outlookAsOfDate").focus();
+    }
+    return;
+  }
+  $("outlookSymbol").removeAttribute("aria-invalid");
+  $("outlookAsOfDate").removeAttribute("aria-invalid");
+  $("companyOutlookStatus").textContent = "Running historical report backtest";
+  const peers = valueOf("outlookPeers").split(",").map((item) => cleanSecuritySymbol(item)).filter(Boolean);
+  const relatedCompanies = valueOf("outlookRelated").split(",").map((item) => cleanSecuritySymbol(item)).filter(Boolean);
+  setCompanyOutlookBusy("backtest");
+  try {
+    const result = await api(`/api/company-outlook/${encodeURIComponent(symbol)}/backtest`, {
+      method: "POST",
+      body: JSON.stringify({
+        peers,
+        industry: valueOf("outlookIndustry"),
+        related_companies: relatedCompanies,
+        related_effect: valueOf("outlookRelatedEffect"),
+        horizon_months: Number(valueOf("outlookHorizon")) || 12,
+        as_of_date: asOfDate,
+      }),
+    });
+    renderCompanyOutlook(result.analysis || {});
+    const evaluation = result.evaluation || {};
+    const actual = evaluation.actual_direction || "pending";
+    $("companyOutlookStatus").textContent = evaluation.accuracy_score == null
+      ? `Backtest from ${formatDate(result.as_of_date)}: ${actual}. ${evaluation.evaluation || ""}`
+      : `Backtest from ${formatDate(result.as_of_date)}: prediction accuracy ${fmt(evaluation.accuracy_score, 0)}% (${actual}).`;
+    await loadCompanyOutlookHistory(symbol);
+  } finally {
+    setCompanyOutlookBusy();
+  }
+}
+
+async function evaluateCompanyOutlookPrediction(predictionId) {
+  const result = await api(`/api/company-outlook/predictions/${encodeURIComponent(predictionId)}/evaluate`, { method: "POST", body: "{}" });
+  $("companyOutlookStatus").textContent = result.actual_direction === "pending" ? "No newer annual report is available for that prediction yet" : `Prediction evaluated: ${result.actual_direction}`;
+  await loadCompanyOutlookHistory(valueOf("outlookSymbol"));
+}
+
+async function deleteCompanyOutlookPrediction(predictionId, symbol) {
+  if (!confirm(`Remove the saved ${symbol || "company"} prediction? This cannot be undone.`)) return;
+  await api(`/api/company-outlook/predictions/${encodeURIComponent(predictionId)}`, { method: "DELETE" });
+  $("companyOutlookStatus").textContent = `${symbol || "Company"} prediction removed`;
+  await loadCompanyOutlookHistory(valueOf("outlookSymbol"));
+}
+
+async function loadFinanceReport() {
+  const symbol = cleanSecuritySymbol(valueOf("financeReportSymbol"));
+  $("financeReportSymbol").value = symbol;
+  if (!symbol) {
+    $("financeReportStatus").textContent = "Enter a ticker symbol";
+    return;
+  }
+  $("financeReportStatus").textContent = "Fetching online finance report";
+  const report = await api(`/api/finance-reports/${encodeURIComponent(symbol)}`);
+  renderFinanceReport(report);
 }
 
 function renderHistorySnapshots() {
@@ -4505,17 +5642,172 @@ async function loadFunds() {
       ? `<span>Saved ${fmt(fund.amount, 0)} · Monthly pension estimate ${fmt(fund.monthly_estimate, 0)}</span>`
       : `<span>Saved ${fmt(fund.amount, 0)} · <em class="muted-inline">Monthly pension estimate N/A</em></span>`;
     const accountText = fund.account_label ? ` · Account ${esc(fund.account_label)}` : "";
+    const historyChange = Number(fund.history_change || 0);
+    const historyText = Number(fund.history_points || 0) > 1
+      ? `Progress ${historyChange > 0 ? "+" : ""}${fmt(historyChange, 0)} (${historyChange > 0 ? "+" : ""}${pct(fund.history_change_percent)}) since ${formatDate(fund.history_first_date)}`
+      : `${fmt(fund.history_points || 0, 0)} saved history point`;
     return `
       <div class="stack-item management-item">
         <b>${esc([fund.kind, fund.fund_name || "", fund.pension_id].filter(Boolean).join(" · "))}</b>
         ${estimate}
+        <button class="secondary compact-button" type="button" data-fund-history="${esc(fund.id)}">History</button>
         <button class="secondary compact-button" type="button" data-edit-fund="${esc(fund.id)}">Edit</button>
         <button class="secondary compact-button" type="button" data-delete-fund="${esc(fund.id)}">Remove</button>
-        <div class="sub">${(fund.persons || []).length ? `${(fund.persons || []).map(personLabel).map(esc).join(" · ")} · ` : ""}${esc(fund.comments || "No comments")}${accountText}</div>
+        <div class="sub">${esc(historyText)}${fund.history_latest_date ? ` · Updated ${esc(formatDate(fund.history_latest_date))}` : ""} · ${(fund.persons || []).length ? `${(fund.persons || []).map(personLabel).map(esc).join(" · ")} · ` : ""}${esc(fund.comments || "No comments")}${accountText}</div>
       </div>
     `;
   }).join("") : '<div class="empty">No pension, provident, or savings funds yet</div>';
   renderPersonLists();
+}
+
+function resetFundHistoryForm() {
+  state.editingFundHistoryId = "";
+  $("fundHistoryDate").value = formatDate(todayString());
+  $("fundHistoryAmount").value = "";
+  $("fundHistoryComments").value = "";
+  $("fundHistoryFormTitle").textContent = "Add saved amount";
+  $("saveFundHistory").textContent = "Add history point";
+  $("cancelFundHistoryEdit").hidden = true;
+}
+
+function renderFundAmountHistory(data) {
+  const fund = data.fund || state.localFunds.find((item) => item.id === state.fundHistoryFundId) || {};
+  const items = [...(data.items || [])].sort((left, right) => String(left.amount_date).localeCompare(String(right.amount_date)));
+  state.fundAmountHistory = items;
+  const first = items[0];
+  const latest = items.at(-1);
+  const change = first && latest ? Number(latest.amount || 0) - Number(first.amount || 0) : 0;
+  const changePercent = first && Number(first.amount || 0) ? change / Math.abs(Number(first.amount)) * 100 : null;
+  $("fundHistorySubtitle").textContent = `${[fund.kind, fund.fund_name, fund.pension_id].filter(Boolean).join(" · ")} · The latest dated balance is used as the current saved amount.`;
+  $("fundHistorySummary").innerHTML = [
+    ["Current saved amount", latest ? fmt(latest.amount, 0) : fmt(fund.amount, 0)],
+    ["Total progress", items.length > 1 ? `${change > 0 ? "+" : ""}${fmt(change, 0)}` : "Not enough history"],
+    ["Progress %", items.length > 1 ? `${changePercent > 0 ? "+" : ""}${pct(changePercent)}` : "Not enough history"],
+    ["History points", items.length],
+  ].map(([label, value]) => `<div class="stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`).join("");
+
+  if (!items.length) {
+    $("fundHistoryChart").innerHTML = '<div class="empty">Add the first dated amount to start tracking progress</div>';
+  } else {
+    const width = 900;
+    const height = 260;
+    const padLeft = 66;
+    const padRight = 28;
+    const padTop = 32;
+    const padBottom = 46;
+    const values = items.map((item) => Number(item.amount || 0));
+    const rawMin = Math.min(...values);
+    const rawMax = Math.max(...values);
+    const padding = Math.max((rawMax - rawMin) * 0.15, rawMax * 0.03, 1);
+    const minValue = Math.max(0, rawMin - padding);
+    const maxValue = rawMax + padding;
+    const plotWidth = width - padLeft - padRight;
+    const plotHeight = height - padTop - padBottom;
+    const pointX = (index) => items.length === 1 ? padLeft + plotWidth / 2 : padLeft + (index / (items.length - 1)) * plotWidth;
+    const pointY = (amount) => padTop + (1 - (Number(amount) - minValue) / (maxValue - minValue || 1)) * plotHeight;
+    const line = items.map((item, index) => `${index ? "L" : "M"} ${pointX(index)} ${pointY(item.amount)}`).join(" ");
+    const area = `${line} L ${pointX(items.length - 1)} ${padTop + plotHeight} L ${pointX(0)} ${padTop + plotHeight} Z`;
+    const points = items.map((item, index) => `
+      <circle cx="${pointX(index)}" cy="${pointY(item.amount)}" r="5">
+        <title>${esc(`${formatDate(item.amount_date)} · Saved ${fmt(item.amount, 0)}`)}</title>
+      </circle>
+    `).join("");
+    const dateLabels = items.length === 1
+      ? `<text x="${padLeft + plotWidth / 2}" y="${height - 12}" text-anchor="middle">${esc(formatDate(first.amount_date))}</text>`
+      : `<text x="${padLeft}" y="${height - 12}">${esc(formatDate(first.amount_date))}</text><text x="${padLeft + plotWidth}" y="${height - 12}" text-anchor="end">${esc(formatDate(latest.amount_date))}</text>`;
+    $("fundHistoryChart").innerHTML = `
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">Saved amount progress</div>
+          <small class="chart-subtitle">Each point is a balance entered for that date.</small>
+        </div>
+      </div>
+      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Saved amount progress over time">
+        <line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${padTop + plotHeight}"></line>
+        <line x1="${padLeft}" y1="${padTop + plotHeight}" x2="${padLeft + plotWidth}" y2="${padTop + plotHeight}"></line>
+        <text x="8" y="${padTop + 5}">${fmt(maxValue, 0)}</text>
+        <text x="8" y="${padTop + plotHeight}">${fmt(minValue, 0)}</text>
+        <path class="fund-history-area" d="${area}"></path>
+        <path class="fund-history-line" d="${line}"></path>
+        ${points}
+        ${dateLabels}
+      </svg>`;
+  }
+
+  $("fundHistoryRows").innerHTML = items.length ? [...items].reverse().map((item, reverseIndex) => {
+    const index = items.length - 1 - reverseIndex;
+    const previous = index > 0 ? items[index - 1] : null;
+    const delta = previous ? Number(item.amount || 0) - Number(previous.amount || 0) : null;
+    return `<tr>
+      <td data-label="Date">${esc(formatDate(item.amount_date))}</td>
+      <td data-label="Saved amount"><b>${fmt(item.amount, 0)}</b></td>
+      <td data-label="Change" class="${delta > 0 ? "positive" : delta < 0 ? "negative" : ""}">${delta === null ? "Opening" : `${delta > 0 ? "+" : ""}${fmt(delta, 0)}`}</td>
+      <td data-label="Comments">${esc(item.comments || cleanSourceLabel(item.source) || "—")}</td>
+      <td data-label="Actions"><div class="row-actions"><button class="secondary compact-button" type="button" data-edit-fund-history="${esc(item.id)}">Edit</button><button class="secondary compact-button" type="button" data-delete-fund-history="${esc(item.id)}">Delete</button></div></td>
+    </tr>`;
+  }).join("") : '<tr><td colspan="5" class="empty-cell">No saved amount history yet</td></tr>';
+}
+
+async function loadFundAmountHistory() {
+  if (!state.fundHistoryFundId) return;
+  const data = await api(`/api/local/funds/${encodeURIComponent(state.fundHistoryFundId)}/amount-history`);
+  renderFundAmountHistory(data);
+}
+
+async function openFundAmountHistory(fundId) {
+  const fund = state.localFunds.find((item) => item.id === fundId);
+  if (!fund) return;
+  state.fundHistoryFundId = fund.id;
+  resetFundHistoryForm();
+  $("fundHistoryStatus").textContent = "Loading saved amounts";
+  openModal("fundHistoryModal");
+  await loadFundAmountHistory();
+  $("fundHistoryStatus").textContent = "";
+}
+
+function editFundAmountHistory(historyId) {
+  const item = state.fundAmountHistory.find((row) => row.id === historyId);
+  if (!item) return;
+  state.editingFundHistoryId = item.id;
+  $("fundHistoryDate").value = formatDate(item.amount_date);
+  $("fundHistoryAmount").value = item.amount;
+  $("fundHistoryComments").value = item.comments || "";
+  $("fundHistoryFormTitle").textContent = "Edit saved amount";
+  $("saveFundHistory").textContent = "Update history point";
+  $("cancelFundHistoryEdit").hidden = false;
+  $("fundHistoryStatus").textContent = `Editing ${formatDate(item.amount_date)}`;
+}
+
+async function saveFundAmountHistory() {
+  const amount = Number(valueOf("fundHistoryAmount") || 0);
+  const amountDate = dateValue("fundHistoryDate");
+  if (!amountDate) {
+    $("fundHistoryStatus").textContent = "Date is required";
+    return;
+  }
+  if (amount <= 0) {
+    $("fundHistoryStatus").textContent = "Saved amount must be greater than zero";
+    return;
+  }
+  const editingId = state.editingFundHistoryId;
+  const path = editingId
+    ? `/api/local/funds/${encodeURIComponent(state.fundHistoryFundId)}/amount-history/${encodeURIComponent(editingId)}`
+    : `/api/local/funds/${encodeURIComponent(state.fundHistoryFundId)}/amount-history`;
+  await api(path, {
+    method: editingId ? "PUT" : "POST",
+    body: JSON.stringify({ amount_date: amountDate, amount, comments: valueOf("fundHistoryComments") }),
+  });
+  resetFundHistoryForm();
+  $("fundHistoryStatus").textContent = editingId ? "History point updated" : "History point added";
+  await Promise.all([loadFundAmountHistory(), loadFunds(), loadReports()]);
+}
+
+async function deleteFundAmountHistory(historyId) {
+  if (!confirm("Delete this saved amount from the fund history?")) return;
+  await api(`/api/local/funds/${encodeURIComponent(state.fundHistoryFundId)}/amount-history/${encodeURIComponent(historyId)}`, { method: "DELETE" });
+  if (state.editingFundHistoryId === historyId) resetFundHistoryForm();
+  $("fundHistoryStatus").textContent = "History point deleted";
+  await Promise.all([loadFundAmountHistory(), loadFunds(), loadReports()]);
 }
 
 function numberValue(id) {
@@ -5523,19 +6815,31 @@ async function loadPortfolio({ refresh = false } = {}) {
       date_to: todayString(),
     });
     const portfolioPath = refresh ? "/api/portfolio?refresh=true" : "/api/portfolio";
-    const [data, trend] = await Promise.all([
+    const [data, trend, fxData, accountData, transactionData] = await Promise.all([
       api(portfolioPath),
       api(`/api/local/account-trends?${trendParams}`),
+      api("/api/fx").catch(() => ({ quotes: [] })),
+      api("/api/local/accounts"),
+      api("/api/local/securities"),
     ]);
-    state.items = data.items;
-    state.accountTrend = trend;
-    populateOptions(data.items);
-    $("status").textContent = `${data.count} positions · ${Object.entries(data.status).map(([k, v]) => `${k}: ${v}`).join(", ")}`;
-    renderPortfolio(data.items);
+    setCoreFxRates(fxData);
+    state.localAccounts = accountData.items || [];
+    state.localTransactions = transactionData.items || [];
+    const allItems = data.items || [];
+    state.items = portfolioItems(allItems);
+    state.portfolioReady = true;
+    state.accountTrend = {
+      ...trend,
+      accounts: (trend.accounts || []).filter((entry) => !isEquityCompAccount(entry.account)),
+    };
+    populateOptions(state.items);
+    $("status").textContent = `${state.items.length} portfolio positions · ${Object.entries(data.status).map(([k, v]) => `${k}: ${v}`).join(", ")}`;
+    renderPortfolio(state.items);
     appLog("portfolio.load.done", {
-      count: data.count,
+      count: state.items.length,
+      equity_comp_positions_excluded: allItems.length - state.items.length,
       status: data.status,
-      trend_accounts: trend.accounts?.length || 0,
+      trend_accounts: state.accountTrend.accounts.length,
     });
     if (!data.count) {
       appWarn("portfolio.empty", {
@@ -5555,9 +6859,10 @@ async function loadLocalOptions() {
     state.localOptions = {
       account_types: ["Investment", "Long-Term Savings", "Bank", "ESOP"],
       fund_kinds: ["Pension", "Provident Fund", "Savings Fund"],
-      asset_classes: ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"],
-      instrument_types: ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"],
+      asset_classes: ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"],
+      instrument_types: ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"],
       option_types: ["CALL", "PUT"],
+      issuer_listing_statuses: ["PRIVATE", "PUBLIC"],
     };
   }
   populateStaticOptions();
@@ -5568,9 +6873,9 @@ async function applyFilter() {
   setLoading(true, "Applying portfolio filter");
   try {
     const data = await api("/api/screener", { method: "POST", body: JSON.stringify(criteriaFromForm()) });
-    state.items = data.items;
-    $("status").textContent = `${data.count} positions matched`;
-    renderPortfolio(data.items);
+    state.items = portfolioItems(data.items || []);
+    $("status").textContent = `${state.items.length} portfolio positions matched`;
+    renderPortfolio(state.items);
   } finally {
     setLoading(false);
   }
@@ -5610,10 +6915,12 @@ async function loadBanner() {
 }
 
 function renderBanner(items) {
-  state.fxRates = items.reduce((rates, item) => {
+  state.bannerFxRates = items.reduce((rates, item) => {
     if (item.type === "fx" && item.value) rates[item.symbol] = Number(item.value);
     return rates;
   }, {});
+  updateFxRates();
+  if (state.items.length) renderPortfolio(state.items);
   $("bannerItems").innerHTML = items.length ? items.map((item) => {
     const hasValue = item.value !== null && item.value !== undefined;
     const status = Object.entries(item.status || {}).map(([name, value]) => `${name}: ${value}`).join(", ");
@@ -5660,71 +6967,379 @@ function addBannerItem() {
   resolveBannerItems();
 }
 
+function alertMetric(metricKey) {
+  return (state.alertOptions.metrics || []).find((item) => item.key === metricKey) || {
+    key: metricKey,
+    label: metricKey.replaceAll("_", " "),
+    unit: "",
+    digits: 2,
+  };
+}
+
+function alertMetricValue(metricKey, value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "Data unavailable";
+  const metric = alertMetric(metricKey);
+  const amount = fmt(value, Number(metric.digits ?? 2));
+  if (metric.unit === "%") return `${amount}%`;
+  if (metric.unit === "×") return `${amount}×`;
+  if (metric.unit === "ratio") return amount;
+  return metric.unit ? `${amount} ${metric.unit}` : amount;
+}
+
+function alertMetricOptions(selected = "") {
+  const groups = (state.alertOptions.metrics || []).reduce((result, metric) => {
+    const group = metric.group || "Financials";
+    (result[group] ||= []).push(metric);
+    return result;
+  }, {});
+  if (!Object.keys(groups).length) return '<option value="">Loading metrics</option>';
+  return Object.entries(groups).map(([group, metrics]) => `
+    <optgroup label="${esc(group)}">
+      ${metrics.map((metric) => `<option value="${esc(metric.key)}"${metric.key === selected ? " selected" : ""}>${esc(metric.label)}${metric.unit ? ` (${esc(metric.unit)})` : ""}</option>`).join("")}
+    </optgroup>
+  `).join("");
+}
+
+function readAlertConditions() {
+  return [...document.querySelectorAll("[data-alert-condition]")].map((row) => ({
+    metric: row.querySelector("[data-alert-condition-metric]")?.value || "",
+    operator: row.querySelector("[data-alert-condition-operator]")?.value || ">",
+    value: row.querySelector("[data-alert-condition-value]")?.value ?? "",
+  }));
+}
+
+function renderAlertConditions() {
+  const operatorOptions = state.alertOptions.operators || [];
+  $("alertConditions").innerHTML = state.alertConditions.map((condition, index) => `
+    <div class="signal-condition-row" data-alert-condition="${index}">
+      <label><span>Financial measure</span><select data-alert-condition-metric>${alertMetricOptions(condition.metric)}</select></label>
+      <label><span>Comparison</span><select data-alert-condition-operator>${operatorOptions.map((operator) => `<option value="${esc(operator.key)}"${operator.key === condition.operator ? " selected" : ""}>${esc(operator.label)}</option>`).join("")}</select></label>
+      <label><span>Value</span><input data-alert-condition-value type="number" step="any" value="${esc(condition.value)}" inputmode="decimal" /></label>
+      <button class="icon-button signal-remove-condition" type="button" data-remove-alert-condition="${index}" aria-label="Remove condition" title="Remove condition">×</button>
+    </div>
+  `).join("");
+}
+
+function resetAlertForm() {
+  state.editingAlertId = "";
+  state.alertConditions = [{ metric: "dividend_yield_percent", operator: ">", value: 2.5 }];
+  $("alertName").value = "";
+  $("alertSignal").value = "buy";
+  $("alertMatchMode").value = "all";
+  $("alertEnabled").checked = true;
+  $("saveAlert").textContent = "Save rule";
+  $("cancelAlertEdit").hidden = true;
+  renderAlertConditions();
+}
+
+function addAlertCondition() {
+  state.alertConditions = readAlertConditions();
+  if (state.alertConditions.length >= 12) {
+    $("alertStatus").textContent = "A rule can contain up to 12 conditions.";
+    return;
+  }
+  const defaultMetrics = ["profit_market_cap_percent", "revenue_growth_percent", "price_earnings_ratio"];
+  const used = new Set(state.alertConditions.map((condition) => condition.metric));
+  const metric = defaultMetrics.find((key) => !used.has(key)) || state.alertOptions.metrics?.[0]?.key || "dividend_yield_percent";
+  state.alertConditions.push({ metric, operator: ">", value: "" });
+  renderAlertConditions();
+  $("alertConditions").querySelector("[data-alert-condition]:last-child [data-alert-condition-value]")?.focus();
+}
+
+function removeAlertCondition(index) {
+  state.alertConditions = readAlertConditions();
+  state.alertConditions.splice(index, 1);
+  renderAlertConditions();
+}
+
+function alertConditionText(condition) {
+  const metric = alertMetric(condition.metric);
+  return `${metric.label} ${condition.operator} ${alertMetricValue(condition.metric, condition.value)}`;
+}
+
+function alertReasonText(reason) {
+  const metric = alertMetric(reason.metric);
+  return `${metric.label}: ${alertMetricValue(reason.metric, reason.value)} ${reason.operator} ${alertMetricValue(reason.metric, reason.threshold)}`;
+}
+
+function renderAlerts(data) {
+  state.alertData = data;
+  state.alertOptions = data.options || state.alertOptions;
+  if (!state.alertConditions.length) resetAlertForm();
+  else renderAlertConditions();
+
+  const rules = data.rules || [];
+  const signals = data.active_signals || [];
+  const runs = data.runs || [];
+  $("alertActiveSummary").textContent = fmt(signals.length, 0);
+  $("alertRuleSummary").textContent = `${rules.filter((rule) => rule.enabled).length} of ${rules.length}`;
+  $("alertScheduleSummary").textContent = data.schedule?.next_run ? formatDateTime(data.schedule.next_run) : "Not scheduled";
+  $("alertRunSummary").textContent = runs[0]?.run_at
+    ? `${runs[0].status === "failed" ? "Failed · " : ""}${formatDateTime(runs[0].run_at)}`
+    : "Not run";
+
+  $("alertsSignals").innerHTML = signals.length ? signals.map((signal) => {
+    const signalType = ["buy", "sell", "watch"].includes(signal.signal) ? signal.signal : "watch";
+    const reasons = (signal.reasons || []).map((reason) => `<li>${esc(alertReasonText(reason))}</li>`).join("");
+    const missing = (signal.missing || []).filter(Boolean);
+    const missingRuleMetrics = (signal.missing_metrics || []).map((metric) => alertMetric(metric).label);
+    return `<article class="signal-card signal-match-card signal-${esc(signalType)}">
+      <div class="signal-card-head">
+        <div><span class="signal-badge">${esc(signalType)} signal</span><h5>${esc(signal.symbol)} <small>${esc(signal.name || "")}</small></h5></div>
+        <span class="signal-time">${esc(formatDateTime(signal.matched_at))}</span>
+      </div>
+      <p class="signal-rule-name">Matched “${esc(signal.rule_name || "Rule")}”</p>
+      ${reasons ? `<ul class="signal-reasons">${reasons}</ul>` : ""}
+      ${missingRuleMetrics.length ? `<p class="signal-missing">Rule data unavailable: ${esc(missingRuleMetrics.join(", "))}</p>` : ""}
+      ${missing.length ? `<p class="signal-missing">Some provider data is unavailable: ${esc(missing.join(", "))}</p>` : ""}
+      <div class="signal-card-actions">
+        <button type="button" data-investigate-signal="${esc(signal.symbol)}">Investigate &amp; score</button>
+      </div>
+    </article>`;
+  }).join("") : '<div class="empty signal-empty">No current matches. Run the rules now or wait for the next daily check.</div>';
+
+  $("alertsList").innerHTML = rules.length ? rules.map((rule) => {
+    const conditions = rule.conditions || [];
+    const joiner = rule.match_mode === "any" ? " OR " : " AND ";
+    const conditionText = conditions.length ? conditions.map(alertConditionText).join(joiner) : "This older rule needs a condition before it can run.";
+    const matchCount = (rule.last_matches || []).length;
+    return `<article class="signal-card saved-rule-card${rule.enabled ? "" : " is-disabled"}">
+      <div class="signal-card-head">
+        <div><span class="signal-badge signal-${esc(rule.signal || "watch")}">${esc(rule.signal || "watch")}</span><h5>${esc(rule.name)}</h5></div>
+        <span class="rule-state">${rule.enabled ? "Daily" : "Paused"}</span>
+      </div>
+      <p>${esc(conditionText)}</p>
+      <div class="signal-rule-meta"><span>${esc(rule.last_status || "Not run")}</span><span>${matchCount} current match${matchCount === 1 ? "" : "es"}</span></div>
+      <div class="signal-card-actions">
+        <button class="secondary compact-button" type="button" data-edit-alert="${esc(rule.id)}">Edit</button>
+        <button class="secondary compact-button" type="button" data-toggle-alert="${esc(rule.id)}">${rule.enabled ? "Pause" : "Enable"}</button>
+        <button class="danger compact-button" type="button" data-delete-alert="${esc(rule.id)}">Remove</button>
+      </div>
+    </article>`;
+  }).join("") : '<div class="empty signal-empty">No saved rules. The example above starts with dividend yield &gt; 2.5%.</div>';
+
+  $("alertRunHistory").innerHTML = runs.length ? runs.slice(0, 12).map((run) => {
+    const providerErrors = run.metadata?.provider_errors?.length || 0;
+    return `<article class="signal-card signal-run-card${run.status === "failed" ? " is-failed" : ""}">
+      <div class="signal-card-head"><h5>${esc(formatDateTime(run.run_at))}</h5><span class="run-state">${esc(run.status || "completed")}</span></div>
+      ${run.error ? `<p class="signal-missing">${esc(run.error)}</p>` : ""}
+      <div class="signal-run-stats"><span><b>${fmt(run.evaluated_symbols || 0, 0)}</b> stocks checked</span><span><b>${fmt(run.matched_signals || 0, 0)}</b> matches</span><span><b>${fmt(providerErrors, 0)}</b> data errors</span></div>
+    </article>`;
+  }).join("") : '<div class="empty signal-empty">No run history yet.</div>';
+}
+
 async function loadAlerts() {
   const data = await api("/api/alerts");
-  $("alertsList").innerHTML = data.rules.length ? data.rules.map((rule) => `
-    <div class="stack-item">
-      <b>${esc(rule.name)}</b>
-      <span>${esc(rule.last_status || "not run")}</span>
-      <div class="sub">matches: ${esc((rule.last_matches || []).join(", ") || "none")}</div>
-    </div>
-  `).join("") : '<div class="empty">No alerts yet</div>';
+  renderAlerts(data);
 }
 
 async function saveAlert() {
-  await api("/api/alerts", {
-    method: "POST",
+  const conditions = readAlertConditions();
+  const payload = {
+    name: $("alertName").value.trim() || "Daily portfolio rule",
+    enabled: $("alertEnabled").checked,
+    signal: $("alertSignal").value,
+    match_mode: $("alertMatchMode").value,
+    conditions,
+    notification: { channels: ["dashboard"] },
+  };
+  $("saveAlert").disabled = true;
+  $("alertStatus").textContent = state.editingAlertId ? "Updating rule…" : "Saving rule…";
+  try {
+    await api(state.editingAlertId ? `/api/alerts/${encodeURIComponent(state.editingAlertId)}` : "/api/alerts", {
+      method: state.editingAlertId ? "PUT" : "POST",
+      body: JSON.stringify(payload),
+    });
+    resetAlertForm();
+    $("alertStatus").textContent = "Rule saved. It will run during the daily check.";
+    await loadAlerts();
+  } catch (error) {
+    $("alertStatus").textContent = `Error: ${error.message}`;
+  } finally {
+    $("saveAlert").disabled = false;
+  }
+}
+
+function editAlertRule(ruleId) {
+  const rule = (state.alertData?.rules || []).find((item) => item.id === ruleId);
+  if (!rule) return;
+  state.editingAlertId = rule.id;
+  state.alertConditions = (rule.conditions || []).map((condition) => ({ ...condition }));
+  $("alertName").value = rule.name || "";
+  $("alertSignal").value = rule.signal || "watch";
+  $("alertMatchMode").value = rule.match_mode || "all";
+  $("alertEnabled").checked = Boolean(rule.enabled);
+  $("saveAlert").textContent = "Update rule";
+  $("cancelAlertEdit").hidden = false;
+  $("alertStatus").textContent = `Editing “${rule.name}”`;
+  renderAlertConditions();
+  $("signalRuleBuilderTitle").scrollIntoView({ behavior: "smooth", block: "start" });
+  $("alertName").focus({ preventScroll: true });
+}
+
+async function toggleAlertRule(ruleId) {
+  const rule = (state.alertData?.rules || []).find((item) => item.id === ruleId);
+  if (!rule) return;
+  await api(`/api/alerts/${encodeURIComponent(ruleId)}`, {
+    method: "PUT",
     body: JSON.stringify({
-      name: $("alertName").value || "Daily portfolio screen",
-      enabled: true,
-      criteria: {
-        trend: $("alertTrend").value,
-        dividendTrend: $("alertDividendTrend").value,
-        minProfitMarketCap: $("alertMinProfitMarketCap").value,
-        minDividendGrowth: $("alertMinDividendGrowth").value,
-        includeMissing: false,
-      },
-      notification: { channels: ["dashboard"] },
+      name: rule.name,
+      enabled: !rule.enabled,
+      signal: rule.signal,
+      match_mode: rule.match_mode,
+      conditions: rule.conditions,
+      notification: rule.notification,
     }),
   });
-  $("alertName").value = "";
-  loadAlerts();
+  $("alertStatus").textContent = rule.enabled ? "Rule paused." : "Rule enabled.";
+  await loadAlerts();
+}
+
+async function deleteAlertRule(ruleId) {
+  const rule = (state.alertData?.rules || []).find((item) => item.id === ruleId);
+  if (!rule || !window.confirm(`Remove the rule “${rule.name}”?`)) return;
+  await api(`/api/alerts/${encodeURIComponent(ruleId)}`, { method: "DELETE" });
+  if (state.editingAlertId === ruleId) resetAlertForm();
+  $("alertStatus").textContent = "Rule removed.";
+  await loadAlerts();
+}
+
+async function investigateAlertSignal(symbol) {
+  setResearchSection("outlook");
+  $("outlookSymbol").value = cleanSecuritySymbol(symbol);
+  $("companyOutlookStatus").textContent = `Investigating ${cleanSecuritySymbol(symbol)} using company reports…`;
+  $("researchOutlookPanel").scrollIntoView({ block: "start" });
+  await loadCompanyOutlook();
 }
 
 async function runAlerts() {
-  $("status").textContent = "Running alerts";
-  await api("/api/alerts/run", { method: "POST", body: "{}" });
-  $("status").textContent = "Alert run finished";
-  loadAlerts();
+  state.alertConditions = readAlertConditions();
+  $("runAlerts").disabled = true;
+  $("alertStatus").textContent = "Checking portfolio stocks against the enabled rules…";
+  try {
+    const result = await api("/api/alerts/run", { method: "POST", body: "{}" });
+    renderAlerts(result.state);
+    const latestRun = result.state?.runs?.[0];
+    $("alertStatus").textContent = latestRun?.status === "failed" ? latestRun.error || "Rule check failed." : "Rule check finished.";
+  } catch (error) {
+    $("alertStatus").textContent = `Error: ${error.message}`;
+  } finally {
+    $("runAlerts").disabled = false;
+  }
+}
+
+function optionalMarketNumber(id, multiplier = 1) {
+  const raw = valueOf(id);
+  if (raw === "") return "";
+  const number = Number(raw);
+  return Number.isFinite(number) ? number * multiplier : "";
 }
 
 function marketCriteria() {
   return {
-    query: $("marketQuery").value.trim(),
-    exchange: $("marketExchange").value,
-    sector: $("marketSector").value.trim(),
-    marketCapMoreThan: $("marketCapMoreThan").value,
-    dividendMoreThan: $("dividendMoreThan").value,
-    limit: 50,
+    query: valueOf("marketQuery"),
+    exchange: valueOf("marketExchange"),
+    sector: valueOf("marketSector"),
+    industry: valueOf("marketIndustry"),
+    country: valueOf("marketCountry"),
+    priceMoreThan: optionalMarketNumber("marketPriceMin"),
+    priceLowerThan: optionalMarketNumber("marketPriceMax"),
+    marketCapMoreThan: optionalMarketNumber("marketCapMinMillions", 1_000_000),
+    marketCapLowerThan: optionalMarketNumber("marketCapMaxMillions", 1_000_000),
+    dividendYieldMoreThan: optionalMarketNumber("marketDividendYieldMin"),
+    dividendYieldLowerThan: optionalMarketNumber("marketDividendYieldMax"),
+    annualNetIncomeMoreThan: optionalMarketNumber("marketAnnualProfitMinMillions", 1_000_000),
+    profitMarketCapMoreThan: optionalMarketNumber("marketProfitCapMin"),
+    profitMarketCapLowerThan: optionalMarketNumber("marketProfitCapMax"),
+    priceEarningsLowerThan: optionalMarketNumber("marketPeMax"),
+    revenueGrowthMoreThan: optionalMarketNumber("marketRevenueGrowthMin"),
+    netIncomeGrowthMoreThan: optionalMarketNumber("marketProfitGrowthMin"),
+    netMarginMoreThan: optionalMarketNumber("marketNetMarginMin"),
+    freeCashFlowMoreThan: optionalMarketNumber("marketFcfMinMillions", 1_000_000),
+    freeCashFlowYieldMoreThan: optionalMarketNumber("marketFcfYieldMin"),
+    debtRevenueLowerThan: optionalMarketNumber("marketDebtRevenueMax"),
+    currentRatioMoreThan: optionalMarketNumber("marketCurrentRatioMin"),
+    betaLowerThan: optionalMarketNumber("marketBetaMax"),
+    volumeMoreThan: optionalMarketNumber("marketVolumeMin"),
+    includeMissing: $("marketIncludeMissing").checked,
+    sortBy: valueOf("marketSortBy") || "market_cap:desc",
+    limit: Number(valueOf("marketResultLimit") || 25),
   };
 }
 
+function validateMarketRange(criteria, minimumKey, maximumKey, label) {
+  const minimum = Number(criteria[minimumKey]);
+  const maximum = Number(criteria[maximumKey]);
+  if (criteria[minimumKey] !== "" && criteria[maximumKey] !== "" && minimum > maximum) {
+    throw new Error(`${label} minimum cannot exceed maximum`);
+  }
+}
+
+function marketMetricPercent(value, digits = 1) {
+  return value === null || value === undefined ? "∅" : `${fmt(value, digits)}%`;
+}
+
+function marketMetricAmount(value, currency = "USD") {
+  return value === null || value === undefined ? "∅" : `${esc(currency || "USD")} ${esc(compactNumber(value))}`;
+}
+
+function marketValueClass(value) {
+  if (value === null || value === undefined) return "";
+  return Number(value) >= 0 ? "positive" : "negative";
+}
+
+function resetMarketScreener() {
+  [
+    "marketQuery", "marketSector", "marketIndustry", "marketCountry", "marketPriceMin", "marketPriceMax",
+    "marketCapMinMillions", "marketCapMaxMillions", "marketDividendYieldMin", "marketDividendYieldMax",
+    "marketAnnualProfitMinMillions", "marketProfitCapMin", "marketProfitCapMax", "marketPeMax",
+    "marketRevenueGrowthMin", "marketProfitGrowthMin", "marketNetMarginMin", "marketFcfMinMillions",
+    "marketFcfYieldMin", "marketDebtRevenueMax", "marketCurrentRatioMin", "marketBetaMax", "marketVolumeMin",
+  ].forEach((id) => { $(id).value = ""; });
+  $("marketExchange").value = "";
+  $("marketSortBy").value = "market_cap:desc";
+  $("marketResultLimit").value = "25";
+  $("marketIncludeMissing").checked = false;
+  $("marketStatus").textContent = "Filters reset";
+  $("marketFilterSummary").textContent = "";
+  $("marketRows").innerHTML = "";
+}
+
 async function runMarketScreener() {
-  $("marketStatus").textContent = "Searching";
-  const data = await api("/api/market/screener", { method: "POST", body: JSON.stringify(marketCriteria()) });
-  const status = Object.entries(data.status || {}).map(([name, value]) => `${name}: ${value}`).join(", ");
-  $("marketStatus").textContent = `${data.count} symbols · ${status}`;
+  const criteria = marketCriteria();
+  validateMarketRange(criteria, "priceMoreThan", "priceLowerThan", "Price");
+  validateMarketRange(criteria, "marketCapMoreThan", "marketCapLowerThan", "Market cap");
+  validateMarketRange(criteria, "dividendYieldMoreThan", "dividendYieldLowerThan", "Dividend yield");
+  validateMarketRange(criteria, "profitMarketCapMoreThan", "profitMarketCapLowerThan", "Profit / market cap");
+  $("marketStatus").textContent = "Searching market and annual statements…";
+  $("marketFilterSummary").textContent = "";
+  const data = await api("/api/market/screener", { method: "POST", body: JSON.stringify(criteria) });
+  const meta = data.meta || {};
+  const provider = providerStatusHint(data.status || {});
+  const reportText = meta.latest_annual_reports ? ` · ${meta.financial_rows || 0}/${meta.enriched || 0} annual reports available` : "";
+  $("marketStatus").textContent = `${data.count} symbols${reportText}${provider ? ` · ${provider}` : ""}`;
+  const activeFilters = meta.filters_applied || [];
+  $("marketFilterSummary").textContent = activeFilters.length
+    ? `Applied: ${activeFilters.join(", ")}${meta.include_missing ? " · missing values included" : " · rows missing filtered values excluded"}`
+    : "No financial thresholds applied";
   $("marketRows").innerHTML = data.items.length ? data.items.map((item) => `
     <tr>
-      <td><div class="symbol">${esc(item.symbol)}</div></td>
-      <td>${esc(item.name || "")}</td>
-      <td>${esc(item.exchange || "")}</td>
-      <td>${fmt(item.price)}</td>
-      <td>${fmt(item.market_cap, 0)}</td>
-      <td>${esc(item.sector || "")}<div class="sub">${esc(item.industry || "")}</div></td>
-      <td>${fmt(item.dividend)}</td>
+      <td><div class="symbol">${esc(item.symbol)}</div><div class="sub">${esc(item.exchange || "Unknown exchange")}</div></td>
+      <td>${esc(item.name || "Unknown company")}<div class="sub">${esc([item.sector, item.industry, item.country].filter(Boolean).join(" · ") || "Classification unavailable")}</div></td>
+      <td>${item.price === null || item.price === undefined ? "∅" : money(item.price, item.currency || "USD", 2)}</td>
+      <td>${marketMetricAmount(item.market_cap, item.currency)}</td>
+      <td>${marketMetricPercent(item.dividend_yield_percent, 2)}<div class="sub">${item.annual_dividend === null || item.annual_dividend === undefined ? "" : `${money(item.annual_dividend, item.currency || "USD", 3)} / share`}</div></td>
+      <td class="${marketValueClass(item.annual_net_income)}">${marketMetricAmount(item.annual_net_income, item.currency)}<div class="sub">${item.fiscal_year || "Year unavailable"}</div></td>
+      <td>${marketMetricPercent(item.profit_market_cap_percent, 2)}</td>
+      <td class="${marketValueClass(item.revenue_growth_percent)}">${marketMetricPercent(item.revenue_growth_percent)}</td>
+      <td class="${marketValueClass(item.net_income_growth_percent)}">${marketMetricPercent(item.net_income_growth_percent)}</td>
+      <td>${marketMetricPercent(item.net_margin_percent)}</td>
+      <td class="${marketValueClass(item.free_cash_flow)}">${marketMetricAmount(item.free_cash_flow, item.currency)}<div class="sub">Yield ${marketMetricPercent(item.free_cash_flow_yield_percent)}</div></td>
+      <td>${item.price_earnings_ratio === null || item.price_earnings_ratio === undefined ? "∅" : fmt(item.price_earnings_ratio, 1)}</td>
+      <td>${item.beta === null || item.beta === undefined ? "∅" : fmt(item.beta, 2)}</td>
+      <td><button class="secondary compact-button" type="button" data-open-market-report="${esc(item.symbol)}">Report</button></td>
     </tr>
-  `).join("") : '<tr><td colspan="7" class="empty-cell">No results</td></tr>';
+  `).join("") : '<tr><td colspan="14" class="empty-cell">No companies match these filters, or the required provider data is unavailable.</td></tr>';
 }
 
 async function loadCacheStatus() {
@@ -5982,9 +7597,28 @@ async function loadAbout() {
   ].map(([label, value]) => `<div class="setting-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
 }
 
-function openModal(id) {
+function setResearchSection(section = "finance") {
+  const selected = ["finance", "outlook", "signals"].includes(section) ? section : "finance";
+  state.researchSection = selected;
+  document.querySelectorAll("[data-research-panel]").forEach((panel) => {
+    const active = panel.dataset.researchPanel === selected;
+    panel.hidden = !active;
+    panel.setAttribute("aria-hidden", String(!active));
+  });
+  document.querySelectorAll("[data-research-tab]").forEach((tab) => {
+    const active = tab.dataset.researchTab === selected;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+  });
+}
+
+let researchModalReturnFocus = null;
+
+function openModal(id, returnFocus = document.activeElement) {
   const modal = $(id);
   if (!modal) return;
+  if (id === "researchModal") researchModalReturnFocus = returnFocus;
   modal.hidden = false;
   if (id === "accountsModal") {
     setAccountsTab("existing");
@@ -6002,11 +7636,16 @@ function openModal(id) {
     loadEvents().catch((error) => { $("alarmsStatus").textContent = `Error: ${error.message}`; });
   }
   if (id === "reportsModal") Promise.all([loadLocalAccounts(), loadReports()]);
+  if (id === "researchModal") {
+    setResearchSection(state.researchSection);
+    loadCompanyOutlookHistory().catch((error) => { $("companyOutlookStatus").textContent = `Error: ${error.message}`; });
+    loadAlerts().catch((error) => { $("alertStatus").textContent = `Error: ${error.message}`; });
+    requestAnimationFrame(() => modal.querySelector("[data-modal-initial-focus]")?.focus());
+  }
   if (id === "fundsModal") {
     hideFundCreate({ clear: true });
     Promise.all([loadLocalAccounts(), loadFamilyMembers(), loadFunds()]);
   }
-  if (id === "alertsModal") loadAlerts();
   if (id === "bannerModal") renderBannerSettings();
   if (id === "settingsModal") loadCacheStatus();
   if (id === "backupScheduleModal") populateBackupScheduleForm();
@@ -6014,15 +7653,101 @@ function openModal(id) {
 }
 
 function closeModal(modal) {
+  if (!modal) return;
   modal.hidden = true;
+  if (modal.id === "researchModal" && researchModalReturnFocus?.isConnected) {
+    requestAnimationFrame(() => researchModalReturnFocus.focus());
+  }
 }
 
+document.addEventListener("keydown", (event) => {
+  const activeResearchTab = event.target.closest?.("[data-research-tab]");
+  if (activeResearchTab && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+    const tabs = [...document.querySelectorAll("[data-research-tab]")];
+    const currentIndex = tabs.indexOf(activeResearchTab);
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? tabs.length - 1
+        : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    event.preventDefault();
+    tabs[nextIndex].focus();
+    tabs[nextIndex].click();
+    return;
+  }
+
+  const researchModal = $("researchModal");
+  if (!researchModal || researchModal.hidden) return;
+  if (event.key === "Escape") {
+    event.preventDefault();
+    closeModal(researchModal);
+    return;
+  }
+  if (event.key !== "Tab") return;
+  const focusable = [...researchModal.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])')]
+    .filter((element) => element.offsetParent !== null);
+  if (!focusable.length) return;
+  const currentIndex = focusable.indexOf(document.activeElement);
+  if (currentIndex === -1) {
+    event.preventDefault();
+    focusable[event.shiftKey ? focusable.length - 1 : 0].focus();
+  } else if (event.shiftKey && currentIndex === 0) {
+    event.preventDefault();
+    focusable.at(-1).focus();
+  } else if (!event.shiftKey && currentIndex === focusable.length - 1) {
+    event.preventDefault();
+    focusable[0].focus();
+  }
+});
+
 document.addEventListener("click", (event) => {
-  const modalId = event.target.closest("[data-modal]")?.dataset.modal;
-  if (modalId) openModal(modalId);
+  const modalTrigger = event.target.closest("[data-modal]");
+  const modalId = modalTrigger?.dataset.modal;
+  if (modalId) {
+    if (modalTrigger.dataset.researchSection) setResearchSection(modalTrigger.dataset.researchSection);
+    openModal(modalId, modalTrigger);
+  }
+
+  const researchTab = event.target.closest("[data-research-tab]")?.dataset.researchTab;
+  if (researchTab) setResearchSection(researchTab);
+
+  const investigateSignal = event.target.closest("[data-investigate-signal]")?.dataset.investigateSignal;
+  if (investigateSignal) {
+    investigateAlertSignal(investigateSignal).catch((error) => {
+      $("companyOutlookStatus").textContent = `Error: ${error.message}`;
+    });
+  }
+
+  const editAlertId = event.target.closest("[data-edit-alert]")?.dataset.editAlert;
+  if (editAlertId) editAlertRule(editAlertId);
+
+  const toggleAlertId = event.target.closest("[data-toggle-alert]")?.dataset.toggleAlert;
+  if (toggleAlertId) {
+    toggleAlertRule(toggleAlertId).catch((error) => { $("alertStatus").textContent = `Error: ${error.message}`; });
+  }
+
+  const deleteAlertId = event.target.closest("[data-delete-alert]")?.dataset.deleteAlert;
+  if (deleteAlertId) {
+    deleteAlertRule(deleteAlertId).catch((error) => { $("alertStatus").textContent = `Error: ${error.message}`; });
+  }
+
+  const removeAlertConditionIndex = event.target.closest("[data-remove-alert-condition]")?.dataset.removeAlertCondition;
+  if (removeAlertConditionIndex !== undefined) removeAlertCondition(Number(removeAlertConditionIndex));
+
+  const marketReportSymbol = event.target.closest("[data-open-market-report]")?.dataset.openMarketReport;
+  if (marketReportSymbol) {
+    closeModal($("marketModal"));
+    setResearchSection("finance");
+    openModal("researchModal");
+    $("financeReportSymbol").value = cleanSecuritySymbol(marketReportSymbol);
+    loadFinanceReport().catch((error) => { $("financeReportStatus").textContent = `Error: ${error.message}`; });
+  }
 
   const dividendAlarmId = event.target.closest("[data-open-dividend-alarm]")?.dataset.openDividendAlarm;
   if (dividendAlarmId) openDividendAlarm(dividendAlarmId);
+
+  const vestingAlarmId = event.target.closest("[data-open-vesting-alarm]")?.dataset.openVestingAlarm;
+  if (vestingAlarmId) openVestingAlarm(vestingAlarmId);
 
   const accountTab = event.target.closest("[data-account-tab]")?.dataset.accountTab;
   if (accountTab) setAccountsTab(accountTab);
@@ -6046,6 +7771,20 @@ document.addEventListener("click", (event) => {
     resolveBannerItems();
   }
 
+  const predictionId = event.target.closest("[data-evaluate-company-outlook]")?.dataset.evaluateCompanyOutlook;
+  if (predictionId) {
+    evaluateCompanyOutlookPrediction(predictionId).catch((error) => {
+      $("companyOutlookStatus").textContent = `Error: ${error.message}`;
+    });
+  }
+
+  const deletePrediction = event.target.closest("[data-delete-company-outlook]");
+  if (deletePrediction) {
+    deleteCompanyOutlookPrediction(deletePrediction.dataset.deleteCompanyOutlook, deletePrediction.dataset.predictionSymbol).catch((error) => {
+      $("companyOutlookStatus").textContent = `Error: ${error.message}`;
+    });
+  }
+
   const accountId = event.target.closest("[data-delete-account]")?.dataset.deleteAccount;
   if (accountId) {
     api(`/api/local/accounts/${accountId}`, { method: "DELETE" }).then(() => Promise.all([loadLocalAccounts(), loadPortfolio()]));
@@ -6056,6 +7795,20 @@ document.addEventListener("click", (event) => {
     openSecurityDetail(securityDetailButton.dataset).catch((error) => {
       $("status").textContent = `Error: ${error.message}`;
     });
+  }
+
+  const positionHistoryButton = event.target.closest("[data-position-history-symbol]");
+  if (positionHistoryButton) {
+    openPositionTransactionHistory(positionHistoryButton.dataset).catch((error) => {
+      $("positionTransactionsRows").innerHTML = `<tr><td colspan="8" class="empty-cell">Error: ${esc(error.message)}</td></tr>`;
+    });
+  }
+
+  const editPositionTransactionId = event.target.closest("[data-edit-position-transaction]")?.dataset.editPositionTransaction;
+  if (editPositionTransactionId) editPositionTransaction(editPositionTransactionId);
+
+  if (event.target.id === "cancelPositionTransactionEdit") {
+    clearPositionTransactionForm("Transaction edit cancelled");
   }
 
   const securityChartPeriod = event.target.closest("[data-security-chart-period]")?.dataset.securityChartPeriod;
@@ -6092,7 +7845,9 @@ document.addEventListener("click", (event) => {
 
   const securityId = event.target.closest("[data-delete-security]")?.dataset.deleteSecurity;
   if (securityId) {
-    api(`/api/local/securities/${securityId}`, { method: "DELETE" }).then(() => Promise.all([loadLocalSecurities(), loadPortfolio()]));
+    api(`/api/local/securities/${securityId}`, { method: "DELETE" })
+      .then(() => Promise.all([loadLocalSecurities(), loadPortfolio()]))
+      .catch((error) => { $("securityStatus").textContent = `Error: ${error.message}`; });
   }
 
   const editSecurityId = event.target.closest("[data-edit-security]")?.dataset.editSecurity;
@@ -6117,7 +7872,9 @@ document.addEventListener("click", (event) => {
 
   const manualSecurityId = event.target.closest("[data-delete-manual-security]")?.dataset.deleteManualSecurity;
   if (manualSecurityId) {
-    api(`/api/local/manual-securities/${manualSecurityId}`, { method: "DELETE" }).then(() => Promise.all([loadManualSecurities(), loadPortfolio()]));
+    api(`/api/local/manual-securities/${manualSecurityId}`, { method: "DELETE" })
+      .then(() => Promise.all([loadManualSecurities(), loadPortfolio()]))
+      .catch((error) => { $("manualSecurityStatus").textContent = `Error: ${error.message}`; });
   }
 
   const useManualSecurityId = event.target.closest("[data-use-manual-security]")?.dataset.useManualSecurity;
@@ -6125,8 +7882,14 @@ document.addEventListener("click", (event) => {
     const item = instrumentById(useManualSecurityId);
     applyInstrumentToForm(item, "security");
     $("securityKnownInstrument").value = useManualSecurityId;
-    $("securityStatus").textContent = `Using ${item?.symbol || "instrument"} for the next transaction`;
+    $("securityStatus").textContent = `Using ${item?.company_name || item?.symbol || "instrument"} for the next transaction`;
   }
+
+  const listingSecurityId = event.target.closest("[data-link-employee-listing]")?.dataset.linkEmployeeListing;
+  if (listingSecurityId) openEmployeeListing(listingSecurityId);
+
+  const exerciseSecurityId = event.target.closest("[data-exercise-employee-option]")?.dataset.exerciseEmployeeOption;
+  if (exerciseSecurityId) openEmployeeExercise(exerciseSecurityId);
 
   const priceId = event.target.closest("[data-delete-price]")?.dataset.deletePrice;
   if (priceId) {
@@ -6155,6 +7918,19 @@ document.addEventListener("click", (event) => {
   const fundId = event.target.closest("[data-delete-fund]")?.dataset.deleteFund;
   if (fundId) {
     api(`/api/local/funds/${fundId}`, { method: "DELETE" }).then(loadFunds);
+  }
+
+  const fundHistoryId = event.target.closest("[data-fund-history]")?.dataset.fundHistory;
+  if (fundHistoryId) {
+    openFundAmountHistory(fundHistoryId).catch((error) => { $("fundStatus").textContent = `Error: ${error.message}`; });
+  }
+
+  const editFundHistoryId = event.target.closest("[data-edit-fund-history]")?.dataset.editFundHistory;
+  if (editFundHistoryId) editFundAmountHistory(editFundHistoryId);
+
+  const deleteFundHistoryId = event.target.closest("[data-delete-fund-history]")?.dataset.deleteFundHistory;
+  if (deleteFundHistoryId) {
+    deleteFundAmountHistory(deleteFundHistoryId).catch((error) => { $("fundHistoryStatus").textContent = `Error: ${error.message}`; });
   }
 
   const editFundId = event.target.closest("[data-edit-fund]")?.dataset.editFund;
@@ -6339,8 +8115,16 @@ document.addEventListener("change", (event) => {
     renderAnalytics(state.items || []);
   }
 
-  if (event.target.id === "manualInstrumentType") {
+  if (event.target.id === "manualInstrumentType" || event.target.id === "manualIssuerStatus") {
     toggleManualInstrumentFields();
+  }
+
+  if (event.target.id === "manualCompanyName") {
+    syncEmployeeIssuerFromCompany();
+  }
+
+  if (event.target.id === "manualGrantDate" && !dateValue("manualVestingStartDate")) {
+    setDateField("manualVestingStartDate", dateValue("manualGrantDate"));
   }
 
   if (event.target.id === "manualSecurityLocation") {
@@ -6366,6 +8150,10 @@ document.addEventListener("change", (event) => {
 
   if (event.target.id === "securityAssetClass" || event.target.id === "securityAction") {
     toggleTransactionCompFields();
+  }
+
+  if (["securityVestingStyle", "securityVestingMode"].includes(event.target.id)) {
+    renderVestingSchedulePreview();
   }
 
   if (event.target.id === "priceKnownInstrument") {
@@ -6446,6 +8234,13 @@ document.addEventListener("input", (event) => {
   ];
   if (pensionIds.includes(event.target.id)) updatePensionActionStates();
   if (["fundKind", "fundPensionId", "fundAmount"].includes(event.target.id)) updateFundActionStates();
+  if (["outlookSymbol", "outlookAsOfDate"].includes(event.target.id) && event.target.value.trim()) {
+    event.target.removeAttribute("aria-invalid");
+  }
+  if ([
+    "securityQuantity", "securityVestingStartDate", "securityVestingDuration", "securityVestingCliffMonths",
+    "securityVestingCliffValue", "securityVestingInterval", "securityVestingInstallmentValue",
+  ].includes(event.target.id)) renderVestingSchedulePreview();
 });
 
 document.addEventListener("focusin", (event) => {
@@ -6501,8 +8296,14 @@ $("refresh").addEventListener("click", () => {
 $("apply").addEventListener("click", applyFilter);
 $("saveAlert").addEventListener("click", saveAlert);
 $("runAlerts").addEventListener("click", runAlerts);
+$("addAlertCondition").addEventListener("click", addAlertCondition);
+$("cancelAlertEdit").addEventListener("click", () => {
+  resetAlertForm();
+  $("alertStatus").textContent = "Edit cancelled.";
+});
 $("addBannerItem").addEventListener("click", addBannerItem);
-$("runMarketScreener").addEventListener("click", runMarketScreener);
+$("runMarketScreener").addEventListener("click", () => runMarketScreener().catch((error) => { $("marketStatus").textContent = `Error: ${error.message}`; }));
+$("resetMarketScreener").addEventListener("click", resetMarketScreener);
 $("saveLocalAccount").addEventListener("click", () => saveLocalAccount().catch((error) => { $("accountsStatus").textContent = `Error: ${error.message}`; }));
 $("saveEditAccount").addEventListener("click", () => saveEditAccount().catch((error) => { $("editAccountStatus").textContent = `Error: ${error.message}`; }));
 $("saveBroker").addEventListener("click", () => saveBroker().catch((error) => { $("brokerStatus").textContent = `Error: ${error.message}`; }));
@@ -6538,15 +8339,26 @@ $("dashboardEdit").addEventListener("click", () => setDashboardEdit(!state.dashb
 $("dashboardReset").addEventListener("click", resetDashboard);
 $("saveManualSecurity").addEventListener("click", () => saveManualSecurity().catch((error) => { $("manualSecurityStatus").textContent = `Error: ${error.message}`; }));
 $("saveSecurity").addEventListener("click", () => saveSecurity().catch((error) => { $("securityStatus").textContent = `Error: ${error.message}`; }));
+$("saveEmployeeListing").addEventListener("click", () => saveEmployeeListing().catch((error) => { $("employeeListingStatus").textContent = `Error: ${error.message}`; }));
+$("saveEmployeeExercise").addEventListener("click", () => saveEmployeeExercise().catch((error) => { $("employeeExerciseStatus").textContent = `Error: ${error.message}`; }));
+$("savePositionTransaction").addEventListener("click", () => savePositionTransaction().catch((error) => { $("positionTransactionStatus").textContent = `Error: ${error.message}`; }));
+$("positionTransactionAction").addEventListener("change", syncPositionTransactionLimit);
 $("runDividendEvents").addEventListener("click", () => runDividendEvents().catch((error) => { $("eventsStatus").textContent = `Error: ${error.message}`; }));
+$("saveAlarmSettings").addEventListener("click", saveVestingAlertSettings);
 $("savePrice").addEventListener("click", () => savePrice().catch((error) => { $("priceStatus").textContent = `Error: ${error.message}`; }));
 $("saveDetailPrice").addEventListener("click", () => saveSecurityDetailPrice().catch((error) => { $("securityDetailStatus").textContent = `Error: ${error.message}`; }));
 $("loadReports").addEventListener("click", () => loadReports().catch((error) => { $("reportsDetails").innerHTML = `<div class="empty">Error: ${esc(error.message)}</div>`; }));
+$("exportReportsPdf").addEventListener("click", () => exportReportsPdf().catch((error) => { $("reportsExportStatus").textContent = `Error: ${error.message}`; }));
+$("loadFinanceReport").addEventListener("click", () => loadFinanceReport().catch((error) => { $("financeReportStatus").textContent = `Error: ${error.message}`; }));
+$("runCompanyOutlook").addEventListener("click", () => loadCompanyOutlook().catch((error) => { $("companyOutlookStatus").textContent = `Error: ${error.message}`; }));
+$("runCompanyOutlookBacktest").addEventListener("click", () => loadCompanyOutlookBacktest().catch((error) => { $("companyOutlookStatus").textContent = `Error: ${error.message}`; }));
 $("saveHistorySnapshot").addEventListener("click", () => saveHistorySnapshot().catch((error) => { $("historyStatus").textContent = `Error: ${error.message}`; }));
 $("captureHistorySnapshot").addEventListener("click", () => captureHistorySnapshot().catch((error) => { $("historyStatus").textContent = `Error: ${error.message}`; }));
 $("showFundCreate").addEventListener("click", showFundCreate);
 $("cancelFundCreate").addEventListener("click", () => hideFundCreate({ clear: true }));
 $("saveFund").addEventListener("click", () => saveFund().catch((error) => { $("fundStatus").textContent = `Error: ${error.message}`; }));
+$("saveFundHistory").addEventListener("click", () => saveFundAmountHistory().catch((error) => { $("fundHistoryStatus").textContent = `Error: ${error.message}`; }));
+$("cancelFundHistoryEdit").addEventListener("click", () => { resetFundHistoryForm(); $("fundHistoryStatus").textContent = "Edit cancelled"; });
 $("saveEditFund").addEventListener("click", () => saveEditFund().catch((error) => { $("editFundStatus").textContent = `Error: ${error.message}`; }));
 $("attachFundPerson").addEventListener("click", () => attachFamilyMember("fundPersons", "fundFamilyMember", "fundStatus", { single: true }));
 $("attachEditFundPerson").addEventListener("click", () => attachFamilyMember("editFundPersons", "editFundFamilyMember", "editFundStatus", { single: true }));
@@ -6560,7 +8372,7 @@ $("localAccountLocation").addEventListener("change", () => syncCurrencyFromLocat
 $("editAccountLocation").addEventListener("change", () => syncCurrencyFromLocation("editAccountLocation", "editAccountCurrency"));
 $("brokerCountry").addEventListener("change", () => syncCurrencyFromLocation("brokerCountry", "brokerCurrency"));
 $("priceLocation").addEventListener("change", () => syncCurrencyFromLocation("priceLocation", "priceCurrency"));
-["manualSecuritySymbol", "manualUnderlyingSymbol", "securitySymbol", "priceSymbol"].forEach((id) => {
+["manualSecuritySymbol", "manualUnderlyingSymbol", "securitySymbol", "priceSymbol", "financeReportSymbol", "outlookSymbol"].forEach((id) => {
   $(id).addEventListener("blur", () => { $(id).value = cleanSecuritySymbol($(id).value); });
 });
 

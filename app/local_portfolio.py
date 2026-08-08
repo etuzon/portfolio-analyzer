@@ -7,6 +7,7 @@ from datetime import date, datetime, timedelta
 import hashlib
 import json
 import math
+import calendar
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -20,9 +21,34 @@ from .models import Holding, Ohlcv, SymbolAnalysis, Trend
 
 ACCOUNT_TYPES = ["Investment", "Long-Term Savings", "Bank", "ESOP"]
 FUND_KINDS = ["Pension", "Provident Fund", "Savings Fund"]
-ASSET_CLASSES = ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"]
-INSTRUMENT_TYPES = ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "STOCK_OPTION"]
+ASSET_CLASSES = [
+    "EQUITY",
+    "ETF",
+    "MUTUALFUND",
+    "BOND",
+    "OPTION",
+    "FUTURE",
+    "RSU",
+    "EMPLOYEE_STOCK_OPTION",
+    "PRIVATE_STOCK",
+    "STOCK_OPTION",
+]
+INSTRUMENT_TYPES = [
+    "STOCK",
+    "ETF",
+    "MUTUALFUND",
+    "BOND",
+    "OPTION",
+    "FUTURE",
+    "RSU",
+    "EMPLOYEE_STOCK_OPTION",
+    "PRIVATE_STOCK",
+    "STOCK_OPTION",
+]
 OPTION_TYPES = ["CALL", "PUT"]
+ISSUER_LISTING_STATUSES = ["PRIVATE", "PUBLIC"]
+COMPANY_OUTLOOK_ACCURACY_TARGET_PERCENT = 75.0
+COMPANY_OUTLOOK_MIN_EVALUATED_PREDICTIONS = 30
 TRANSACTION_ACTIONS = ["ADD", "REMOVE", "BUY", "SELL", "SHORT", "DIVIDEND", "INTEREST", "FEE"]
 PENSION_INSURANCE_RATES_PATH = Path(__file__).resolve().parent.parent / "reference-data" / "pension-insurance-rates.yaml"
 PENSION_INSURANCE_RATES: dict[int, dict[str, Any]] | None = None
@@ -43,6 +69,22 @@ EXPORT_TABLES = {
         "comments",
         "created_at",
     ],
+    "issuers": [
+        "id",
+        "company_name",
+        "listing_status",
+        "public_symbol",
+        "public_market",
+        "currency",
+        "location",
+        "listing_date",
+        "restriction_end_date",
+        "manual_share_value",
+        "valuation_date",
+        "comments",
+        "created_at",
+        "updated_at",
+    ],
     "manual_securities": [
         "id",
         "symbol",
@@ -55,6 +97,12 @@ EXPORT_TABLES = {
         "expiration_date",
         "strike_price",
         "contract_multiplier",
+        "issuer_id",
+        "grant_id",
+        "grant_date",
+        "vesting_start_date",
+        "tax_scheme",
+        "early_exercise_allowed",
         "currency",
         "location",
         "comments",
@@ -73,11 +121,26 @@ EXPORT_TABLES = {
         "vest_date",
         "purchase_price",
         "strike_price",
+        "security_id",
+        "transition_id",
+        "vesting_schedule",
         "currency",
         "location",
         "trade_date",
         "source",
         "comments",
+        "created_at",
+    ],
+    "equity_transitions": [
+        "id",
+        "transition_type",
+        "source_security_id",
+        "target_security_id",
+        "account_db_id",
+        "quantity",
+        "conversion_ratio",
+        "effective_date",
+        "details",
         "created_at",
     ],
     "price_history": [
@@ -95,6 +158,7 @@ EXPORT_TABLES = {
         "created_at",
     ],
     "funds": ["id", "kind", "fund_name", "pension_id", "amount", "factor", "account_id", "birth_date", "persons", "comments", "created_at"],
+    "fund_amount_history": ["id", "fund_id", "amount_date", "amount", "source", "comments", "created_at", "updated_at"],
     "account_snapshots": [
         "account_db_id",
         "snapshot_date",
@@ -124,6 +188,27 @@ EXPORT_TABLES = {
         "details",
         "created_at",
         "updated_at",
+    ],
+    "company_report_predictions": [
+        "id",
+        "symbol",
+        "company_name",
+        "industry",
+        "created_at",
+        "horizon_date",
+        "model_version",
+        "score",
+        "label",
+        "direction",
+        "confidence",
+        "baseline",
+        "thesis",
+        "mermaid",
+        "actual",
+        "actual_direction",
+        "accuracy_score",
+        "evaluation",
+        "evaluated_at",
     ],
 }
 
@@ -202,6 +287,26 @@ class LocalPortfolioStore:
                 )
                 conn.execute(
                     """
+                    create table if not exists issuers (
+                        id text primary key,
+                        company_name text not null,
+                        listing_status text not null default 'PRIVATE',
+                        public_symbol text not null default '',
+                        public_market text not null default '',
+                        currency text not null default 'USD',
+                        location text not null default 'USA',
+                        listing_date text not null default '',
+                        restriction_end_date text not null default '',
+                        manual_share_value real not null default 0,
+                        valuation_date text not null default '',
+                        comments text not null default '',
+                        created_at text not null,
+                        updated_at text not null
+                    )
+                    """
+                )
+                conn.execute(
+                    """
                     create table if not exists manual_securities (
                         id text primary key,
                         symbol text not null,
@@ -214,6 +319,12 @@ class LocalPortfolioStore:
                         expiration_date text not null default '',
                         strike_price real not null default 0,
                         contract_multiplier real not null default 1,
+                        issuer_id text not null default '',
+                        grant_id text not null default '',
+                        grant_date text not null default '',
+                        vesting_start_date text not null default '',
+                        tax_scheme text not null default '',
+                        early_exercise_allowed integer not null default 0,
                         currency text not null,
                         location text not null,
                         comments text not null default '',
@@ -237,11 +348,30 @@ class LocalPortfolioStore:
                         vest_date text not null default '',
                         purchase_price real not null default 0,
                         strike_price real not null default 0,
+                        security_id text not null default '',
+                        transition_id text not null default '',
+                        vesting_schedule text not null default '{}',
                         currency text not null,
                         location text not null,
                         trade_date text not null,
                         source text not null default 'manual',
                         comments text not null default '',
+                        created_at text not null
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    create table if not exists equity_transitions (
+                        id text primary key,
+                        transition_type text not null,
+                        source_security_id text not null default '',
+                        target_security_id text not null default '',
+                        account_db_id text not null default '',
+                        quantity real not null default 0,
+                        conversion_ratio real not null default 1,
+                        effective_date text not null,
+                        details text not null default '{}',
                         created_at text not null
                     )
                     """
@@ -284,6 +414,21 @@ class LocalPortfolioStore:
                 )
                 conn.execute(
                     """
+                    create table if not exists fund_amount_history (
+                        id text primary key,
+                        fund_id text not null references funds(id) on delete cascade,
+                        amount_date text not null,
+                        amount real not null,
+                        source text not null default 'manual',
+                        comments text not null default '',
+                        created_at text not null,
+                        updated_at text not null,
+                        unique(fund_id, amount_date)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
                     create table if not exists account_snapshots (
                         account_db_id text not null references accounts(id) on delete cascade,
                         snapshot_date text not null,
@@ -321,9 +466,37 @@ class LocalPortfolioStore:
                     )
                     """
                 )
+                conn.execute(
+                    """
+                    create table if not exists company_report_predictions (
+                        id text primary key,
+                        symbol text not null,
+                        company_name text not null default '',
+                        industry text not null default '',
+                        created_at text not null,
+                        horizon_date text not null,
+                        model_version text not null,
+                        score real not null,
+                        label text not null,
+                        direction text not null,
+                        confidence text not null,
+                        baseline text not null,
+                        thesis text not null,
+                        mermaid text not null,
+                        actual text not null default '{}',
+                        actual_direction text not null default 'pending',
+                        accuracy_score real,
+                        evaluation text not null default '',
+                        evaluated_at text not null default ''
+                    )
+                    """
+                )
                 conn.execute("create index if not exists idx_account_snapshots_date on account_snapshots(snapshot_date)")
+                conn.execute("create index if not exists idx_fund_amount_history_date on fund_amount_history(fund_id, amount_date)")
                 conn.execute("create index if not exists idx_events_date on events(event_date)")
                 conn.execute("create index if not exists idx_events_status on events(status)")
+                conn.execute("create index if not exists idx_equity_transitions_source on equity_transitions(source_security_id, effective_date)")
+                conn.execute("create index if not exists idx_company_report_predictions_symbol on company_report_predictions(symbol, created_at desc)")
                 self._ensure_column(conn, "accounts", "persons", "text not null default '[]'")
                 self._ensure_column(conn, "family_members", "first_name", "text not null default ''")
                 self._ensure_column(conn, "family_members", "last_name", "text not null default ''")
@@ -334,9 +507,22 @@ class LocalPortfolioStore:
                 self._ensure_column(conn, "transactions", "vest_date", "text not null default ''")
                 self._ensure_column(conn, "transactions", "purchase_price", "real not null default 0")
                 self._ensure_column(conn, "transactions", "strike_price", "real not null default 0")
+                self._ensure_column(conn, "transactions", "security_id", "text not null default ''")
+                self._ensure_column(conn, "transactions", "transition_id", "text not null default ''")
+                self._ensure_column(conn, "transactions", "vesting_schedule", "text not null default '{}'")
+                self._ensure_column(conn, "manual_securities", "issuer_id", "text not null default ''")
+                self._ensure_column(conn, "manual_securities", "grant_id", "text not null default ''")
+                self._ensure_column(conn, "manual_securities", "grant_date", "text not null default ''")
+                self._ensure_column(conn, "manual_securities", "vesting_start_date", "text not null default ''")
+                self._ensure_column(conn, "manual_securities", "tax_scheme", "text not null default ''")
+                self._ensure_column(conn, "manual_securities", "early_exercise_allowed", "integer not null default 0")
+                conn.execute("create index if not exists idx_manual_securities_issuer on manual_securities(issuer_id)")
+                conn.execute("create index if not exists idx_transactions_security on transactions(security_id)")
                 self._split_existing_family_names(conn)
                 self._normalize_existing_symbols(conn)
+                self._migrate_equity_instruments(conn)
                 self._seed_brokers_from_accounts(conn)
+                self._seed_fund_amount_history(conn)
         except sqlite3.OperationalError as exc:
             if "readonly" not in str(exc).lower():
                 raise
@@ -373,6 +559,57 @@ class LocalPortfolioStore:
                 """
             )
 
+    def _migrate_equity_instruments(self, conn: sqlite3.Connection) -> None:
+        """Add stable identities without rewriting legacy grant symbols or transactions."""
+        rows = conn.execute(
+            """
+            select * from manual_securities
+            where instrument_type in ('STOCK_OPTION', 'EMPLOYEE_STOCK_OPTION', 'PRIVATE_STOCK')
+              and trim(issuer_id) = ''
+            order by created_at, id
+            """
+        ).fetchall()
+        now = _now()
+        non_public_markets = {"", "PRIVATE", "MANUAL", "LOCAL", "UNKNOWN", "N/A", "NONE", "ESOP"}
+        for row in rows:
+            issuer_id = str(uuid4())
+            market = str(row["stock_market"] or "").upper().strip()
+            underlying = _clean_security_symbol(row["underlying_symbol"])
+            listing_status = "PUBLIC" if underlying and market not in non_public_markets else "PRIVATE"
+            public_symbol = underlying if listing_status == "PUBLIC" else ""
+            public_market = market if listing_status == "PUBLIC" else ""
+            company_name = str(row["name"] or underlying or row["symbol"] or "Private company").strip()
+            conn.execute(
+                """
+                insert into issuers
+                  (id, company_name, listing_status, public_symbol, public_market, currency, location,
+                   listing_date, restriction_end_date, manual_share_value, valuation_date, comments, created_at, updated_at)
+                values (?, ?, ?, ?, ?, ?, ?, '', '', 0, '', 'Migrated from an existing employee equity instrument', ?, ?)
+                """,
+                (issuer_id, company_name, listing_status, public_symbol, public_market, row["currency"], row["location"], now, now),
+            )
+            conn.execute("update manual_securities set issuer_id = ? where id = ?", (issuer_id, row["id"]))
+        conn.execute(
+            """
+            update transactions
+            set security_id = coalesce((
+              select s.id from manual_securities s
+              where s.symbol = transactions.symbol and s.stock_market = transactions.stock_market
+              limit 1
+            ), '')
+            where trim(security_id) = ''
+            """
+        )
+        conn.execute(
+            """
+            update manual_securities
+            set vesting_start_date = grant_date
+            where instrument_type = 'EMPLOYEE_STOCK_OPTION'
+              and trim(vesting_start_date) = ''
+              and trim(grant_date) != ''
+            """
+        )
+
     def _seed_brokers_from_accounts(self, conn: sqlite3.Connection) -> None:
         rows = conn.execute(
             """
@@ -403,6 +640,27 @@ class LocalPortfolioStore:
                     "currency": currency,
                     "created_at": _now(),
                 },
+            )
+
+    def _seed_fund_amount_history(self, conn: sqlite3.Connection) -> None:
+        rows = conn.execute(
+            """
+            select f.id, f.amount, f.created_at
+            from funds f
+            where not exists (select 1 from fund_amount_history h where h.fund_id = f.id)
+            """
+        ).fetchall()
+        for row in rows:
+            created_at = str(row["created_at"] or _now())
+            amount_date = (_parse_date(created_at) or date.today()).isoformat()
+            now = _now()
+            conn.execute(
+                """
+                insert into fund_amount_history
+                  (id, fund_id, amount_date, amount, source, comments, created_at, updated_at)
+                values (?, ?, ?, ?, 'opening_balance', 'Initial saved amount', ?, ?)
+                """,
+                (str(uuid4()), row["id"], amount_date, float(row["amount"] or 0), created_at, now),
             )
 
     def remove_source_branding(self) -> None:
@@ -437,10 +695,14 @@ class LocalPortfolioStore:
                 "transactions": conn.execute("select count(*) from transactions").fetchone()[0],
                 "prices": conn.execute("select count(*) from price_history").fetchone()[0],
                 "manual_securities": conn.execute("select count(*) from manual_securities").fetchone()[0],
+                "issuers": conn.execute("select count(*) from issuers").fetchone()[0],
+                "equity_transitions": conn.execute("select count(*) from equity_transitions").fetchone()[0],
                 "brokers": conn.execute("select count(*) from brokers").fetchone()[0],
                 "funds": conn.execute("select count(*) from funds").fetchone()[0],
+                "fund_amount_history": conn.execute("select count(*) from fund_amount_history").fetchone()[0],
                 "snapshots": conn.execute("select count(*) from account_snapshots").fetchone()[0],
                 "events": conn.execute("select count(*) from events").fetchone()[0],
+                "company_report_predictions": conn.execute("select count(*) from company_report_predictions").fetchone()[0],
                 "app_preferences": conn.execute("select count(*) from app_preferences").fetchone()[0],
             }
 
@@ -481,7 +743,7 @@ class LocalPortfolioStore:
                 for table, columns in EXPORT_TABLES.items()
             }
         return {
-            "version": 1,
+            "version": 3,
             "exported_at": _now(),
             "kind": "portfolio-analyzer-local-data",
             "data": data,
@@ -505,23 +767,31 @@ class LocalPortfolioStore:
         }
         with self._sync_lock:
             with self._connect() as conn:
+                conn.execute("delete from equity_transitions")
+                conn.execute("delete from fund_amount_history")
                 conn.execute("delete from account_snapshots")
                 conn.execute("delete from events")
+                conn.execute("delete from company_report_predictions")
                 conn.execute("delete from funds")
                 conn.execute("delete from price_history")
                 conn.execute("delete from transactions")
                 conn.execute("delete from manual_securities")
+                conn.execute("delete from issuers")
                 conn.execute("delete from accounts")
                 conn.execute("delete from family_members")
                 conn.execute("delete from brokers")
                 conn.execute("delete from app_preferences")
-                for table in ["app_preferences", "brokers", "family_members", "accounts", "manual_securities", "transactions", "price_history", "funds", "account_snapshots", "events"]:
+                for table in ["app_preferences", "brokers", "family_members", "accounts", "issuers", "manual_securities", "transactions", "equity_transitions", "price_history", "funds", "fund_amount_history", "account_snapshots", "events", "company_report_predictions"]:
                     columns = EXPORT_TABLES[table]
                     placeholders = ", ".join([":" + column for column in columns])
                     conn.executemany(
                         f"insert into {table} ({', '.join(columns)}) values ({placeholders})",
                         prepared[table],
                     )
+                self._migrate_equity_instruments(conn)
+                self._seed_fund_amount_history(conn)
+                for fund_row in conn.execute("select id from funds").fetchall():
+                    self._sync_fund_amount_from_history(conn, fund_row["id"])
         return {"imported": {table: len(rows) for table, rows in prepared.items()}}
 
     def _clean_import_row(self, row: Any, columns: list[str]) -> dict[str, Any]:
@@ -535,7 +805,7 @@ class LocalPortfolioStore:
                 "value": value if isinstance(value, str) else json.dumps(value if value is not None else {}, default=str),
                 "updated_at": str(record.get("updated_at") or _now()),
             }
-        for key in ["id", "key", "account_db_id", "symbol", "stock_market", "asset_class", "instrument_type", "option_type", "underlying_symbol", "currency", "location", "trade_date", "price_date", "snapshot_date", "event_date", "expiration_date", "vest_date", "source_key", "transaction_id", "status"]:
+        for key in ["id", "key", "account_db_id", "fund_id", "issuer_id", "security_id", "transition_id", "source_security_id", "target_security_id", "symbol", "stock_market", "asset_class", "instrument_type", "option_type", "underlying_symbol", "public_symbol", "public_market", "currency", "location", "trade_date", "price_date", "amount_date", "snapshot_date", "event_date", "effective_date", "expiration_date", "vest_date", "grant_id", "grant_date", "vesting_start_date", "tax_scheme", "listing_status", "listing_date", "restriction_end_date", "valuation_date", "transition_type", "source_key", "transaction_id", "status", "company_name", "industry", "horizon_date", "model_version", "label", "direction", "confidence", "actual_direction", "evaluation", "evaluated_at"]:
             if key in record and record[key] is not None:
                 record[key] = str(record[key])
         if "symbol" in record:
@@ -544,18 +814,220 @@ class LocalPortfolioStore:
             record["underlying_symbol"] = _clean_security_symbol(record["underlying_symbol"])
         if "value" in record:
             record["value"] = record["value"] if isinstance(record.get("value"), str) else json.dumps(record.get("value") if record.get("value") is not None else {}, default=str)
-        for key in ["type", "name", "first_name", "last_name", "gender", "username", "account_id", "management_company", "comments", "source", "kind", "fund_name", "pension_id", "created_at", "updated_at", "birth_date", "vest_date", "country", "currency", "details"]:
+        for key in ["type", "name", "first_name", "last_name", "gender", "username", "account_id", "management_company", "comments", "source", "kind", "fund_name", "pension_id", "created_at", "updated_at", "birth_date", "vest_date", "country", "currency", "details", "vesting_schedule", "baseline", "thesis", "mermaid", "actual", "issuer_id", "security_id", "transition_id", "source_security_id", "target_security_id", "grant_id", "grant_date", "vesting_start_date", "tax_scheme", "listing_date", "restriction_end_date", "valuation_date", "public_symbol", "public_market"]:
             if key in record:
-                record[key] = str(record.get(key) or "")
+                default_text = "{}" if key in {"details", "vesting_schedule", "actual"} else ""
+                value = record.get(key)
+                record[key] = value if isinstance(value, str) else json.dumps(value if value is not None else {}, default=str) if default_text else str(value or "")
         if "first_name" in record and "last_name" in record and not (record["first_name"] or record["last_name"]):
             record["first_name"], record["last_name"] = _split_person_name(record.get("name"))
             record["name"] = _full_person_name(record["first_name"], record["last_name"]) or record.get("name", "")
         if "persons" in record:
             record["persons"] = json.dumps(_clean_persons(record.get("persons")))
-        for key in ["initial_cash", "quantity", "price_input", "price", "amount", "factor", "value", "cash", "profit", "profit_percent", "strike_price", "purchase_price", "contract_multiplier", "retire_age", "gross_amount", "tax_amount", "net_amount"]:
+        for key in ["initial_cash", "quantity", "price_input", "price", "amount", "factor", "value", "cash", "profit", "profit_percent", "strike_price", "purchase_price", "contract_multiplier", "manual_share_value", "conversion_ratio", "early_exercise_allowed", "retire_age", "gross_amount", "tax_amount", "net_amount", "score"]:
             if key in record:
                 record[key] = _number(record.get(key), 0)
+        if "listing_status" in record and not record.get("listing_status"):
+            record["listing_status"] = "PRIVATE"
+        if "updated_at" in record and not record.get("updated_at"):
+            record["updated_at"] = str(record.get("created_at") or _now())
+        if "accuracy_score" in record and record.get("accuracy_score") is not None:
+            record["accuracy_score"] = _number(record.get("accuracy_score"), 0)
         return record
+
+    def list_company_report_predictions(self, symbol: str = "") -> list[dict[str, Any]]:
+        symbol_key = _clean_security_symbol(symbol)
+        with self._connect() as conn:
+            if symbol_key:
+                rows = conn.execute(
+                    "select * from company_report_predictions where symbol = ? order by created_at desc",
+                    (symbol_key,),
+                ).fetchall()
+            else:
+                rows = conn.execute("select * from company_report_predictions order by created_at desc").fetchall()
+        return [self._company_report_prediction_out(row) for row in rows]
+
+    def company_report_prediction_for_batch(self, batch_id: str, symbol: str) -> dict[str, Any] | None:
+        normalized_batch_id = str(batch_id or "").strip()
+        normalized_symbol = _clean_security_symbol(symbol)
+        if not normalized_batch_id or not normalized_symbol:
+            return None
+        for prediction in self.list_company_report_predictions(normalized_symbol):
+            baseline = prediction.get("baseline") if isinstance(prediction.get("baseline"), dict) else {}
+            batch = baseline.get("batch") if isinstance(baseline.get("batch"), dict) else {}
+            if str(batch.get("id") or "").strip() == normalized_batch_id:
+                return prediction
+        return None
+
+    def save_company_report_prediction(self, payload: dict[str, Any]) -> dict[str, Any]:
+        symbol = _clean_security_symbol(payload.get("symbol"))
+        if not symbol:
+            raise ValueError("Prediction symbol is required")
+        direction = str(payload.get("direction") or "neutral").lower()
+        if direction not in {"positive", "neutral", "negative"}:
+            raise ValueError("Prediction direction must be positive, neutral, or negative")
+        confidence = str(payload.get("confidence") or "Low").title()
+        if confidence not in {"High", "Medium", "Low"}:
+            raise ValueError("Prediction confidence must be High, Medium, or Low")
+        score = max(0, min(100, _number(payload.get("score"), 0)))
+        record = {
+            "id": str(payload.get("id") or uuid4()),
+            "symbol": symbol,
+            "company_name": str(payload.get("company_name") or "").strip(),
+            "industry": str(payload.get("industry") or "").strip(),
+            "created_at": str(payload.get("created_at") or _now()),
+            "horizon_date": _date_string(payload.get("horizon_date") or date.today() + timedelta(days=365)),
+            "model_version": str(payload.get("model_version") or "report-outlook-v1"),
+            "score": score,
+            "label": str(payload.get("label") or "Mixed").strip(),
+            "direction": direction,
+            "confidence": confidence,
+            "baseline": json.dumps(payload.get("baseline") if isinstance(payload.get("baseline"), dict) else {}, default=str),
+            "thesis": str(payload.get("thesis") or "").strip(),
+            "mermaid": str(payload.get("mermaid") or "").strip(),
+            "actual": json.dumps(payload.get("actual") if isinstance(payload.get("actual"), dict) else {}, default=str),
+            "actual_direction": str(payload.get("actual_direction") or "pending").lower(),
+            "accuracy_score": payload.get("accuracy_score"),
+            "evaluation": str(payload.get("evaluation") or "").strip(),
+            "evaluated_at": str(payload.get("evaluated_at") or ""),
+        }
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert into company_report_predictions
+                  (id, symbol, company_name, industry, created_at, horizon_date, model_version, score, label, direction, confidence, baseline, thesis, mermaid, actual, actual_direction, accuracy_score, evaluation, evaluated_at)
+                values
+                  (:id, :symbol, :company_name, :industry, :created_at, :horizon_date, :model_version, :score, :label, :direction, :confidence, :baseline, :thesis, :mermaid, :actual, :actual_direction, :accuracy_score, :evaluation, :evaluated_at)
+                on conflict(id) do update set
+                  actual = excluded.actual,
+                  actual_direction = excluded.actual_direction,
+                  accuracy_score = excluded.accuracy_score,
+                  evaluation = excluded.evaluation,
+                  evaluated_at = excluded.evaluated_at
+                """,
+                record,
+            )
+            row = conn.execute("select * from company_report_predictions where id = ?", (record["id"],)).fetchone()
+        return self._company_report_prediction_out(row or record)
+
+    def evaluate_company_report_prediction(self, prediction_id: str, actual: dict[str, Any], actual_direction: str, accuracy_score: float | None, evaluation: str) -> dict[str, Any]:
+        direction = str(actual_direction or "pending").lower()
+        if direction not in {"positive", "neutral", "negative", "pending", "inconclusive"}:
+            raise ValueError("Invalid actual direction")
+        with self._connect() as conn:
+            row = conn.execute("select * from company_report_predictions where id = ?", (prediction_id,)).fetchone()
+            if not row:
+                raise ValueError("Prediction not found")
+            conn.execute(
+                """
+                update company_report_predictions
+                set actual = ?, actual_direction = ?, accuracy_score = ?, evaluation = ?, evaluated_at = ?
+                where id = ?
+                """,
+                (
+                    json.dumps(actual if isinstance(actual, dict) else {}, default=str),
+                    direction,
+                    accuracy_score,
+                    str(evaluation or "").strip(),
+                    _now() if direction not in {"pending", "inconclusive"} else "",
+                    prediction_id,
+                ),
+            )
+            updated = conn.execute("select * from company_report_predictions where id = ?", (prediction_id,)).fetchone()
+        return self._company_report_prediction_out(updated)
+
+    def delete_company_report_prediction(self, prediction_id: str) -> dict[str, Any]:
+        normalized_id = str(prediction_id or "").strip()
+        if not normalized_id:
+            raise ValueError("Prediction not found")
+        with self._connect() as conn:
+            row = conn.execute("select * from company_report_predictions where id = ?", (normalized_id,)).fetchone()
+            if not row:
+                raise ValueError("Prediction not found")
+            conn.execute("delete from company_report_predictions where id = ?", (normalized_id,))
+        return self._company_report_prediction_out(row)
+
+    def company_report_scorecard(self, prediction_ids: set[str] | None = None) -> dict[str, Any]:
+        stored_rows = self.list_company_report_predictions()
+        if prediction_ids is not None:
+            stored_rows = [item for item in stored_rows if item.get("id") in prediction_ids]
+        rows = []
+        seen_batch_symbols: set[tuple[str, str]] = set()
+        duplicate_batch_records = 0
+        for item in stored_rows:
+            baseline = item.get("baseline") if isinstance(item.get("baseline"), dict) else {}
+            batch = baseline.get("batch") if isinstance(baseline.get("batch"), dict) else {}
+            batch_id = str(batch.get("id") or "").strip()
+            key = (batch_id, str(item.get("symbol") or ""))
+            if batch_id and key in seen_batch_symbols:
+                duplicate_batch_records += 1
+                continue
+            if batch_id:
+                seen_batch_symbols.add(key)
+            rows.append(item)
+        evaluated = [item for item in rows if item.get("accuracy_score") is not None]
+        average = round(sum(float(item["accuracy_score"]) for item in evaluated) / len(evaluated), 1) if evaluated else None
+        by_symbol: dict[str, list[float]] = {}
+        by_industry: dict[str, list[float]] = {}
+        by_model_version: dict[str, list[float]] = {}
+        by_horizon_months: dict[str, list[float]] = {}
+        by_confidence: dict[str, list[float]] = {}
+        by_direction: dict[str, list[float]] = {}
+        for item in evaluated:
+            by_symbol.setdefault(item["symbol"], []).append(float(item["accuracy_score"]))
+            if item.get("industry"):
+                by_industry.setdefault(item["industry"], []).append(float(item["accuracy_score"]))
+            by_model_version.setdefault(str(item.get("model_version") or "unknown"), []).append(float(item["accuracy_score"]))
+            horizon_date = _date_string(item.get("horizon_date"))
+            created_date = _date_string(str(item.get("created_at") or "")[:10])
+            try:
+                horizon_months = max(0, round((date.fromisoformat(horizon_date) - date.fromisoformat(created_date)).days / 30))
+            except ValueError:
+                horizon_months = 0
+            by_horizon_months.setdefault(f"{horizon_months} months" if horizon_months else "unknown", []).append(float(item["accuracy_score"]))
+            by_confidence.setdefault(str(item.get("confidence") or "unknown"), []).append(float(item["accuracy_score"]))
+            by_direction.setdefault(str(item.get("direction") or "unknown"), []).append(float(item["accuracy_score"]))
+        aggregate = lambda groups: [
+            {"name": name, "evaluated": len(scores), "accuracy_percent": round(sum(scores) / len(scores), 1)}
+            for name, scores in sorted(groups.items())
+        ]
+        validation_passed = bool(
+            len(evaluated) >= COMPANY_OUTLOOK_MIN_EVALUATED_PREDICTIONS
+            and average is not None
+            and average >= COMPANY_OUTLOOK_ACCURACY_TARGET_PERCENT
+        )
+        return {
+            "total": len(rows),
+            "stored_total": len(stored_rows),
+            "duplicate_batch_records": duplicate_batch_records,
+            "evaluated": len(evaluated),
+            "pending": len([item for item in rows if item.get("actual_direction") == "pending"]),
+            "accuracy_percent": average,
+            "quality_gate": {
+                "target_accuracy_percent": COMPANY_OUTLOOK_ACCURACY_TARGET_PERCENT,
+                "minimum_evaluated_predictions": COMPANY_OUTLOOK_MIN_EVALUATED_PREDICTIONS,
+                "passed": validation_passed,
+                "status": "validated" if validation_passed else "not validated",
+            },
+            "by_symbol": aggregate(by_symbol),
+            "by_industry": aggregate(by_industry),
+            "by_model_version": aggregate(by_model_version),
+            "by_horizon": aggregate(by_horizon_months),
+            "by_confidence": aggregate(by_confidence),
+            "by_predicted_direction": aggregate(by_direction),
+        }
+
+    def _company_report_prediction_out(self, row: Any) -> dict[str, Any]:
+        item = _dict(row)
+        for key in ["baseline", "actual"]:
+            try:
+                item[key] = json.loads(item.get(key) or "{}")
+            except (TypeError, json.JSONDecodeError):
+                item[key] = {}
+        item["score"] = float(item.get("score") or 0)
+        if item.get("accuracy_score") is not None:
+            item["accuracy_score"] = float(item["accuracy_score"])
+        return item
 
     def backup_dir(self) -> Path:
         path = data_dir() / "backups"
@@ -830,9 +1302,18 @@ class LocalPortfolioStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                select *
-                from manual_securities
-                order by stock_market, symbol
+                select s.*,
+                       i.company_name,
+                       i.listing_status,
+                       i.public_symbol,
+                       i.public_market,
+                       i.listing_date,
+                       i.restriction_end_date,
+                       i.manual_share_value,
+                       i.valuation_date
+                from manual_securities s
+                left join issuers i on i.id = s.issuer_id
+                order by coalesce(i.company_name, s.name), s.grant_date, s.symbol
                 """
             ).fetchall()
         return [_dict(row) for row in rows]
@@ -843,13 +1324,107 @@ class LocalPortfolioStore:
         location = str(payload.get("location") or "USA").strip()
         currency = str(payload.get("currency") or _currency_for_location(location)).upper().strip()
         option_type = str(payload.get("option_type") or "").upper().strip()
-        expiration_date = ""
-        if payload.get("expiration_date"):
-            expiration_date = _date_string(payload.get("expiration_date"))
-        is_option_grant = instrument_type in {"OPTION", "STOCK_OPTION"}
-        if is_option_grant:
+        expiration_date = _optional_date_string(payload.get("expiration_date"))
+        is_employee_option = instrument_type == "EMPLOYEE_STOCK_OPTION"
+        is_legacy_option_grant = instrument_type == "STOCK_OPTION"
+        is_exchange_option = instrument_type == "OPTION"
+        is_option = is_employee_option or is_legacy_option_grant or is_exchange_option
+        grant_date = _optional_date_string(payload.get("grant_date"))
+        vesting_start_date = _optional_date_string(payload.get("vesting_start_date")) or grant_date
+        issuer_id = str(payload.get("issuer_id") or "").strip()
+        security_id = str(payload.get("id") or uuid4())
+        existing = self.manual_security_by_id(security_id) if payload.get("id") else None
+
+        if is_employee_option:
+            company_name = str(payload.get("company_name") or payload.get("issuer_name") or payload.get("name") or "").strip()
+            if not company_name:
+                raise ValueError("Company name is required for employee stock options")
+            if not grant_date:
+                raise ValueError("Grant date is required for employee stock options")
+            if not vesting_start_date:
+                raise ValueError("Vesting start date is required for employee stock options")
+            if not expiration_date:
+                raise ValueError("Expiration date is required for employee stock options")
+            if _number(payload.get("strike_price"), 0) <= 0:
+                raise ValueError("Strike price must be greater than zero for employee stock options")
+            issuer_existing: dict[str, Any] = {}
+            lookup_issuer_id = issuer_id or str((existing or {}).get("issuer_id") or "")
+            with self._connect() as conn:
+                if lookup_issuer_id:
+                    issuer_row = conn.execute("select * from issuers where id = ?", (lookup_issuer_id,)).fetchone()
+                else:
+                    issuer_row = conn.execute(
+                        """
+                        select * from issuers
+                        where lower(trim(company_name)) = lower(trim(?))
+                          and currency = ? and location = ?
+                        order by created_at
+                        limit 1
+                        """,
+                        (company_name, currency, location),
+                    ).fetchone()
+                if issuer_row:
+                    issuer_existing = _dict(issuer_row)
+            listing_status = _choice(
+                payload.get("listing_status") or issuer_existing.get("listing_status"),
+                ISSUER_LISTING_STATUSES,
+                "PRIVATE",
+            )
+            if str(issuer_existing.get("listing_status") or "").upper() == "PUBLIC":
+                listing_status = "PUBLIC"
+            public_symbol = _clean_security_symbol(payload.get("public_symbol") or payload.get("underlying_symbol") or payload.get("symbol"))
+            public_market = str(payload.get("public_market") or payload.get("stock_market") or "").upper().strip()
+            if listing_status == "PUBLIC":
+                public_symbol = public_symbol or _clean_security_symbol(issuer_existing.get("public_symbol"))
+                public_market = public_market or str(issuer_existing.get("public_market") or "").upper().strip()
+            if listing_status == "PUBLIC" and (not public_symbol or not public_market):
+                raise ValueError("Public symbol and stock market are required for a public company")
+            if listing_status == "PRIVATE":
+                public_symbol = ""
+                public_market = ""
+            issuer_id = lookup_issuer_id or str(issuer_existing.get("id") or uuid4())
+            now = _now()
+            share_value_input = payload.get("manual_share_value")
+            manual_share_value = _number(
+                share_value_input,
+                _number(issuer_existing.get("manual_share_value"), 0),
+            )
+            if manual_share_value < 0:
+                raise ValueError("Manual share value cannot be negative")
+            valuation_date = _optional_date_string(payload.get("valuation_date")) or str(issuer_existing.get("valuation_date") or "")
+            if manual_share_value > 0 and not valuation_date:
+                raise ValueError("Valuation date is required when a manual share value is entered")
+            issuer_record = {
+                "id": issuer_id,
+                "company_name": company_name,
+                "listing_status": listing_status,
+                "public_symbol": public_symbol,
+                "public_market": public_market,
+                "currency": currency,
+                "location": location,
+                "listing_date": _optional_date_string(payload.get("listing_date")) or str(issuer_existing.get("listing_date") or ""),
+                "restriction_end_date": _optional_date_string(payload.get("restriction_end_date")) or str(issuer_existing.get("restriction_end_date") or ""),
+                "manual_share_value": manual_share_value,
+                "valuation_date": valuation_date,
+                "comments": str(payload.get("issuer_comments") or issuer_existing.get("comments") or "").strip(),
+                "created_at": str(issuer_existing.get("created_at") or now),
+                "updated_at": now,
+            }
+            option_type = "CALL"
+            symbol = str((existing or {}).get("symbol") or f"ESO-{security_id[:8].upper()}")
+            stock_market = "PRIVATE"
+            underlying_symbol = public_symbol
+            multiplier_default = 1
+        else:
+            issuer_record = None
+            symbol = _clean_security_symbol(payload.get("symbol"))
+            stock_market = str(payload.get("stock_market") or "").upper().strip()
+            underlying_symbol = _clean_security_symbol(payload.get("underlying_symbol"))
+            multiplier_default = 100 if (is_exchange_option or is_legacy_option_grant) else 1
+
+        if is_exchange_option or is_legacy_option_grant:
             option_type = _choice(option_type, OPTION_TYPES, "CALL")
-            if not str(payload.get("underlying_symbol") or "").strip():
+            if not underlying_symbol:
                 raise ValueError("Underlying symbol is required for options")
             if not expiration_date:
                 raise ValueError("Expiration date is required for options")
@@ -857,39 +1432,77 @@ class LocalPortfolioStore:
                 raise ValueError("Strike price must be greater than zero for options")
         elif instrument_type == "FUTURE" and not expiration_date:
             raise ValueError("Expiration date is required for futures")
-        else:
+        elif not is_employee_option:
             option_type = ""
-        multiplier_default = 100 if is_option_grant else 1
         record = {
-            "id": str(payload.get("id") or uuid4()),
-            "symbol": _clean_security_symbol(payload.get("symbol")),
+            "id": security_id,
+            "symbol": symbol,
             "name": str(payload.get("name") or "").strip(),
-            "stock_market": str(payload.get("stock_market") or "").upper().strip(),
+            "stock_market": stock_market,
             "asset_class": asset_class,
             "instrument_type": instrument_type,
             "option_type": option_type,
-            "underlying_symbol": str(payload.get("underlying_symbol") or "").upper().strip(),
+            "underlying_symbol": underlying_symbol,
             "expiration_date": expiration_date,
             "strike_price": _number(payload.get("strike_price"), 0),
             "contract_multiplier": _number(payload.get("contract_multiplier"), multiplier_default) or multiplier_default,
+            "issuer_id": issuer_id,
+            "grant_id": str(payload.get("grant_id") or "").strip(),
+            "grant_date": grant_date,
+            "vesting_start_date": vesting_start_date,
+            "tax_scheme": str(payload.get("tax_scheme") or "").strip(),
+            "early_exercise_allowed": int(bool(payload.get("early_exercise_allowed"))),
             "currency": currency,
             "location": location,
             "comments": str(payload.get("comments") or "").strip(),
-            "created_at": str(payload.get("created_at") or _now()),
+            "created_at": str(payload.get("created_at") or (existing or {}).get("created_at") or _now()),
         }
         if not record["symbol"]:
             raise ValueError("Symbol is required")
         if not record["stock_market"]:
             raise ValueError("Stock market is required")
         if not record["name"]:
-            record["name"] = record["symbol"]
+            if is_employee_option:
+                grant_label = f" {record['grant_id']}" if record["grant_id"] else ""
+                record["name"] = f"{issuer_record['company_name']}{grant_label} employee options"
+            else:
+                record["name"] = record["symbol"]
         with self._connect() as conn:
+            if issuer_record:
+                conn.execute(
+                    """
+                    insert into issuers
+                      (id, company_name, listing_status, public_symbol, public_market, currency, location,
+                       listing_date, restriction_end_date, manual_share_value, valuation_date, comments, created_at, updated_at)
+                    values
+                      (:id, :company_name, :listing_status, :public_symbol, :public_market, :currency, :location,
+                       :listing_date, :restriction_end_date, :manual_share_value, :valuation_date, :comments, :created_at, :updated_at)
+                    on conflict(id) do update set
+                      company_name = excluded.company_name,
+                      listing_status = excluded.listing_status,
+                      public_symbol = excluded.public_symbol,
+                      public_market = excluded.public_market,
+                      currency = excluded.currency,
+                      location = excluded.location,
+                      listing_date = excluded.listing_date,
+                      restriction_end_date = excluded.restriction_end_date,
+                      manual_share_value = excluded.manual_share_value,
+                      valuation_date = excluded.valuation_date,
+                      comments = excluded.comments,
+                      updated_at = excluded.updated_at
+                    """,
+                    issuer_record,
+                )
             conn.execute(
                 """
                 insert into manual_securities
-                  (id, symbol, name, stock_market, asset_class, instrument_type, option_type, underlying_symbol, expiration_date, strike_price, contract_multiplier, currency, location, comments, created_at)
+                  (id, symbol, name, stock_market, asset_class, instrument_type, option_type, underlying_symbol,
+                   expiration_date, strike_price, contract_multiplier, issuer_id, grant_id, grant_date,
+                   vesting_start_date, tax_scheme, early_exercise_allowed, currency, location, comments, created_at)
                 values
-                  (:id, :symbol, :name, :stock_market, :asset_class, :instrument_type, :option_type, :underlying_symbol, :expiration_date, :strike_price, :contract_multiplier, :currency, :location, :comments, :created_at)
+                  (:id, :symbol, :name, :stock_market, :asset_class, :instrument_type, :option_type, :underlying_symbol,
+                   :expiration_date, :strike_price, :contract_multiplier, :issuer_id, :grant_id, :grant_date,
+                   :vesting_start_date, :tax_scheme, :early_exercise_allowed, :currency, :location, :comments, :created_at)
                 on conflict(symbol, stock_market) do update set
                   name = excluded.name,
                   asset_class = excluded.asset_class,
@@ -899,17 +1512,31 @@ class LocalPortfolioStore:
                   expiration_date = excluded.expiration_date,
                   strike_price = excluded.strike_price,
                   contract_multiplier = excluded.contract_multiplier,
+                  issuer_id = excluded.issuer_id,
+                  grant_id = excluded.grant_id,
+                  grant_date = excluded.grant_date,
+                  vesting_start_date = excluded.vesting_start_date,
+                  tax_scheme = excluded.tax_scheme,
+                  early_exercise_allowed = excluded.early_exercise_allowed,
                   currency = excluded.currency,
                   location = excluded.location,
                   comments = excluded.comments
                 """,
                 record,
             )
-        return self.manual_security(record["symbol"], record["stock_market"]) or record
+        return self.manual_security_by_id(record["id"]) or self.manual_security(record["symbol"], record["stock_market"]) or record
 
     def delete_manual_security(self, security_id: str) -> bool:
         with self._connect() as conn:
             before = conn.execute("select count(*) from manual_securities where id = ?", (security_id,)).fetchone()[0]
+            if before:
+                transactions = conn.execute("select count(*) from transactions where security_id = ?", (security_id,)).fetchone()[0]
+                transitions = conn.execute(
+                    "select count(*) from equity_transitions where source_security_id = ? or target_security_id = ?",
+                    (security_id, security_id),
+                ).fetchone()[0]
+                if transactions or transitions:
+                    raise ValueError("Cannot remove an instrument that has transactions or lifecycle history")
             conn.execute("delete from manual_securities where id = ?", (security_id,))
         return bool(before)
 
@@ -920,8 +1547,31 @@ class LocalPortfolioStore:
             return None
         with self._connect() as conn:
             row = conn.execute(
-                "select * from manual_securities where symbol = ? and stock_market = ?",
+                """
+                select s.*, i.company_name, i.listing_status, i.public_symbol, i.public_market,
+                       i.listing_date, i.restriction_end_date, i.manual_share_value, i.valuation_date
+                from manual_securities s
+                left join issuers i on i.id = s.issuer_id
+                where s.symbol = ? and s.stock_market = ?
+                """,
                 (symbol_key, market_key),
+            ).fetchone()
+        return _dict(row) if row else None
+
+    def manual_security_by_id(self, security_id: Any) -> dict[str, Any] | None:
+        key = str(security_id or "").strip()
+        if not key:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select s.*, i.company_name, i.listing_status, i.public_symbol, i.public_market,
+                       i.listing_date, i.restriction_end_date, i.manual_share_value, i.valuation_date
+                from manual_securities s
+                left join issuers i on i.id = s.issuer_id
+                where s.id = ?
+                """,
+                (key,),
             ).fetchone()
         return _dict(row) if row else None
 
@@ -939,10 +1589,27 @@ class LocalPortfolioStore:
                        s.underlying_symbol,
                        s.expiration_date,
                        s.strike_price as instrument_strike_price,
-                       s.contract_multiplier
+                       s.contract_multiplier,
+                       s.issuer_id,
+                       s.grant_id,
+                       s.grant_date,
+                       s.vesting_start_date,
+                       s.tax_scheme,
+                       s.early_exercise_allowed,
+                       i.company_name,
+                       i.listing_status,
+                       i.public_symbol,
+                       i.public_market,
+                       i.listing_date,
+                       i.restriction_end_date,
+                       i.manual_share_value,
+                       i.valuation_date
                 from transactions t
                 join accounts a on a.id = t.account_db_id
-                left join manual_securities s on s.symbol = t.symbol and s.stock_market = t.stock_market
+                left join manual_securities s
+                  on s.id = t.security_id
+                  or (trim(t.security_id) = '' and s.symbol = t.symbol and s.stock_market = t.stock_market)
+                left join issuers i on i.id = s.issuer_id
                 order by t.trade_date desc, t.created_at desc
                 """
             ).fetchall()
@@ -952,21 +1619,30 @@ class LocalPortfolioStore:
             if not item.get("strike_price") and item.get("instrument_strike_price"):
                 item["strike_price"] = item["instrument_strike_price"]
             item.pop("instrument_strike_price", None)
+            item["vesting_schedule"] = _json_object(item.get("vesting_schedule"))
             items.append(item)
         return items
 
     def add_transaction(self, payload: dict[str, Any]) -> dict[str, Any]:
         record = self._transaction_record(payload)
         with self._connect() as conn:
+            position_quantity = self._validate_position_ledger(conn, record)
             self._insert_transaction(conn, record)
-        return record
+        return self._transaction_with_position_status(record, position_quantity)
 
     def _transaction_record(self, payload: dict[str, Any]) -> dict[str, Any]:
         account = self._account(payload.get("account_db_id"))
         action = _choice(payload.get("action"), TRANSACTION_ACTIONS, "BUY")
         symbol = _clean_security_symbol(payload.get("symbol"))
         stock_market = str(payload.get("stock_market") or "").upper().strip()
-        metadata = self.manual_security(symbol, stock_market)
+        security_id = str(payload.get("security_id") or "").strip()
+        metadata = self.manual_security_by_id(security_id) if security_id else self.manual_security(symbol, stock_market)
+        if security_id and not metadata:
+            raise ValueError("Defined instrument not found")
+        if metadata:
+            security_id = str(metadata.get("id") or security_id)
+            symbol = str(metadata.get("symbol") or symbol)
+            stock_market = str(metadata.get("stock_market") or stock_market)
         asset_class = str(payload.get("asset_class") or (metadata or {}).get("asset_class") or "EQUITY").upper().strip()
         quantity = abs(_number(payload.get("quantity"), 0))
         price_input = _number(payload.get("price_input"), 0)
@@ -983,8 +1659,33 @@ class LocalPortfolioStore:
         if strike_price < 0:
             raise ValueError("Strike price cannot be negative")
         instrument_type = str((metadata or {}).get("instrument_type") or asset_class).upper().strip()
-        if instrument_type in {"OPTION", "STOCK_OPTION"} and strike_price <= 0:
+        if instrument_type == "EMPLOYEE_STOCK_OPTION" and not metadata:
+            raise ValueError("Define the employee stock option grant before adding its transaction")
+        if instrument_type == "EMPLOYEE_STOCK_OPTION" and action not in {"ADD", "REMOVE"}:
+            raise ValueError("Employee stock option transactions must use Add or Remove; use Exercise for share conversion")
+        if instrument_type in {"OPTION", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"} and strike_price <= 0:
             raise ValueError("Strike price is required for options")
+        trade_date = _date_string(payload.get("trade_date") or (metadata or {}).get("grant_date"))
+        vest_date = _optional_date_string(payload.get("vest_date"))
+        raw_schedule = _json_object(payload.get("vesting_schedule"))
+        schedule: dict[str, Any] = {}
+        if raw_schedule.get("enabled"):
+            if instrument_type != "EMPLOYEE_STOCK_OPTION":
+                raise ValueError("Vesting schedules are available for employee stock options")
+            if action != "ADD":
+                raise ValueError("A vesting schedule can only be saved when adding an employee option grant")
+            schedule = _build_vesting_schedule(
+                raw_schedule,
+                quantity,
+                (metadata or {}).get("vesting_start_date") or (metadata or {}).get("grant_date") or trade_date,
+            )
+            vest_date = ""
+            expiration = _parse_date((metadata or {}).get("expiration_date"))
+            final_vest = _parse_date(schedule["tranches"][-1]["vest_date"])
+            if expiration and final_vest and final_vest > expiration:
+                raise ValueError("The vesting schedule cannot continue after the option expiration date")
+        elif instrument_type == "EMPLOYEE_STOCK_OPTION" and action == "ADD" and not vest_date:
+            raise ValueError("Choose a vest date or configure a vesting schedule")
         record = {
             "id": str(payload.get("id") or uuid4()),
             "account_db_id": account["id"],
@@ -995,12 +1696,15 @@ class LocalPortfolioStore:
             "quantity": quantity,
             "price_input": price_input,
             "price": price_input if action in {"DIVIDEND", "INTEREST", "FEE"} else normalize_price(price_input, location, asset_class),
-            "vest_date": _optional_date_string(payload.get("vest_date")),
+            "vest_date": vest_date,
             "purchase_price": purchase_price,
             "strike_price": strike_price,
+            "security_id": security_id,
+            "transition_id": str(payload.get("transition_id") or "").strip(),
+            "vesting_schedule": json.dumps(schedule, separators=(",", ":")),
             "currency": currency,
             "location": location,
-            "trade_date": _date_string(payload.get("trade_date")),
+            "trade_date": trade_date,
             "source": str(payload.get("source") or "manual").strip(),
             "comments": str(payload.get("comments") or "").strip(),
             "created_at": str(payload.get("created_at") or _now()),
@@ -1015,21 +1719,116 @@ class LocalPortfolioStore:
         conn.execute(
             """
             insert into transactions
-              (id, account_db_id, action, symbol, stock_market, asset_class, quantity, price_input, price, vest_date, purchase_price, strike_price, currency, location, trade_date, source, comments, created_at)
+              (id, account_db_id, action, symbol, stock_market, asset_class, quantity, price_input, price,
+               vest_date, purchase_price, strike_price, security_id, transition_id, vesting_schedule,
+               currency, location, trade_date, source, comments, created_at)
             values
-              (:id, :account_db_id, :action, :symbol, :stock_market, :asset_class, :quantity, :price_input, :price, :vest_date, :purchase_price, :strike_price, :currency, :location, :trade_date, :source, :comments, :created_at)
+              (:id, :account_db_id, :action, :symbol, :stock_market, :asset_class, :quantity, :price_input, :price,
+               :vest_date, :purchase_price, :strike_price, :security_id, :transition_id, :vesting_schedule,
+               :currency, :location, :trade_date, :source, :comments, :created_at)
             """,
             record,
         )
+
+    def _position_transactions(
+        self,
+        conn: sqlite3.Connection,
+        account_db_id: str,
+        symbol: str,
+        stock_market: str,
+        exclude_id: str = "",
+    ) -> list[dict[str, Any]]:
+        rows = conn.execute(
+            """
+            select * from transactions
+            where account_db_id = ? and symbol = ? and stock_market = ? and id != ?
+            order by trade_date, created_at, id
+            """,
+            (account_db_id, symbol, stock_market, exclude_id),
+        ).fetchall()
+        return [_dict(row) for row in rows]
+
+    def _validate_position_ledger(
+        self,
+        conn: sqlite3.Connection,
+        record: dict[str, Any] | None = None,
+        *,
+        account_db_id: str = "",
+        symbol: str = "",
+        stock_market: str = "",
+        exclude_id: str = "",
+    ) -> float:
+        if record:
+            account_db_id = record["account_db_id"]
+            symbol = record["symbol"]
+            stock_market = record["stock_market"]
+        transactions = self._position_transactions(conn, account_db_id, symbol, stock_market, exclude_id)
+        if record:
+            transactions.append(record)
+        transactions.sort(key=lambda tx: (str(tx.get("trade_date") or ""), str(tx.get("created_at") or ""), str(tx.get("id") or "")))
+
+        position_quantity = 0.0
+        epsilon = 1e-9
+        for tx in transactions:
+            action = str(tx.get("action") or "").upper()
+            quantity = abs(_number(tx.get("quantity"), 0))
+            if action == "BUY":
+                if position_quantity < -epsilon and quantity > abs(position_quantity) + epsilon:
+                    raise ValueError(f"You can buy at most {abs(position_quantity):g} units to close this short")
+                position_quantity += quantity
+            elif action == "SELL":
+                if position_quantity <= epsilon:
+                    raise ValueError("Sell is only available for a long position")
+                if quantity > position_quantity + epsilon:
+                    raise ValueError(f"You can sell at most {position_quantity:g} units")
+                position_quantity -= quantity
+            elif action == "SHORT":
+                if position_quantity > epsilon:
+                    raise ValueError("Close the long position with Sell before adding a short")
+                position_quantity -= quantity
+            elif action == "ADD":
+                position_quantity += quantity
+            elif action == "REMOVE":
+                if position_quantity > epsilon:
+                    position_quantity -= min(quantity, position_quantity)
+                elif position_quantity < -epsilon:
+                    position_quantity += min(quantity, abs(position_quantity))
+            if abs(position_quantity) <= epsilon:
+                position_quantity = 0.0
+        return position_quantity
+
+    @staticmethod
+    def _transaction_with_position_status(record: dict[str, Any], position_quantity: float) -> dict[str, Any]:
+        quantity = 0.0 if abs(position_quantity) <= 1e-9 else position_quantity
+        return {
+            **record,
+            "vesting_schedule": _json_object(record.get("vesting_schedule")),
+            "position_quantity": quantity,
+            "position_closed": quantity == 0,
+            "position_side": "closed" if quantity == 0 else "long" if quantity > 0 else "short",
+        }
 
     def update_transaction(self, transaction_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         with self._connect() as conn:
             existing = conn.execute("select * from transactions where id = ?", (transaction_id,)).fetchone()
         if not existing:
             raise ValueError("Security transaction not found")
+        if str(existing["transition_id"] or "").strip():
+            raise ValueError("Lifecycle-generated transactions are read-only")
         merged = {**_dict(existing), **(payload or {}), "id": transaction_id, "created_at": existing["created_at"]}
         record = self._transaction_record(merged)
         with self._connect() as conn:
+            old_key = (existing["account_db_id"], existing["symbol"], existing["stock_market"])
+            new_key = (record["account_db_id"], record["symbol"], record["stock_market"])
+            position_quantity = self._validate_position_ledger(conn, record, exclude_id=transaction_id)
+            if old_key != new_key:
+                self._validate_position_ledger(
+                    conn,
+                    account_db_id=old_key[0],
+                    symbol=old_key[1],
+                    stock_market=old_key[2],
+                    exclude_id=transaction_id,
+                )
             conn.execute(
                 """
                 update transactions
@@ -1044,6 +1843,9 @@ class LocalPortfolioStore:
                     vest_date = :vest_date,
                     purchase_price = :purchase_price,
                     strike_price = :strike_price,
+                    security_id = :security_id,
+                    transition_id = :transition_id,
+                    vesting_schedule = :vesting_schedule,
                     currency = :currency,
                     location = :location,
                     trade_date = :trade_date,
@@ -1053,13 +1855,273 @@ class LocalPortfolioStore:
                 """,
                 record,
             )
-        return record
+        return self._transaction_with_position_status(record, position_quantity)
 
     def delete_transaction(self, transaction_id: str) -> bool:
         with self._connect() as conn:
-            before = conn.execute("select count(*) from transactions where id = ?", (transaction_id,)).fetchone()[0]
+            row = conn.execute("select transition_id from transactions where id = ?", (transaction_id,)).fetchone()
+            if row and str(row["transition_id"] or "").strip():
+                raise ValueError("Lifecycle-generated transactions are read-only")
+            before = int(bool(row))
             conn.execute("delete from transactions where id = ?", (transaction_id,))
         return bool(before)
+
+    def list_equity_transitions(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                select e.*, source.name as source_name, target.name as target_name
+                from equity_transitions e
+                left join manual_securities source on source.id = e.source_security_id
+                left join manual_securities target on target.id = e.target_security_id
+                order by e.effective_date desc, e.created_at desc
+                """
+            ).fetchall()
+        items = []
+        for row in rows:
+            item = _dict(row)
+            item["details"] = _json_object(item.get("details"))
+            items.append(item)
+        return items
+
+    def link_employee_option_listing(self, security_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        security = self.manual_security_by_id(security_id)
+        if not security or security.get("instrument_type") != "EMPLOYEE_STOCK_OPTION":
+            raise ValueError("Employee stock option grant not found")
+        issuer_id = str(security.get("issuer_id") or "")
+        if not issuer_id:
+            raise ValueError("Employee stock option issuer is missing")
+        public_symbol = _clean_security_symbol(payload.get("public_symbol"))
+        public_market = str(payload.get("public_market") or "").upper().strip()
+        if not public_symbol or not public_market:
+            raise ValueError("Public symbol and stock market are required")
+        listing_date = _optional_date_string(payload.get("listing_date"))
+        if not listing_date:
+            raise ValueError("Listing date is required")
+        restriction_end_date = _optional_date_string(payload.get("restriction_end_date"))
+        now = _now()
+        transition_id = str(uuid4())
+        with self._connect() as conn:
+            issuer = conn.execute("select * from issuers where id = ?", (issuer_id,)).fetchone()
+            if not issuer:
+                raise ValueError("Employee stock option issuer not found")
+            unchanged = (
+                issuer["listing_status"] == "PUBLIC"
+                and issuer["public_symbol"] == public_symbol
+                and issuer["public_market"] == public_market
+                and issuer["listing_date"] == listing_date
+                and issuer["restriction_end_date"] == restriction_end_date
+            )
+            if not unchanged:
+                conn.execute(
+                    """
+                    update issuers
+                    set listing_status = 'PUBLIC', public_symbol = ?, public_market = ?, listing_date = ?,
+                        restriction_end_date = ?, updated_at = ?
+                    where id = ?
+                    """,
+                    (public_symbol, public_market, listing_date, restriction_end_date, now, issuer_id),
+                )
+                conn.execute(
+                    "update manual_securities set underlying_symbol = ? where issuer_id = ? and instrument_type = 'EMPLOYEE_STOCK_OPTION'",
+                    (public_symbol, issuer_id),
+                )
+                conn.execute(
+                    """
+                    insert into equity_transitions
+                      (id, transition_type, source_security_id, target_security_id, account_db_id,
+                       quantity, conversion_ratio, effective_date, details, created_at)
+                    values (?, 'LISTING_LINK', ?, '', '', 0, 1, ?, ?, ?)
+                    """,
+                    (
+                        transition_id,
+                        security_id,
+                        listing_date,
+                        json.dumps({"public_symbol": public_symbol, "public_market": public_market, "restriction_end_date": restriction_end_date}, separators=(",", ":")),
+                        now,
+                    ),
+                )
+        return {
+            "security": self.manual_security_by_id(security_id),
+            "transition_id": "" if unchanged else transition_id,
+            "unchanged": unchanged,
+        }
+
+    def _employee_option_available(
+        self,
+        conn: sqlite3.Connection,
+        security: dict[str, Any],
+        account_db_id: str,
+        as_of: date,
+    ) -> tuple[float, float]:
+        rows = conn.execute(
+            """
+            select * from transactions
+            where account_db_id = ?
+              and (security_id = ? or (trim(security_id) = '' and symbol = ? and stock_market = ?))
+            order by trade_date, created_at, id
+            """,
+            (account_db_id, security["id"], security["symbol"], security["stock_market"]),
+        ).fetchall()
+        lots: list[dict[str, Any]] = []
+        for raw in rows:
+            tx = _dict(raw)
+            action = str(tx.get("action") or "").upper()
+            quantity = abs(_number(tx.get("quantity"), 0))
+            if action in {"ADD", "BUY"}:
+                schedule = _json_object(tx.get("vesting_schedule"))
+                tranches = schedule.get("tranches") if isinstance(schedule.get("tranches"), list) else []
+                if tranches:
+                    for tranche in tranches:
+                        tranche_quantity = _number((tranche or {}).get("quantity"), 0)
+                        if tranche_quantity > 0:
+                            lots.append({"quantity": tranche_quantity, "vest_date": _parse_date((tranche or {}).get("vest_date"))})
+                else:
+                    lots.append({"quantity": quantity, "vest_date": _parse_date(tx.get("vest_date"))})
+                continue
+            if action not in {"REMOVE", "SELL"}:
+                continue
+            remaining = quantity
+            for lot in lots:
+                if remaining <= 1e-9:
+                    break
+                used = min(float(lot["quantity"]), remaining)
+                lot["quantity"] -= used
+                remaining -= used
+        current = sum(max(float(lot["quantity"]), 0) for lot in lots)
+        if bool(security.get("early_exercise_allowed")):
+            return current, current
+        vested = sum(
+            max(float(lot["quantity"]), 0)
+            for lot in lots
+            if lot.get("vest_date") and lot["vest_date"] <= as_of
+        )
+        return current, vested
+
+    def exercise_employee_option(self, security_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        security = self.manual_security_by_id(security_id)
+        if not security or security.get("instrument_type") != "EMPLOYEE_STOCK_OPTION":
+            raise ValueError("Employee stock option grant not found")
+        account = self._account(payload.get("account_db_id"))
+        quantity = _number(payload.get("quantity"), 0)
+        ratio = _number(payload.get("share_ratio"), 1) or 1
+        effective_date = _parse_date(payload.get("exercise_date"))
+        if quantity <= 0:
+            raise ValueError("Exercise quantity must be greater than zero")
+        if ratio <= 0:
+            raise ValueError("Share ratio must be greater than zero")
+        if not effective_date:
+            raise ValueError("Exercise date is required")
+        expiration = _parse_date(security.get("expiration_date"))
+        if expiration and effective_date > expiration:
+            raise ValueError("Employee stock options cannot be exercised after expiration")
+        issuer_id = str(security.get("issuer_id") or "")
+        if not issuer_id:
+            raise ValueError("Employee stock option issuer is missing")
+        listing_status = str(security.get("listing_status") or "PRIVATE")
+        if listing_status == "PUBLIC":
+            symbol = _clean_security_symbol(security.get("public_symbol"))
+            market = str(security.get("public_market") or "").upper().strip()
+            if not symbol or not market:
+                raise ValueError("Public issuer symbol and stock market are required before exercise")
+            target_type = "STOCK"
+        else:
+            symbol = f"PVT-{issuer_id[:8].upper()}"
+            market = "PRIVATE"
+            target_type = "PRIVATE_STOCK"
+        share_quantity = quantity * ratio
+        share_cost_basis = _number(payload.get("share_cost_basis"), _number(security.get("strike_price"), 0) / ratio)
+        if share_cost_basis < 0:
+            raise ValueError("Share cost basis cannot be negative")
+        transition_id = str(uuid4())
+        source_record = self._transaction_record(
+            {
+                "account_db_id": account["id"],
+                "action": "REMOVE",
+                "security_id": security_id,
+                "quantity": quantity,
+                "price_input": 0,
+                "strike_price": security.get("strike_price"),
+                "trade_date": effective_date.isoformat(),
+                "transition_id": transition_id,
+                "source": "employee_option_exercise",
+                "comments": str(payload.get("comments") or "Employee stock option exercise").strip(),
+            }
+        )
+        # Reject invalid exercises before creating their destination share instrument.
+        # Availability is checked again in the transaction below to keep the paired
+        # ledger entries protected if another local write occurs in between.
+        with self._connect() as conn:
+            current, vested = self._employee_option_available(conn, security, account["id"], effective_date)
+            if quantity > current + 1e-9:
+                raise ValueError(f"You can exercise at most {current:g} remaining options")
+            if quantity > vested + 1e-9:
+                raise ValueError(f"You can exercise at most {vested:g} vested options on this date")
+            self._validate_position_ledger(conn, source_record)
+        target_security = self.save_manual_security(
+            {
+                "symbol": symbol,
+                "name": f"{security.get('company_name') or security.get('name') or symbol} shares",
+                "stock_market": market,
+                "instrument_type": target_type,
+                "issuer_id": issuer_id,
+                "currency": security.get("currency"),
+                "location": security.get("location"),
+                "comments": "Shares acquired by exercising employee stock options",
+            }
+        )
+        target_record = self._transaction_record(
+            {
+                "account_db_id": account["id"],
+                "action": "ADD",
+                "security_id": target_security["id"],
+                "quantity": share_quantity,
+                "price_input": share_cost_basis,
+                "trade_date": effective_date.isoformat(),
+                "transition_id": transition_id,
+                "source": "employee_option_exercise",
+                "comments": str(payload.get("comments") or "Shares acquired from employee stock options").strip(),
+            }
+        )
+        now = _now()
+        with self._connect() as conn:
+            current, vested = self._employee_option_available(conn, security, account["id"], effective_date)
+            if quantity > current + 1e-9:
+                raise ValueError(f"You can exercise at most {current:g} remaining options")
+            if quantity > vested + 1e-9:
+                raise ValueError(f"You can exercise at most {vested:g} vested options on this date")
+            source_position = self._validate_position_ledger(conn, source_record)
+            self._validate_position_ledger(conn, target_record)
+            self._insert_transaction(conn, source_record)
+            self._insert_transaction(conn, target_record)
+            conn.execute(
+                """
+                insert into equity_transitions
+                  (id, transition_type, source_security_id, target_security_id, account_db_id,
+                   quantity, conversion_ratio, effective_date, details, created_at)
+                values (?, 'EXERCISE', ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    transition_id,
+                    security_id,
+                    target_security["id"],
+                    account["id"],
+                    quantity,
+                    ratio,
+                    effective_date.isoformat(),
+                    json.dumps({"share_quantity": share_quantity, "share_cost_basis": share_cost_basis}, separators=(",", ":")),
+                    now,
+                ),
+            )
+        return {
+            "transition_id": transition_id,
+            "source_security": self.manual_security_by_id(security_id),
+            "target_security": self.manual_security_by_id(target_security["id"]),
+            "option_quantity_exercised": quantity,
+            "share_quantity_acquired": share_quantity,
+            "remaining_option_quantity": source_position,
+            "effective_date": effective_date.isoformat(),
+        }
 
     def list_events(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -1419,34 +2481,160 @@ class LocalPortfolioStore:
             raise ValueError("Fund ID is required")
         if record["amount"] <= 0:
             raise ValueError("Saved amount is required")
-        with self._connect() as conn:
-            if record["account_id"]:
-                account = conn.execute("select * from accounts where id = ?", (record["account_id"],)).fetchone()
-                if not account:
-                    raise ValueError("Long-term account not found")
-                if account["type"] != "Long-Term Savings":
-                    raise ValueError("Fund can only be linked to a Long-Term Savings account")
-            conn.execute(
-                """
-                insert into funds
-                  (id, kind, fund_name, pension_id, amount, factor, account_id, birth_date, persons, comments, created_at)
-                values
-                  (:id, :kind, :fund_name, :pension_id, :amount, :factor, :account_id, :birth_date, :persons, :comments, :created_at)
-                on conflict(id) do update set
-                  kind = excluded.kind,
-                  fund_name = excluded.fund_name,
-                  pension_id = excluded.pension_id,
-                  amount = excluded.amount,
-                  factor = excluded.factor,
-                  account_id = excluded.account_id,
-                  birth_date = excluded.birth_date,
-                  persons = excluded.persons,
-                  comments = excluded.comments
-                """,
-                record,
-            )
-            row = conn.execute("select * from funds where id = ?", (record["id"],)).fetchone()
+        with self._sync_lock:
+            with self._connect() as conn:
+                existing = conn.execute("select * from funds where id = ?", (record["id"],)).fetchone()
+                if record["account_id"]:
+                    account = conn.execute("select * from accounts where id = ?", (record["account_id"],)).fetchone()
+                    if not account:
+                        raise ValueError("Long-term account not found")
+                    if account["type"] != "Long-Term Savings":
+                        raise ValueError("Fund can only be linked to a Long-Term Savings account")
+                conn.execute(
+                    """
+                    insert into funds
+                      (id, kind, fund_name, pension_id, amount, factor, account_id, birth_date, persons, comments, created_at)
+                    values
+                      (:id, :kind, :fund_name, :pension_id, :amount, :factor, :account_id, :birth_date, :persons, :comments, :created_at)
+                    on conflict(id) do update set
+                      kind = excluded.kind,
+                      fund_name = excluded.fund_name,
+                      pension_id = excluded.pension_id,
+                      amount = excluded.amount,
+                      factor = excluded.factor,
+                      account_id = excluded.account_id,
+                      birth_date = excluded.birth_date,
+                      persons = excluded.persons,
+                      comments = excluded.comments
+                    """,
+                    record,
+                )
+                amount_changed = not existing or float(existing["amount"] or 0) != float(record["amount"])
+                if amount_changed:
+                    amount_date = _date_string(payload.get("amount_date") or payload.get("date"))
+                    now = _now()
+                    conn.execute(
+                        """
+                        insert into fund_amount_history
+                          (id, fund_id, amount_date, amount, source, comments, created_at, updated_at)
+                        values (?, ?, ?, ?, 'fund_update', 'Saved amount update', ?, ?)
+                        on conflict(fund_id, amount_date) do update set
+                          amount = excluded.amount,
+                          source = excluded.source,
+                          comments = excluded.comments,
+                          updated_at = excluded.updated_at
+                        """,
+                        (str(uuid4()), record["id"], amount_date, record["amount"], now, now),
+                    )
+                row = conn.execute("select * from funds where id = ?", (record["id"],)).fetchone()
         return self._fund_out(row or record)
+
+    def list_fund_amount_history(self, fund_id: str) -> list[dict[str, Any]]:
+        clean_fund_id = str(fund_id or "").strip()
+        with self._connect() as conn:
+            fund = conn.execute("select id from funds where id = ?", (clean_fund_id,)).fetchone()
+            if not fund:
+                raise ValueError("Fund record not found")
+            rows = conn.execute(
+                "select * from fund_amount_history where fund_id = ? order by amount_date, created_at",
+                (clean_fund_id,),
+            ).fetchall()
+        return [_dict(row) for row in rows]
+
+    def save_fund_amount_history(self, fund_id: str, payload: dict[str, Any], history_id: str = "") -> dict[str, Any]:
+        clean_fund_id = str(fund_id or "").strip()
+        amount = _optional_number(payload.get("amount"))
+        if amount is None or amount <= 0:
+            raise ValueError("Saved amount must be greater than zero")
+        amount_date = _optional_date_string(payload.get("amount_date") or payload.get("date"))
+        if not amount_date:
+            raise ValueError("History date is required")
+        if date.fromisoformat(amount_date) > date.today():
+            raise ValueError("History date cannot be in the future")
+        now = _now()
+        record = {
+            "id": str(history_id or payload.get("id") or uuid4()),
+            "fund_id": clean_fund_id,
+            "amount_date": amount_date,
+            "amount": amount,
+            "source": str(payload.get("source") or "manual").strip(),
+            "comments": str(payload.get("comments") or "").strip(),
+            "created_at": str(payload.get("created_at") or now),
+            "updated_at": now,
+        }
+        try:
+            with self._sync_lock:
+                with self._connect() as conn:
+                    fund = conn.execute("select id from funds where id = ?", (clean_fund_id,)).fetchone()
+                    if not fund:
+                        raise ValueError("Fund record not found")
+                    existing = conn.execute("select * from fund_amount_history where id = ?", (record["id"],)).fetchone()
+                    if history_id and not existing:
+                        raise ValueError("Fund history point not found")
+                    if existing and existing["fund_id"] != clean_fund_id:
+                        raise ValueError("Fund history point does not belong to this fund")
+                    if existing:
+                        record["created_at"] = existing["created_at"]
+                        conn.execute(
+                            """
+                            update fund_amount_history
+                            set amount_date = :amount_date,
+                                amount = :amount,
+                                source = :source,
+                                comments = :comments,
+                                updated_at = :updated_at
+                            where id = :id and fund_id = :fund_id
+                            """,
+                            record,
+                        )
+                    else:
+                        conn.execute(
+                            """
+                            insert into fund_amount_history
+                              (id, fund_id, amount_date, amount, source, comments, created_at, updated_at)
+                            values
+                              (:id, :fund_id, :amount_date, :amount, :source, :comments, :created_at, :updated_at)
+                            """,
+                            record,
+                        )
+                    self._sync_fund_amount_from_history(conn, clean_fund_id)
+                    row = conn.execute("select * from fund_amount_history where id = ?", (record["id"],)).fetchone()
+        except sqlite3.IntegrityError as exc:
+            if "unique" in str(exc).lower():
+                raise ValueError("A saved amount already exists for this date") from exc
+            raise
+        return _dict(row or record)
+
+    def delete_fund_amount_history(self, fund_id: str, history_id: str) -> bool:
+        clean_fund_id = str(fund_id or "").strip()
+        clean_history_id = str(history_id or "").strip()
+        with self._sync_lock:
+            with self._connect() as conn:
+                before = conn.execute(
+                    "select count(*) from fund_amount_history where id = ? and fund_id = ?",
+                    (clean_history_id, clean_fund_id),
+                ).fetchone()[0]
+                conn.execute(
+                    "delete from fund_amount_history where id = ? and fund_id = ?",
+                    (clean_history_id, clean_fund_id),
+                )
+                if before:
+                    self._sync_fund_amount_from_history(conn, clean_fund_id)
+        return bool(before)
+
+    def _sync_fund_amount_from_history(self, conn: sqlite3.Connection, fund_id: str) -> None:
+        latest = conn.execute(
+            """
+            select amount
+            from fund_amount_history
+            where fund_id = ?
+            order by amount_date desc, updated_at desc
+            limit 1
+            """,
+            (fund_id,),
+        ).fetchone()
+        if latest:
+            conn.execute("update funds set amount = ? where id = ?", (float(latest["amount"] or 0), fund_id))
 
     def simulate_pension(self, payload: dict[str, Any]) -> dict[str, Any]:
         scenarios = payload.get("scenarios")
@@ -2124,6 +3312,26 @@ class LocalPortfolioStore:
         if not item["persons"] and item.get("birth_date"):
             item["persons"] = [{"name": "Person 1", "birth_date": item["birth_date"], "age": age_from_birth_date(item["birth_date"])}]
         item["monthly_estimate"] = monthly_pension(item["amount"], item["factor"]) if item.get("kind") == "Pension" else None
+        with self._connect() as conn:
+            history_rows = conn.execute(
+                "select amount_date, amount from fund_amount_history where fund_id = ? order by amount_date, created_at",
+                (item["id"],),
+            ).fetchall()
+        if history_rows:
+            first = history_rows[0]
+            latest = history_rows[-1]
+            change = float(latest["amount"] or 0) - float(first["amount"] or 0)
+            item["history_points"] = len(history_rows)
+            item["history_first_date"] = first["amount_date"]
+            item["history_latest_date"] = latest["amount_date"]
+            item["history_change"] = change
+            item["history_change_percent"] = change / abs(float(first["amount"] or 0)) * 100 if float(first["amount"] or 0) else None
+        else:
+            item["history_points"] = 0
+            item["history_first_date"] = None
+            item["history_latest_date"] = None
+            item["history_change"] = None
+            item["history_change_percent"] = None
         item["account"] = None
         item["account_label"] = ""
         if item.get("account_id"):
@@ -2443,12 +3651,120 @@ def _asset_class_for_instrument(instrument_type: str, requested: Any = "") -> st
         "OPTION": "OPTION",
         "FUTURE": "FUTURE",
         "RSU": "RSU",
+        "EMPLOYEE_STOCK_OPTION": "EMPLOYEE_STOCK_OPTION",
+        "PRIVATE_STOCK": "PRIVATE_STOCK",
         "STOCK_OPTION": "STOCK_OPTION",
     }
     requested_text = str(requested or "").upper().strip()
     if requested_text in ASSET_CLASSES and instrument_type not in mapping:
         return requested_text
     return mapping.get(instrument_type, requested_text if requested_text in ASSET_CLASSES else "EQUITY")
+
+
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(str(value))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _add_months(value: date, months: int) -> date:
+    month_index = value.month - 1 + int(months)
+    year = value.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _build_vesting_schedule(payload: dict[str, Any], total_quantity: float, default_start: Any) -> dict[str, Any]:
+    mode = str(payload.get("mode") or "PERCENT").upper().strip()
+    if mode not in {"PERCENT", "ABSOLUTE"}:
+        raise ValueError("Vesting schedule mode must be percentage or option units")
+    start = _parse_date(payload.get("vesting_start_date") or default_start)
+    if not start:
+        raise ValueError("Vesting start date is required")
+    duration_months = int(_number(payload.get("duration_months"), 48))
+    cliff_months = int(_number(payload.get("cliff_months"), 12))
+    interval_months = int(_number(payload.get("interval_months"), 3))
+    cliff_value = _number(payload.get("cliff_value"), 25)
+    installment_value = _number(payload.get("installment_value"), 6.25)
+    if total_quantity <= 0:
+        raise ValueError("Total option quantity must be greater than zero")
+    if duration_months < 1 or duration_months > 600:
+        raise ValueError("Vesting duration must be between 1 and 600 months")
+    if cliff_months < 0 or cliff_months > duration_months:
+        raise ValueError("Cliff months must be between 0 and the vesting duration")
+    if interval_months < 1 or interval_months > duration_months:
+        raise ValueError("Recurring vesting interval must be between 1 month and the vesting duration")
+    if cliff_value <= 0:
+        raise ValueError("Cliff vesting amount must be greater than zero")
+    if mode == "PERCENT" and cliff_value > 100:
+        raise ValueError("Cliff vesting percentage cannot exceed 100%")
+
+    def quantity_for(value: float) -> float:
+        return total_quantity * value / 100 if mode == "PERCENT" else value
+
+    epsilon = max(1e-8, abs(total_quantity) * 1e-10)
+    cliff_quantity = quantity_for(cliff_value)
+    if cliff_quantity > total_quantity + epsilon:
+        raise ValueError("Cliff vesting amount cannot exceed the total option quantity")
+    tranches: list[dict[str, Any]] = []
+    vested = 0.0
+
+    def add_tranche(month_offset: int, requested_quantity: float) -> None:
+        nonlocal vested
+        amount = min(requested_quantity, total_quantity - vested)
+        if amount <= epsilon:
+            return
+        vested = min(total_quantity, vested + amount)
+        rounded_amount = round(amount, 8)
+        rounded_cumulative = round(vested, 8)
+        tranches.append(
+            {
+                "sequence": len(tranches) + 1,
+                "vest_date": _add_months(start, month_offset).isoformat(),
+                "quantity": rounded_amount,
+                "cumulative_quantity": rounded_cumulative,
+                "cumulative_percent": round(rounded_cumulative / total_quantity * 100, 6),
+            }
+        )
+
+    add_tranche(cliff_months, cliff_quantity)
+    if vested < total_quantity - epsilon:
+        if installment_value <= 0:
+            raise ValueError("Recurring vesting amount must be greater than zero")
+        if mode == "PERCENT" and installment_value > 100:
+            raise ValueError("Recurring vesting percentage cannot exceed 100%")
+        installment_quantity = quantity_for(installment_value)
+        month_offset = cliff_months + interval_months
+        while vested < total_quantity - epsilon and month_offset <= duration_months:
+            add_tranche(month_offset, installment_quantity)
+            month_offset += interval_months
+    if vested < total_quantity - epsilon:
+        missing = total_quantity - vested
+        unit = "%" if mode == "PERCENT" else "options"
+        raise ValueError(
+            f"Vesting schedule leaves {missing:g} options unvested by month {duration_months}; adjust the recurring {unit} or duration"
+        )
+    if not tranches:
+        raise ValueError("Vesting schedule must contain at least one tranche")
+    return {
+        "enabled": True,
+        "mode": mode,
+        "vesting_start_date": start.isoformat(),
+        "duration_months": duration_months,
+        "cliff_months": cliff_months,
+        "cliff_value": cliff_value,
+        "interval_months": interval_months,
+        "installment_value": installment_value,
+        "total_quantity": round(total_quantity, 8),
+        "tranches": tranches,
+    }
 
 
 def _source_account_key(account: Any, currency: Any) -> tuple[str, str]:

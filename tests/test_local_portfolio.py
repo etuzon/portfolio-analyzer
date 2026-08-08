@@ -1,6 +1,8 @@
 from datetime import date
 import sqlite3
 
+import pytest
+
 from app.local_portfolio import LocalPortfolioStore, age_from_birth_date, monthly_pension, normalize_price
 from app.models import Holding
 
@@ -64,6 +66,74 @@ def test_local_portfolio_aggregates_transactions_and_trends(tmp_path):
     assert report["cash"] == 800
     assert report["securities_value"] == 250
     assert report["value"] == 1050
+
+
+def test_trade_quantity_validation_and_long_position_close(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = store.save_account({"type": "Investment", "location": "USA", "currency": "USD", "initial_cash": 1000, "username": "Eyal"})
+    base = {
+        "account_db_id": account["id"],
+        "symbol": "ABC",
+        "stock_market": "NYSE",
+        "asset_class": "EQUITY",
+        "price_input": 10,
+        "allow_manual": True,
+    }
+    store.add_transaction({**base, "action": "BUY", "quantity": 10, "trade_date": "2026-01-01"})
+
+    with pytest.raises(ValueError, match="sell at most 10"):
+        store.add_transaction({**base, "action": "SELL", "quantity": 11, "trade_date": "2026-01-02"})
+
+    closed = store.add_transaction({**base, "action": "SELL", "quantity": 10, "price_input": 12, "trade_date": "2026-01-02"})
+
+    assert closed["position_quantity"] == 0
+    assert closed["position_closed"] is True
+    assert closed["position_side"] == "closed"
+    assert store.holdings() == []
+
+
+def test_short_cover_validation_and_close(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = store.save_account({"type": "Investment", "location": "USA", "currency": "USD", "initial_cash": 1000, "username": "Eyal"})
+    base = {
+        "account_db_id": account["id"],
+        "symbol": "XYZ",
+        "stock_market": "NASDAQ",
+        "asset_class": "EQUITY",
+        "price_input": 20,
+        "allow_manual": True,
+    }
+    opened = store.add_transaction({**base, "action": "SHORT", "quantity": 5, "trade_date": "2026-01-01"})
+    assert opened["position_quantity"] == -5
+    assert opened["position_side"] == "short"
+
+    with pytest.raises(ValueError, match="buy at most 5"):
+        store.add_transaction({**base, "action": "BUY", "quantity": 6, "trade_date": "2026-01-02"})
+
+    closed = store.add_transaction({**base, "action": "BUY", "quantity": 5, "price_input": 18, "trade_date": "2026-01-02"})
+    assert closed["position_closed"] is True
+    assert store.holdings() == []
+
+
+def test_short_cannot_cross_a_long_position_and_edit_keeps_ledger_valid(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = store.save_account({"type": "Investment", "location": "USA", "currency": "USD", "initial_cash": 1000, "username": "Eyal"})
+    base = {
+        "account_db_id": account["id"],
+        "symbol": "ABC",
+        "stock_market": "NYSE",
+        "asset_class": "EQUITY",
+        "price_input": 10,
+        "allow_manual": True,
+    }
+    buy = store.add_transaction({**base, "action": "BUY", "quantity": 10, "trade_date": "2026-01-01"})
+
+    with pytest.raises(ValueError, match="Close the long position"):
+        store.add_transaction({**base, "action": "SHORT", "quantity": 1, "trade_date": "2026-01-02"})
+
+    store.add_transaction({**base, "action": "SELL", "quantity": 6, "trade_date": "2026-01-03"})
+    with pytest.raises(ValueError, match="sell at most 5"):
+        store.update_transaction(buy["id"], {"quantity": 5})
 
 
 def test_account_update_preserves_transactions(tmp_path):
@@ -692,6 +762,63 @@ def test_fund_name_export_import_round_trip(tmp_path):
     assert fund["amount"] == 2000
 
 
+def test_fund_amount_history_crud_updates_current_saved_amount(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    fund = store.save_fund(
+        {
+            "kind": "Provident Fund",
+            "fund_name": "Progress Fund",
+            "pension_id": "G-HISTORY",
+            "amount": 100000,
+            "amount_date": "2026-01-01",
+        }
+    )
+
+    opening = store.list_fund_amount_history(fund["id"])
+    assert [(item["amount_date"], item["amount"]) for item in opening] == [("2026-01-01", 100000)]
+
+    added = store.save_fund_amount_history(
+        fund["id"],
+        {"amount_date": "2026-03-01", "amount": 125000, "comments": "Quarterly update"},
+    )
+    assert store.list_funds()[0]["amount"] == 125000
+    assert store.list_funds()[0]["history_change"] == 25000
+    assert store.list_funds()[0]["history_change_percent"] == 25
+
+    updated = store.save_fund_amount_history(
+        fund["id"],
+        {"amount_date": "2026-04-01", "amount": 130000, "comments": "Corrected"},
+        added["id"],
+    )
+    assert updated["amount_date"] == "2026-04-01"
+    assert updated["amount"] == 130000
+    assert store.list_funds()[0]["amount"] == 130000
+
+    assert store.delete_fund_amount_history(fund["id"], updated["id"]) is True
+    assert store.list_funds()[0]["amount"] == 100000
+    assert [item["amount_date"] for item in store.list_fund_amount_history(fund["id"])] == ["2026-01-01"]
+
+
+def test_fund_amount_history_rejects_duplicate_dates_and_survives_export(tmp_path):
+    source = LocalPortfolioStore(tmp_path / "source.sqlite3")
+    fund = source.save_fund({"kind": "Savings Fund", "pension_id": "S-HISTORY", "amount": 5000, "amount_date": "2026-01-01"})
+    source.save_fund_amount_history(fund["id"], {"amount_date": "2026-02-01", "amount": 5500})
+
+    with pytest.raises(ValueError, match="already exists"):
+        source.save_fund_amount_history(fund["id"], {"amount_date": "2026-02-01", "amount": 5600})
+
+    target = LocalPortfolioStore(tmp_path / "target.sqlite3")
+    target.import_data(source.export_data())
+
+    restored = target.list_funds()[0]
+    assert restored["amount"] == 5500
+    assert restored["history_points"] == 2
+    assert [(item["amount_date"], item["amount"]) for item in target.list_fund_amount_history(restored["id"])] == [
+        ("2026-01-01", 5000),
+        ("2026-02-01", 5500),
+    ]
+
+
 def test_pension_simulation_uses_income_percent_and_factor(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
 
@@ -1167,3 +1294,405 @@ def test_broker_export_import_round_trip(tmp_path):
     assert brokers[0]["name"] == "Leumi Trade"
     assert brokers[0]["country"] == "Israel"
     assert brokers[0]["currency"] == "ILS"
+
+
+def test_company_report_predictions_round_trip_and_scorecard(tmp_path):
+    source = LocalPortfolioStore(tmp_path / "source.sqlite3")
+    prediction = source.save_company_report_prediction(
+        {
+            "symbol": "ACME",
+            "company_name": "Acme Networks",
+            "industry": "Networking",
+            "score": 72,
+            "label": "Good",
+            "direction": "positive",
+            "confidence": "Medium",
+            "baseline": {"target": {"fiscal_date": "2026-12-31", "revenue_growth_percent": 20}},
+            "thesis": "Revenue growth is above the peer median.",
+            "mermaid": "flowchart LR\n  T --> I",
+        }
+    )
+    evaluated = source.evaluate_company_report_prediction(
+        prediction["id"],
+        {"fiscal_date": "2027-12-31", "revenue_growth_percent": 12},
+        "positive",
+        100,
+        "Revenue and margin improved.",
+    )
+
+    assert evaluated["accuracy_score"] == 100
+    assert source.company_report_scorecard()["accuracy_percent"] == 100
+    assert source.company_report_scorecard()["quality_gate"]["passed"] is False
+    assert source.company_report_scorecard()["by_industry"] == [{"name": "Networking", "evaluated": 1, "accuracy_percent": 100.0}]
+    assert source.company_report_scorecard()["by_model_version"] == [{"name": "report-outlook-v1", "evaluated": 1, "accuracy_percent": 100.0}]
+    assert source.company_report_scorecard()["by_confidence"] == [{"name": "Medium", "evaluated": 1, "accuracy_percent": 100.0}]
+    assert source.company_report_scorecard()["by_predicted_direction"] == [{"name": "positive", "evaluated": 1, "accuracy_percent": 100.0}]
+
+    target = LocalPortfolioStore(tmp_path / "target.sqlite3")
+    target.import_data(source.export_data())
+    restored = target.list_company_report_predictions("ACME")
+
+    assert len(restored) == 1
+    assert restored[0]["baseline"]["target"]["fiscal_date"] == "2026-12-31"
+    assert restored[0]["actual_direction"] == "positive"
+
+
+def test_pending_company_prediction_remains_unevaluated_after_import(tmp_path):
+    source = LocalPortfolioStore(tmp_path / "source.sqlite3")
+    source.save_company_report_prediction({"symbol": "ACME", "score": 55, "direction": "neutral", "confidence": "Low"})
+
+    target = LocalPortfolioStore(tmp_path / "target.sqlite3")
+    target.import_data(source.export_data())
+
+    restored = target.list_company_report_predictions("ACME")[0]
+    assert restored["actual_direction"] == "pending"
+    assert restored["accuracy_score"] is None
+    assert target.company_report_scorecard()["evaluated"] == 0
+
+
+def test_company_report_prediction_can_be_deleted(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    first = store.save_company_report_prediction({"symbol": "ACME", "score": 55, "direction": "neutral", "confidence": "Low"})
+    store.save_company_report_prediction({"symbol": "OTHER", "score": 65, "direction": "positive", "confidence": "Medium"})
+
+    deleted = store.delete_company_report_prediction(first["id"])
+
+    assert deleted["id"] == first["id"]
+    assert deleted["symbol"] == "ACME"
+    assert [item["symbol"] for item in store.list_company_report_predictions()] == ["OTHER"]
+    assert store.company_report_scorecard()["total"] == 1
+    with pytest.raises(ValueError, match="Prediction not found"):
+        store.delete_company_report_prediction(first["id"])
+
+
+def test_company_report_prediction_can_be_found_by_batch_and_symbol(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    saved = store.save_company_report_prediction(
+        {
+            "symbol": "ACME",
+            "score": 55,
+            "direction": "neutral",
+            "confidence": "Low",
+            "baseline": {"batch": {"id": "calibration-001", "number": 1, "phase": "calibration"}},
+        }
+    )
+
+    found = store.company_report_prediction_for_batch("calibration-001", "acme")
+
+    assert found is not None
+    assert found["id"] == saved["id"]
+    assert store.company_report_prediction_for_batch("calibration-001", "OTHER") is None
+
+
+def test_company_report_scorecard_excludes_duplicate_batch_symbol_records(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    payload = {
+        "symbol": "ACME",
+        "score": 55,
+        "direction": "neutral",
+        "confidence": "Low",
+        "baseline": {"batch": {"id": "calibration-001"}},
+    }
+    first = store.save_company_report_prediction({**payload, "id": "first", "created_at": "2024-01-01T00:00:00Z"})
+    second = store.save_company_report_prediction({**payload, "id": "second", "created_at": "2024-01-02T00:00:00Z"})
+    store.evaluate_company_report_prediction(first["id"], {}, "neutral", 100, "First run")
+    store.evaluate_company_report_prediction(second["id"], {}, "negative", 0, "Duplicate retry")
+
+    scorecard = store.company_report_scorecard()
+
+    assert scorecard["total"] == 1
+    assert scorecard["stored_total"] == 2
+    assert scorecard["duplicate_batch_records"] == 1
+    assert scorecard["accuracy_percent"] == 0
+
+
+def _save_private_employee_option(store):
+    return store.save_manual_security(
+        {
+            "company_name": "Private Labs",
+            "name": "Private Labs 2024 option grant",
+            "listing_status": "PRIVATE",
+            "instrument_type": "EMPLOYEE_STOCK_OPTION",
+            "grant_id": "GRANT-2024",
+            "grant_date": "01/01/2024",
+            "vesting_start_date": "01/01/2024",
+            "expiration_date": "01/01/2034",
+            "strike_price": 2.5,
+            "currency": "USD",
+            "location": "USA",
+        }
+    )
+
+
+def test_private_employee_option_uses_issuer_identity_without_public_market(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+
+    saved = _save_private_employee_option(store)
+
+    assert saved["instrument_type"] == "EMPLOYEE_STOCK_OPTION"
+    assert saved["asset_class"] == "EMPLOYEE_STOCK_OPTION"
+    assert saved["symbol"].startswith("ESO-")
+    assert saved["stock_market"] == "PRIVATE"
+    assert saved["listing_status"] == "PRIVATE"
+    assert saved["public_symbol"] == ""
+    assert saved["public_market"] == ""
+    assert saved["company_name"] == "Private Labs"
+    assert saved["grant_date"] == "2024-01-01"
+    assert saved["vesting_start_date"] == "2024-01-01"
+    assert saved["contract_multiplier"] == 1
+
+
+def test_employee_option_grants_for_same_company_share_issuer_lifecycle(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    first = _save_private_employee_option(store)
+    second = store.save_manual_security(
+        {
+            "company_name": "Private Labs",
+            "listing_status": "PRIVATE",
+            "instrument_type": "EMPLOYEE_STOCK_OPTION",
+            "grant_id": "GRANT-2025",
+            "grant_date": "01/01/2025",
+            "vesting_start_date": "01/01/2025",
+            "expiration_date": "01/01/2035",
+            "strike_price": 3.5,
+            "currency": "USD",
+            "location": "USA",
+        }
+    )
+
+    assert second["id"] != first["id"]
+    assert second["issuer_id"] == first["issuer_id"]
+
+    store.link_employee_option_listing(
+        second["id"],
+        {"public_symbol": "PLAB", "public_market": "NASDAQ", "listing_date": "01/06/2026"},
+    )
+    grants = [item for item in store.list_manual_securities() if item["instrument_type"] == "EMPLOYEE_STOCK_OPTION"]
+    assert {item["public_symbol"] for item in grants} == {"PLAB"}
+    assert {item["listing_status"] for item in grants} == {"PUBLIC"}
+
+    later_grant = store.save_manual_security(
+        {
+            "company_name": "Private Labs",
+            "listing_status": "PRIVATE",
+            "instrument_type": "EMPLOYEE_STOCK_OPTION",
+            "grant_id": "GRANT-2027",
+            "grant_date": "01/01/2027",
+            "vesting_start_date": "01/01/2027",
+            "expiration_date": "01/01/2037",
+            "strike_price": 7,
+            "currency": "USD",
+            "location": "USA",
+        }
+    )
+    assert later_grant["listing_status"] == "PUBLIC"
+    assert later_grant["public_symbol"] == "PLAB"
+
+
+def test_employee_option_percentage_schedule_is_saved_as_one_transaction(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = store.save_account({"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
+    option = _save_private_employee_option(store)
+
+    saved = store.add_transaction(
+        {
+            "account_db_id": account["id"],
+            "action": "ADD",
+            "security_id": option["id"],
+            "quantity": 4000,
+            "price_input": 0,
+            "trade_date": "08/08/2026",
+            "vesting_schedule": {
+                "enabled": True,
+                "mode": "PERCENT",
+                "vesting_start_date": "01/01/2024",
+                "duration_months": 48,
+                "cliff_months": 12,
+                "cliff_value": 25,
+                "interval_months": 3,
+                "installment_value": 6.25,
+            },
+        }
+    )
+
+    transactions = store.list_transactions()
+    schedule = transactions[0]["vesting_schedule"]
+    assert len(transactions) == 1
+    assert saved["vesting_schedule"]["enabled"] is True
+    assert schedule["mode"] == "PERCENT"
+    assert len(schedule["tranches"]) == 13
+    assert schedule["tranches"][0] == {
+        "sequence": 1,
+        "vest_date": "2025-01-01",
+        "quantity": 1000.0,
+        "cumulative_quantity": 1000.0,
+        "cumulative_percent": 25.0,
+    }
+    assert schedule["tranches"][-1]["vest_date"] == "2028-01-01"
+    assert schedule["tranches"][-1]["cumulative_quantity"] == 4000
+    assert sum(item["quantity"] for item in schedule["tranches"]) == 4000
+
+
+def test_employee_option_absolute_schedule_and_under_vesting_validation(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = store.save_account({"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
+    option = _save_private_employee_option(store)
+    base = {
+        "account_db_id": account["id"],
+        "action": "ADD",
+        "security_id": option["id"],
+        "quantity": 4000,
+        "price_input": 0,
+        "trade_date": "08/08/2026",
+    }
+
+    with pytest.raises(ValueError, match="unvested"):
+        store.add_transaction(
+            {
+                **base,
+                "vesting_schedule": {
+                    "enabled": True,
+                    "mode": "ABSOLUTE",
+                    "vesting_start_date": "01/01/2024",
+                    "duration_months": 48,
+                    "cliff_months": 12,
+                    "cliff_value": 1000,
+                    "interval_months": 3,
+                    "installment_value": 100,
+                },
+            }
+        )
+
+    saved = store.add_transaction(
+        {
+            **base,
+            "vesting_schedule": {
+                "enabled": True,
+                "mode": "ABSOLUTE",
+                "vesting_start_date": "01/01/2024",
+                "duration_months": 48,
+                "cliff_months": 12,
+                "cliff_value": 1000,
+                "interval_months": 3,
+                "installment_value": 250,
+            },
+        }
+    )
+    assert saved["vesting_schedule"]["mode"] == "ABSOLUTE"
+    assert [item["quantity"] for item in saved["vesting_schedule"]["tranches"]] == [1000.0] + [250.0] * 12
+
+
+def test_employee_option_transaction_requires_a_defined_grant(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = store.save_account({"type": "ESOP", "location": "USA", "currency": "USD"})
+
+    with pytest.raises(ValueError, match="Define the employee stock option grant"):
+        store.add_transaction(
+            {
+                "account_db_id": account["id"],
+                "action": "ADD",
+                "symbol": "PRIVATE-GRANT",
+                "stock_market": "PRIVATE",
+                "asset_class": "EMPLOYEE_STOCK_OPTION",
+                "quantity": 100,
+                "strike_price": 1,
+                "vest_date": "01/01/2027",
+            }
+        )
+
+
+def test_employee_option_listing_and_exercise_are_audited_and_atomic(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = store.save_account({"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
+    option = _save_private_employee_option(store)
+    store.add_transaction(
+        {
+            "account_db_id": account["id"],
+            "action": "ADD",
+            "security_id": option["id"],
+            "quantity": 4000,
+            "price_input": 0,
+            "vesting_schedule": {
+                "enabled": True,
+                "mode": "PERCENT",
+                "duration_months": 48,
+                "cliff_months": 12,
+                "cliff_value": 25,
+                "interval_months": 3,
+                "installment_value": 6.25,
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="at most 1500 vested"):
+        store.exercise_employee_option(
+            option["id"],
+            {"account_db_id": account["id"], "quantity": 1600, "exercise_date": "01/07/2025"},
+        )
+    assert len(store.list_transactions()) == 1
+    assert all(item["instrument_type"] != "PRIVATE_STOCK" for item in store.list_manual_securities())
+
+    private_exercise = store.exercise_employee_option(
+        option["id"],
+        {"account_db_id": account["id"], "quantity": 1000, "exercise_date": "01/07/2025", "share_cost_basis": 2.5},
+    )
+    assert private_exercise["target_security"]["instrument_type"] == "PRIVATE_STOCK"
+    assert private_exercise["target_security"]["stock_market"] == "PRIVATE"
+
+    listing = store.link_employee_option_listing(
+        option["id"],
+        {"public_symbol": "PLAB", "public_market": "NASDAQ", "listing_date": "01/06/2026"},
+    )
+    assert listing["security"]["instrument_type"] == "EMPLOYEE_STOCK_OPTION"
+    assert listing["security"]["listing_status"] == "PUBLIC"
+    assert listing["security"]["public_symbol"] == "PLAB"
+
+    public_exercise = store.exercise_employee_option(
+        option["id"],
+        {"account_db_id": account["id"], "quantity": 250, "exercise_date": "01/08/2026", "share_cost_basis": 2.5},
+    )
+    assert public_exercise["target_security"]["instrument_type"] == "STOCK"
+    assert public_exercise["target_security"]["symbol"] == "PLAB"
+    assert public_exercise["target_security"]["stock_market"] == "NASDAQ"
+    assert [item["transition_type"] for item in store.list_equity_transitions()] == ["EXERCISE", "LISTING_LINK", "EXERCISE"]
+    lifecycle_transaction = next(item for item in store.list_transactions() if item["transition_id"])
+    with pytest.raises(ValueError, match="read-only"):
+        store.update_transaction(lifecycle_transaction["id"], {"quantity": 1})
+    with pytest.raises(ValueError, match="read-only"):
+        store.delete_transaction(lifecycle_transaction["id"])
+    with pytest.raises(ValueError, match="lifecycle history"):
+        store.delete_manual_security(option["id"])
+
+
+def test_employee_option_schedule_round_trips_in_backup(tmp_path):
+    source = LocalPortfolioStore(tmp_path / "source.sqlite3")
+    account = source.save_account({"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
+    option = _save_private_employee_option(source)
+    source.add_transaction(
+        {
+            "account_db_id": account["id"],
+            "action": "ADD",
+            "security_id": option["id"],
+            "quantity": 4000,
+            "price_input": 0,
+            "vesting_schedule": {
+                "enabled": True,
+                "mode": "PERCENT",
+                "duration_months": 48,
+                "cliff_months": 12,
+                "cliff_value": 25,
+                "interval_months": 3,
+                "installment_value": 6.25,
+            },
+        }
+    )
+
+    restored = LocalPortfolioStore(tmp_path / "restored.sqlite3")
+    restored.import_data(source.export_data())
+
+    restored_option = restored.list_manual_securities()[0]
+    restored_schedule = restored.list_transactions()[0]["vesting_schedule"]
+    assert restored_option["grant_date"] == "2024-01-01"
+    assert restored_option["vesting_start_date"] == "2024-01-01"
+    assert restored_option["company_name"] == "Private Labs"
+    assert restored_schedule["tranches"][-1]["cumulative_quantity"] == 4000

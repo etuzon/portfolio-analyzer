@@ -2,6 +2,8 @@ import io
 import zipfile
 from datetime import date, timedelta
 
+import pytest
+
 from app import main
 from app.models import Ohlcv
 from fastapi import HTTPException
@@ -186,6 +188,35 @@ def test_us_transaction_validation_accepts_sec_ticker_without_quote(monkeypatch)
     assert store.payload["stock_market"] == "NASDAQ"
 
 
+def test_transaction_validation_accepts_existing_manual_market(monkeypatch):
+    class Store:
+        def manual_security_exists(self, symbol, stock_market):
+            return symbol == "5136924" and stock_market == "MANUAL"
+
+        def add_transaction(self, payload):
+            self.payload = payload
+            return payload
+
+    store = Store()
+    monkeypatch.setattr(main, "local_store", store)
+
+    result = main.add_local_security(
+        {
+            "account_db_id": "account-1",
+            "action": "SELL",
+            "symbol": "5136924",
+            "stock_market": "MANUAL",
+            "asset_class": "MUTUALFUND",
+            "quantity": 1,
+            "price_input": 91.09,
+            "trade_date": "06/08/2026",
+        }
+    )
+
+    assert result["stock_market"] == "MANUAL"
+    assert store.payload["stock_market"] == "MANUAL"
+
+
 def test_transaction_validation_rejects_provider_as_stock_market(monkeypatch):
     class Store:
         def manual_security_exists(self, symbol, stock_market):
@@ -200,6 +231,280 @@ def test_transaction_validation_rejects_provider_as_stock_market(monkeypatch):
         assert "Unsupported stock market" in str(exc.detail)
     else:
         raise AssertionError("Provider names should not be accepted as stock markets")
+
+
+def test_finance_report_normalizes_online_fundamentals(monkeypatch):
+    class Hub:
+        def fundamentals(self, symbol):
+            assert symbol == "CSCO"
+            return {
+                "profile": {"name": "Cisco Systems"},
+                "income_statement": {
+                    "annualReports": [
+                        {"fiscalDateEnding": "2025-07-31", "totalRevenue": "1000", "netIncome": "100"},
+                        {"fiscalDateEnding": "2026-07-31", "totalRevenue": "1250", "netIncome": "150"},
+                    ]
+                },
+            }, {"sec_company_facts": "ok"}
+
+    monkeypatch.setattr(main, "hub", lambda: Hub())
+
+    result = main.finance_report("csco")
+
+    assert result["symbol"] == "CSCO"
+    assert result["profile"]["name"] == "Cisco Systems"
+    assert result["provider_status"] == {"sec_company_facts": "ok"}
+    assert result["reports"][0]["fiscal_date"] == "2026-07-31"
+    assert result["reports"][0]["revenue_growth_percent"] == 25
+    assert result["reports"][0]["net_income_growth_percent"] == 50
+    assert result["reports"][0]["net_margin_percent"] == 12
+    assert result["summary"]["years"] == 2
+
+
+def test_finance_report_backtest_cutoff_uses_filing_date(monkeypatch):
+    class Hub:
+        def fundamentals(self, symbol):
+            return {
+                "income_statement": {
+                    "annualReports": [
+                        {"fiscalDateEnding": "2023-12-31", "filingDate": "2024-02-01", "totalRevenue": 100, "netIncome": 10},
+                        {"fiscalDateEnding": "2024-12-31", "filingDate": "2025-02-01", "totalRevenue": 120, "netIncome": 15},
+                    ]
+                }
+            }, {"test_reports": "ok"}
+
+    monkeypatch.setattr(main, "hub", lambda: Hub())
+
+    result = main._finance_report_payload("ACME", as_of_date="2024-08-05")
+
+    assert len(result["reports"]) == 1
+    assert result["latest"]["fiscal_date"] == "2023-12-31"
+    assert result["latest"]["filing_date"] == "2024-02-01"
+
+
+def test_finance_report_normalizes_income_cash_flow_and_balance_sheet_metrics(monkeypatch):
+    class Hub:
+        def fundamentals(self, symbol):
+            return {
+                "income_statement": {
+                    "annualReports": [
+                        {
+                            "fiscalDateEnding": "2024-12-31",
+                            "totalRevenue": 100,
+                            "grossProfit": 60,
+                            "operatingIncome": 20,
+                            "netIncome": 10,
+                            "operatingCashFlow": 25,
+                            "capitalExpenditures": -5,
+                            "totalCurrentAssets": 80,
+                            "totalCurrentLiabilities": 40,
+                            "netReceivables": 15,
+                            "inventory": 10,
+                        }
+                    ]
+                }
+            }, {"test_reports": "ok"}
+
+    monkeypatch.setattr(main, "hub", lambda: Hub())
+
+    report = main._finance_report_payload("ACME")
+    latest = report["latest"]
+
+    assert latest["gross_margin_percent"] == 60
+    assert latest["operating_margin_percent"] == 20
+    assert latest["free_cash_flow"] == 20
+    assert latest["cash_conversion_percent"] == 200
+    assert latest["current_ratio"] == 2
+    assert latest["accounts_receivable"] == 15
+
+
+def test_company_outlook_batch_runs_at_most_ten_companies_and_returns_review(tmp_path, monkeypatch):
+    calls = []
+
+    def backtest(symbol, request):
+        calls.append((symbol, request))
+        return {
+            "analysis": {"prediction_record": {"id": symbol}},
+            "evaluation": {"id": symbol, "direction": "positive", "actual_direction": "positive", "accuracy_score": 100},
+        }
+
+    monkeypatch.setattr(main, "_company_outlook_backtest", backtest)
+    from app.local_portfolio import LocalPortfolioStore
+
+    monkeypatch.setattr(main, "local_store", LocalPortfolioStore(tmp_path / "local.sqlite3"))
+
+    result = main._company_outlook_backtest_batch(
+        {
+            "as_of_date": "2024-08-05",
+            "horizon_months": 24,
+            "phase": "holdout",
+            "batch_number": 3,
+            "companies": [
+                {"symbol": "ACME", "industry": "Networking", "peers": ["PEER1", "PEER2"]},
+                {"symbol": "PEER1", "industry": "Networking", "peers": ["ACME", "PEER2"]},
+            ],
+        }
+    )
+
+    assert len(calls) == 2
+    assert calls[0][1]["batch"]["phase"] == "holdout"
+    assert calls[0][1]["industry"] == "Networking"
+    assert result["review"]["accuracy_percent"] == 100
+    assert result["review"]["calibration_notice"].startswith("This is an untouched holdout")
+
+    with pytest.raises(ValueError, match="at most 10"):
+        main._company_outlook_backtest_batch(
+            {
+                "as_of_date": "2024-08-05",
+                "companies": [{"symbol": f"S{i}", "peers": ["P1", "P2"]} for i in range(11)],
+            }
+        )
+
+
+def test_company_outlook_compares_peer_reports_saves_prediction_and_has_no_feedback_loops(tmp_path, monkeypatch):
+    reports = {
+        "ACME": {
+            "profile": {"name": "Acme Networks", "industry": "Networking"},
+            "income_statement": {
+                "annualReports": [
+                    {"fiscalDateEnding": "2024-12-31", "totalRevenue": 100, "netIncome": 10},
+                    {"fiscalDateEnding": "2025-12-31", "totalRevenue": 120, "netIncome": 15},
+                    {"fiscalDateEnding": "2026-12-31", "totalRevenue": 150, "netIncome": 24},
+                ]
+            },
+        },
+        "PEER1": {
+            "profile": {"name": "Peer One", "industry": "Networking"},
+            "income_statement": {
+                "annualReports": [
+                    {"fiscalDateEnding": "2024-12-31", "totalRevenue": 100, "netIncome": 12},
+                    {"fiscalDateEnding": "2025-12-31", "totalRevenue": 110, "netIncome": 14},
+                    {"fiscalDateEnding": "2026-12-31", "totalRevenue": 121, "netIncome": 15},
+                ]
+            },
+        },
+        "PEER2": {
+            "profile": {"name": "Peer Two", "industry": "Networking"},
+            "income_statement": {
+                "annualReports": [
+                    {"fiscalDateEnding": "2024-12-31", "totalRevenue": 100, "netIncome": 10},
+                    {"fiscalDateEnding": "2025-12-31", "totalRevenue": 105, "netIncome": 10},
+                    {"fiscalDateEnding": "2026-12-31", "totalRevenue": 110, "netIncome": 11},
+                ]
+            },
+        },
+    }
+
+    class Hub:
+        def fundamentals(self, symbol):
+            return reports[symbol], {"test_reports": "ok"}
+
+        def market_screener(self, criteria):
+            assert criteria["industry"] == "Networking"
+            return [{"symbol": "PEER1"}, {"symbol": "PEER2"}], {"test_screener": "ok"}
+
+    from app.local_portfolio import LocalPortfolioStore
+
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    monkeypatch.setattr(main, "hub", lambda: Hub())
+    monkeypatch.setattr(main, "local_store", store)
+
+    result = main.company_outlook("acme", {"save_prediction": True, "horizon_months": 12})
+
+    assert result["symbol"] == "ACME"
+    assert result["industry"]["name"] == "Networking"
+    assert result["industry"]["peer_count"] == 2
+    assert result["rank"] == 1
+    assert result["prediction_record"]["status"] == "pending"
+    assert result["graph"]["feedback_loops"] == 0
+    assert result["mermaid"].startswith("flowchart LR")
+    assert len(store.list_company_report_predictions("ACME")) == 1
+
+
+def test_market_screener_filters_latest_annual_profit_and_yields(monkeypatch):
+    reports = {
+        "GOOD": {
+            "profile": {"name": "Good Company", "sector": "Technology", "industry": "Hardware", "currency": "USD"},
+            "income_statement": {
+                "annualReports": [
+                    {"fiscalDateEnding": "2024-12-31", "totalRevenue": 800_000_000, "netIncome": 80_000_000},
+                    {"fiscalDateEnding": "2025-12-31", "totalRevenue": 1_000_000_000, "netIncome": 120_000_000, "operatingCashFlow": 170_000_000, "capitalExpenditures": 20_000_000},
+                ]
+            },
+        },
+        "WEAK": {
+            "profile": {"name": "Weak Company", "sector": "Technology", "industry": "Hardware", "currency": "USD"},
+            "income_statement": {
+                "annualReports": [
+                    {"fiscalDateEnding": "2024-12-31", "totalRevenue": 500_000_000, "netIncome": 20_000_000},
+                    {"fiscalDateEnding": "2025-12-31", "totalRevenue": 510_000_000, "netIncome": 10_000_000},
+                ]
+            },
+        },
+    }
+
+    class Hub:
+        def market_screener(self, criteria):
+            assert criteria["limit"] == 75
+            return [
+                {"symbol": "GOOD", "price": 100, "market_cap": 1_000_000_000, "dividend": 2, "currency": "USD"},
+                {"symbol": "WEAK", "price": 50, "market_cap": 500_000_000, "dividend": 0.25, "currency": "USD"},
+            ], {"test_screener": "ok"}
+
+        def fundamentals(self, symbol):
+            return reports[symbol], {"test_reports": "ok"}
+
+        def quote(self, symbol):
+            return {}, {"test_quote": "missing"}
+
+        def dividends(self, symbol):
+            return [], {"test_dividends": "missing"}
+
+    monkeypatch.setattr(main, "hub", lambda: Hub())
+
+    result = main.market_screener(
+        {
+            "limit": 25,
+            "annualNetIncomeMoreThan": 100_000_000,
+            "profitMarketCapMoreThan": 10,
+            "dividendYieldMoreThan": 1.5,
+            "revenueGrowthMoreThan": 20,
+            "sortBy": "annual_profit:desc",
+        }
+    )
+
+    assert result["count"] == 1
+    assert result["items"][0]["symbol"] == "GOOD"
+    assert result["items"][0]["fiscal_year"] == 2025
+    assert result["items"][0]["annual_net_income"] == 120_000_000
+    assert result["items"][0]["dividend_yield_percent"] == 2
+    assert result["items"][0]["profit_market_cap_percent"] == 12
+    assert result["items"][0]["revenue_growth_percent"] == 25
+    assert result["meta"]["financial_rows"] == 2
+
+
+def test_market_screener_missing_financial_filter_is_explicit(monkeypatch):
+    class Hub:
+        def market_screener(self, criteria):
+            return [{"symbol": "UNKNOWN", "price": 10, "market_cap": 100_000_000}], {"test_screener": "ok"}
+
+        def fundamentals(self, symbol):
+            return {}, {"test_reports": "missing"}
+
+        def quote(self, symbol):
+            return {}, {"test_quote": "missing"}
+
+        def dividends(self, symbol):
+            return [], {"test_dividends": "missing"}
+
+    monkeypatch.setattr(main, "hub", lambda: Hub())
+
+    excluded = main.market_screener({"annualNetIncomeMoreThan": 0})
+    included = main.market_screener({"annualNetIncomeMoreThan": 0, "includeMissing": True})
+
+    assert excluded["count"] == 0
+    assert included["count"] == 1
+    assert included["meta"]["missing_financial_rows"] == 1
 
 
 def test_backup_archive_contains_all_backup_files(tmp_path, monkeypatch):

@@ -18,10 +18,10 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
-from .alerts import AlertStore, start_scheduler
+from .alerts import ALERT_JOB_ID, AlertStore, alert_rule_options, start_scheduler
 from .config import data_dir, load_config
 from .ghostfolio import GhostfolioClient
-from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, OPTION_TYPES, LocalPortfolioStore
+from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, LocalPortfolioStore
 from .metrics import analyze_holding, moving_averages, screen, support_resistance, to_dict, volume_metrics
 from .models import Ohlcv
 from .providers import MarketDataHub
@@ -140,6 +140,757 @@ def _security_history_response(
     }
 
 
+def _safe_symbol(value: Any) -> str:
+    symbol = str(value or "").upper().strip()
+    if not symbol or len(symbol) > 24 or any(char for char in symbol if not (char.isalnum() or char in ".-")):
+        raise HTTPException(status_code=400, detail="Symbol must contain only letters, numbers, dots, or dashes")
+    return symbol
+
+
+def _number_or_none(value: Any) -> float | None:
+    try:
+        if value in (None, "", "None"):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _percent_change(current: float | None, previous: float | None) -> float | None:
+    if current is None or previous in (None, 0):
+        return None
+    return (current - previous) / abs(previous) * 100
+
+
+def _report_date(value: Any) -> str:
+    text = str(value or "").strip()
+    parsed = _parse_query_date(text)
+    if parsed:
+        return parsed.isoformat()
+    if len(text) == 4 and text.isdigit():
+        return f"{text}-12-31"
+    return text[:10]
+
+
+def _report_value(row: dict[str, Any], keys: list[str]) -> float | None:
+    for key in keys:
+        value = _number_or_none(row.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _annual_report_rows(fundamentals: dict[str, Any], limit: int, as_of: date | None = None) -> list[dict[str, Any]]:
+    income = fundamentals.get("income_statement", {})
+    raw_rows = income.get("annualReports") if isinstance(income, dict) else income if isinstance(income, list) else []
+    rows: list[dict[str, Any]] = []
+    for row in raw_rows or []:
+        if not isinstance(row, dict):
+            continue
+        fiscal_date = _report_date(row.get("fiscalDateEnding") or row.get("date") or row.get("calendarYear") or row.get("fillingDate"))
+        filing_date = _report_date(row.get("filingDate") or row.get("fillingDate") or row.get("acceptedDate"))
+        revenue = _report_value(row, ["totalRevenue", "revenue", "Revenue", "sales"])
+        net_income = _report_value(row, ["netIncome", "net_income", "NetIncomeLoss", "income"])
+        gross_profit = _report_value(row, ["grossProfit", "gross_profit"])
+        operating_income = _report_value(row, ["operatingIncome", "operating_income", "operatingIncomeLoss"])
+        operating_cash_flow = _report_value(row, ["operatingCashFlow", "netCashProvidedByOperatingActivities", "cashFlowFromOperations"])
+        capital_expenditures = _report_value(row, ["capitalExpenditures", "capitalExpenditure", "capex"])
+        cash = _report_value(row, ["cashAndCashEquivalents", "cash", "cashAndShortTermInvestments"])
+        current_assets = _report_value(row, ["totalCurrentAssets", "currentAssets"])
+        current_liabilities = _report_value(row, ["totalCurrentLiabilities", "currentLiabilities"])
+        accounts_receivable = _report_value(row, ["netReceivables", "accountsReceivable"])
+        inventory = _report_value(row, ["inventory"])
+        long_term_debt = _report_value(row, ["longTermDebt", "totalDebt", "netDebt"])
+        interest_expense = _report_value(row, ["interestExpense", "interest_expense"])
+        if not fiscal_date or (revenue is None and net_income is None):
+            continue
+        available_date = _parse_query_date(filing_date) or _parse_query_date(fiscal_date)
+        if as_of and available_date and available_date > as_of:
+            continue
+        free_cash_flow = operating_cash_flow - abs(capital_expenditures) if operating_cash_flow is not None and capital_expenditures is not None else None
+        rows.append(
+            {
+                "fiscal_date": fiscal_date,
+                "filing_date": filing_date or None,
+                "fiscal_year": int(fiscal_date[:4]) if fiscal_date[:4].isdigit() else None,
+                "revenue": revenue,
+                "net_income": net_income,
+                "gross_profit": gross_profit,
+                "gross_margin_percent": (gross_profit / revenue * 100) if revenue not in (None, 0) and gross_profit is not None else None,
+                "operating_income": operating_income,
+                "operating_margin_percent": (operating_income / revenue * 100) if revenue not in (None, 0) and operating_income is not None else None,
+                "net_margin_percent": (net_income / revenue * 100) if revenue not in (None, 0) and net_income is not None else None,
+                "operating_cash_flow": operating_cash_flow,
+                "capital_expenditures": capital_expenditures,
+                "free_cash_flow": free_cash_flow,
+                "free_cash_flow_margin_percent": (free_cash_flow / revenue * 100) if free_cash_flow is not None and revenue not in (None, 0) else None,
+                "cash_conversion_percent": (free_cash_flow / net_income * 100) if free_cash_flow is not None and net_income not in (None, 0) else None,
+                "cash": cash,
+                "current_assets": current_assets,
+                "current_liabilities": current_liabilities,
+                "current_ratio": (current_assets / current_liabilities) if current_assets is not None and current_liabilities not in (None, 0) else None,
+                "accounts_receivable": accounts_receivable,
+                "inventory": inventory,
+                "long_term_debt": long_term_debt,
+                "debt_to_revenue_percent": (long_term_debt / revenue * 100) if long_term_debt is not None and revenue not in (None, 0) else None,
+                "interest_expense": interest_expense,
+            }
+        )
+    rows.sort(key=lambda item: item["fiscal_date"])
+    previous: dict[str, Any] | None = None
+    for row in rows:
+        row["revenue_growth_percent"] = _percent_change(row.get("revenue"), previous.get("revenue") if previous else None)
+        row["net_income_growth_percent"] = _percent_change(row.get("net_income"), previous.get("net_income") if previous else None)
+        previous = row
+    rows.reverse()
+    return rows[:limit]
+
+
+def _finance_report_payload(symbol: str, limit: int = 6, as_of_date: str = "") -> dict[str, Any]:
+    normalized_symbol = _safe_symbol(symbol)
+    row_limit = min(max(int(limit or 6), 1), 10)
+    as_of = _parse_query_date(as_of_date)
+    if as_of_date and not as_of:
+        raise ValueError("As-of date must use dd/mm/yyyy or yyyy-mm-dd")
+    provider_hub = hub()
+    if as_of and callable(getattr(provider_hub, "fundamentals_as_of", None)):
+        fundamentals, status = provider_hub.fundamentals_as_of(normalized_symbol, as_of)
+    else:
+        fundamentals, status = provider_hub.fundamentals(normalized_symbol)
+    raw_profile = fundamentals.get("profile") if isinstance(fundamentals.get("profile"), dict) else fundamentals.get("overview") if isinstance(fundamentals.get("overview"), dict) else {}
+    profile = {
+        **raw_profile,
+        "name": raw_profile.get("name") or raw_profile.get("Name") or raw_profile.get("companyName"),
+        "sector": raw_profile.get("sector") or raw_profile.get("Sector"),
+        "industry": raw_profile.get("industry") or raw_profile.get("Industry"),
+        "exchange": raw_profile.get("exchange") or raw_profile.get("Exchange") or raw_profile.get("exchangeShortName"),
+        "currency": raw_profile.get("currency") or raw_profile.get("Currency"),
+        "country": raw_profile.get("country") or raw_profile.get("Country"),
+        "market_cap": _number_or_none(raw_profile.get("market_cap") or raw_profile.get("MarketCapitalization") or raw_profile.get("marketCap") or raw_profile.get("mktCap")),
+        "shares_outstanding": _number_or_none(raw_profile.get("shares_outstanding") or raw_profile.get("SharesOutstanding") or raw_profile.get("sharesOutstanding")),
+        "beta": _number_or_none(raw_profile.get("beta") or raw_profile.get("Beta")),
+    } if raw_profile else {}
+    reports = _annual_report_rows(fundamentals, row_limit, as_of)
+    latest = reports[0] if reports else {}
+    missing = []
+    if not reports:
+        missing.append("annual financial reports")
+    if not profile:
+        missing.append("company profile")
+    if reports:
+        latest = reports[0]
+        if latest.get("free_cash_flow") is None:
+            missing.append("free cash flow")
+        if latest.get("long_term_debt") is None:
+            missing.append("long-term debt")
+    if as_of and any(not row.get("filing_date") for row in reports):
+        missing.append("filing dates unavailable; fiscal-date cutoff used for some reports")
+    return {
+        "symbol": normalized_symbol,
+        "profile": profile,
+        "provider_status": status,
+        "reports": reports,
+        "latest": latest,
+        "summary": {
+            "latest_revenue": latest.get("revenue"),
+            "latest_net_income": latest.get("net_income"),
+            "latest_gross_margin_percent": latest.get("gross_margin_percent"),
+            "latest_operating_margin_percent": latest.get("operating_margin_percent"),
+            "latest_net_margin_percent": latest.get("net_margin_percent"),
+            "latest_revenue_growth_percent": latest.get("revenue_growth_percent"),
+            "latest_net_income_growth_percent": latest.get("net_income_growth_percent"),
+            "latest_free_cash_flow": latest.get("free_cash_flow"),
+            "latest_free_cash_flow_margin_percent": latest.get("free_cash_flow_margin_percent"),
+            "latest_cash_conversion_percent": latest.get("cash_conversion_percent"),
+            "latest_current_ratio": latest.get("current_ratio"),
+            "latest_long_term_debt": latest.get("long_term_debt"),
+            "years": len(reports),
+        },
+        "statement_coverage": {
+            "income_statement": bool(latest.get("revenue") is not None and latest.get("net_income") is not None),
+            "cash_flow_statement": bool(latest.get("operating_cash_flow") is not None and latest.get("capital_expenditures") is not None),
+            "balance_sheet": bool(latest.get("cash") is not None or latest.get("long_term_debt") is not None or latest.get("current_ratio") is not None),
+        },
+        "missing": missing,
+        "as_of_date": as_of.isoformat() if as_of else None,
+    }
+
+
+OUTLOOK_MODEL_VERSION = "report-outlook-v4"
+OUTLOOK_BATCH_MAX_COMPANIES = 10
+
+
+def _clamp(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
+
+
+def _median(values: list[float | None]) -> float | None:
+    numbers = sorted(value for value in values if value is not None)
+    if not numbers:
+        return None
+    middle = len(numbers) // 2
+    return numbers[middle] if len(numbers) % 2 else (numbers[middle - 1] + numbers[middle]) / 2
+
+
+def _symbol_list(value: Any, maximum: int = 6) -> list[str]:
+    values = value if isinstance(value, list) else str(value or "").replace(";", ",").split(",")
+    result: list[str] = []
+    for item in values:
+        candidate = item.get("symbol") if isinstance(item, dict) else item
+        try:
+            symbol = _safe_symbol(candidate)
+        except HTTPException:
+            continue
+        if symbol not in result:
+            result.append(symbol)
+        if len(result) >= maximum:
+            break
+    return result
+
+
+def _same_industry(left: Any, right: Any) -> bool:
+    left_text = str(left or "").strip().casefold()
+    right_text = str(right or "").strip().casefold()
+    return bool(left_text and right_text and (left_text == right_text or left_text in right_text or right_text in left_text))
+
+
+def _outlook_company(symbol: str, payload: dict[str, Any], target_industry: str = "", peer_source: str = "") -> dict[str, Any]:
+    profile = payload.get("profile") if isinstance(payload.get("profile"), dict) else {}
+    latest = payload.get("latest") if isinstance(payload.get("latest"), dict) else {}
+    reports = payload.get("reports") if isinstance(payload.get("reports"), list) else []
+    previous = reports[1] if len(reports) > 1 and isinstance(reports[1], dict) else {}
+    industry = str(profile.get("industry") or profile.get("sector") or "").strip()
+    return {
+        "symbol": symbol,
+        "name": str(profile.get("name") or symbol),
+        "industry": industry,
+        "fiscal_date": latest.get("fiscal_date"),
+        "filing_date": latest.get("filing_date"),
+        "revenue": latest.get("revenue"),
+        "revenue_growth_percent": latest.get("revenue_growth_percent"),
+        "net_income": latest.get("net_income"),
+        "net_income_growth_percent": latest.get("net_income_growth_percent"),
+        "gross_margin_percent": latest.get("gross_margin_percent"),
+        "operating_margin_percent": latest.get("operating_margin_percent"),
+        "net_margin_percent": latest.get("net_margin_percent"),
+        "profit_margin_percent": latest.get("operating_margin_percent") if latest.get("operating_margin_percent") is not None else latest.get("net_margin_percent"),
+        "profit_margin_source": "operating margin" if latest.get("operating_margin_percent") is not None else "net margin",
+        "net_margin_change_percent": (
+            latest["net_margin_percent"] - previous["net_margin_percent"]
+            if latest.get("net_margin_percent") is not None and previous.get("net_margin_percent") is not None
+            else None
+        ),
+        "free_cash_flow": latest.get("free_cash_flow"),
+        "free_cash_flow_margin_percent": latest.get("free_cash_flow_margin_percent"),
+        "cash_conversion_percent": latest.get("cash_conversion_percent"),
+        "current_ratio": latest.get("current_ratio"),
+        "receivables_to_revenue_percent": (latest["accounts_receivable"] / latest["revenue"] * 100)
+        if latest.get("accounts_receivable") is not None and latest.get("revenue") not in (None, 0) else None,
+        "inventory_to_revenue_percent": (latest["inventory"] / latest["revenue"] * 100)
+        if latest.get("inventory") is not None and latest.get("revenue") not in (None, 0) else None,
+        "long_term_debt": latest.get("long_term_debt"),
+        "debt_to_revenue_percent": latest.get("debt_to_revenue_percent"),
+        "report_years": payload.get("summary", {}).get("years", 0),
+        "same_industry": _same_industry(industry, target_industry) if target_industry else False,
+        "peer_source": peer_source,
+        "missing": payload.get("missing") or [],
+        "provider_status": payload.get("provider_status") or {},
+        "statement_coverage": payload.get("statement_coverage") or {},
+    }
+
+
+def _relative_points(value: float | None, median: float | None, maximum: float, spread: float) -> float:
+    if value is None or median is None:
+        return 0.0
+    return round(_clamp(maximum / 2 + (value - median) / max(spread, 0.1) * (maximum / 2), 0, maximum), 1)
+
+
+def _fundamental_score(
+    company: dict[str, Any],
+    median_revenue_growth: float | None,
+    median_income_growth: float | None,
+    median_margin: float | None,
+    median_free_cash_flow_margin: float | None,
+    median_cash_conversion: float | None,
+    median_debt_to_revenue: float | None,
+    median_current_ratio: float | None,
+) -> float:
+    score = 0.0
+    available_weight = 0.0
+    for value, median, maximum, spread in [
+        (company.get("revenue_growth_percent"), median_revenue_growth, 12, 20),
+        (company.get("net_income_growth_percent"), median_income_growth, 10, 30),
+        (company.get("profit_margin_percent"), median_margin, 10, 20),
+    ]:
+        if value is None or median is None:
+            continue
+        score += _relative_points(value, median, maximum, spread)
+        available_weight += maximum
+    cash_quality_points = []
+    if company.get("free_cash_flow_margin_percent") is not None and median_free_cash_flow_margin is not None:
+        cash_quality_points.append(_relative_points(company["free_cash_flow_margin_percent"], median_free_cash_flow_margin, 5, 15))
+    if company.get("cash_conversion_percent") is not None and median_cash_conversion is not None:
+        cash_quality_points.append(_relative_points(company["cash_conversion_percent"], median_cash_conversion, 5, 40))
+    if cash_quality_points:
+        score += sum(cash_quality_points) / len(cash_quality_points)
+        available_weight += 5
+    if company.get("debt_to_revenue_percent") is not None and median_debt_to_revenue is not None:
+        score += _relative_points(median_debt_to_revenue, company["debt_to_revenue_percent"], 2, 30)
+        available_weight += 2
+    if company.get("current_ratio") is not None and median_current_ratio is not None:
+        score += _relative_points(company["current_ratio"], median_current_ratio, 1, 0.8)
+        available_weight += 1
+    margin_change = company.get("net_margin_change_percent")
+    if margin_change is not None:
+        score += 5 if margin_change >= 0 else 1
+        available_weight += 5
+    return round(score / available_weight * 45, 1) if available_weight else 0.0
+
+
+def _score_band(score: float) -> tuple[str, str]:
+    if score >= 80:
+        return "Strong", "positive"
+    if score >= 65:
+        return "Good", "positive"
+    if score >= 50:
+        return "Mixed", "neutral"
+    return "Weak", "negative"
+
+
+def _mermaid_label(value: Any) -> str:
+    return str(value or "").replace('"', "'").replace("[", "(").replace("]", ")").replace("|", "/")[:80]
+
+
+def _pct_label(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.1f}%"
+
+
+def _outlook_mermaid(target: dict[str, Any], industry: dict[str, Any], peers: list[dict[str, Any]], related: list[dict[str, Any]], score: float) -> tuple[dict[str, Any], str]:
+    nodes = [
+        {"id": "target", "label": target["symbol"], "type": "target"},
+        {"id": "industry", "label": industry["name"], "type": "industry"},
+    ]
+    edges = [{"from": "target", "to": "industry", "label": "competes in"}]
+    lines = [
+        "flowchart LR",
+        f'  T["{_mermaid_label(target["symbol"])}<br/>Revenue growth: {_pct_label(target.get("revenue_growth_percent"))}<br/>Net margin: {_pct_label(target.get("net_margin_percent"))}<br/>Score: {score:.0f}"]:::target',
+        f'  I["{_mermaid_label(industry["name"])}<br/>Median revenue growth: {_pct_label(industry.get("median_revenue_growth_percent"))}<br/>Health: {_mermaid_label(industry["health"])}"]:::industry',
+        '  T -->|"competes in"| I',
+    ]
+    for index, peer in enumerate(peers[:6], 1):
+        node_id = f"peer{index}"
+        nodes.append({"id": node_id, "label": peer["symbol"], "type": "peer"})
+        edges.append({"from": node_id, "to": "industry", "label": "same industry"})
+        lines.append(f'  P{index}["{_mermaid_label(peer["symbol"])}<br/>Score: {peer.get("score", 0):.0f}<br/>Revenue growth: {_pct_label(peer.get("revenue_growth_percent"))}"]:::peer')
+        lines.append(f'  P{index} -->|"same industry"| I')
+    for index, item in enumerate(related[:4], 1):
+        node_id = f"related{index}"
+        nodes.append({"id": node_id, "label": item["symbol"], "type": "related"})
+        edges.append({"from": node_id, "to": "target", "label": item["relation"]})
+        lines.append(f'  R{index}["{_mermaid_label(item["symbol"])}<br/>{_mermaid_label(item["relation"])}<br/>Revenue growth: {_pct_label(item.get("revenue_growth_percent"))}"]:::related')
+        lines.append(f'  R{index} -->|"{_mermaid_label(item["relation"])}"| T')
+    lines.extend(
+        [
+            "  classDef target fill:#183b56,stroke:#64d2ff,color:#ffffff",
+            "  classDef industry fill:#232946,stroke:#f4d35e,color:#ffffff",
+            "  classDef peer fill:#123524,stroke:#8bd17c,color:#ffffff",
+            "  classDef related fill:#3a233f,stroke:#f38ba8,color:#ffffff",
+        ]
+    )
+    return {"nodes": nodes[:14], "edges": edges[:22], "feedback_loops": 0}, "\n".join(lines)
+
+
+def _related_company_specs(payload: dict[str, Any]) -> list[dict[str, str]]:
+    raw = payload.get("related_companies") or []
+    if not isinstance(raw, list):
+        raw = str(raw).replace(";", ",").split(",")
+    relation = str(payload.get("related_effect") or "related industry").strip()[:40] or "related industry"
+    result = []
+    for item in raw:
+        source = item if isinstance(item, dict) else {"symbol": item}
+        try:
+            symbol = _safe_symbol(source.get("symbol"))
+        except HTTPException:
+            continue
+        if any(row["symbol"] == symbol for row in result):
+            continue
+        result.append({"symbol": symbol, "relation": str(source.get("relation") or relation).strip()[:40] or "related industry"})
+        if len(result) >= 4:
+            break
+    return result
+
+
+def _company_outlook_payload(symbol: str, request: dict[str, Any] | None = None) -> dict[str, Any]:
+    request = request or {}
+    target_symbol = _safe_symbol(symbol)
+    as_of_date = str(request.get("as_of_date") or "").strip()
+    manual_industry = str(request.get("industry") or "").strip()[:80]
+    target_report = _finance_report_payload(target_symbol, 6, as_of_date)
+    target = _outlook_company(target_symbol, target_report)
+    industry_name = manual_industry or target["industry"] or "Unclassified industry"
+    industry_source = "manual comparable cohort" if manual_industry else "company profile" if target["industry"] else "unclassified"
+    explicit_peers = [item for item in _symbol_list(request.get("peers")) if item != target_symbol]
+    peer_symbols = explicit_peers[:]
+    screener_status: dict[str, str] = {}
+    peer_source = "explicit industry cohort" if peer_symbols and manual_industry else "explicit" if peer_symbols else ""
+    if not peer_symbols and target["industry"]:
+        candidates, screener_status = hub().market_screener({"industry": target["industry"], "limit": 8})
+        peer_symbols = [
+            item_symbol for item_symbol in _symbol_list([item.get("symbol") for item in candidates], 6)
+            if item_symbol != target_symbol
+        ]
+        peer_source = "provider industry screener" if peer_symbols else ""
+    peer_reports = [_outlook_company(peer_symbol, _finance_report_payload(peer_symbol, 4, as_of_date), target["industry"], peer_source) for peer_symbol in peer_symbols[:6]]
+    comparable_peers = [
+        peer for peer in peer_reports
+        if peer.get("same_industry") or peer_source in {"provider industry screener", "explicit industry cohort"}
+    ]
+    score_peers = comparable_peers or peer_reports
+    median_revenue_growth = _median([peer.get("revenue_growth_percent") for peer in score_peers])
+    median_income_growth = _median([peer.get("net_income_growth_percent") for peer in score_peers])
+    median_margin = _median([peer.get("profit_margin_percent") for peer in score_peers])
+    median_free_cash_flow_margin = _median([peer.get("free_cash_flow_margin_percent") for peer in score_peers])
+    median_cash_conversion = _median([peer.get("cash_conversion_percent") for peer in score_peers])
+    median_debt_to_revenue = _median([peer.get("debt_to_revenue_percent") for peer in score_peers])
+    median_current_ratio = _median([peer.get("current_ratio") for peer in score_peers])
+    industry_score = (
+        _relative_points(median_revenue_growth, 0, 8, 20)
+        + _relative_points(median_income_growth, 0, 6, 25)
+        + _relative_points(median_margin, 0, 5, 20)
+        + (2 if len(score_peers) >= 3 else 0)
+    )
+    industry_health = "Pressure" if industry_score < 9 else "Stable" if industry_score < 15 else "Supportive"
+    industry = {
+        "name": industry_name,
+        "source": industry_source,
+        "median_revenue_growth_percent": median_revenue_growth,
+        "median_net_income_growth_percent": median_income_growth,
+        "median_net_margin_percent": median_margin,
+        "score": round(industry_score, 1),
+        "health": industry_health,
+        "issues": ([] if score_peers else ["No comparable peer reports were available"]),
+        "peer_count": len(score_peers),
+    }
+    company_score = _fundamental_score(
+        target,
+        median_revenue_growth,
+        median_income_growth,
+        median_margin,
+        median_free_cash_flow_margin,
+        median_cash_conversion,
+        median_debt_to_revenue,
+        median_current_ratio,
+    )
+    for peer in peer_reports:
+        peer["score"] = _fundamental_score(
+            peer,
+            median_revenue_growth,
+            median_income_growth,
+            median_margin,
+            median_free_cash_flow_margin,
+            median_cash_conversion,
+            median_debt_to_revenue,
+            median_current_ratio,
+        )
+    related = []
+    related_score = 0.0
+    for spec in _related_company_specs(request):
+        relation_report = _finance_report_payload(spec["symbol"], 4, as_of_date)
+        company = _outlook_company(spec["symbol"], relation_report)
+        item = {**company, "relation": spec["relation"]}
+        related.append(item)
+        growth = item.get("revenue_growth_percent")
+        if growth is not None:
+            if spec["relation"].casefold() in {"demand support", "customer demand", "complement"}:
+                related_score += 5 if growth > 0 else 1
+            elif spec["relation"].casefold() in {"cost pressure", "supplier pressure", "substitute"}:
+                related_score += 1 if growth > 0 else 4
+            else:
+                related_score += 2.5
+    related_score = min(15.0, related_score)
+    target["same_industry"] = True
+    preliminary = company_score + industry_score + related_score
+    target["score"] = company_score
+    ranked = sorted([target, *score_peers], key=lambda item: item.get("score") if item.get("score") is not None else -10_000, reverse=True)
+    rank = next((index + 1 for index, item in enumerate(ranked) if item["symbol"] == target_symbol), 1)
+    rank_score = 0.0 if len(ranked) <= 1 else round((len(ranked) - rank) / (len(ranked) - 1) * 8, 1)
+    source_score = 4 if target["report_years"] >= 3 and len(score_peers) >= 3 else 2 if target["report_years"] >= 2 and score_peers else 0
+    missing = list(target_report.get("missing") or [])
+    if not score_peers:
+        missing.append("same-industry peer reports")
+    if not related:
+        missing.append("related-industry reports")
+    confidence = "High" if target["report_years"] >= 3 and len(score_peers) >= 4 else "Medium" if target["report_years"] >= 2 and len(score_peers) >= 2 else "Low"
+    data_quality = 3 if confidence == "High" else 2 if confidence == "Medium" else 0
+    final_score = round(_clamp(preliminary + rank_score + source_score + data_quality, 0, 100), 1)
+    label, direction = _score_band(final_score)
+    graph, mermaid = _outlook_mermaid(target, industry, peer_reports, related, final_score)
+    thesis = (
+        f"{target_symbol} ranks {rank} of {len(ranked)} on available report growth signals. "
+        f"Industry conditions appear {industry_health.casefold()}. "
+        f"Cash-flow and balance-sheet measures are included when filed; missing statement evidence lowers confidence."
+    )
+    simple_words = (
+        f"{target_symbol} scores {final_score:.0f}/100. It ranks {rank} out of {len(ranked)} companies using available annual report numbers. "
+        f"The {industry_name} outlook looks {industry_health.casefold()}. {thesis.split('. ')[-1]} Confidence: {confidence}."
+    )
+    payload = {
+        "symbol": target_symbol,
+        "companies": [target, *peer_reports],
+        "industry": industry,
+        "related_industries": related,
+        "graph": graph,
+        "mermaid": mermaid,
+        "score": final_score,
+        "label": label,
+        "direction": direction,
+        "rank": rank,
+        "score_components": {
+            "company_fundamentals": round(company_score, 1),
+            "industry_outlook": round(industry_score, 1),
+            "related_industry_effect": round(related_score, 1),
+            "relative_rank": rank_score,
+            "source_and_confidence": round(source_score + data_quality, 1),
+        },
+        "confidence": confidence,
+        "conclusion": thesis,
+        "simple_words": simple_words,
+        "missing": missing,
+        "as_of_date": target_report.get("as_of_date"),
+        "provider_status": {"target": target_report.get("provider_status") or {}, "peer_screener": screener_status},
+        "peer_source": peer_source or "No peer source available",
+    }
+    if request.get("save_prediction", True):
+        horizon_months = int(request.get("horizon_months") or 12)
+        horizon_months = max(3, min(horizon_months, 48))
+        prediction_date = _parse_query_date(as_of_date) or date.today()
+        record = local_store.save_company_report_prediction(
+            {
+                "symbol": target_symbol,
+                "company_name": target["name"],
+                "industry": industry_name,
+                "created_at": prediction_date.isoformat() + "T00:00:00Z",
+                "horizon_date": (prediction_date + timedelta(days=horizon_months * 30)).isoformat(),
+                "model_version": OUTLOOK_MODEL_VERSION,
+                "score": final_score,
+                "label": label,
+                "direction": direction,
+                "confidence": confidence,
+                "baseline": {
+                    "target": target,
+                    "peers": [{"symbol": peer["symbol"], "fiscal_date": peer.get("fiscal_date")} for peer in score_peers],
+                    "industry": industry,
+                    "related_industries": related,
+                    "score_components": payload["score_components"],
+                    "batch": request.get("batch") if isinstance(request.get("batch"), dict) else {},
+                },
+                "thesis": thesis,
+                "mermaid": mermaid,
+            }
+        )
+        payload["prediction_record"] = {"id": record["id"], "horizon_date": record["horizon_date"], "baseline_fiscal_date": target.get("fiscal_date"), "status": record["actual_direction"]}
+    return payload
+
+
+def _evaluate_prediction(prediction: dict[str, Any]) -> dict[str, Any]:
+    baseline = prediction.get("baseline") if isinstance(prediction.get("baseline"), dict) else {}
+    baseline_target = baseline.get("target") if isinstance(baseline.get("target"), dict) else {}
+    baseline_date = str(baseline_target.get("fiscal_date") or "")
+    horizon_date = _parse_query_date(str(prediction.get("horizon_date") or ""))
+    report = _finance_report_payload(prediction["symbol"], 6, horizon_date.isoformat() if horizon_date else "")
+
+    def newer_report(rows: list[dict[str, Any]], since_date: str) -> dict[str, Any] | None:
+        eligible = []
+        for row in rows:
+            fiscal_date = str(row.get("fiscal_date") or "")
+            available_date = str(row.get("filing_date") or fiscal_date)
+            if fiscal_date <= since_date:
+                continue
+            if horizon_date and available_date > horizon_date.isoformat():
+                continue
+            eligible.append(row)
+        return eligible[0] if eligible else None
+
+    actual = newer_report(report.get("reports") or [], baseline_date)
+    if not baseline_date or not actual:
+        return local_store.evaluate_company_report_prediction(prediction["id"], {}, "pending", None, "No newer annual report is available yet.")
+
+    peer_rows = baseline.get("peers") if isinstance(baseline.get("peers"), list) else []
+    peer_actuals = []
+    for peer in peer_rows[:6]:
+        if not isinstance(peer, dict) or not peer.get("symbol"):
+            continue
+        peer_report = _finance_report_payload(str(peer["symbol"]), 6, horizon_date.isoformat() if horizon_date else "")
+        row = newer_report(peer_report.get("reports") or [], str(peer.get("fiscal_date") or ""))
+        if row and row.get("revenue_growth_percent") is not None and row.get("net_margin_percent") is not None:
+            peer_actuals.append({"symbol": peer["symbol"], **row})
+
+    revenue_growth = actual.get("revenue_growth_percent")
+    margin_change = None
+    if actual.get("net_margin_percent") is not None and baseline_target.get("net_margin_percent") is not None:
+        margin_change = actual["net_margin_percent"] - baseline_target["net_margin_percent"]
+    peer_median_revenue_growth = _median([row.get("revenue_growth_percent") for row in peer_actuals])
+    peer_median_margin = _median([row.get("net_margin_percent") for row in peer_actuals])
+    actual = {
+        **actual,
+        "peer_count": len(peer_actuals),
+        "peer_median_revenue_growth_percent": peer_median_revenue_growth,
+        "peer_median_net_margin_percent": peer_median_margin,
+    }
+
+    if len(peer_actuals) >= 2 and revenue_growth is not None and actual.get("net_margin_percent") is not None:
+        revenue_relative = revenue_growth - peer_median_revenue_growth
+        margin_relative = actual["net_margin_percent"] - peer_median_margin
+        if revenue_relative >= 0 and margin_relative >= 0:
+            direction = "positive"
+            evaluation = "Revenue growth and net margin were at or above the later peer medians."
+        elif revenue_relative < 0 and margin_relative < 0:
+            direction = "negative"
+            evaluation = "Revenue growth and net margin were both below the later peer medians."
+        else:
+            direction = "neutral"
+            evaluation = "Later report signals were mixed versus peer medians."
+    elif revenue_growth is None or margin_change is None:
+        direction = "inconclusive"
+        evaluation = "The newer report is missing comparable revenue growth or net margin."
+    elif revenue_growth > 0 and margin_change >= 0:
+        direction = "positive"
+        evaluation = "Revenue growth and net margin both improved or held."
+    elif revenue_growth < 0 and margin_change < 0:
+        direction = "negative"
+        evaluation = "Revenue growth and net margin both weakened."
+    else:
+        direction = "neutral"
+        evaluation = "The newer report shows mixed revenue-growth and margin signals."
+
+    if direction == "inconclusive":
+        accuracy = None
+    elif prediction["direction"] == direction:
+        accuracy = 100
+    elif direction == "neutral":
+        accuracy = 50
+    else:
+        accuracy = 0
+    return local_store.evaluate_company_report_prediction(prediction["id"], actual, direction, accuracy, evaluation)
+
+
+def _company_outlook_backtest(symbol: str, request: dict[str, Any] | None = None) -> dict[str, Any]:
+    request = request or {}
+    as_of = _parse_query_date(str(request.get("as_of_date") or ""))
+    if not as_of:
+        raise ValueError("A historical as-of date is required for a backtest")
+    if as_of >= date.today():
+        raise ValueError("The historical as-of date must be before today")
+    analysis = _company_outlook_payload(symbol, {**request, "as_of_date": as_of.isoformat(), "save_prediction": True})
+    prediction_id = analysis.get("prediction_record", {}).get("id")
+    prediction = next((item for item in local_store.list_company_report_predictions() if item["id"] == prediction_id), None)
+    if not prediction:
+        raise ValueError("Backtest prediction was not saved")
+    evaluation = _evaluate_prediction(prediction)
+    return {"as_of_date": as_of.isoformat(), "analysis": analysis, "evaluation": evaluation, "scorecard": local_store.company_report_scorecard()}
+
+
+def _batch_prediction_review(predictions: list[dict[str, Any]], phase: str) -> dict[str, Any]:
+    evaluated = [item for item in predictions if item.get("accuracy_score") is not None]
+    actual_directions = {"positive": 0, "neutral": 0, "negative": 0, "pending": 0, "inconclusive": 0}
+    direction_pairs: dict[str, int] = {}
+    for item in predictions:
+        actual = str(item.get("actual_direction") or "pending")
+        actual_directions[actual] = actual_directions.get(actual, 0) + 1
+        if item.get("accuracy_score") is not None:
+            key = f"predicted_{item.get('direction')}__actual_{actual}"
+            direction_pairs[key] = direction_pairs.get(key, 0) + 1
+    accuracy = round(sum(float(item["accuracy_score"]) for item in evaluated) / len(evaluated), 1) if evaluated else None
+    return {
+        "phase": phase,
+        "attempted": len(predictions),
+        "evaluated": len(evaluated),
+        "pending": actual_directions.get("pending", 0),
+        "inconclusive": actual_directions.get("inconclusive", 0),
+        "accuracy_percent": accuracy,
+        "actual_directions": actual_directions,
+        "direction_confusion": direction_pairs,
+        "calibration_notice": (
+            "This batch may be used to assess a pre-declared candidate rule, but it cannot validate a rule tuned on this batch."
+            if phase == "calibration"
+            else "This is an untouched holdout batch. Do not tune the model using its results."
+        ),
+    }
+
+
+def _company_outlook_backtest_batch(request: dict[str, Any] | None = None) -> dict[str, Any]:
+    request = request or {}
+    as_of = _parse_query_date(str(request.get("as_of_date") or ""))
+    if not as_of:
+        raise ValueError("A historical as-of date is required for a batch backtest")
+    if as_of >= date.today():
+        raise ValueError("The historical as-of date must be before today")
+    raw_companies = request.get("companies")
+    if not isinstance(raw_companies, list) or not raw_companies:
+        raise ValueError("Batch backtests require a non-empty companies list")
+    if len(raw_companies) > OUTLOOK_BATCH_MAX_COMPANIES:
+        raise ValueError(f"A batch can contain at most {OUTLOOK_BATCH_MAX_COMPANIES} companies")
+    phase = str(request.get("phase") or "calibration").strip().lower()
+    if phase not in {"calibration", "holdout"}:
+        raise ValueError("Batch phase must be calibration or holdout")
+    batch_number = max(1, int(request.get("batch_number") or 1))
+    horizon_months = max(3, min(int(request.get("horizon_months") or 12), 48))
+    batch_id = str(request.get("batch_id") or f"{phase}-{as_of.isoformat()}-{horizon_months}m-{batch_number:03d}").strip()[:120]
+    results = []
+    failures = []
+    for item in raw_companies:
+        spec = item if isinstance(item, dict) else {"symbol": item}
+        try:
+            symbol = _safe_symbol(spec.get("symbol"))
+            existing = local_store.company_report_prediction_for_batch(batch_id, symbol)
+            if existing:
+                results.append(
+                    {
+                        "as_of_date": as_of.isoformat(),
+                        "analysis": {"symbol": symbol, "prediction_record": {"id": existing["id"], "status": existing.get("actual_direction")}},
+                        "evaluation": existing,
+                        "reused": True,
+                    }
+                )
+                continue
+            peers = _symbol_list(spec.get("peers"))
+            if len(peers) < 2:
+                raise ValueError("Each company requires at least two same-industry peers")
+            result = _company_outlook_backtest(
+                symbol,
+                {
+                    "as_of_date": as_of.isoformat(),
+                    "horizon_months": horizon_months,
+                    "peers": peers,
+                    "industry": str(spec.get("industry") or "").strip()[:80],
+                    "related_companies": spec.get("related_companies") or [],
+                    "related_effect": str(spec.get("related_effect") or "").strip()[:40],
+                    "batch": {"id": batch_id, "number": batch_number, "phase": phase},
+                },
+            )
+            results.append(result)
+        except (HTTPException, ValueError) as exc:
+            failures.append({"symbol": str(spec.get("symbol") or "").upper().strip(), "error": str(getattr(exc, "detail", exc))})
+    predictions = [item["evaluation"] for item in results if isinstance(item.get("evaluation"), dict)]
+    prediction_ids = {
+        str(item.get("analysis", {}).get("prediction_record", {}).get("id") or "")
+        for item in results
+    }
+    prediction_ids.discard("")
+    return {
+        "batch_id": batch_id,
+        "batch_number": batch_number,
+        "phase": phase,
+        "as_of_date": as_of.isoformat(),
+        "horizon_months": horizon_months,
+        "model_version": OUTLOOK_MODEL_VERSION,
+        "results": results,
+        "failures": failures,
+        "review": _batch_prediction_review(predictions, phase),
+        "scorecard": local_store.company_report_scorecard(prediction_ids),
+    }
+
+
 def _stock_market_key(value: Any) -> str:
     text = str(value or "").upper().strip().replace(" ", "").replace("-", "").replace("_", "")
     aliases = {
@@ -178,13 +929,13 @@ def _exact_screener_match(symbol: str, rows: list[dict[str, Any]]) -> dict[str, 
 
 def _resolve_supported_stock_market(symbol: str, stock_market: str, allow_manual: bool, known_manual: bool) -> tuple[str, dict[str, str]]:
     selected = _stock_market_key(stock_market)
+    if allow_manual or known_manual:
+        return selected or "MANUAL", {"manual": "accepted"}
     if selected not in SUPPORTED_STOCK_MARKETS:
         raise HTTPException(
             status_code=400,
             detail=f"Unsupported stock market '{stock_market}'. Supported markets are: {', '.join(sorted(SUPPORTED_STOCK_MARKETS))}",
         )
-    if allow_manual or known_manual:
-        return selected, {"manual": "accepted"}
     if selected == "TASE":
         raise HTTPException(
             status_code=422,
@@ -744,7 +1495,7 @@ def startup():
     local_store.delete_history_before(HISTORY_START_DATE)
     local_store.capture_daily_snapshots()
     if scheduler is None:
-        scheduler = start_scheduler(alert_store, analyze_all, config.alerts, local_store.capture_daily_snapshots)
+        scheduler = start_scheduler(alert_store, _run_portfolio_alerts, config.alerts, local_store.capture_daily_snapshots)
     configure_backup_job()
     configure_dividend_job()
 
@@ -795,6 +1546,61 @@ def screener(criteria: dict[str, Any]):
     return {"count": len(results), "items": [to_dict(item) for item in results]}
 
 
+@app.get("/api/finance-reports/{symbol}")
+def finance_report(symbol: str, limit: int = 6):
+    return _finance_report_payload(symbol, limit)
+
+
+@app.get("/api/company-outlook/predictions")
+def company_outlook_predictions(symbol: str = ""):
+    return {"items": local_store.list_company_report_predictions(symbol), "scorecard": local_store.company_report_scorecard()}
+
+
+@app.delete("/api/company-outlook/predictions/{prediction_id}")
+def delete_company_outlook_prediction(prediction_id: str):
+    try:
+        return local_store.delete_company_report_prediction(prediction_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/company-outlook/predictions/{prediction_id}/evaluate")
+def evaluate_company_outlook_prediction(prediction_id: str):
+    prediction = next((item for item in local_store.list_company_report_predictions() if item["id"] == prediction_id), None)
+    if not prediction:
+        raise HTTPException(status_code=404, detail="Prediction not found")
+    return _evaluate_prediction(prediction)
+
+
+@app.get("/api/company-outlook/scorecard")
+def company_outlook_scorecard():
+    return local_store.company_report_scorecard()
+
+
+@app.post("/api/company-outlook/backtests/batch")
+def company_outlook_backtest_batch(payload: dict[str, Any] | None = None):
+    try:
+        return _company_outlook_backtest_batch(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/company-outlook/{symbol}/backtest")
+def company_outlook_backtest(symbol: str, payload: dict[str, Any] | None = None):
+    try:
+        return _company_outlook_backtest(symbol, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/company-outlook/{symbol}")
+def company_outlook(symbol: str, payload: dict[str, Any] | None = None):
+    try:
+        return _company_outlook_payload(symbol, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/local/options")
 def local_options():
     return {
@@ -803,6 +1609,7 @@ def local_options():
         "asset_classes": ASSET_CLASSES,
         "instrument_types": INSTRUMENT_TYPES,
         "option_types": OPTION_TYPES,
+        "issuer_listing_statuses": ISSUER_LISTING_STATUSES,
     }
 
 
@@ -903,11 +1710,14 @@ def add_local_security(payload: dict[str, Any]):
     symbol = str(payload.get("symbol") or "").strip()
     stock_market = str(payload.get("stock_market") or "").strip()
     allow_manual = bool(payload.get("allow_manual"))
-    known_manual = local_store.manual_security_exists(symbol, stock_market)
-    if symbol and stock_market:
+    security_id = str(payload.get("security_id") or "").strip()
+    known_manual = bool(security_id and local_store.manual_security_by_id(security_id)) or local_store.manual_security_exists(symbol, stock_market)
+    if symbol and stock_market and not security_id:
         payload["stock_market"], _status = _resolve_supported_stock_market(symbol, stock_market, allow_manual, known_manual)
     try:
-        return local_store.add_transaction(payload)
+        result = local_store.add_transaction(payload)
+        clear_portfolio_cache()
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -918,11 +1728,14 @@ def update_local_security(transaction_id: str, payload: dict[str, Any]):
     symbol = str(payload.get("symbol") or "").strip()
     stock_market = str(payload.get("stock_market") or "").strip()
     allow_manual = bool(payload.get("allow_manual"))
-    known_manual = local_store.manual_security_exists(symbol, stock_market)
-    if symbol and stock_market:
+    security_id = str(payload.get("security_id") or "").strip()
+    known_manual = bool(security_id and local_store.manual_security_by_id(security_id)) or local_store.manual_security_exists(symbol, stock_market)
+    if symbol and stock_market and not security_id:
         payload["stock_market"], _status = _resolve_supported_stock_market(symbol, stock_market, allow_manual, known_manual)
     try:
-        return local_store.update_transaction(transaction_id, payload)
+        result = local_store.update_transaction(transaction_id, payload)
+        clear_portfolio_cache()
+        return result
     except ValueError as exc:
         message = str(exc)
         if "not found" in message.lower():
@@ -938,23 +1751,68 @@ def list_manual_securities():
 @app.post("/api/local/manual-securities")
 def save_manual_security(payload: dict[str, Any]):
     try:
-        return local_store.save_manual_security(payload or {})
+        result = local_store.save_manual_security(payload or {})
+        clear_portfolio_cache()
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.delete("/api/local/manual-securities/{security_id}")
 def delete_manual_security(security_id: str):
-    if not local_store.delete_manual_security(security_id):
-        raise HTTPException(status_code=404, detail="Manual instrument not found")
-    return {"deleted": True}
+    try:
+        if not local_store.delete_manual_security(security_id):
+            raise HTTPException(status_code=404, detail="Manual instrument not found")
+        clear_portfolio_cache()
+        return {"deleted": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/local/equity-transitions")
+def list_equity_transitions():
+    return {"items": local_store.list_equity_transitions()}
+
+
+@app.post("/api/local/manual-securities/{security_id}/link-listing")
+def link_employee_option_listing(security_id: str, payload: dict[str, Any]):
+    payload = payload or {}
+    symbol = str(payload.get("public_symbol") or "").strip()
+    market = str(payload.get("public_market") or "").strip()
+    if symbol and market:
+        payload["public_market"], _status = _resolve_supported_stock_market(
+            symbol,
+            market,
+            bool(payload.get("allow_manual")),
+            False,
+        )
+    try:
+        result = local_store.link_employee_option_listing(security_id, payload)
+        clear_portfolio_cache()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/local/manual-securities/{security_id}/exercise")
+def exercise_employee_option(security_id: str, payload: dict[str, Any]):
+    try:
+        result = local_store.exercise_employee_option(security_id, payload or {})
+        clear_portfolio_cache()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.delete("/api/local/securities/{transaction_id}")
 def delete_local_security(transaction_id: str):
-    if not local_store.delete_transaction(transaction_id):
-        raise HTTPException(status_code=404, detail="Security transaction not found")
-    return {"deleted": True}
+    try:
+        if not local_store.delete_transaction(transaction_id):
+            raise HTTPException(status_code=404, detail="Security transaction not found")
+        clear_portfolio_cache()
+        return {"deleted": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/local/events")
@@ -1089,6 +1947,46 @@ def save_local_fund(payload: dict[str, Any]):
         return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/local/funds/{fund_id}/amount-history")
+def list_local_fund_amount_history(fund_id: str):
+    try:
+        items = local_store.list_fund_amount_history(fund_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    fund = next((item for item in local_store.list_funds() if item["id"] == fund_id), None)
+    if not fund:
+        raise HTTPException(status_code=404, detail="Fund record not found")
+    return {"fund": fund, "items": items}
+
+
+@app.post("/api/local/funds/{fund_id}/amount-history")
+def save_local_fund_amount_history(fund_id: str, payload: dict[str, Any]):
+    try:
+        result = local_store.save_fund_amount_history(fund_id, payload or {})
+        clear_portfolio_cache()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/local/funds/{fund_id}/amount-history/{history_id}")
+def update_local_fund_amount_history(fund_id: str, history_id: str, payload: dict[str, Any]):
+    try:
+        result = local_store.save_fund_amount_history(fund_id, payload or {}, history_id)
+        clear_portfolio_cache()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/local/funds/{fund_id}/amount-history/{history_id}")
+def delete_local_fund_amount_history(fund_id: str, history_id: str):
+    if not local_store.delete_fund_amount_history(fund_id, history_id):
+        raise HTTPException(status_code=404, detail="Fund history point not found")
+    clear_portfolio_cache()
+    return {"deleted": True}
 
 
 @app.post("/api/local/pension-simulate")
@@ -1280,25 +2178,396 @@ def run_local_backup():
     return write_runtime_backup(int(backup.get("keep") or 100))
 
 
+MARKET_SCREENER_FINANCIAL_FILTERS = {
+    "annualNetIncomeMoreThan",
+    "profitMarketCapMoreThan",
+    "profitMarketCapLowerThan",
+    "priceEarningsLowerThan",
+    "revenueGrowthMoreThan",
+    "netIncomeGrowthMoreThan",
+    "netMarginMoreThan",
+    "freeCashFlowMoreThan",
+    "freeCashFlowYieldMoreThan",
+    "debtRevenueLowerThan",
+    "currentRatioMoreThan",
+}
+
+MARKET_SCREENER_NUMERIC_FILTERS = {
+    "priceMoreThan": ("price", "min", "minimum price"),
+    "priceLowerThan": ("price", "max", "maximum price"),
+    "marketCapMoreThan": ("market_cap", "min", "minimum market cap"),
+    "marketCapLowerThan": ("market_cap", "max", "maximum market cap"),
+    "dividendYieldMoreThan": ("dividend_yield_percent", "min", "minimum dividend yield"),
+    "dividendYieldLowerThan": ("dividend_yield_percent", "max", "maximum dividend yield"),
+    "annualNetIncomeMoreThan": ("annual_net_income", "min", "minimum annual net profit"),
+    "profitMarketCapMoreThan": ("profit_market_cap_percent", "min", "minimum profit / market cap"),
+    "profitMarketCapLowerThan": ("profit_market_cap_percent", "max", "maximum profit / market cap"),
+    "priceEarningsLowerThan": ("price_earnings_ratio", "max", "maximum P/E"),
+    "revenueGrowthMoreThan": ("revenue_growth_percent", "min", "minimum revenue growth"),
+    "netIncomeGrowthMoreThan": ("net_income_growth_percent", "min", "minimum profit growth"),
+    "netMarginMoreThan": ("net_margin_percent", "min", "minimum net margin"),
+    "freeCashFlowMoreThan": ("free_cash_flow", "min", "minimum free cash flow"),
+    "freeCashFlowYieldMoreThan": ("free_cash_flow_yield_percent", "min", "minimum free-cash-flow yield"),
+    "debtRevenueLowerThan": ("debt_to_revenue_percent", "max", "maximum debt / revenue"),
+    "currentRatioMoreThan": ("current_ratio", "min", "minimum current ratio"),
+    "betaLowerThan": ("beta", "max", "maximum beta"),
+    "volumeMoreThan": ("volume", "min", "minimum volume"),
+}
+
+MARKET_SCREENER_SORT_FIELDS = {
+    "market_cap": "market_cap",
+    "dividend_yield": "dividend_yield_percent",
+    "annual_profit": "annual_net_income",
+    "profit_market_cap": "profit_market_cap_percent",
+    "revenue_growth": "revenue_growth_percent",
+    "profit_growth": "net_income_growth_percent",
+    "net_margin": "net_margin_percent",
+    "free_cash_flow": "free_cash_flow",
+    "price": "price",
+    "beta": "beta",
+    "symbol": "symbol",
+}
+
+
+def _market_screener_number(criteria: dict[str, Any], key: str) -> float | None:
+    return _number_or_none(criteria.get(key))
+
+
+def _market_screener_needs_financials(criteria: dict[str, Any]) -> bool:
+    return bool(str(criteria.get("query") or "").strip()) or any(_market_screener_number(criteria, key) is not None for key in MARKET_SCREENER_FINANCIAL_FILTERS)
+
+
+def _market_screener_annual_dividend(rows: list[dict[str, Any]]) -> float | None:
+    dated: list[tuple[date, float]] = []
+    undated: list[float] = []
+    cutoff = date.today() - timedelta(days=370)
+    for row in rows or []:
+        amount = _number_or_none(row.get("amount") or row.get("dividend") or row.get("adjDividend"))
+        if amount is None:
+            continue
+        paid_on = _parse_query_date(str(row.get("date") or row.get("paymentDate") or row.get("exDate") or ""))
+        if paid_on:
+            dated.append((paid_on, amount))
+        else:
+            undated.append(amount)
+    if dated:
+        recent = [amount for paid_on, amount in dated if paid_on >= cutoff]
+        return sum(recent) if recent else None
+    return sum(undated[:4]) if undated else None
+
+
+def _enrich_market_screener_item(item: dict[str, Any], provider_hub: MarketDataHub, need_dividend_history: bool) -> tuple[dict[str, Any], bool]:
+    enriched = dict(item)
+    symbol = str(item.get("symbol") or "").upper().strip()
+    if not symbol:
+        return enriched, False
+    report = _finance_report_payload(symbol, 2)
+    latest = report.get("latest") or {}
+    profile = report.get("profile") or {}
+    price = _number_or_none(enriched.get("price"))
+    market_cap = _number_or_none(enriched.get("market_cap"))
+    quote: dict[str, Any] = {}
+    if price is None or market_cap is None:
+        quote, _quote_status = provider_hub.quote(symbol)
+        price = price if price is not None else _number_or_none(quote.get("price"))
+        market_cap = market_cap if market_cap is not None else _number_or_none(quote.get("market_cap") or quote.get("marketCap"))
+    market_cap = market_cap if market_cap is not None else _number_or_none(profile.get("market_cap") or profile.get("marketCap") or profile.get("mktCap") or profile.get("marketCapitalization"))
+    shares = _number_or_none(profile.get("shares_outstanding") or profile.get("sharesOutstanding"))
+    if market_cap is None and price is not None and shares is not None:
+        market_cap = price * shares
+    annual_dividend = _number_or_none(enriched.get("dividend"))
+    if annual_dividend is None and need_dividend_history:
+        dividends, _dividend_status = provider_hub.dividends(symbol)
+        annual_dividend = _market_screener_annual_dividend(dividends)
+    annual_net_income = _number_or_none(latest.get("net_income"))
+    free_cash_flow = _number_or_none(latest.get("free_cash_flow"))
+    enriched.update(
+        {
+            "name": enriched.get("name") or profile.get("name") or quote.get("name"),
+            "exchange": enriched.get("exchange") or profile.get("exchange") or quote.get("exchange"),
+            "currency": enriched.get("currency") or profile.get("currency") or quote.get("currency") or "USD",
+            "sector": enriched.get("sector") or profile.get("sector"),
+            "industry": enriched.get("industry") or profile.get("industry"),
+            "country": enriched.get("country") or profile.get("country"),
+            "beta": _number_or_none(enriched.get("beta")) if _number_or_none(enriched.get("beta")) is not None else _number_or_none(profile.get("beta")),
+            "price": price,
+            "market_cap": market_cap,
+            "annual_dividend": annual_dividend,
+            "dividend_yield_percent": (annual_dividend / price * 100) if annual_dividend is not None and price not in (None, 0) else None,
+            "fiscal_year": latest.get("fiscal_year"),
+            "annual_revenue": _number_or_none(latest.get("revenue")),
+            "annual_net_income": annual_net_income,
+            "profit_market_cap_percent": (annual_net_income / market_cap * 100) if annual_net_income is not None and market_cap not in (None, 0) else None,
+            "price_earnings_ratio": (market_cap / annual_net_income) if annual_net_income is not None and annual_net_income > 0 and market_cap is not None else None,
+            "revenue_growth_percent": _number_or_none(latest.get("revenue_growth_percent")),
+            "net_income_growth_percent": _number_or_none(latest.get("net_income_growth_percent")),
+            "net_margin_percent": _number_or_none(latest.get("net_margin_percent")),
+            "free_cash_flow": free_cash_flow,
+            "free_cash_flow_yield_percent": (free_cash_flow / market_cap * 100) if free_cash_flow is not None and market_cap not in (None, 0) else None,
+            "debt_to_revenue_percent": _number_or_none(latest.get("debt_to_revenue_percent")),
+            "current_ratio": _number_or_none(latest.get("current_ratio")),
+            "statement_coverage": report.get("statement_coverage") or {},
+            "missing": report.get("missing") or [],
+        }
+    )
+    has_financials = annual_net_income is not None or enriched.get("annual_revenue") is not None
+    return enriched, has_financials
+
+
+def _alert_current_price(analysis: Any) -> float | None:
+    for period in ["1m", "6m", "1y", "3y", "5y"]:
+        value = _number_or_none((analysis.price_ranges.get(period) or {}).get("current"))
+        if value is not None:
+            return value
+    return _number_or_none((analysis.support_resistance.get("1m") or {}).get("current_price"))
+
+
+def _portfolio_alert_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    analyses = analyze_all()
+    grouped: dict[str, dict[str, Any]] = {}
+    for analysis in analyses:
+        holding = analysis.holding
+        asset_class = str(holding.asset_class or holding.asset_sub_class or "").upper()
+        if str(holding.account_type or "").upper() == "ESOP" or asset_class in {"RSU", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"}:
+            continue
+        symbol = str(holding.symbol or "").upper().strip()
+        if not symbol:
+            continue
+        group = grouped.setdefault(
+            symbol,
+            {
+                "analysis": analysis,
+                "name": holding.name or symbol,
+                "currency": holding.currency,
+                "market_value": 0.0,
+                "cost_basis": 0.0,
+                "unrealized_profit": 0.0,
+                "accounts": set(),
+                "missing": set(),
+            },
+        )
+        group["market_value"] += float(holding.market_value or 0)
+        group["cost_basis"] += float(holding.cost_basis or 0)
+        group["unrealized_profit"] += float(holding.unrealized_profit or 0)
+        if holding.account:
+            group["accounts"].add(str(holding.account))
+        group["missing"].update(analysis.missing or [])
+    provider_hub = hub()
+    base_currency = str(config.dashboard.get("base_currency") or "ILS").upper()
+    provider_errors: list[dict[str, str]] = []
+    fx_rates: dict[str, float] = {base_currency: 1.0}
+    for currency in sorted({str(group["currency"] or base_currency).upper() for group in grouped.values()}):
+        if currency == base_currency:
+            continue
+        pair = f"{currency}/{base_currency}"
+        try:
+            quote, _status = provider_hub.fx(pair)
+            rate = _number_or_none(quote.get("rate"))
+        except Exception as exc:
+            rate = None
+            provider_errors.append({"symbol": pair, "error": type(exc).__name__})
+        if rate is None or rate <= 0:
+            if not any(error["symbol"] == pair for error in provider_errors):
+                provider_errors.append({"symbol": pair, "error": "missing FX rate"})
+            continue
+        fx_rates[currency] = rate
+    allocation_data_complete = all(str(group["currency"] or base_currency).upper() in fx_rates for group in grouped.values())
+    total_market_value = sum(
+        max(float(group["market_value"]), 0) * fx_rates.get(str(group["currency"] or base_currency).upper(), 0)
+        for group in grouped.values()
+    )
+    rows: list[dict[str, Any]] = []
+    enrichment_errors = 0
+    for symbol, group in grouped.items():
+        analysis = group["analysis"]
+        current_price = _alert_current_price(analysis)
+        base = {
+            "symbol": symbol,
+            "name": group["name"],
+            "currency": group["currency"],
+            "price": current_price,
+            "market_cap": analysis.market_cap,
+            "sector": analysis.holding.sector,
+            "industry": analysis.industry or analysis.holding.industry,
+        }
+        try:
+            row, _has_financials = _enrich_market_screener_item(base, provider_hub, True)
+        except Exception as exc:
+            row = base
+            enrichment_errors += 1
+            provider_errors.append({"symbol": symbol, "error": type(exc).__name__})
+        one_year = analysis.price_ranges.get("1y") or {}
+        ma30 = analysis.moving_averages.get("30") or {}
+        market_cap = _number_or_none(row.get("market_cap"))
+        annual_profit = _number_or_none(row.get("annual_net_income"))
+        free_cash_flow = _number_or_none(row.get("free_cash_flow"))
+        cost_basis = float(group["cost_basis"] or 0)
+        currency = str(group["currency"] or base_currency).upper()
+        normalized_market_value = float(group["market_value"]) * fx_rates.get(currency, 0)
+        row.update(
+            {
+                "accounts": sorted(group["accounts"]),
+                "market_value": float(group["market_value"]),
+                "unrealized_profit": float(group["unrealized_profit"]),
+                "unrealized_profit_percent": (float(group["unrealized_profit"]) / abs(cost_basis) * 100) if cost_basis else None,
+                "holding_allocation_percent": (normalized_market_value / total_market_value * 100) if allocation_data_complete and total_market_value else None,
+                "market_cap_millions": market_cap / 1_000_000 if market_cap is not None else None,
+                "annual_net_income_millions": annual_profit / 1_000_000 if annual_profit is not None else None,
+                "free_cash_flow_millions": free_cash_flow / 1_000_000 if free_cash_flow is not None else None,
+                "dividend_growth_percent": analysis.dividend_trend.percent_change,
+                "price_vs_ma30_percent": _number_or_none(ma30.get("price_vs_ma_percent")),
+                "price_from_high_1y_percent": _number_or_none(one_year.get("percent_from_high")),
+                "missing": sorted(set(group["missing"]) | set(row.get("missing") or [])),
+            }
+        )
+        rows.append(row)
+    return rows, {
+        "portfolio_symbols": len(grouped),
+        "enriched_symbols": len(rows) - enrichment_errors,
+        "provider_errors": provider_errors,
+        "allocation_currency": base_currency,
+    }
+
+
+def _run_portfolio_alerts() -> list[dict[str, Any]]:
+    if not any(rule.get("enabled", True) for rule in alert_store.list_rules()):
+        return alert_store.evaluate([], {"status": "no enabled rules", "portfolio_symbols": 0})
+    try:
+        rows, metadata = _portfolio_alert_rows()
+        return alert_store.evaluate(rows, metadata)
+    except Exception as exc:
+        alert_store.record_failure(
+            f"Rule check failed: {type(exc).__name__}",
+            {"error_type": type(exc).__name__},
+        )
+        return []
+
+
+def _market_screener_basic_metrics(item: dict[str, Any]) -> dict[str, Any]:
+    row = dict(item)
+    price = _number_or_none(row.get("price"))
+    annual_dividend = _number_or_none(row.get("annual_dividend") or row.get("dividend"))
+    row["annual_dividend"] = annual_dividend
+    row["dividend_yield_percent"] = (annual_dividend / price * 100) if annual_dividend is not None and price not in (None, 0) else None
+    return row
+
+
+def _market_screener_matches(item: dict[str, Any], criteria: dict[str, Any]) -> bool:
+    include_missing = bool(criteria.get("includeMissing"))
+    for criterion, (field, direction, _label) in MARKET_SCREENER_NUMERIC_FILTERS.items():
+        threshold = _market_screener_number(criteria, criterion)
+        if threshold is None:
+            continue
+        value = _number_or_none(item.get(field))
+        if value is None:
+            if not include_missing:
+                return False
+            continue
+        if direction == "min" and value < threshold:
+            return False
+        if direction == "max" and value > threshold:
+            return False
+    for criterion, field in [("sector", "sector"), ("industry", "industry"), ("country", "country")]:
+        expected = str(criteria.get(criterion) or "").strip().casefold()
+        if not expected:
+            continue
+        actual = str(item.get(field) or "").strip().casefold()
+        if not actual and include_missing:
+            continue
+        if expected not in actual:
+            return False
+    return True
+
+
+def _market_screener_sort(items: list[dict[str, Any]], criteria: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_sort = str(criteria.get("sortBy") or "market_cap:desc").strip().lower()
+    sort_name, _, sort_direction = raw_sort.partition(":")
+    field = MARKET_SCREENER_SORT_FIELDS.get(sort_name, "market_cap")
+    descending = sort_direction != "asc"
+    if field == "symbol":
+        return sorted(items, key=lambda item: str(item.get(field) or ""), reverse=descending)
+    present = [item for item in items if _number_or_none(item.get(field)) is not None]
+    missing = [item for item in items if _number_or_none(item.get(field)) is None]
+    present.sort(key=lambda item: float(item[field]), reverse=descending)
+    return present + missing
+
+
 @app.post("/api/market/screener")
 def market_screener(criteria: dict[str, Any]):
-    items, status = hub().market_screener(criteria or {})
-    return {"count": len(items), "status": status, "items": items}
+    criteria = criteria or {}
+    requested_limit = min(max(int(_number_or_none(criteria.get("limit")) or 25), 1), 50)
+    needs_financials = _market_screener_needs_financials(criteria)
+    provider_criteria = {**criteria, "limit": min(max(requested_limit * (3 if needs_financials else 1), 10), 100)}
+    provider_hub = hub()
+    candidates, status = provider_hub.market_screener(provider_criteria)
+    rows = [_market_screener_basic_metrics(item) for item in candidates]
+    enrichment_limit = min(len(rows), 15 if needs_financials else 0)
+    enriched_count = 0
+    financial_rows = 0
+    need_dividend_history = bool(str(criteria.get("query") or "").strip()) or any(
+        _market_screener_number(criteria, key) is not None for key in {"dividendYieldMoreThan", "dividendYieldLowerThan"}
+    )
+    for index in range(enrichment_limit):
+        rows[index], has_financials = _enrich_market_screener_item(rows[index], provider_hub, need_dividend_history)
+        enriched_count += 1
+        financial_rows += int(has_financials)
+    matched = [item for item in rows if _market_screener_matches(item, criteria)]
+    matched = _market_screener_sort(matched, criteria)
+    filtered_count = len(matched)
+    matched = matched[:requested_limit]
+    active_filters = [label for key, (_field, _direction, label) in MARKET_SCREENER_NUMERIC_FILTERS.items() if _market_screener_number(criteria, key) is not None]
+    if needs_financials:
+        status = {**status, "financial_enrichment": f"ok ({financial_rows}/{enriched_count} with annual statements)"}
+    return {
+        "count": len(matched),
+        "status": status,
+        "items": matched,
+        "meta": {
+            "candidates": len(candidates),
+            "matched_before_limit": filtered_count,
+            "enriched": enriched_count,
+            "financial_rows": financial_rows,
+            "missing_financial_rows": max(enriched_count - financial_rows, 0),
+            "filters_applied": active_filters,
+            "include_missing": bool(criteria.get("includeMissing")),
+            "latest_annual_reports": needs_financials,
+        },
+    }
 
 
 @app.get("/api/alerts")
 def list_alerts():
-    return {"rules": alert_store.list_rules()}
+    rules = alert_store.list_rules()
+    runs = alert_store.list_runs()
+    job = scheduler.get_job(ALERT_JOB_ID) if scheduler else None
+    active_signals = [match for rule in rules if rule.get("enabled", True) for match in rule.get("last_matches") or [] if isinstance(match, dict)]
+    return {
+        "rules": rules,
+        "runs": runs,
+        "active_signals": active_signals,
+        "options": alert_rule_options(),
+        "schedule": {
+            "cron": str(config.alerts.get("schedule") or "0 7 * * *"),
+            "timezone": str(config.alerts.get("timezone") or "UTC"),
+            "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
+        },
+    }
 
 
 @app.post("/api/alerts")
 def create_alert(payload: dict[str, Any]):
-    return alert_store.add_rule(payload or {})
+    try:
+        return alert_store.add_rule(payload or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.put("/api/alerts/{rule_id}")
 def update_alert(rule_id: str, payload: dict[str, Any]):
-    rule = alert_store.update_rule(rule_id, payload or {})
+    try:
+        rule = alert_store.update_rule(rule_id, payload or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not rule:
         raise HTTPException(status_code=404, detail="Alert not found")
     return rule
@@ -1313,7 +2582,8 @@ def delete_alert(rule_id: str):
 
 @app.post("/api/alerts/run")
 def run_alerts():
-    return {"results": alert_store.evaluate(analyze_all())}
+    results = _run_portfolio_alerts()
+    return {"results": results, "state": list_alerts()}
 
 
 web_dir = Path(__file__).resolve().parent.parent / "web"

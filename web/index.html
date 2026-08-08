@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080d25" />
     <title>Portfolio Analyzer</title>
     <link rel="icon" type="image/svg+xml" href="/assets/app-icon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=0.4.63" />
+  <link rel="stylesheet" href="/styles.css?v=0.4.70" />
   </head>
   <body>
     <div class="app-shell">
@@ -42,10 +42,17 @@
             </div>
           </details>
           <details class="nav-menu">
-            <summary>Markets & Alerts</summary>
+            <summary>Research</summary>
+            <div class="nav-children">
+              <button class="nav-item" type="button" data-modal="researchModal" data-research-section="finance">Company Reports</button>
+              <button class="nav-item" type="button" data-modal="researchModal" data-research-section="outlook">Company Outlook</button>
+              <button class="nav-item" type="button" data-modal="researchModal" data-research-section="signals">Portfolio Signals</button>
+            </div>
+          </details>
+          <details class="nav-menu">
+            <summary>Markets</summary>
             <div class="nav-children">
               <button class="nav-item" type="button" data-modal="marketModal">Market Screener</button>
-              <button class="nav-item" type="button" data-modal="alertsModal">Alerts</button>
               <button class="nav-item" type="button" data-modal="bannerModal">Market Banner</button>
             </div>
           </details>
@@ -367,14 +374,62 @@
             <select id="manualInstrumentType"></select>
             <select id="manualSecurityCurrency"></select>
             <input id="manualSecurityLocation" list="countryOptions" placeholder="Location" />
+            <label class="management-field employee-option-field" data-employee-option-field hidden>
+              <span>Company Name *</span>
+              <input id="manualCompanyName" list="employeeCompanyOptions" autocomplete="organization" placeholder="Employer or issuer" aria-required="true" />
+              <datalist id="employeeCompanyOptions"></datalist>
+            </label>
+            <label class="management-field employee-option-field" data-employee-option-field hidden>
+              <span>Company Status</span>
+              <select id="manualIssuerStatus">
+                <option value="PRIVATE">Private Company</option>
+                <option value="PUBLIC">Public Company</option>
+              </select>
+            </label>
+            <label class="management-field employee-option-field" data-employee-option-field hidden>
+              <span>Grant ID</span>
+              <input id="manualGrantId" placeholder="Optional plan grant ID" />
+            </label>
+            <label class="management-field employee-option-field" data-employee-option-field hidden>
+              <span>Grant Date *</span>
+              <input id="manualGrantDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-required="true" />
+            </label>
+            <label class="management-field employee-option-field" data-employee-option-field hidden>
+              <span>Vesting Start Date *</span>
+              <input id="manualVestingStartDate" class="date-field" inputmode="numeric" placeholder="Defaults to Grant Date" aria-required="true" />
+            </label>
             <input id="manualUnderlyingSymbol" data-derivative-field placeholder="Underlying" />
             <select id="manualOptionType" data-option-field></select>
-            <input id="manualExpirationDate" class="date-field" data-derivative-field inputmode="numeric" placeholder="dd/mm/yyyy" />
-            <input id="manualStrikePrice" data-option-field type="number" step="0.0001" placeholder="Strike" />
+            <label class="management-field" data-derivative-field>
+              <span>Expiration Date *</span>
+              <input id="manualExpirationDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-required="true" />
+            </label>
+            <label class="management-field" data-option-field>
+              <span>Strike Price *</span>
+              <input id="manualStrikePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Strike" aria-required="true" />
+            </label>
             <input id="manualContractMultiplier" data-derivative-field type="number" step="0.0001" placeholder="Multiplier" />
+            <label class="management-field employee-option-field" data-employee-option-field hidden>
+              <span>Tax/Plan Type</span>
+              <input id="manualTaxScheme" placeholder="Optional, e.g. ISO or NSO" />
+            </label>
+            <label class="management-field employee-option-field" data-private-issuer-field hidden>
+              <span>Latest Share Value</span>
+              <input id="manualShareValue" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Optional private valuation" />
+            </label>
+            <label class="management-field employee-option-field" data-private-issuer-field hidden>
+              <span>Valuation Date</span>
+              <input id="manualValuationDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
+            </label>
+            <label class="management-field employee-option-field" data-employee-option-field hidden>
+              <span>Restriction End Date</span>
+              <input id="manualRestrictionEndDate" class="date-field" inputmode="numeric" placeholder="Optional dd/mm/yyyy" />
+            </label>
+            <label class="check employee-option-check" data-employee-option-field hidden><input id="manualEarlyExercise" type="checkbox" /> Allow early exercise</label>
             <input id="manualSecurityComments" placeholder="Comments" />
             <button id="saveManualSecurity" type="button">Save instrument</button>
           </div>
+          <p class="info-strip" data-employee-option-field hidden>Grant Date is when the company issued the grant. Vesting Start Date controls the cliff and later vesting dates. The date you add it to this app is stored separately and never changes vesting calculations. A private share value is informational, not a formal tax valuation.</p>
           <p id="manualSecurityStatus" class="status-line"></p>
           <div id="manualSecuritiesList" class="stack management-list compact-list"></div>
         </div>
@@ -402,6 +457,55 @@
             <input id="securityVestDate" class="date-field" data-equity-comp-field inputmode="numeric" placeholder="Vested date" hidden />
             <input id="securityStrikePrice" data-option-grant-field type="number" min="0" step="0.0001" placeholder="Strike price required" hidden />
             <input id="securityPurchasePrice" data-equity-comp-field type="number" min="0" step="0.0001" placeholder="Purchase price" hidden />
+            <section id="vestingSchedulePanel" class="vesting-schedule-panel" data-employee-option-transaction-field hidden aria-labelledby="vestingScheduleTitle">
+              <div class="vesting-schedule-head">
+                <div>
+                  <b id="vestingScheduleTitle">Vesting Schedule</b>
+                  <small>Save the complete grant once. Dates are calculated from the Vesting Start Date, not when it is entered.</small>
+                </div>
+                <label class="management-field compact-field">
+                  <span>Vesting Entry</span>
+                  <select id="securityVestingStyle">
+                    <option value="SCHEDULE">Cliff and recurring schedule</option>
+                    <option value="SINGLE">One vest date</option>
+                  </select>
+                </label>
+              </div>
+              <div id="vestingScheduleFields" class="vesting-schedule-grid">
+                <label class="management-field">
+                  <span>Vesting Start Date</span>
+                  <input id="securityVestingStartDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
+                </label>
+                <label class="management-field">
+                  <span>Input Mode</span>
+                  <select id="securityVestingMode">
+                    <option value="PERCENT">Percentage of total</option>
+                    <option value="ABSOLUTE">Number of options</option>
+                  </select>
+                </label>
+                <label class="management-field">
+                  <span>Total Period (months)</span>
+                  <input id="securityVestingDuration" type="number" min="1" max="600" step="1" value="48" inputmode="numeric" />
+                </label>
+                <label class="management-field">
+                  <span>Cliff (months)</span>
+                  <input id="securityVestingCliffMonths" type="number" min="0" max="600" step="1" value="12" inputmode="numeric" />
+                </label>
+                <label class="management-field">
+                  <span id="securityVestingCliffValueLabel">Cliff Amount (%)</span>
+                  <input id="securityVestingCliffValue" type="number" min="0" step="0.0001" value="25" inputmode="decimal" />
+                </label>
+                <label class="management-field">
+                  <span>Then Every (months)</span>
+                  <input id="securityVestingInterval" type="number" min="1" max="600" step="1" value="3" inputmode="numeric" />
+                </label>
+                <label class="management-field">
+                  <span id="securityVestingInstallmentValueLabel">Each Installment (%)</span>
+                  <input id="securityVestingInstallmentValue" type="number" min="0" step="0.0001" value="6.25" inputmode="decimal" />
+                </label>
+              </div>
+              <div id="vestingSchedulePreview" class="vesting-schedule-preview" role="status" aria-live="polite"></div>
+            </section>
             <label class="check"><input id="securityAllowManual" type="checkbox" /> Manual if not found</label>
             <input id="securityComments" placeholder="Comments" />
             <button id="saveSecurity" type="button">Save transaction</button>
@@ -410,6 +514,54 @@
         </div>
         <p id="securityStatus" class="status-line"></p>
         <div id="securitiesList" class="stack management-list"></div>
+      </section>
+    </div>
+
+    <div id="employeeListingModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="employeeListingTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Employee option lifecycle</p>
+            <h2 id="employeeListingTitle">Link Public Listing</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <p id="employeeListingSubtitle" class="transaction-history-subtitle"></p>
+        <div class="management-form lifecycle-form">
+          <label class="management-field"><span>Public Symbol</span><input id="employeeListingSymbol" placeholder="Ticker" /></label>
+          <label class="management-field"><span>Stock Market</span><input id="employeeListingMarket" list="marketOptions" placeholder="NASDAQ, NYSE, TASE…" /></label>
+          <label class="management-field"><span>Listing Date</span><input id="employeeListingDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+          <label class="management-field"><span>Restriction End Date</span><input id="employeeListingRestrictionDate" class="date-field" inputmode="numeric" placeholder="Optional dd/mm/yyyy" /></label>
+          <label class="check"><input id="employeeListingAllowManual" type="checkbox" /> Save if quote is unavailable</label>
+          <button id="saveEmployeeListing" type="button">Link listing</button>
+        </div>
+        <p id="employeeListingStatus" class="status-line"></p>
+      </section>
+    </div>
+
+    <div id="employeeExerciseModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="employeeExerciseTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Employee option lifecycle</p>
+            <h2 id="employeeExerciseTitle">Exercise Options</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <p id="employeeExerciseSubtitle" class="transaction-history-subtitle"></p>
+        <div class="management-form lifecycle-form">
+          <label class="management-field"><span>Account</span><select id="employeeExerciseAccount"></select></label>
+          <label class="management-field"><span>Options to Exercise</span><input id="employeeExerciseQuantity" type="number" min="0" step="0.0001" inputmode="decimal" /></label>
+          <label class="management-field"><span>Shares per Option</span><input id="employeeExerciseRatio" type="number" min="0.0001" step="0.0001" value="1" inputmode="decimal" /></label>
+          <label class="management-field"><span>Share Cost Basis</span><input id="employeeExerciseCostBasis" type="number" min="0" step="0.0001" inputmode="decimal" /></label>
+          <label class="management-field"><span>Exercise Date</span><input id="employeeExerciseDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+          <label class="management-field"><span>Comments</span><input id="employeeExerciseComments" placeholder="Optional audit note" /></label>
+          <button id="saveEmployeeExercise" type="button">Record exercise</button>
+        </div>
+        <p class="info-strip">This records paired local transactions: options decrease and acquired shares increase. It does not write to the employer or import source. Confirm tax treatment and share cost basis against the plan documents or a qualified adviser.</p>
+        <p id="employeeExerciseStatus" class="status-line"></p>
       </section>
     </div>
 
@@ -523,6 +675,80 @@
       </section>
     </div>
 
+    <div id="positionTransactionsModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="positionTransactionsTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Position transactions</p>
+            <h2 id="positionTransactionsTitle">Buy / sell history</h2>
+            <p id="positionTransactionsSubtitle" class="transaction-history-subtitle"></p>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div class="position-transaction-editor">
+          <div class="position-transaction-editor-head">
+            <p id="positionTransactionFormTitle" class="form-caption">Add transaction</p>
+            <span id="positionTransactionLimit" class="position-transaction-limit"></span>
+          </div>
+          <div class="position-transaction-form">
+            <label>Action
+              <select id="positionTransactionAction">
+                <option value="BUY">Buy</option>
+                <option value="SELL">Sell</option>
+                <option value="SHORT">Short</option>
+              </select>
+            </label>
+            <label>Units
+              <input id="positionTransactionQuantity" type="number" min="0.00000001" step="any" placeholder="0" />
+            </label>
+            <label>Unit price
+              <input id="positionTransactionPrice" type="number" min="0" step="any" placeholder="0.00" />
+            </label>
+            <label>Date
+              <input id="positionTransactionDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
+            </label>
+            <label class="position-transaction-notes">Notes
+              <input id="positionTransactionComments" placeholder="Optional" />
+            </label>
+            <div class="position-transaction-buttons">
+              <button id="savePositionTransaction" type="button">Save</button>
+              <button id="cancelPositionTransactionEdit" class="secondary" type="button" hidden>Cancel edit</button>
+            </div>
+          </div>
+          <p id="positionTransactionStatus" class="status-line"></p>
+        </div>
+        <div class="table-wrap transaction-history-wrap">
+          <table class="transaction-history-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Action</th>
+                <th>Units</th>
+                <th>Unit price</th>
+                <th>Total</th>
+                <th>Source</th>
+                <th>Notes</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="positionTransactionsRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div id="positionClosedModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card position-closed-card" role="alertdialog" aria-modal="true" aria-labelledby="positionClosedTitle">
+        <div class="position-closed-icon" aria-hidden="true">✓</div>
+        <p class="eyebrow">Transaction saved</p>
+        <h2 id="positionClosedTitle">Position closed</h2>
+        <p id="positionClosedMessage" class="position-closed-message"></p>
+        <button type="button" data-close>Done</button>
+      </section>
+    </div>
+
     <div id="alarmsModal" class="modal" hidden>
       <div class="modal-backdrop" data-close></div>
       <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="alarmsTitle">
@@ -533,7 +759,16 @@
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
-        <p id="alarmsStatus" class="status-line">Dividend alarms from portfolio events</p>
+        <div class="alarm-settings">
+          <label class="field" for="vestingAlertDays">
+            <span>Vesting notice</span>
+            <span class="alarm-days-control"><input id="vestingAlertDays" type="number" min="1" max="365" step="1" value="30" inputmode="numeric" aria-describedby="vestingAlertDaysHint" /> days before vesting</span>
+            <small id="vestingAlertDaysHint">Upcoming RSU and stock-option vest dates will appear in Alarms.</small>
+          </label>
+          <button id="saveAlarmSettings" class="secondary" type="button">Save notice</button>
+        </div>
+        <p id="alarmSettingsStatus" class="status-line" role="status" aria-live="polite"></p>
+        <p id="alarmsStatus" class="status-line">Vesting and dividend alarms</p>
         <div id="alarmsList" class="stack"></div>
       </section>
     </div>
@@ -558,25 +793,48 @@
 
     <div id="reportsModal" class="modal" hidden>
       <div class="modal-backdrop" data-close></div>
-      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="reportsTitle">
-        <div class="section-head">
+      <section class="modal-card wide account-reports-card" role="dialog" aria-modal="true" aria-labelledby="reportsTitle">
+        <div class="section-head report-screen-only">
           <div>
-            <p class="eyebrow">Account value and profit</p>
+            <p class="eyebrow">Portfolio and account reporting</p>
             <h2 id="reportsTitle">Reports</h2>
+            <p class="section-note">Account values, profit, allocation, and saved history. Stock research is available under Research.</p>
           </div>
-          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+          <div class="settings-actions">
+            <button id="exportReportsPdf" class="secondary" type="button" title="Open the print dialog and choose Save as PDF">Export PDF</button>
+            <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+          </div>
         </div>
-        <div class="management-form">
-          <select id="reportAccount"></select>
-          <select id="reportAccountType"></select>
-          <input id="reportLocation" list="countryOptions" placeholder="Location" />
-          <input id="reportFrom" class="date-field" inputmode="numeric" placeholder="From dd/mm/yyyy" />
-          <input id="reportTo" class="date-field" inputmode="numeric" placeholder="To dd/mm/yyyy" />
+        <div id="pdfReportHeading" class="pdf-report-heading">
+          <h1>Portfolio and account report</h1>
+          <p id="pdfReportMeta"></p>
+        </div>
+        <div class="management-form report-controls report-screen-only">
+          <select id="reportAccount" aria-label="Account"></select>
+          <select id="reportAccountType" aria-label="Account type"></select>
+          <input id="reportLocation" list="countryOptions" placeholder="Location" aria-label="Location" />
+          <input id="reportFrom" class="date-field" inputmode="numeric" placeholder="From dd/mm/yyyy" aria-label="From date" />
+          <input id="reportTo" class="date-field" inputmode="numeric" placeholder="To dd/mm/yyyy" aria-label="To date" />
           <button id="loadReports" type="button">Run report</button>
         </div>
+        <p id="reportsExportStatus" class="status-line report-screen-only"></p>
         <div id="reportsSummary" class="report-grid"></div>
         <div id="accountTrendChart" class="chart-card report-chart"></div>
-        <div class="history-editor">
+        <div class="account-report-breakdowns">
+          <section class="account-report-section">
+            <h3>Account breakdown</h3>
+            <div id="reportsDetails" class="stack management-list"></div>
+          </section>
+          <section class="account-report-section">
+            <h3>Value by account type</h3>
+            <div id="reportsByType" class="report-breakdown-list"></div>
+          </section>
+          <section class="account-report-section">
+            <h3>Value by location</h3>
+            <div id="reportsByLocation" class="report-breakdown-list"></div>
+          </section>
+        </div>
+        <div class="history-editor report-screen-only">
           <div class="section-head">
             <div>
               <p class="eyebrow">Saved daily history</p>
@@ -596,7 +854,191 @@
           <p id="historyStatus" class="status-line"></p>
           <div id="historyList" class="stack management-list"></div>
         </div>
-        <div id="reportsDetails" class="stack management-list"></div>
+      </section>
+    </div>
+
+    <div id="researchModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide research-card" role="dialog" aria-modal="true" aria-labelledby="researchTitle">
+        <div class="research-modal-top">
+          <div class="research-modal-heading">
+            <div>
+              <p class="eyebrow">Stocks and industries</p>
+              <h2 id="researchTitle" tabindex="-1" data-modal-initial-focus>Research workspace</h2>
+              <p class="section-note">Company filings, peer comparisons, industry signals, and prediction tracking.</p>
+            </div>
+            <button class="icon-button" type="button" data-close aria-label="Close research window">×</button>
+          </div>
+          <div class="research-tabs" role="tablist" aria-label="Research sections">
+            <button id="researchFinanceTab" class="research-tab active" type="button" role="tab" aria-controls="researchFinancePanel" data-research-tab="finance">Company reports</button>
+            <button id="researchOutlookTab" class="research-tab" type="button" role="tab" aria-controls="researchOutlookPanel" data-research-tab="outlook">Company outlook</button>
+            <button id="researchSignalsTab" class="research-tab" type="button" role="tab" aria-controls="researchSignalsPanel" data-research-tab="signals">Portfolio Signals</button>
+          </div>
+        </div>
+        <div id="researchFinancePanel" class="online-report-panel research-panel" role="tabpanel" aria-labelledby="researchFinanceTab" data-research-panel="finance">
+          <div class="section-head compact-head">
+            <div>
+              <p class="eyebrow">Online company filings</p>
+              <h3>Financial statements and annual reports</h3>
+            </div>
+          </div>
+          <div class="management-form report-lookup-form">
+            <input id="financeReportSymbol" placeholder="Ticker symbol" />
+            <button id="loadFinanceReport" type="button">Get company report</button>
+          </div>
+          <p id="financeReportStatus" class="status-line"></p>
+          <div id="financeReportSummary" class="report-grid finance-report-summary"></div>
+          <div id="financeReportTable" class="table-wrap finance-report-table"></div>
+        </div>
+        <div id="researchOutlookPanel" class="online-report-panel company-outlook-panel research-panel" role="tabpanel" aria-labelledby="researchOutlookTab" data-research-panel="outlook" hidden>
+          <div class="section-head compact-head">
+            <div>
+              <p class="eyebrow">Report-backed research</p>
+              <h3>Company and industry outlook</h3>
+              <p class="section-note">Start with a ticker. We compare its filings with peers and save the result so it can be evaluated later.</p>
+            </div>
+          </div>
+          <section id="companyOutlookWorkbench" class="outlook-workbench" aria-label="Company outlook setup">
+            <div class="outlook-primary-form">
+              <label class="field outlook-symbol-field" for="outlookSymbol">
+                <span>Target ticker <em class="required-mark">Required</em></span>
+                <input id="outlookSymbol" placeholder="For example, CSCO" autocomplete="off" spellcheck="false" aria-describedby="outlookSymbolHint" />
+                <small id="outlookSymbolHint">The company you want to analyze</small>
+              </label>
+              <label class="field" for="outlookHorizon">
+                <span>Prediction horizon</span>
+                <select id="outlookHorizon"><option value="12">12 months</option><option value="6">6 months</option><option value="18">18 months</option><option value="24">24 months</option><option value="36">36 months</option><option value="48">48 months</option></select>
+                <small>When the prediction should be evaluated</small>
+              </label>
+              <button id="runCompanyOutlook" class="outlook-primary-action" type="button">Analyze and save</button>
+            </div>
+
+            <details class="outlook-advanced">
+              <summary>
+                <span>Comparison options</span>
+                <small>Optional — automatic peer selection is used when left blank</small>
+              </summary>
+              <div class="outlook-advanced-grid">
+                <label class="field" for="outlookIndustry">
+                  <span>Industry cohort</span>
+                  <input id="outlookIndustry" placeholder="For example, networking" />
+                  <small>Override the automatic industry group</small>
+                </label>
+                <label class="field" for="outlookPeers">
+                  <span>Peer tickers</span>
+                  <input id="outlookPeers" placeholder="ANET, HPE, JNPR" autocomplete="off" spellcheck="false" />
+                  <small>Comma-separated companies to compare</small>
+                </label>
+                <label class="field" for="outlookRelated">
+                  <span>Related companies</span>
+                  <input id="outlookRelated" placeholder="AVGO, MSFT" autocomplete="off" spellcheck="false" />
+                  <small>Suppliers, customers, or substitutes</small>
+                </label>
+                <label class="field" for="outlookRelatedEffect">
+                  <span>Relationship</span>
+                  <select id="outlookRelatedEffect"><option value="related industry">Related industry</option><option value="demand support">Demand support</option><option value="cost pressure">Cost pressure</option><option value="complement">Complement</option><option value="substitute">Substitute</option></select>
+                  <small>How related companies affect the target</small>
+                </label>
+              </div>
+            </details>
+
+            <div class="outlook-backtest-panel">
+              <div class="outlook-backtest-copy">
+                <b>Test a past prediction</b>
+                <span>Use only reports that were available on a historical date</span>
+              </div>
+              <label class="field" for="outlookAsOfDate">
+                <span>Historical date</span>
+                <input id="outlookAsOfDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
+              </label>
+              <button id="runCompanyOutlookBacktest" class="secondary" type="button">Run backtest</button>
+            </div>
+          </section>
+
+          <p id="companyOutlookStatus" class="status-line outlook-status" role="status" aria-live="polite"></p>
+
+          <div id="companyOutlookEmpty" class="outlook-empty-state">
+            <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M8 38V10M8 38h32M14 31l8-9 7 5 10-13"/><circle cx="14" cy="31" r="2"/><circle cx="22" cy="22" r="2"/><circle cx="29" cy="27" r="2"/><circle cx="39" cy="14" r="2"/></svg>
+            <div><b>Ready for your first analysis</b><span>Enter a ticker above. Optional settings can stay closed for a faster start.</span></div>
+          </div>
+
+          <div id="companyOutlookResults" class="outlook-results" hidden>
+            <div class="outlook-result-heading"><div><p class="eyebrow">Latest analysis</p><h4>Score and report evidence</h4></div></div>
+            <div id="companyOutlookSummary" class="report-grid outlook-summary"></div>
+            <div id="companyOutlookWords" class="outlook-words"></div>
+            <div id="companyOutlookTable" class="table-wrap finance-report-table"></div>
+            <div class="outlook-diagram-wrap">
+              <div class="section-head compact-head"><div><h4>Relationship map</h4><p class="section-note">How the company, peers, and related industries affect one another</p></div></div>
+              <div id="companyOutlookDiagram" class="outlook-diagram" aria-live="polite"></div>
+            </div>
+          </div>
+
+          <div class="outlook-history">
+            <div class="section-head compact-head"><div><p class="eyebrow">Track record</p><h4>Prediction accuracy history</h4><p class="section-note">Saved predictions stay unchanged so later reports can measure their accuracy.</p></div></div>
+            <div id="companyOutlookScorecard" class="report-grid outlook-scorecard"></div>
+            <div id="companyOutlookHistory" class="stack management-list"></div>
+          </div>
+        </div>
+        <div id="researchSignalsPanel" class="online-report-panel research-panel signals-panel" role="tabpanel" aria-labelledby="researchSignalsTab" data-research-panel="signals" hidden>
+          <div class="section-head compact-head signals-heading">
+            <div>
+              <p class="eyebrow">Daily portfolio research</p>
+              <h3>Portfolio Signals</h3>
+              <p class="section-note">Create financial rules for stocks already in your portfolio. Matches appear here after the daily background check.</p>
+            </div>
+            <button id="runAlerts" class="secondary" type="button">Run rules now</button>
+          </div>
+
+          <div class="signal-notice" role="note">
+            <b>Research signals only</b>
+            <span>No trades are placed. A match is based on your rule and the data currently available.</span>
+          </div>
+
+          <div class="signal-overview" aria-label="Signal status">
+            <div><span>Active signals</span><b id="alertActiveSummary">0</b></div>
+            <div><span>Enabled rules</span><b id="alertRuleSummary">0</b></div>
+            <div><span>Next daily check</span><b id="alertScheduleSummary">Loading</b></div>
+            <div><span>Last run</span><b id="alertRunSummary">Not run</b></div>
+          </div>
+
+          <section class="signal-rule-builder" aria-labelledby="signalRuleBuilderTitle">
+            <div class="section-head compact-head">
+              <div><p class="eyebrow">Rule builder</p><h4 id="signalRuleBuilderTitle">When should a signal appear?</h4></div>
+            </div>
+            <div class="signal-rule-grid">
+              <label class="field" for="alertName"><span>Rule name</span><input id="alertName" placeholder="For example, Income opportunity" maxlength="120" /></label>
+              <label class="field" for="alertSignal"><span>Signal</span><select id="alertSignal"><option value="buy">Buy signal</option><option value="sell">Sell signal</option><option value="watch">Watch signal</option></select></label>
+              <label class="field" for="alertMatchMode"><span>Match logic</span><select id="alertMatchMode"><option value="all">All conditions</option><option value="any">Any condition</option></select></label>
+              <label class="signal-enabled" for="alertEnabled"><input id="alertEnabled" type="checkbox" checked /><span>Run this rule daily</span></label>
+            </div>
+            <div class="signal-condition-head">
+              <b>Conditions</b>
+              <button id="addAlertCondition" class="secondary compact-button" type="button">+ Add condition</button>
+            </div>
+            <div id="alertConditions" class="signal-conditions"></div>
+            <div class="form-actions signal-form-actions">
+              <button id="saveAlert" type="button">Save rule</button>
+              <button id="cancelAlertEdit" class="secondary" type="button" hidden>Cancel edit</button>
+            </div>
+            <p id="alertStatus" class="status-line" role="status" aria-live="polite"></p>
+          </section>
+
+          <section class="signal-section" aria-labelledby="activeSignalsTitle">
+            <div class="section-head compact-head"><div><p class="eyebrow">Matches</p><h4 id="activeSignalsTitle">Active signals</h4><p class="section-note">Open a company investigation before making a decision.</p></div></div>
+            <div id="alertsSignals" class="signal-card-list"></div>
+          </section>
+
+          <div class="signal-lower-grid">
+            <section class="signal-section" aria-labelledby="savedRulesTitle">
+              <div class="section-head compact-head"><div><p class="eyebrow">Automation</p><h4 id="savedRulesTitle">Saved rules</h4></div></div>
+              <div id="alertsList" class="signal-card-list"></div>
+            </section>
+            <section class="signal-section" aria-labelledby="ruleHistoryTitle">
+              <div class="section-head compact-head"><div><p class="eyebrow">Audit trail</p><h4 id="ruleHistoryTitle">Run history</h4></div></div>
+              <div id="alertRunHistory" class="signal-card-list"></div>
+            </section>
+          </div>
+        </div>
       </section>
     </div>
 
@@ -774,9 +1216,55 @@
       </section>
     </div>
 
+    <div id="fundHistoryModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide fund-history-card" role="dialog" aria-modal="true" aria-labelledby="fundHistoryTitle">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Long-term savings progress</p>
+            <h2 id="fundHistoryTitle">Saved amount history</h2>
+            <p id="fundHistorySubtitle" class="section-note">Add dated balances to track progress over time.</p>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <div id="fundHistorySummary" class="report-grid fund-history-summary"></div>
+        <div id="fundHistoryChart" class="chart-card fund-history-chart"></div>
+        <div class="management-section fund-history-editor">
+          <div class="section-head compact-head">
+            <div>
+              <p class="eyebrow">Balance point</p>
+              <h3 id="fundHistoryFormTitle">Add saved amount</h3>
+            </div>
+          </div>
+          <div class="management-form fund-history-form">
+            <label class="field"><span class="field-label">Date</span><input id="fundHistoryDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+            <label class="field"><span class="field-label">Saved amount</span><input id="fundHistoryAmount" type="number" min="0.01" step="0.01" placeholder="Amount saved" /></label>
+            <label class="field"><span class="field-label">Comments</span><input id="fundHistoryComments" placeholder="Optional note" /></label>
+            <div class="form-actions fund-history-actions">
+              <button id="saveFundHistory" type="button">Add history point</button>
+              <button id="cancelFundHistoryEdit" class="secondary" type="button" hidden>Cancel edit</button>
+            </div>
+          </div>
+          <p id="fundHistoryStatus" class="status-line"></p>
+        </div>
+        <div class="section-head compact-head list-head">
+          <div>
+            <p class="eyebrow">Saved balances</p>
+            <h3>Amount history</h3>
+          </div>
+        </div>
+        <div class="table-wrap fund-history-table-wrap">
+          <table class="holdings-table fund-history-table">
+            <thead><tr><th>Date</th><th>Saved amount</th><th>Change</th><th>Comments</th><th>Actions</th></tr></thead>
+            <tbody id="fundHistoryRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
     <div id="marketModal" class="modal" hidden>
       <div class="modal-backdrop" data-close></div>
-      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="marketTitle">
+      <section class="modal-card wide market-screener-card" role="dialog" aria-modal="true" aria-labelledby="marketTitle">
         <div class="section-head">
           <div>
             <p class="eyebrow">Stocks outside portfolio</p>
@@ -784,69 +1272,89 @@
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
-        <div class="toolbar modal-toolbar">
-          <input id="marketQuery" placeholder="Symbol or company" />
-          <select id="marketExchange">
+        <div class="market-screener-controls">
+          <div class="market-screener-primary">
+            <label>Symbol or company<input id="marketQuery" placeholder="For example CSCO" /></label>
+            <label>Exchange<select id="marketExchange">
+            <option value="">Any exchange</option>
             <option value="NASDAQ">NASDAQ</option>
             <option value="NYSE">NYSE</option>
             <option value="AMEX">AMEX</option>
             <option value="TASE">TASE</option>
-            <option value="">Any exchange</option>
-          </select>
-          <input id="marketSector" placeholder="Sector" />
-          <input id="marketCapMoreThan" type="number" placeholder="Min market cap" />
-          <input id="dividendMoreThan" type="number" step="0.01" placeholder="Min dividend" />
-          <button id="runMarketScreener" type="button">Search</button>
+            </select></label>
+            <label>Sector<input id="marketSector" placeholder="Technology" /></label>
+            <label>Industry<input id="marketIndustry" placeholder="Communication equipment" /></label>
+            <label>Country<input id="marketCountry" placeholder="US" /></label>
+            <label>Sort results<select id="marketSortBy">
+              <option value="market_cap:desc">Market cap: high to low</option>
+              <option value="dividend_yield:desc">Dividend yield: high to low</option>
+              <option value="annual_profit:desc">Annual profit: high to low</option>
+              <option value="profit_market_cap:desc">Profit / market cap: high to low</option>
+              <option value="revenue_growth:desc">Revenue growth: high to low</option>
+              <option value="profit_growth:desc">Profit growth: high to low</option>
+              <option value="net_margin:desc">Net margin: high to low</option>
+              <option value="free_cash_flow:desc">Free cash flow: high to low</option>
+              <option value="price:asc">Price: low to high</option>
+              <option value="symbol:asc">Symbol: A to Z</option>
+            </select></label>
+            <div class="market-screener-actions">
+              <button id="runMarketScreener" type="button">Search</button>
+              <button id="resetMarketScreener" class="secondary" type="button">Reset</button>
+            </div>
+          </div>
+          <details class="market-advanced-filters" open>
+            <summary>Financial filters</summary>
+            <p class="market-filter-note">Statement filters use the latest available annual report. Amount fields below use USD millions.</p>
+            <div class="market-filter-grid">
+              <label>Price min<input id="marketPriceMin" type="number" min="0" step="0.01" placeholder="Any" /></label>
+              <label>Price max<input id="marketPriceMax" type="number" min="0" step="0.01" placeholder="Any" /></label>
+              <label>Market cap min ($M)<input id="marketCapMinMillions" type="number" min="0" step="1" placeholder="Any" /></label>
+              <label>Market cap max ($M)<input id="marketCapMaxMillions" type="number" min="0" step="1" placeholder="Any" /></label>
+              <label>Dividend yield min %<input id="marketDividendYieldMin" type="number" min="0" step="0.01" placeholder="Any" /></label>
+              <label>Dividend yield max %<input id="marketDividendYieldMax" type="number" min="0" step="0.01" placeholder="Any" /></label>
+              <label>Annual net profit min ($M)<input id="marketAnnualProfitMinMillions" type="number" step="1" placeholder="Any" /></label>
+              <label>Profit / market cap min %<input id="marketProfitCapMin" type="number" step="0.01" placeholder="Any" /></label>
+              <label>Profit / market cap max %<input id="marketProfitCapMax" type="number" step="0.01" placeholder="Any" /></label>
+              <label>P/E maximum<input id="marketPeMax" type="number" min="0" step="0.1" placeholder="Any" /></label>
+              <label>Revenue growth min %<input id="marketRevenueGrowthMin" type="number" step="0.1" placeholder="Any" /></label>
+              <label>Profit growth min %<input id="marketProfitGrowthMin" type="number" step="0.1" placeholder="Any" /></label>
+              <label>Net margin min %<input id="marketNetMarginMin" type="number" step="0.1" placeholder="Any" /></label>
+              <label>Free cash flow min ($M)<input id="marketFcfMinMillions" type="number" step="1" placeholder="Any" /></label>
+              <label>FCF yield min %<input id="marketFcfYieldMin" type="number" step="0.1" placeholder="Any" /></label>
+              <label>Debt / revenue max %<input id="marketDebtRevenueMax" type="number" min="0" step="0.1" placeholder="Any" /></label>
+              <label>Current ratio min<input id="marketCurrentRatioMin" type="number" min="0" step="0.1" placeholder="Any" /></label>
+              <label>Beta maximum<input id="marketBetaMax" type="number" min="0" step="0.1" placeholder="Any" /></label>
+              <label>Daily volume min<input id="marketVolumeMin" type="number" min="0" step="1000" placeholder="Any" /></label>
+              <label>Maximum results<select id="marketResultLimit"><option value="10">10</option><option value="25" selected>25</option><option value="50">50</option></select></label>
+              <label class="market-missing-toggle"><input id="marketIncludeMissing" type="checkbox" /> Include rows missing a filtered value</label>
+            </div>
+          </details>
         </div>
         <p id="marketStatus" class="status-line"></p>
+        <p id="marketFilterSummary" class="market-filter-summary"></p>
         <div class="table-wrap">
           <table class="market-table">
             <thead>
               <tr>
                 <th>Symbol</th>
-                <th>Name</th>
-                <th>Exchange</th>
+                <th>Company</th>
                 <th>Price</th>
                 <th>Market Cap</th>
-                <th>Sector</th>
-                <th>Dividend</th>
+                <th title="Trailing annual dividend per share divided by current price">Dividend Yield</th>
+                <th title="Net income from the latest available annual statement">Annual Profit</th>
+                <th title="Annual net profit divided by market capitalization">Profit / Cap</th>
+                <th>Revenue Growth</th>
+                <th>Profit Growth</th>
+                <th>Net Margin</th>
+                <th>Free Cash Flow</th>
+                <th>P/E</th>
+                <th>Beta</th>
+                <th>Action</th>
               </tr>
             </thead>
             <tbody id="marketRows"></tbody>
           </table>
         </div>
-      </section>
-    </div>
-
-    <div id="alertsModal" class="modal" hidden>
-      <div class="modal-backdrop" data-close></div>
-      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="alertsTitle">
-        <div class="section-head">
-          <div>
-            <p class="eyebrow">Daily filters</p>
-            <h2 id="alertsTitle">Alerts</h2>
-          </div>
-          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
-        </div>
-        <div class="alert-form">
-          <input id="alertName" placeholder="Alert name" />
-          <select id="alertTrend">
-            <option value="up">Trend up</option>
-            <option value="down">Trend down</option>
-            <option value="flat">Trend flat</option>
-          </select>
-          <select id="alertDividendTrend">
-            <option value="">Any dividend</option>
-            <option value="up">Dividend up</option>
-            <option value="down">Dividend down</option>
-            <option value="flat">Dividend flat</option>
-          </select>
-          <input id="alertMinProfitMarketCap" type="number" step="0.01" placeholder="Min profit/cap" />
-          <input id="alertMinDividendGrowth" type="number" placeholder="Min dividend %" />
-          <button id="saveAlert" type="button">Save</button>
-          <button id="runAlerts" type="button" class="secondary">Run now</button>
-        </div>
-        <div id="alertsList" class="stack"></div>
       </section>
     </div>
 
@@ -959,6 +1467,7 @@
       </section>
     </div>
 
-    <script src="/app.js?v=0.4.63"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+  <script src="/app.js?v=0.4.72"></script>
   </body>
 </html>

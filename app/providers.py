@@ -98,6 +98,21 @@ class MarketDataHub:
             status["fundamentals_api"] = "missing Alpha Vantage or FMP API key"
         return {}, status or {"providers": "none configured"}
 
+    def fundamentals_as_of(self, symbol: str, as_of: date) -> tuple[dict[str, Any], dict[str, str]]:
+        status = {}
+        for provider in self.providers:
+            try:
+                data = provider.fundamentals_as_of(symbol, as_of)
+                if data:
+                    status[provider.name] = "ok"
+                    return data, status
+                status[provider.name] = "missing"
+            except Exception as exc:
+                status[provider.name] = f"error: {exc.__class__.__name__}"
+        if not self._has_fundamental_provider():
+            status["fundamentals_api"] = "missing Alpha Vantage or FMP API key"
+        return {}, status or {"providers": "none configured"}
+
     def dividends(self, symbol: str, force_refresh: bool = False, to_date: date | None = None) -> tuple[list[dict[str, Any]], dict[str, str]]:
         status = {}
         for provider in self.providers:
@@ -422,6 +437,9 @@ class MarketDataProvider:
     def fundamentals(self, symbol: str) -> dict[str, Any]:
         return {}
 
+    def fundamentals_as_of(self, symbol: str, as_of: date) -> dict[str, Any]:
+        return self.fundamentals(symbol)
+
     def dividends(self, symbol: str, force_refresh: bool = False, to_date: date | None = None) -> list[dict[str, Any]]:
         return []
 
@@ -669,7 +687,12 @@ class FmpProvider(MarketDataProvider):
                 ("industry", "industry"),
                 ("country", "country"),
                 ("marketCapMoreThan", "marketCapMoreThan"),
+                ("marketCapLowerThan", "marketCapLowerThan"),
                 ("priceMoreThan", "priceMoreThan"),
+                ("priceLowerThan", "priceLowerThan"),
+                ("betaMoreThan", "betaMoreThan"),
+                ("betaLowerThan", "betaLowerThan"),
+                ("volumeMoreThan", "volumeMoreThan"),
                 ("dividendMoreThan", "dividendMoreThan"),
             ]:
                 value = criteria.get(source)
@@ -690,7 +713,9 @@ class FmpProvider(MarketDataProvider):
                 "market_cap": _float_or_none(row.get("marketCap")),
                 "sector": row.get("sector"),
                 "industry": row.get("industry"),
+                "country": row.get("country"),
                 "beta": _float_or_none(row.get("beta")),
+                "volume": _float_or_none(row.get("volume")),
                 "dividend": _float_or_none(row.get("lastAnnualDividend") or row.get("dividend")),
             }
             for row in rows
@@ -854,22 +879,64 @@ class SecCompanyFactsProvider(MarketDataProvider):
         return {}
 
     def fundamentals(self, symbol: str) -> dict[str, Any]:
+        return self._fundamentals(symbol)
+
+    def fundamentals_as_of(self, symbol: str, as_of: date) -> dict[str, Any]:
+        return self._fundamentals(symbol, as_of)
+
+    def _fundamentals(self, symbol: str, as_of: date | None = None) -> dict[str, Any]:
         ticker = self._ticker_row(symbol)
         cik = ticker.get("cik")
         if not cik:
             return {}
         facts = self._company_facts(cik)
         us_gaap = facts.get("facts", {}).get("us-gaap", {})
-        revenue = _sec_annual_facts(us_gaap, ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"])
-        net_income = _sec_annual_facts(us_gaap, ["NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"])
+        revenue = _sec_annual_facts(us_gaap, ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"], as_of)
+        net_income = _sec_annual_facts(us_gaap, ["NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"], as_of)
+        gross_profit = _sec_annual_facts(us_gaap, ["GrossProfit"], as_of)
+        operating_income = _sec_annual_facts(us_gaap, ["OperatingIncomeLoss"], as_of)
+        operating_cash_flow = _sec_annual_facts(us_gaap, ["NetCashProvidedByUsedInOperatingActivities"], as_of)
+        capital_expenditures = _sec_annual_facts(us_gaap, ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"], as_of)
+        cash = _sec_annual_facts(us_gaap, ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"], as_of)
+        current_assets = _sec_annual_facts(us_gaap, ["AssetsCurrent"], as_of)
+        current_liabilities = _sec_annual_facts(us_gaap, ["LiabilitiesCurrent"], as_of)
+        accounts_receivable = _sec_annual_facts(us_gaap, ["AccountsReceivableNetCurrent", "AccountsNotesAndLoansReceivableNetCurrent"], as_of)
+        inventory = _sec_annual_facts(us_gaap, ["InventoryNet", "InventoryFinishedGoodsNetOfReserves"], as_of)
+        long_term_debt = _sec_annual_facts(us_gaap, ["LongTermDebtCurrent", "LongTermDebtNoncurrent", "LongTermDebt"], as_of)
+        interest_expense = _sec_annual_facts(us_gaap, ["InterestExpenseNonoperating", "InterestExpenseDebt"], as_of)
         reports_by_year: dict[int, dict[str, Any]] = {}
         for year, row in revenue.items():
-            reports_by_year.setdefault(year, {"fiscalDateEnding": row.get("end") or str(year)})["totalRevenue"] = row["val"]
+            report = reports_by_year.setdefault(year, {"fiscalDateEnding": row.get("end") or str(year)})
+            report["totalRevenue"] = row["val"]
+            if row.get("filed"):
+                report["filingDate"] = row["filed"]
         for year, row in net_income.items():
             report = reports_by_year.setdefault(year, {"fiscalDateEnding": row.get("end") or str(year)})
             report["netIncome"] = row["val"]
             if row.get("end"):
                 report["fiscalDateEnding"] = row["end"]
+            if row.get("filed") and str(row["filed"]) > str(report.get("filingDate") or ""):
+                report["filingDate"] = row["filed"]
+        for field, rows in [
+            ("grossProfit", gross_profit),
+            ("operatingIncome", operating_income),
+            ("operatingCashFlow", operating_cash_flow),
+            ("capitalExpenditures", capital_expenditures),
+            ("cashAndCashEquivalents", cash),
+            ("totalCurrentAssets", current_assets),
+            ("totalCurrentLiabilities", current_liabilities),
+            ("netReceivables", accounts_receivable),
+            ("inventory", inventory),
+            ("longTermDebt", long_term_debt),
+            ("interestExpense", interest_expense),
+        ]:
+            for year, row in rows.items():
+                report = reports_by_year.setdefault(year, {"fiscalDateEnding": row.get("end") or str(year)})
+                report[field] = row["val"]
+                if row.get("end"):
+                    report["fiscalDateEnding"] = row["end"]
+                if row.get("filed") and str(row["filed"]) > str(report.get("filingDate") or ""):
+                    report["filingDate"] = row["filed"]
         reports = [reports_by_year[year] for year in sorted(reports_by_year)]
         return {"income_statement": {"annualReports": reports}, "profile": self.profile(symbol)}
 
@@ -1136,7 +1203,14 @@ def _yahoo_value(value: Any) -> Any:
     return value
 
 
-def _sec_annual_facts(us_gaap: dict[str, Any], concepts: list[str]) -> dict[int, dict[str, Any]]:
+def _provider_date(value: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(value or "")[:10])
+    except ValueError:
+        return None
+
+
+def _sec_annual_facts(us_gaap: dict[str, Any], concepts: list[str], as_of: date | None = None) -> dict[int, dict[str, Any]]:
     by_year: dict[int, dict[str, Any]] = {}
     for concept in concepts:
         units = us_gaap.get(concept, {}).get("units", {})
@@ -1144,7 +1218,11 @@ def _sec_annual_facts(us_gaap: dict[str, Any], concepts: list[str]) -> dict[int,
         for row in rows:
             if row.get("fp") != "FY" or row.get("form") not in {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}:
                 continue
-            year = row.get("fy")
+            filed = _provider_date(row.get("filed"))
+            if as_of and (not filed or filed > as_of):
+                continue
+            end = _provider_date(row.get("end"))
+            year = end.year if end else row.get("fy")
             value = _float_or_none(row.get("val"))
             if not year or value is None:
                 continue

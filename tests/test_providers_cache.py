@@ -216,3 +216,32 @@ def test_sec_company_facts_maps_net_income_revenue_and_shares(monkeypatch, tmp_p
     assert fundamentals["income_statement"]["annualReports"][-1]["netIncome"] == 180
     assert fundamentals["income_statement"]["annualReports"][-1]["totalRevenue"] == 1200
     assert profile["shares_outstanding"] == 50000000
+
+
+def test_sec_company_facts_as_of_uses_filing_available_at_historical_cutoff(monkeypatch, tmp_path):
+    provider = SecCompanyFactsProvider({}, SqliteCache(tmp_path / "cache.sqlite3", ttl_hours=24))
+    monkeypatch.setattr(provider, "_ticker_row", lambda symbol: {"ticker": symbol, "cik": "0000000001", "title": "Example"})
+    monkeypatch.setattr(
+        provider,
+        "_company_facts",
+        lambda cik: {
+            "facts": {
+                "us-gaap": {
+                    "Revenues": {"units": {"USD": [
+                        {"fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-09-01", "end": "2023-07-29", "val": 100},
+                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2024-09-01", "end": "2023-07-29", "val": 101},
+                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2024-09-01", "end": "2024-07-27", "val": 120},
+                    ]}},
+                    "NetIncomeLoss": {"units": {"USD": [
+                        {"fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-09-01", "end": "2023-07-29", "val": 10},
+                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2024-09-01", "end": "2024-07-27", "val": 12},
+                    ]}},
+                },
+                "dei": {},
+            }
+        },
+    )
+
+    reports = provider.fundamentals_as_of("EXM", date(2024, 8, 5))["income_statement"]["annualReports"]
+
+    assert reports == [{"fiscalDateEnding": "2023-07-29", "totalRevenue": 100.0, "filingDate": "2023-09-01", "netIncome": 10.0}]
