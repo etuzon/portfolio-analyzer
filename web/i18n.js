@@ -1382,16 +1382,22 @@
     return String(value || "").trim().replace(/\s+/gu, " ");
   }
 
+  function withOuterWhitespace(source, translated) {
+    const leading = source.match(/^\s*/u)?.[0] || "";
+    const trailing = source.match(/\s*$/u)?.[0] || "";
+    return `${leading}${translated}${trailing}`;
+  }
+
   function translatedText(value, language = currentLanguage) {
     const source = String(value || "");
     if (language !== "he") return source;
     const key = normalized(source);
     if (!key) return source;
     const exact = HEBREW_TEXT[key];
-    if (exact) return source.replace(key, exact);
+    if (exact) return withOuterWhitespace(source, exact);
     for (const [pattern, formatter] of HEBREW_PATTERNS) {
       const match = key.match(pattern);
-      if (match) return source.replace(key, formatter(...match));
+      if (match) return withOuterWhitespace(source, formatter(...match));
     }
     return source;
   }

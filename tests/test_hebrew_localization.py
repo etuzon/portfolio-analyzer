@@ -48,7 +48,7 @@ def test_hebrew_is_the_default_document_language_and_direction():
     script = (ROOT / "web/app.js").read_text()
 
     assert '<html lang="he" dir="rtl">' in html
-    assert html.index('/i18n.js?v=1.0.1') < html.index('/app.js?v=0.4.84')
+    assert html.index('/i18n.js?v=1.0.2') < html.index('/app.js?v=0.4.84')
     assert 'language: "he"' in script
     assert 'state.language = saved === "en" ? "en" : "he"' in script
     assert 'window.PortfolioI18n?.applyToDocument(state.language)' in script
@@ -61,6 +61,8 @@ def test_localization_runtime_handles_dynamic_text_and_attributes():
     assert '"Employee Stock Options": "אופציות לעובדים"' in i18n
     assert '"placeholder", "aria-label", "title", "alt"' in i18n
     assert "new MutationObserver" in i18n
+    assert "withOuterWhitespace(source, formatter(...match))" in i18n
+    assert "source.replace(key" not in i18n
     assert 'field.setAttribute("dir", "auto")' in i18n
     assert 'field.setAttribute("dir", "ltr")' in i18n
 
