@@ -39,17 +39,15 @@ html[dir="rtl"] body {
 }
 
 html[dir="rtl"] .app-shell {
-  grid-template-columns: minmax(0, 1fr) 216px;
+  grid-template-columns: 216px minmax(0, 1fr);
 }
 
 html[dir="rtl"] .sidebar {
-  grid-column: 2;
-  border-right: 0;
-  border-left: 1px solid #24262b;
+  grid-column: 1;
 }
 
 html[dir="rtl"] .workspace {
-  grid-column: 1;
+  grid-column: 2;
   grid-row: 1;
 }
 
@@ -1344,15 +1342,14 @@ textarea.muted-control {
 .dashboard-widget-toolbar {
   position: absolute;
   top: 10px;
-  right: 10px;
+  inset-inline: 10px;
   z-index: 1;
-  left: 10px;
   justify-content: flex-end;
   gap: 6px;
 }
 
 .dashboard-drag-handle {
-  margin-right: auto;
+  margin-inline-end: auto;
   color: #9aa4b2;
   font-size: 17px;
   font-weight: 800;
@@ -3255,7 +3252,7 @@ textarea.muted-control {
 
 .native-date-picker {
   position: fixed;
-  left: 0;
+  inset-inline-start: 0;
   top: 0;
   width: 1px;
   height: 1px;
@@ -3283,7 +3280,7 @@ textarea.muted-control {
   position: absolute;
   z-index: 1;
   top: 8px;
-  left: 10px;
+  inset-inline-start: 10px;
   padding: 5px 8px;
   border: 1px solid #4a3d20;
   border-radius: 7px;
@@ -3474,16 +3471,16 @@ textarea.muted-control {
 }
 
 .connected-control select {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
+  border-start-end-radius: 0;
+  border-end-end-radius: 0;
 }
 
 .connected-control button {
   width: auto;
   min-width: 122px;
-  border-left: 0;
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
+  border-inline-start: 0;
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
   white-space: nowrap;
 }
 
@@ -4060,7 +4057,7 @@ tbody tr:hover {
 
   .employee-options-mode .section-head .icon-button {
     flex: 0 0 auto;
-    margin-left: auto;
+    margin-inline-start: auto;
   }
 
   .employee-wizard-heading,
@@ -4276,7 +4273,7 @@ tbody tr:hover {
   .employee-guide-connector {
     width: 2px;
     height: 14px;
-    margin-left: 24px;
+    margin-inline-start: 24px;
   }
 
   .employee-account-notice {
@@ -4645,7 +4642,7 @@ tbody tr:hover {
   display: inline-block;
   width: 12px;
   height: 12px;
-  margin-right: 8px;
+  margin-inline-end: 8px;
   border: 2px solid currentColor;
   border-right-color: transparent;
   border-radius: 50%;
@@ -4824,8 +4821,9 @@ tbody tr:hover {
 
 .outlook-words {
   border: 1px solid rgba(33, 167, 255, 0.2);
-  border-left: 3px solid #21a7ff;
-  border-radius: 0 7px 7px 0;
+  border-inline-start: 3px solid #21a7ff;
+  border-start-start-radius: 0;
+  border-end-start-radius: 0;
   padding: 11px 13px;
   background: rgba(17, 24, 39, 0.72);
 }
@@ -5201,7 +5199,7 @@ tbody tr:hover {
 }
 
 .signal-card h5 small {
-  margin-left: 5px;
+  margin-inline-start: 5px;
   color: #8f99a9;
   font-size: 11px;
   font-weight: 600;
@@ -5262,7 +5260,7 @@ tbody tr:hover {
   display: grid;
   gap: 4px;
   margin: 0;
-  padding-left: 18px;
+  padding-inline-start: 18px;
   color: #d1d8e3;
   font-size: 12px;
   line-height: 1.45;
@@ -5660,6 +5658,23 @@ tbody tr:hover {
     grid-template-columns: 1fr;
   }
 
+  html[dir="rtl"] .app-shell {
+    grid-template-columns: 1fr;
+  }
+
+  html[dir="rtl"] .sidebar,
+  html[dir="rtl"] .workspace {
+    grid-column: 1;
+  }
+
+  html[dir="rtl"] .sidebar {
+    grid-row: 1;
+  }
+
+  html[dir="rtl"] .workspace {
+    grid-row: 2;
+  }
+
   .market-screener-primary,
   .market-filter-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -5678,7 +5693,7 @@ tbody tr:hover {
     align-items: center;
     gap: 10px;
     overflow-x: auto;
-    border-right: 0;
+    border-inline-end: 0;
     border-bottom: 1px solid #272d36;
     padding: 8px;
   }
@@ -5717,9 +5732,10 @@ tbody tr:hover {
   .nav-children {
     display: grid;
     gap: 4px;
-    margin: 2px 0 0 10px;
-    padding-left: 12px;
-    border-left: 1px solid #3a4250;
+    margin-block-start: 2px;
+    margin-inline-start: 10px;
+    padding-inline-start: 12px;
+    border-inline-start: 1px solid #3a4250;
   }
 
   .nav-item {

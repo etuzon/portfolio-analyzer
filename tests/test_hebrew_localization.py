@@ -48,7 +48,7 @@ def test_hebrew_is_the_default_document_language_and_direction():
     script = (ROOT / "web/app.js").read_text()
 
     assert '<html lang="he" dir="rtl">' in html
-    assert html.index('/i18n.js?v=0.2.0') < html.index('/app.js?v=0.4.84')
+    assert html.index('/i18n.js?v=1.0.0') < html.index('/app.js?v=0.4.84')
     assert 'language: "he"' in script
     assert 'state.language = saved === "en" ? "en" : "he"' in script
     assert 'window.PortfolioI18n?.applyToDocument(state.language)' in script
