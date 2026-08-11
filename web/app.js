@@ -87,7 +87,7 @@ const state = {
   tableMaPeriod: "30",
   backupSettings: null,
   riskSnapshot: null,
-  language: "en",
+  language: "he",
 };
 
 const $ = (id) => document.getElementById(id);
@@ -147,7 +147,6 @@ const ACCOUNT_COUNTRIES = ["USA", "Israel"];
 const MARKET_OPTIONS = ["NASDAQ", "NYSE", "AMEX", "NYSEARCA", "OTC", "TASE"];
 const FALLBACK_CURRENCIES = "USD ILS EUR GBP JPY CHF CAD AUD NZD CNY HKD SGD INR KRW MXN BRL ARS CLP COP ZAR AED SAR TRY PLN CZK HUF SEK NOK DKK ISK RUB UAH RON BGN HRK RSD THB IDR MYR PHP VND TWD ILS".split(" ");
 const EMPLOYEE_OPTION_CURRENCIES = ["ILS", "USD", "EUR"];
-const countryNames = typeof Intl.DisplayNames === "function" ? new Intl.DisplayNames([navigator.language || "en"], { type: "region" }) : null;
 const TRANSLATIONS = {
   en: {
     appName: "Portfolio analyzer",
@@ -207,13 +206,13 @@ const TRANSLATIONS = {
     backupSchedule: "Backup schedule",
   },
   he: {
-    appName: "מנתח תיק השקעות",
+    appName: "מנהל תיק השקעות",
     brand: "תיק השקעות",
     overview: "סקירה",
     loadingPortfolio: "טוען תיק",
     readingCachedAnalytics: "קורא נתוני ניתוח שמורים",
     mainMenu: "תפריט ראשי",
-    dashboard: "דשבורד",
+    dashboard: "לוח בקרה",
     reports: "דוחות",
     research: "מחקר",
     companyReports: "דוחות חברות",
@@ -282,7 +281,8 @@ const OPTION_LABELS = {
 };
 
 function optionLabel(value) {
-  return OPTION_LABELS[value] || value;
+  const label = OPTION_LABELS[value] || value;
+  return window.PortfolioI18n?.translate(label, state.language) || label;
 }
 
 function flagFor(code) {
@@ -291,7 +291,10 @@ function flagFor(code) {
 
 function countryName(code) {
   try {
-    return countryNames?.of(code) || code;
+    const names = typeof Intl.DisplayNames === "function"
+      ? new Intl.DisplayNames([locale() || navigator.language || "en"], { type: "region" })
+      : null;
+    return names?.of(code) || code;
   } catch {
     return code;
   }
@@ -299,7 +302,7 @@ function countryName(code) {
 
 function currencySymbol(code) {
   try {
-    const part = new Intl.NumberFormat(undefined, { style: "currency", currency: code, currencyDisplay: "narrowSymbol" })
+    const part = new Intl.NumberFormat(locale(), { style: "currency", currency: code, currencyDisplay: "narrowSymbol" })
       .formatToParts(0)
       .find((item) => item.type === "currency");
     return part?.value || code;
@@ -843,7 +846,7 @@ function saveTableSettings() {
 
 function loadLanguageSettings() {
   const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
-  state.language = saved === "he" ? "he" : "en";
+  state.language = saved === "en" ? "en" : "he";
 }
 
 function saveLanguageSettings() {
@@ -1018,6 +1021,8 @@ function applyLanguage() {
   ensureHierarchicalNav();
   bindNavAccordion();
   applyAutoDirection();
+  window.PortfolioI18n?.applyToDocument(state.language);
+  window.PortfolioI18n?.observe();
 }
 
 function normalizeDashboardOrders() {
