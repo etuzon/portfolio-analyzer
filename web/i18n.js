@@ -1204,6 +1204,8 @@
     "Failed": "נכשל",
     "missing": "חסר",
     "No cash movement": "ללא תנועת מזומן",
+    "Saved": "נצבר",
+    "Funds": "קופות",
   });
 
   const HEBREW_PATTERNS = Object.freeze([
