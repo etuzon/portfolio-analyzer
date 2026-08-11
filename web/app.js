@@ -46,6 +46,14 @@ const state = {
   editingFamilyMemberId: "",
   editingFundId: "",
   editingTransactionId: "",
+  securitiesWorkflow: "general",
+  employeeOptionGrants: [],
+  employeeOptionWizardMode: "browse",
+  employeeOptionWizardStep: 1,
+  employeeOptionWizardMaxStep: 1,
+  editingEmployeeOptionSecurityId: "",
+  editingEmployeeOptionTransactionId: "",
+  returnToEmployeeOptionsAfterAccount: false,
   activeEmployeeListingSecurityId: "",
   activeEmployeeExerciseSecurityId: "",
   pensionScenarios: [],
@@ -64,6 +72,7 @@ const state = {
   alertConditions: [],
   editingAlertId: "",
   vestingAlertDays: 30,
+  dismissedAlarmIds: [],
   activePensionScenarioIndex: null,
   localOptions: {
     account_types: ["Investment", "Long-Term Savings", "Bank", "ESOP"],
@@ -106,8 +115,8 @@ const TABLE_SETTINGS_STORAGE_KEY = "portfolioAnalyzer.tableSettings";
 const LANGUAGE_STORAGE_KEY = "portfolioAnalyzer.language";
 const PENSION_SIMULATION_STORAGE_KEY = "portfolioAnalyzer.pensionSimulation";
 const VESTING_ALERT_SETTINGS_STORAGE_KEY = "portfolioAnalyzer.vestingAlerts";
+const ALARM_DISMISSALS_STORAGE_KEY = "portfolioAnalyzer.alarmDismissals";
 const LOG_PREFIX = "[Portfolio Analyzer]";
-const MIN_LOADING_VISIBLE_MS = 700;
 const SENSITIVE_LOG_KEY = /(password|passwd|secret|token|api[_-]?key|authorization|credential|connection|string)/i;
 const PENSION_INSURANCE_TRACKS = {
   comprehensive: { label: "Comprehensive", disability: 75, spouse: 60, children: 40 },
@@ -137,6 +146,7 @@ const REGION_CODES = "AF AX AL DZ AS AD AO AI AQ AG AR AM AW AU AT AZ BS BH BD B
 const ACCOUNT_COUNTRIES = ["USA", "Israel"];
 const MARKET_OPTIONS = ["NASDAQ", "NYSE", "AMEX", "NYSEARCA", "OTC", "TASE"];
 const FALLBACK_CURRENCIES = "USD ILS EUR GBP JPY CHF CAD AUD NZD CNY HKD SGD INR KRW MXN BRL ARS CLP COP ZAR AED SAR TRY PLN CZK HUF SEK NOK DKK ISK RUB UAH RON BGN HRK RSD THB IDR MYR PHP VND TWD ILS".split(" ");
+const EMPLOYEE_OPTION_CURRENCIES = ["ILS", "USD", "EUR"];
 const countryNames = typeof Intl.DisplayNames === "function" ? new Intl.DisplayNames([navigator.language || "en"], { type: "region" }) : null;
 const TRANSLATIONS = {
   en: {
@@ -155,11 +165,16 @@ const TRANSLATIONS = {
     portfolioData: "Portfolio Data",
     accounts: "Accounts",
     brokers: "Brokers",
+    employeeOptions: "Employee Stock Options",
     securities: "Securities",
     prices: "Prices",
     events: "Events",
-    householdRetirement: "Household & Retirement",
+    people: "People",
     familyMembers: "Family Members",
+    accountOwnership: "Account Ownership",
+    retirement: "Retirement",
+    pensionsFunds: "Pensions & Funds",
+    retirementProjections: "Retirement Projections",
     pensionFunds: "Pension/Funds",
     marketsAlerts: "Markets",
     marketScreener: "Market Screener",
@@ -207,11 +222,16 @@ const TRANSLATIONS = {
     portfolioData: "נתוני תיק",
     accounts: "חשבונות",
     brokers: "ברוקרים",
+    employeeOptions: "אופציות עובדים",
     securities: "ניירות ערך",
     prices: "מחירים",
     events: "אירועים",
-    householdRetirement: "משפחה ופרישה",
+    people: "אנשים",
     familyMembers: "בני משפחה",
+    accountOwnership: "שיוך חשבונות",
+    retirement: "פרישה",
+    pensionsFunds: "פנסיה וקופות",
+    retirementProjections: "תחזיות פרישה",
     pensionFunds: "פנסיה וקופות",
     marketsAlerts: "שווקים",
     marketScreener: "סורק שוק",
@@ -474,47 +494,21 @@ async function api(path, options = {}) {
 }
 
 let loadingRequests = 0;
-let loadingStartedAt = 0;
-let loadingHideTimer = null;
-let loadingPreviousFocus = null;
 let clientStateSyncTimer = null;
 
 function setLoading(active, detail = "") {
   const overlay = $("loadingOverlay");
-  if (!overlay) return;
   const loadingDetailText = detail || t("readingCachedAnalytics");
-  if (loadingHideTimer) {
-    clearTimeout(loadingHideTimer);
-    loadingHideTimer = null;
-  }
   if (active && loadingRequests === 0) {
-    loadingStartedAt = performance.now();
-    loadingPreviousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    overlay.hidden = false;
-    overlay.focus({ preventScroll: true });
-    document.body.classList.add("is-loading-portfolio");
     appLog("loading.start", { detail: loadingDetailText });
   }
   loadingRequests = Math.max(0, loadingRequests + (active ? 1 : -1));
-  $("loadingTitle").textContent = t("loadingPortfolio");
-  $("loadingDetail").textContent = loadingDetailText;
+  if (overlay) overlay.hidden = true;
+  document.body.classList.remove("is-loading-portfolio");
+  if ($("loadingTitle")) $("loadingTitle").textContent = t("loadingPortfolio");
+  if ($("loadingDetail")) $("loadingDetail").textContent = loadingDetailText;
   $("refresh")?.classList.toggle("is-loading", loadingRequests > 0);
-  if (loadingRequests > 0) return;
-  const elapsed = performance.now() - loadingStartedAt;
-  const hide = () => {
-    overlay.hidden = true;
-    document.body.classList.remove("is-loading-portfolio");
-    if (loadingPreviousFocus?.isConnected) {
-      loadingPreviousFocus.focus({ preventScroll: true });
-    }
-    loadingPreviousFocus = null;
-    appLog("loading.end", { elapsed_ms: Math.round(performance.now() - loadingStartedAt) });
-  };
-  if (elapsed >= MIN_LOADING_VISIBLE_MS) {
-    hide();
-  } else {
-    loadingHideTimer = setTimeout(hide, MIN_LOADING_VISIBLE_MS - elapsed);
-  }
+  if (loadingRequests === 0) appLog("loading.end");
 }
 
 function esc(value) {
@@ -638,16 +632,24 @@ function ensureHierarchicalNav() {
       <div class="nav-children">
         <button class="nav-item" type="button" data-modal="accountsModal">${esc(t("accounts"))}</button>
         <button class="nav-item" type="button" data-modal="brokersModal">${esc(t("brokers"))}</button>
+        <button class="nav-item" type="button" data-modal="securitiesModal" data-securities-workflow="employee-options">${esc(t("employeeOptions"))}</button>
         <button class="nav-item" type="button" data-modal="securitiesModal">${esc(t("securities"))}</button>
         <button class="nav-item" type="button" data-modal="pricesModal">${esc(t("prices"))}</button>
         <button class="nav-item" type="button" data-modal="eventsModal">${esc(t("events"))}</button>
       </div>
     </details>
     <details class="nav-menu">
-      <summary>${esc(t("householdRetirement"))}</summary>
+      <summary>${esc(t("people"))}</summary>
       <div class="nav-children">
-        <button class="nav-item" type="button" data-modal="familyModal">${esc(t("familyMembers"))}</button>
-        <button class="nav-item" type="button" data-modal="fundsModal">${esc(t("pensionFunds"))}</button>
+        <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="familyMembersSection" data-modal-focus="familyMemberFirstName">${esc(t("familyMembers"))}</button>
+        <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="accountOwnershipSection" data-modal-focus="familyAttachAccount">${esc(t("accountOwnership"))}</button>
+      </div>
+    </details>
+    <details class="nav-menu">
+      <summary>${esc(t("retirement"))}</summary>
+      <div class="nav-children">
+        <button class="nav-item" type="button" data-modal="fundsModal" data-modal-target="fundsTitle" data-modal-focus="showFundCreate">${esc(t("pensionsFunds"))}</button>
+        <button class="nav-item" type="button" data-modal="fundsModal" data-modal-target="simulatorPanel" data-modal-focus="simPersonSource">${esc(t("retirementProjections"))}</button>
       </div>
     </details>
     <details class="nav-menu">
@@ -859,6 +861,21 @@ function loadVestingAlertSettings() {
   state.vestingAlertDays = normalizedVestingAlertDays(settings?.leadDays);
 }
 
+function normalizedAlarmDismissals(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.map((item) => String(item || "").trim()).filter(Boolean))].slice(-2000);
+}
+
+function loadAlarmDismissals() {
+  state.dismissedAlarmIds = normalizedAlarmDismissals(readLocalJson(ALARM_DISMISSALS_STORAGE_KEY, []));
+}
+
+function saveAlarmDismissals() {
+  state.dismissedAlarmIds = normalizedAlarmDismissals(state.dismissedAlarmIds);
+  localStorage.setItem(ALARM_DISMISSALS_STORAGE_KEY, JSON.stringify(state.dismissedAlarmIds));
+  scheduleClientStateSync();
+}
+
 function saveVestingAlertSettings() {
   state.vestingAlertDays = normalizedVestingAlertDays(valueOf("vestingAlertDays"));
   localStorage.setItem(VESTING_ALERT_SETTINGS_STORAGE_KEY, JSON.stringify({ leadDays: state.vestingAlertDays }));
@@ -886,7 +903,10 @@ function collectClientState() {
     language: state.language || "en",
     bannerItems: Array.isArray(state.bannerItems) ? state.bannerItems : readLocalJson("portfolioAnalyzer.bannerItems", []),
     pensionSimulation: readLocalJson(PENSION_SIMULATION_STORAGE_KEY, {}),
-    alarms: { vestingLeadDays: state.vestingAlertDays },
+    alarms: {
+      vestingLeadDays: state.vestingAlertDays,
+      dismissedIds: normalizedAlarmDismissals(state.dismissedAlarmIds),
+    },
   };
 }
 
@@ -912,6 +932,11 @@ function applyClientState(clientState) {
     localStorage.setItem(VESTING_ALERT_SETTINGS_STORAGE_KEY, JSON.stringify({
       leadDays: normalizedVestingAlertDays(clientState.alarms.vestingLeadDays),
     }));
+    if (Array.isArray(clientState.alarms.dismissedIds)) {
+      localStorage.setItem(ALARM_DISMISSALS_STORAGE_KEY, JSON.stringify(
+        normalizedAlarmDismissals(clientState.alarms.dismissedIds),
+      ));
+    }
   }
   return true;
 }
@@ -922,6 +947,7 @@ function loadClientStateFromStorage() {
   loadTableSettings();
   loadPensionSimulationState();
   loadVestingAlertSettings();
+  loadAlarmDismissals();
   renderPensionInsuranceControls();
   applyLanguage();
 }
@@ -1882,13 +1908,45 @@ function refreshMarketOptions() {
   $("marketOptions").innerHTML = MARKET_OPTIONS.map((market) => `<option value="${esc(market)}"></option>`).join("");
 }
 
-function setCurrencyOptions(id) {
+function setCurrencyOptions(id, supportedCodes = null) {
   const select = $(id);
   if (!select) return;
   const current = select.value;
-  const codes = [...new Set(currencyCodes())].sort();
+  const codes = Array.isArray(supportedCodes)
+    ? [...new Set(supportedCodes)]
+    : [...new Set(currencyCodes())].sort();
   select.innerHTML = codes.map((code) => `<option value="${esc(code)}">${esc(currencySymbol(code))} ${esc(code)}</option>`).join("");
   select.value = codes.includes(current) ? current : (codes.includes("USD") ? "USD" : codes[0]);
+}
+
+function companyCountryChoices() {
+  return REGION_CODES.map((code) => {
+    const name = countryName(code);
+    const value = code === "US" ? "USA" : code === "IL" ? "Israel" : name;
+    return { code, name, value };
+  }).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function normalizedCompanyLocation(location, choices = companyCountryChoices()) {
+  const text = String(location || "").trim().toLowerCase();
+  if (["usa", "us", "u.s.", "u.s.a.", "united states", "united states of america"].includes(text)) return "USA";
+  if (["israel", "il", "state of israel"].includes(text)) return "Israel";
+  return choices.find((choice) => (
+    choice.code.toLowerCase() === text
+    || choice.name.toLowerCase() === text
+    || choice.value.toLowerCase() === text
+  ))?.value || "";
+}
+
+function setCompanyLocationOptions(preferred = "", selectId = "manualSecurityLocation") {
+  const select = $(selectId);
+  if (!select) return;
+  const choices = companyCountryChoices();
+  const current = normalizedCompanyLocation(preferred || select.value, choices);
+  select.innerHTML = choices.map((choice) => (
+    `<option value="${esc(choice.value)}">${esc(flagFor(choice.code))} ${esc(choice.name)}</option>`
+  )).join("");
+  select.value = current || "USA";
 }
 
 function syncCurrencyFromLocation(locationId, currencyId) {
@@ -1907,7 +1965,10 @@ function populateStaticOptions() {
     })
     .join("");
   refreshMarketOptions();
-  ["localAccountCurrency", "editAccountCurrency", "priceCurrency", "manualSecurityCurrency"].forEach(setCurrencyOptions);
+  ["localAccountCurrency", "editAccountCurrency", "priceCurrency", "manualSecurityCurrency"].forEach((id) => setCurrencyOptions(id));
+  setCurrencyOptions("employeeWizardCurrency", EMPLOYEE_OPTION_CURRENCIES);
+  setCompanyLocationOptions("USA");
+  setCompanyLocationOptions("USA", "employeeWizardLocation");
   const assetClasses = state.localOptions.asset_classes || ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"];
   setOptions("localAccountType", state.localOptions.account_types);
   setOptions("editAccountType", state.localOptions.account_types);
@@ -3621,13 +3682,13 @@ async function attachAccountToMember() {
   const account = state.localAccounts.find((item) => item.id === valueOf("familyAttachAccount"));
   const member = familyMemberById(valueOf("familyAttachMember"));
   if (!account || !member) {
-    $("familyStatus").textContent = "Choose an account and a family member";
+    $("accountOwnershipStatus").textContent = "Choose an account and a family member";
     return;
   }
   const person = personFromFamilyMember(member);
   const current = account.persons || [];
   if (current.some((item) => item.member_id === person.member_id)) {
-    $("familyStatus").textContent = "That member is already attached to this account";
+    $("accountOwnershipStatus").textContent = "That member is already attached to this account";
     return;
   }
   const persons = accountAllowsMultipleMembers(account) ? current.concat(person) : [person];
@@ -3635,7 +3696,7 @@ async function attachAccountToMember() {
     method: "POST",
     body: JSON.stringify(accountSavePayload(account, persons)),
   });
-  $("familyStatus").textContent = accountAllowsMultipleMembers(account)
+  $("accountOwnershipStatus").textContent = accountAllowsMultipleMembers(account)
     ? "Member attached to account"
     : "Member attached as the account owner";
   await Promise.all([loadLocalAccounts(), loadFamilyMembers(), loadPortfolio()]);
@@ -3647,13 +3708,19 @@ function isImportedAccount(account) {
 
 function refreshLocalAccountSelects() {
   const accountOptions = '<option value="">All local accounts</option>' + state.localAccounts.map(accountOptionHtml).join("");
-  ["securityAccount", "reportAccount", "employeeExerciseAccount"].forEach((id) => {
+  ["securityAccount", "employeeWizardAccount", "reportAccount", "employeeExerciseAccount"].forEach((id) => {
     const select = $(id);
     if (!select) return;
     const current = select.value;
-    select.innerHTML = ["securityAccount", "employeeExerciseAccount"].includes(id) ? state.localAccounts.map(accountOptionHtml).join("") : accountOptions;
+    const employeeWorkflowAccounts = (id === "employeeWizardAccount" || (id === "securityAccount" && state.securitiesWorkflow === "employee-options"))
+      ? state.localAccounts.filter((account) => String(account.type || "").toUpperCase() === "ESOP")
+      : state.localAccounts;
+    select.innerHTML = ["securityAccount", "employeeWizardAccount", "employeeExerciseAccount"].includes(id)
+      ? (employeeWorkflowAccounts.map(accountOptionHtml).join("") || (["securityAccount", "employeeWizardAccount"].includes(id) ? '<option value="">Create an ESOP account first</option>' : ""))
+      : accountOptions;
     if ([...select.options].some((option) => option.value === current)) select.value = current;
   });
+  updateEmployeeOptionsAccountNotice();
   const historySelect = $("historyAccount");
   if (historySelect) {
     const current = historySelect.value;
@@ -3729,6 +3796,14 @@ async function saveLocalAccount() {
   resetNewAccountForm();
   await loadLocalAccounts();
   await loadPortfolio();
+  if (state.returnToEmployeeOptionsAfterAccount && payload.type === "ESOP") {
+    state.returnToEmployeeOptionsAfterAccount = false;
+    closeModal($("accountsModal"));
+    setSecuritiesWorkflow("employee-options");
+    openModal("securitiesModal");
+    $("employeeOptionListStatus").textContent = "ESOP account created. You can now save employee option grants.";
+    requestAnimationFrame(() => $("employeeWizardCompany")?.focus());
+  }
 }
 
 function resetNewAccountForm() {
@@ -3920,7 +3995,7 @@ function renderVestingSchedulePreview() {
   const isSchedule = valueOf("securityVestingStyle") === "SCHEDULE";
   const isEmployeeGrantAdd = selectedTransactionInstrumentType() === "EMPLOYEE_STOCK_OPTION" && valueOf("securityAction") === "ADD";
   $("vestingScheduleFields").hidden = !isSchedule;
-  $("securityVestDate").hidden = !isEmployeeGrantAdd || isSchedule;
+  $("securityVestDateField").hidden = !isEmployeeGrantAdd || isSchedule;
   const mode = valueOf("securityVestingMode") || "PERCENT";
   $("securityVestingCliffValueLabel").textContent = mode === "PERCENT" ? "Cliff Amount (%)" : "Cliff Amount (options)";
   $("securityVestingInstallmentValueLabel").textContent = mode === "PERCENT" ? "Each Installment (%)" : "Each Installment (options)";
@@ -3953,8 +4028,11 @@ function toggleTransactionCompFields() {
   const isEquityComp = isRsu || isOptionGrant;
   document.querySelectorAll("[data-equity-comp-field]").forEach((node) => { node.hidden = !isEquityComp; });
   document.querySelectorAll("[data-option-grant-field]").forEach((node) => { node.hidden = !isOptionGrant; });
+  document.querySelectorAll("[data-employee-option-derived-field]").forEach((node) => {
+    node.hidden = node.hidden || isEmployeeOption || employeeOptionsWorkflowActive();
+  });
   document.querySelectorAll("[data-employee-option-transaction-field]").forEach((node) => { node.hidden = !isEmployeeGrantAdd; });
-  $("securityPrice").hidden = isEquityComp;
+  $("securityPriceField").hidden = isEquityComp || employeeOptionsWorkflowActive();
   $("securityStrikePrice").required = isOptionGrant;
   $("securityPrice").placeholder = "Price";
   $("securityPurchasePrice").placeholder = isOptionGrant ? "Exercise/purchase price" : "Purchase price (optional)";
@@ -3967,16 +4045,26 @@ function toggleTransactionCompFields() {
 }
 
 function refreshManualSecuritySelects() {
-  const options = '<option value="">Free symbol / not defined</option>' + state.manualSecurities
+  const transactionInstruments = employeeOptionsWorkflowActive()
+    ? state.manualSecurities.filter((item) => item.instrument_type === "EMPLOYEE_STOCK_OPTION")
+    : state.manualSecurities;
+  const options = `<option value="">${employeeOptionsWorkflowActive() ? "Choose a saved employee option grant" : "Free symbol / not defined"}</option>` + transactionInstruments
     .map((item) => `<option value="${esc(item.id)}">${esc(instrumentLabel(item))}</option>`)
     .join("");
-  ["securityKnownInstrument", "priceKnownInstrument"].forEach((id) => {
-    const select = $(id);
-    if (!select) return;
-    const current = select.value;
-    select.innerHTML = options;
-    if ([...select.options].some((option) => option.value === current)) select.value = current;
-  });
+  const securitySelect = $("securityKnownInstrument");
+  if (securitySelect) {
+    const current = securitySelect.value;
+    securitySelect.innerHTML = options;
+    if ([...securitySelect.options].some((option) => option.value === current)) securitySelect.value = current;
+  }
+  const priceSelect = $("priceKnownInstrument");
+  if (priceSelect) {
+    const current = priceSelect.value;
+    priceSelect.innerHTML = '<option value="">Free symbol / not defined</option>' + state.manualSecurities
+      .map((item) => `<option value="${esc(item.id)}">${esc(instrumentLabel(item))}</option>`)
+      .join("");
+    if ([...priceSelect.options].some((option) => option.value === current)) priceSelect.value = current;
+  }
   refreshMarketOptions();
 }
 
@@ -4006,8 +4094,11 @@ function setSecurityEditMode(tx = null) {
   state.editingTransactionId = tx?.id || "";
   const saveButton = $("saveSecurity");
   const cancelButton = $("cancelSecurityEdit");
-  if (saveButton) saveButton.textContent = tx ? "Update transaction" : "Save transaction";
+  if (saveButton) saveButton.textContent = tx
+    ? (employeeOptionsWorkflowActive() ? "Update employee option grant" : "Update transaction")
+    : (employeeOptionsWorkflowActive() ? "Save employee option grant" : "Save transaction");
   if (cancelButton) cancelButton.hidden = !tx;
+  updateEmployeeOptionsAccountNotice();
 }
 
 function clearSecurityForm() {
@@ -4680,16 +4771,585 @@ async function saveSecurityDetailPrice() {
   await loadPortfolio();
 }
 
+function employeeOptionsWorkflowActive() {
+  return state.securitiesWorkflow === "employee-options";
+}
+
+function setEmployeeOptionGuideStep(step, { complete = false } = {}) {
+  if (!employeeOptionsWorkflowActive()) return;
+  const normalizedStep = Math.max(1, Math.min(3, Number(step) || 1));
+  state.employeeOptionWizardStep = normalizedStep;
+  state.employeeOptionWizardMaxStep = complete
+    ? 3
+    : Math.max(state.employeeOptionWizardMaxStep || 1, normalizedStep);
+  document.querySelectorAll("[data-employee-guide-step]").forEach((node) => {
+    const nodeStep = Number(node.dataset.employeeGuideStep || 0);
+    const active = nodeStep === normalizedStep && !complete;
+    node.classList.toggle("active", active);
+    node.classList.toggle("complete", nodeStep < normalizedStep || (complete && nodeStep <= normalizedStep));
+    node.disabled = nodeStep > state.employeeOptionWizardMaxStep;
+    if (active) node.setAttribute("aria-current", "step");
+    else node.removeAttribute("aria-current");
+  });
+  document.querySelectorAll("[data-employee-wizard-panel]").forEach((panel) => {
+    panel.hidden = Number(panel.dataset.employeeWizardPanel || 0) !== normalizedStep;
+  });
+}
+
+function toggleEmployeeWizardCompanyFields() {
+  const isPublic = valueOf("employeeWizardCompanyStatus") === "PUBLIC";
+  document.querySelectorAll("[data-employee-wizard-public]").forEach((node) => { node.hidden = !isPublic; });
+  document.querySelectorAll("[data-employee-wizard-private]").forEach((node) => { node.hidden = isPublic; });
+}
+
+function syncEmployeeWizardIssuerFromCompany() {
+  const companyName = valueOf("employeeWizardCompany").toLocaleLowerCase();
+  if (!companyName) return;
+  const match = state.manualSecurities.find((item) => (
+    item.instrument_type === "EMPLOYEE_STOCK_OPTION"
+    && String(item.company_name || "").toLocaleLowerCase() === companyName
+  ));
+  if (!match) return;
+  $("employeeWizardCompanyStatus").value = match.listing_status || "PRIVATE";
+  setCompanyLocationOptions(match.location || "USA", "employeeWizardLocation");
+  setCurrencyOptions("employeeWizardCurrency", EMPLOYEE_OPTION_CURRENCIES);
+  $("employeeWizardCurrency").value = EMPLOYEE_OPTION_CURRENCIES.includes(match.currency) ? match.currency : "USD";
+  $("employeeWizardPublicSymbol").value = match.public_symbol || "";
+  $("employeeWizardPublicMarket").value = match.public_market || "";
+  $("employeeWizardShareValue").value = Number(match.manual_share_value || 0) > 0 ? match.manual_share_value : "";
+  setDateField("employeeWizardValuationDate", match.valuation_date || "");
+  toggleEmployeeWizardCompanyFields();
+  $("employeeWizardGrantStatus").textContent = `Using the saved company details for ${match.company_name}. This will still be a separate grant.`;
+}
+
+function employeeWizardFirstField(step) {
+  return step === 1
+    ? $("employeeWizardCompany")
+    : step === 2
+      ? $("employeeWizardAccount")
+      : $("saveEmployeeOptionGrant");
+}
+
+function showEmployeeOptionWizard(mode = "create") {
+  state.employeeOptionWizardMode = mode;
+  $("employeeOptionWizard").hidden = false;
+  $("employeeOptionsGuide").hidden = false;
+  $("employeeOptionWizardTitle").textContent = mode === "edit" ? "Edit employee option grant" : "Add employee option grant";
+  $("employeeOptionWizardHint").textContent = mode === "edit"
+    ? "Update the grant terms or vesting rule, then review every date before saving."
+    : "You will review every vesting date before anything is saved.";
+  $("cancelEmployeeOptionWizard").textContent = mode === "edit" ? "Cancel edit" : "Cancel";
+}
+
+function hideEmployeeOptionWizard() {
+  state.employeeOptionWizardMode = "browse";
+  state.employeeOptionWizardStep = 1;
+  state.employeeOptionWizardMaxStep = 1;
+  state.editingEmployeeOptionSecurityId = "";
+  state.editingEmployeeOptionTransactionId = "";
+  $("employeeOptionWizard").hidden = true;
+  $("employeeOptionsGuide").hidden = true;
+}
+
+function clearEmployeeOptionWizard() {
+  [
+    "employeeWizardCompany", "employeeWizardGrantId", "employeeWizardGrantDate", "employeeWizardExpiration",
+    "employeeWizardStrikePrice", "employeeWizardPublicSymbol", "employeeWizardPublicMarket", "employeeWizardTaxScheme",
+    "employeeWizardShareValue", "employeeWizardValuationDate", "employeeWizardRestrictionEnd", "employeeWizardComments",
+    "employeeWizardQuantity", "employeeWizardVestingStart", "employeeWizardSingleVestDate",
+  ].forEach((id) => { $(id).value = ""; });
+  $("employeeWizardCompanyStatus").value = "PRIVATE";
+  setCompanyLocationOptions("USA", "employeeWizardLocation");
+  setCurrencyOptions("employeeWizardCurrency", EMPLOYEE_OPTION_CURRENCIES);
+  $("employeeWizardCurrency").value = "USD";
+  $("employeeWizardEarlyExercise").checked = false;
+  $("employeeWizardVestingStyle").value = "SCHEDULE";
+  $("employeeWizardVestingMode").value = "PERCENT";
+  $("employeeWizardFirstMonths").value = "12";
+  $("employeeWizardFirstValue").value = "25";
+  $("employeeWizardInstallmentValue").value = "6.25";
+  $("employeeWizardInterval").value = "3";
+  const esopAccount = state.localAccounts.find((account) => String(account.type || "").toUpperCase() === "ESOP");
+  $("employeeWizardAccount").value = esopAccount?.id || "";
+  ["employeeWizardGrantStatus", "employeeWizardVestingStatus", "employeeOptionWizardStatus"].forEach((id) => { $(id).textContent = ""; });
+  const advanced = $("employeeOptionWizard")?.querySelector(".employee-wizard-advanced");
+  if (advanced) advanced.open = false;
+  toggleEmployeeWizardCompanyFields();
+  renderEmployeeWizardVestingPreview();
+}
+
+function beginNewEmployeeOptionGrant() {
+  state.editingEmployeeOptionSecurityId = "";
+  state.editingEmployeeOptionTransactionId = "";
+  state.employeeOptionWizardMaxStep = 1;
+  clearEmployeeOptionWizard();
+  showEmployeeOptionWizard("create");
+  setEmployeeOptionGuideStep(1);
+  $("employeeOptionListStatus").textContent = "";
+  requestAnimationFrame(() => $("employeeWizardCompany")?.focus());
+}
+
+function employeeWizardValidationError(statusId, message, fieldId) {
+  $(statusId).textContent = message;
+  if (fieldId) $(fieldId)?.focus();
+  return false;
+}
+
+function validateEmployeeWizardGrant() {
+  const required = [
+    ["employeeWizardCompany", "Enter the company name."],
+    ["employeeWizardGrantDate", "Enter the grant date in dd/mm/yyyy format."],
+    ["employeeWizardLocation", "Choose the company location."],
+    ["employeeWizardCurrency", "Choose the grant currency."],
+    ["employeeWizardExpiration", "Enter the expiration date in dd/mm/yyyy format."],
+    ["employeeWizardStrikePrice", "Enter a strike price greater than zero."],
+  ];
+  for (const [fieldId, message] of required) {
+    if (!valueOf(fieldId)) return employeeWizardValidationError("employeeWizardGrantStatus", message, fieldId);
+  }
+  const grantDate = dateValue("employeeWizardGrantDate");
+  const expirationDate = dateValue("employeeWizardExpiration");
+  if (!grantDate) return employeeWizardValidationError("employeeWizardGrantStatus", "Enter a valid Grant Date in dd/mm/yyyy format.", "employeeWizardGrantDate");
+  if (!expirationDate) return employeeWizardValidationError("employeeWizardGrantStatus", "Enter a valid Expiration Date in dd/mm/yyyy format.", "employeeWizardExpiration");
+  if (expirationDate <= grantDate) return employeeWizardValidationError("employeeWizardGrantStatus", "Expiration Date must be after the Grant Date.", "employeeWizardExpiration");
+  if (!(Number(valueOf("employeeWizardStrikePrice")) > 0)) return employeeWizardValidationError("employeeWizardGrantStatus", "Strike Price must be greater than zero.", "employeeWizardStrikePrice");
+  if (!EMPLOYEE_OPTION_CURRENCIES.includes(valueOf("employeeWizardCurrency"))) {
+    return employeeWizardValidationError("employeeWizardGrantStatus", "Currency must be ILS, USD, or EUR.", "employeeWizardCurrency");
+  }
+  if (valueOf("employeeWizardCompanyStatus") === "PUBLIC") {
+    if (!valueOf("employeeWizardPublicSymbol")) return employeeWizardValidationError("employeeWizardGrantStatus", "Enter the public company symbol.", "employeeWizardPublicSymbol");
+    if (!valueOf("employeeWizardPublicMarket")) return employeeWizardValidationError("employeeWizardGrantStatus", "Enter the public stock market.", "employeeWizardPublicMarket");
+  }
+  if (Number(valueOf("employeeWizardShareValue") || 0) > 0 && !dateValue("employeeWizardValuationDate")) {
+    return employeeWizardValidationError("employeeWizardGrantStatus", "Enter the valuation date for the latest share value.", "employeeWizardValuationDate");
+  }
+  $("employeeWizardGrantStatus").textContent = "";
+  return true;
+}
+
+function employeeWizardScheduleData() {
+  const total = Number(valueOf("employeeWizardQuantity") || 0);
+  const start = dateValue("employeeWizardVestingStart") || dateValue("employeeWizardGrantDate");
+  if (!(total > 0)) throw new Error("Enter the total number of options granted");
+  if (!start) throw new Error("Enter the Vesting Start Date in dd/mm/yyyy format");
+  if (valueOf("employeeWizardVestingStyle") === "SINGLE") {
+    const vestDate = dateValue("employeeWizardSingleVestDate");
+    if (!vestDate) throw new Error("Enter the Vest Date in dd/mm/yyyy format");
+    return {
+      style: "SINGLE",
+      vestDate,
+      schedule: {},
+      tranches: [{
+        sequence: 1,
+        vest_date: vestDate,
+        quantity: total,
+        cumulative_quantity: total,
+        cumulative_percent: 100,
+      }],
+    };
+  }
+  const mode = valueOf("employeeWizardVestingMode") || "PERCENT";
+  const firstMonths = Number(valueOf("employeeWizardFirstMonths"));
+  const firstValue = Number(valueOf("employeeWizardFirstValue"));
+  const interval = Number(valueOf("employeeWizardInterval"));
+  const installmentValue = Number(valueOf("employeeWizardInstallmentValue"));
+  if (!Number.isInteger(firstMonths) || firstMonths < 0 || firstMonths > 600) throw new Error("First vest must be 0–600 whole months after vesting starts");
+  if (!Number.isInteger(interval) || interval < 1 || interval > 600) throw new Error("Repeating interval must be 1–600 whole months");
+  if (!(firstValue > 0)) throw new Error("Enter the amount that vests first");
+  const toQuantity = (value) => mode === "PERCENT" ? total * value / 100 : value;
+  const firstQuantity = toQuantity(firstValue);
+  if (firstQuantity > total) throw new Error(`The first vest cannot exceed ${fmt(total, 4)} options`);
+  const remaining = Math.max(0, total - firstQuantity);
+  if (remaining > 0 && !(installmentValue > 0)) throw new Error("Enter the amount that repeats after the first vest");
+  const installmentQuantity = toQuantity(installmentValue);
+  if (remaining > 0 && !(installmentQuantity > 0)) throw new Error("The repeating vest amount must be greater than zero");
+  const recurringCount = remaining > 0 ? Math.ceil(remaining / installmentQuantity) : 0;
+  const durationMonths = firstMonths + recurringCount * interval;
+  if (durationMonths > 600) throw new Error("This schedule lasts more than 600 months; increase each repeating vest amount");
+  const schedule = {
+    enabled: true,
+    mode,
+    vesting_start_date: start,
+    duration_months: durationMonths,
+    cliff_months: firstMonths,
+    cliff_value: firstValue,
+    interval_months: interval,
+    installment_value: installmentValue,
+    total_quantity: total,
+  };
+  return { style: "SCHEDULE", vestDate: "", schedule, tranches: buildVestingPreview(schedule) };
+}
+
+function employeeWizardScheduleSentence(data, total = Number(valueOf("employeeWizardQuantity") || 0)) {
+  if (data.style === "SINGLE") return `All ${fmt(total, 4)} options vest on ${formatDate(data.vestDate)}.`;
+  const schedule = data.schedule;
+  const unit = schedule.mode === "PERCENT" ? "% of the grant" : "options";
+  return `First vest after ${schedule.cliff_months} month${schedule.cliff_months === 1 ? "" : "s"}: ${fmt(schedule.cliff_value, 4)} ${unit}. Then ${fmt(schedule.installment_value, 4)} ${unit} every ${schedule.interval_months} month${schedule.interval_months === 1 ? "" : "s"} until fully vested.`;
+}
+
+function employeeWizardTrancheTable(tranches) {
+  return `
+    <div class="employee-vesting-table-wrap">
+      <table class="employee-vesting-table">
+        <thead><tr><th>Vest</th><th>Date</th><th>Options</th><th>Total Vested</th></tr></thead>
+        <tbody>${tranches.map((tranche) => `
+          <tr>
+            <td>${esc(tranche.sequence)}</td>
+            <td>${esc(formatDate(tranche.vest_date))}</td>
+            <td>${fmt(tranche.quantity, 4)}</td>
+            <td>${fmt(tranche.cumulative_quantity, 4)} <small>(${fmt(tranche.cumulative_percent, 4)}%)</small></td>
+          </tr>
+        `).join("")}</tbody>
+      </table>
+    </div>`;
+}
+
+function renderEmployeeWizardVestingPreview() {
+  const preview = $("employeeWizardVestingPreview");
+  if (!preview) return;
+  const single = valueOf("employeeWizardVestingStyle") === "SINGLE";
+  $("employeeWizardRecurringFields").hidden = single;
+  $("employeeWizardSingleFields").hidden = !single;
+  const absolute = valueOf("employeeWizardVestingMode") === "ABSOLUTE";
+  $("employeeWizardRecurringUnit").textContent = absolute ? "options every" : "% of the grant every";
+  try {
+    const data = employeeWizardScheduleData();
+    const expiration = dateValue("employeeWizardExpiration");
+    const last = data.tranches.at(-1);
+    if (expiration && last.vest_date > expiration) throw new Error(`The final vest on ${formatDate(last.vest_date)} is after the option expiration date`);
+    preview.classList.remove("error");
+    preview.innerHTML = `
+      <div class="employee-preview-summary">
+        <b>${data.tranches.length} vesting date${data.tranches.length === 1 ? "" : "s"}</b>
+        <span>First: ${esc(formatDate(data.tranches[0].vest_date))}</span>
+        <span>Fully vested: ${esc(formatDate(last.vest_date))}</span>
+      </div>
+      <p>${esc(employeeWizardScheduleSentence(data))}</p>
+      ${employeeWizardTrancheTable(data.tranches)}`;
+    return data;
+  } catch (error) {
+    const incomplete = /^(Enter|Choose)/.test(error.message);
+    preview.classList.toggle("error", !incomplete);
+    preview.innerHTML = `<p>${esc(error.message)}</p>`;
+    return null;
+  }
+}
+
+function validateEmployeeWizardVesting() {
+  if (!valueOf("employeeWizardAccount")) return employeeWizardValidationError("employeeWizardVestingStatus", "Choose an ESOP account. Create one first if the list is empty.", "employeeWizardAccount");
+  const data = renderEmployeeWizardVestingPreview();
+  if (!data) return employeeWizardValidationError("employeeWizardVestingStatus", "Correct the vesting rule shown above before continuing.", "employeeWizardQuantity");
+  const expiration = dateValue("employeeWizardExpiration");
+  if (expiration && data.tranches.at(-1).vest_date > expiration) {
+    return employeeWizardValidationError("employeeWizardVestingStatus", "The vesting schedule must finish before the option Expiration Date.", "employeeWizardFirstMonths");
+  }
+  $("employeeWizardVestingStatus").textContent = "";
+  return true;
+}
+
+function employeeWizardGrantPayload() {
+  const isPublic = valueOf("employeeWizardCompanyStatus") === "PUBLIC";
+  return {
+    id: state.editingEmployeeOptionSecurityId || undefined,
+    instrument_type: "EMPLOYEE_STOCK_OPTION",
+    company_name: valueOf("employeeWizardCompany"),
+    listing_status: isPublic ? "PUBLIC" : "PRIVATE",
+    public_symbol: isPublic ? cleanSecuritySymbol(valueOf("employeeWizardPublicSymbol")) : "",
+    public_market: isPublic ? valueOf("employeeWizardPublicMarket") : "",
+    currency: valueOf("employeeWizardCurrency"),
+    location: valueOf("employeeWizardLocation"),
+    grant_id: valueOf("employeeWizardGrantId"),
+    grant_date: dateValue("employeeWizardGrantDate"),
+    vesting_start_date: dateValue("employeeWizardVestingStart") || dateValue("employeeWizardGrantDate"),
+    expiration_date: dateValue("employeeWizardExpiration"),
+    strike_price: valueOf("employeeWizardStrikePrice"),
+    contract_multiplier: 1,
+    tax_scheme: valueOf("employeeWizardTaxScheme"),
+    early_exercise_allowed: $("employeeWizardEarlyExercise").checked,
+    manual_share_value: valueOf("employeeWizardShareValue") || undefined,
+    valuation_date: dateValue("employeeWizardValuationDate"),
+    restriction_end_date: dateValue("employeeWizardRestrictionEnd"),
+    comments: valueOf("employeeWizardComments"),
+  };
+}
+
+function renderEmployeeWizardReview() {
+  const grant = employeeWizardGrantPayload();
+  const vesting = employeeWizardScheduleData();
+  const account = state.localAccounts.find((item) => item.id === valueOf("employeeWizardAccount"));
+  const total = Number(valueOf("employeeWizardQuantity") || 0);
+  $("employeeWizardReview").innerHTML = `
+    <div class="employee-review-card">
+      <h4>Grant</h4>
+      <dl>
+        <div><dt>Company</dt><dd>${esc(grant.company_name)}</dd></div>
+        <div><dt>Grant ID</dt><dd>${esc(grant.grant_id || "Not provided")}</dd></div>
+        <div><dt>Grant Date</dt><dd>${esc(formatDate(grant.grant_date))}</dd></div>
+        <div><dt>Expiration Date</dt><dd>${esc(formatDate(grant.expiration_date))}</dd></div>
+        <div><dt>Strike Price</dt><dd>${money(grant.strike_price, grant.currency, 4)}</dd></div>
+        <div><dt>Company</dt><dd>${esc(grant.listing_status === "PUBLIC" ? `${grant.public_symbol} · ${grant.public_market}` : "Private Company")}</dd></div>
+      </dl>
+    </div>
+    <div class="employee-review-card">
+      <h4>Options and vesting</h4>
+      <dl>
+        <div><dt>ESOP Account</dt><dd>${esc(account ? accountLabel(account) : "Not selected")}</dd></div>
+        <div><dt>Total Options</dt><dd>${fmt(total, 4)}</dd></div>
+        <div><dt>Vesting Starts</dt><dd>${esc(formatDate(grant.vesting_start_date))}</dd></div>
+        <div><dt>Schedule</dt><dd>${esc(employeeWizardScheduleSentence(vesting, total))}</dd></div>
+      </dl>
+    </div>
+    <div class="employee-review-schedule">
+      <h4>Exact vesting dates</h4>
+      ${employeeWizardTrancheTable(vesting.tranches)}
+    </div>`;
+}
+
+async function saveEmployeeOptionGrant() {
+  if (!validateEmployeeWizardGrant() || !validateEmployeeWizardVesting()) return;
+  const vestingData = employeeWizardScheduleData();
+  const editing = Boolean(state.editingEmployeeOptionSecurityId);
+  const payload = {
+    security_id: state.editingEmployeeOptionSecurityId || undefined,
+    transaction_id: state.editingEmployeeOptionTransactionId || undefined,
+    grant: employeeWizardGrantPayload(),
+    vesting: {
+      id: state.editingEmployeeOptionTransactionId || undefined,
+      account_db_id: valueOf("employeeWizardAccount"),
+      quantity: valueOf("employeeWizardQuantity"),
+      vest_date: vestingData.style === "SINGLE" ? vestingData.vestDate : "",
+      vesting_schedule: vestingData.style === "SCHEDULE" ? vestingData.schedule : {},
+      trade_date: dateValue("employeeWizardGrantDate"),
+      comments: valueOf("employeeWizardComments"),
+    },
+  };
+  const button = $("saveEmployeeOptionGrant");
+  button.disabled = true;
+  $("employeeOptionWizardStatus").textContent = editing ? "Updating grant…" : "Saving grant…";
+  try {
+    const path = editing
+      ? `/api/local/employee-option-grants/${encodeURIComponent(state.editingEmployeeOptionSecurityId)}`
+      : "/api/local/employee-option-grants";
+    const saved = await api(path, { method: editing ? "PUT" : "POST", body: JSON.stringify(payload) });
+    hideEmployeeOptionWizard();
+    await Promise.all([loadLocalSecurities(), loadEmployeeOptionGrants()]);
+    await loadPortfolio();
+    const company = saved.security?.company_name || "Employee option grant";
+    $("employeeOptionListStatus").textContent = editing ? `${company} was updated.` : `${company} was saved with its vesting schedule.`;
+  } catch (error) {
+    $("employeeOptionWizardStatus").textContent = `Could not save the grant: ${error.message}. Your entries are still here.`;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function employeeGrantCardSchedule(grant) {
+  const tx = grant.transaction;
+  if (!tx) return "Vesting setup is incomplete";
+  const schedule = tx.vesting_schedule || {};
+  const tranches = Array.isArray(schedule.tranches) ? schedule.tranches : [];
+  if (!tranches.length) return tx.vest_date ? `All options vest on ${formatDate(tx.vest_date)}` : "No vesting date saved";
+  const first = tranches[0];
+  const last = tranches.at(-1);
+  return `${tranches.length} vesting dates · first ${formatDate(first.vest_date)} · fully vested ${formatDate(last.vest_date)}`;
+}
+
+function renderEmployeeOptionGrants() {
+  const list = $("employeeOptionGrantsList");
+  if (!list) return;
+  if (!state.employeeOptionGrants.length) {
+    list.innerHTML = '<div class="empty">No grants yet. The wizard above will guide you through the first one.</div>';
+    if (employeeOptionsWorkflowActive() && state.employeeOptionWizardMode === "browse") beginNewEmployeeOptionGrant();
+    return;
+  }
+  list.innerHTML = state.employeeOptionGrants.map((grant) => {
+    const security = grant.security || {};
+    const tx = grant.transaction;
+    const account = tx ? state.localAccounts.find((item) => item.id === tx.account_db_id) : null;
+    const lockedReason = grant.has_lifecycle_history
+      ? "This grant has exercise or listing history"
+      : "This grant has additional activity";
+    return `
+      <article class="employee-grant-card">
+        <div class="employee-grant-main">
+          <div class="employee-grant-title">
+            <h4>${esc(security.company_name || security.name || "Employee option grant")}</h4>
+            <span class="badge ${tx ? "ok" : "warn"}">${tx ? "Complete" : "Setup incomplete"}</span>
+          </div>
+          <p>${esc(security.grant_id ? `Grant ${security.grant_id}` : "No grant ID")} · Granted ${esc(formatDate(security.grant_date))} · Expires ${esc(formatDate(security.expiration_date))}</p>
+          <p>${tx ? `${fmt(tx.quantity, 4)} options · ${esc(account ? accountLabel(account) : tx.account_id || "ESOP account")}` : "Open Edit to add the option quantity and vesting rule."}</p>
+          <p class="employee-grant-schedule">${esc(employeeGrantCardSchedule(grant))}</p>
+        </div>
+        <div class="employee-grant-actions row-actions">
+          <button class="secondary compact-button" type="button" data-edit-employee-option-grant="${esc(security.id)}"${grant.can_edit ? "" : ` disabled title="${esc(lockedReason)}"`}>Edit</button>
+          <button class="secondary compact-button danger-button" type="button" data-delete-employee-option-grant="${esc(security.id)}"${grant.can_delete ? "" : ` disabled title="${esc(lockedReason)}"`}>Delete</button>
+          ${security.listing_status !== "PUBLIC" ? `<button class="secondary compact-button" type="button" data-link-employee-listing="${esc(security.id)}">Link listing</button>` : ""}
+          ${tx ? `<button class="secondary compact-button" type="button" data-exercise-employee-option="${esc(security.id)}">Exercise</button>` : ""}
+        </div>
+      </article>`;
+  }).join("");
+}
+
+async function loadEmployeeOptionGrants() {
+  const data = await api("/api/local/employee-option-grants");
+  state.employeeOptionGrants = data.items || [];
+  renderEmployeeOptionGrants();
+}
+
+function editEmployeeOptionGrant(securityId) {
+  const grant = state.employeeOptionGrants.find((item) => item.security?.id === securityId);
+  if (!grant || !grant.can_edit) {
+    $("employeeOptionListStatus").textContent = "This grant cannot be edited because it has additional lifecycle activity.";
+    return;
+  }
+  const security = grant.security;
+  const tx = grant.transaction;
+  clearEmployeeOptionWizard();
+  state.editingEmployeeOptionSecurityId = security.id;
+  state.editingEmployeeOptionTransactionId = tx?.id || "";
+  $("employeeWizardCompany").value = security.company_name || "";
+  $("employeeWizardGrantId").value = security.grant_id || "";
+  setDateField("employeeWizardGrantDate", security.grant_date || "");
+  $("employeeWizardCompanyStatus").value = security.listing_status || "PRIVATE";
+  setCompanyLocationOptions(security.location || "USA", "employeeWizardLocation");
+  setCurrencyOptions("employeeWizardCurrency", EMPLOYEE_OPTION_CURRENCIES);
+  $("employeeWizardCurrency").value = security.currency || "USD";
+  setDateField("employeeWizardExpiration", security.expiration_date || "");
+  $("employeeWizardStrikePrice").value = security.strike_price || "";
+  $("employeeWizardPublicSymbol").value = security.public_symbol || "";
+  $("employeeWizardPublicMarket").value = security.public_market || "";
+  $("employeeWizardTaxScheme").value = security.tax_scheme || "";
+  $("employeeWizardShareValue").value = Number(security.manual_share_value || 0) > 0 ? security.manual_share_value : "";
+  setDateField("employeeWizardValuationDate", security.valuation_date || "");
+  setDateField("employeeWizardRestrictionEnd", security.restriction_end_date || "");
+  $("employeeWizardEarlyExercise").checked = Boolean(security.early_exercise_allowed);
+  $("employeeWizardComments").value = security.comments || tx?.comments || "";
+  if (tx) {
+    $("employeeWizardAccount").value = tx.account_db_id || "";
+    $("employeeWizardQuantity").value = tx.quantity || "";
+    const schedule = tx.vesting_schedule || {};
+    $("employeeWizardVestingStyle").value = schedule.enabled ? "SCHEDULE" : "SINGLE";
+    setDateField("employeeWizardVestingStart", schedule.vesting_start_date || security.vesting_start_date || security.grant_date || "");
+    setDateField("employeeWizardSingleVestDate", tx.vest_date || "");
+    if (schedule.enabled) {
+      $("employeeWizardVestingMode").value = schedule.mode || "PERCENT";
+      $("employeeWizardFirstMonths").value = schedule.cliff_months ?? 12;
+      $("employeeWizardFirstValue").value = schedule.cliff_value ?? 25;
+      $("employeeWizardInstallmentValue").value = schedule.installment_value ?? 6.25;
+      $("employeeWizardInterval").value = schedule.interval_months ?? 3;
+    }
+  } else {
+    setDateField("employeeWizardVestingStart", security.vesting_start_date || security.grant_date || "");
+  }
+  toggleEmployeeWizardCompanyFields();
+  renderEmployeeWizardVestingPreview();
+  state.employeeOptionWizardMaxStep = 3;
+  showEmployeeOptionWizard("edit");
+  setEmployeeOptionGuideStep(1);
+  $("employeeOptionListStatus").textContent = `Editing ${security.company_name || security.name}.`;
+  $("employeeOptionWizard")?.scrollIntoView({ block: "start", behavior: "smooth" });
+  requestAnimationFrame(() => $("employeeWizardCompany")?.focus({ preventScroll: true }));
+}
+
+async function deleteEmployeeOptionGrant(securityId) {
+  const grant = state.employeeOptionGrants.find((item) => item.security?.id === securityId);
+  if (!grant) return;
+  const company = grant.security.company_name || grant.security.name || "this grant";
+  if (!window.confirm(`Delete the ${company} grant and its vesting schedule? This cannot be undone.`)) return;
+  $("employeeOptionListStatus").textContent = `Deleting ${company}…`;
+  try {
+    await api(`/api/local/employee-option-grants/${encodeURIComponent(securityId)}`, { method: "DELETE" });
+    await Promise.all([loadLocalSecurities(), loadEmployeeOptionGrants()]);
+    await loadPortfolio();
+    $("employeeOptionListStatus").textContent = `${company} was deleted.`;
+  } catch (error) {
+    $("employeeOptionListStatus").textContent = `Could not delete the grant: ${error.message}`;
+  }
+}
+
+function updateEmployeeOptionsAccountNotice() {
+  const notice = $("employeeOptionsAccountNotice");
+  if (!notice) return;
+  const hasEsopAccount = state.localAccounts.some((account) => String(account.type || "").toUpperCase() === "ESOP");
+  notice.hidden = !employeeOptionsWorkflowActive() || hasEsopAccount;
+  const saveButton = $("saveSecurity");
+  if (saveButton && !state.editingTransactionId) saveButton.disabled = employeeOptionsWorkflowActive() && !hasEsopAccount;
+  const wizardSaveButton = $("saveEmployeeOptionGrant");
+  if (wizardSaveButton) wizardSaveButton.disabled = employeeOptionsWorkflowActive() && !hasEsopAccount;
+}
+
+function setSecuritiesWorkflow(workflow = "general") {
+  const employeeOptions = workflow === "employee-options";
+  state.securitiesWorkflow = employeeOptions ? "employee-options" : "general";
+  $("securitiesModal")?.classList.toggle("employee-options-mode", employeeOptions);
+  $("employeeOptionSavedSection").hidden = !employeeOptions;
+  $("instrumentDefinitionSection").hidden = employeeOptions;
+  $("accountTransactionSection").hidden = employeeOptions;
+  $("savedTransactionsLabel").hidden = employeeOptions;
+  $("securitiesList").hidden = employeeOptions;
+  $("instrumentDefinitionBadge").hidden = true;
+  $("accountTransactionBadge").hidden = true;
+  $("securitiesEyebrow").textContent = employeeOptions ? "Equity compensation" : "Manual transactions";
+  $("securitiesTitle").textContent = employeeOptions ? "Employee Stock Options" : "Securities";
+  $("securitiesSubtitle").textContent = employeeOptions
+    ? "Add, review, edit, or delete a grant and its complete vesting schedule."
+    : "Define an instrument, then record it in an account.";
+  $("instrumentDefinitionTitle").textContent = employeeOptions ? "Enter grant details" : "Instrument definition";
+  $("instrumentDefinitionHint").textContent = employeeOptions
+    ? "Use the dates and strike price shown in your company grant agreement."
+    : "Describe the security once so it can be reused in transactions and price history.";
+  $("accountTransactionTitle").textContent = employeeOptions ? "Add options and vesting" : "Account transaction";
+  $("accountTransactionHint").textContent = employeeOptions
+    ? "Choose the ESOP account, enter the total options granted, and review the calculated vesting dates."
+    : "Choose an account and record the security movement.";
+  $("definedInstrumentsLabel").textContent = employeeOptions ? "Your employee option grants" : "Defined instruments";
+  $("savedTransactionsLabel").textContent = employeeOptions ? "Saved employee option activity" : "Saved transactions";
+  $("saveManualSecurity").textContent = employeeOptions ? "Continue to options and vesting" : "Save instrument";
+  $("saveSecurity").textContent = employeeOptions ? "Save employee option grant" : "Save transaction";
+  $("securityQuantityLabel").textContent = employeeOptions ? "Total Options Granted *" : "Quantity *";
+  $("securityDateLabel").textContent = employeeOptions ? "Grant Added Date *" : "Transaction Date *";
+  document.querySelectorAll("[data-general-security-field], [data-general-transaction-field]").forEach((node) => {
+    node.hidden = employeeOptions;
+  });
+  const instrumentType = $("manualInstrumentType");
+  if (instrumentType) {
+    if (employeeOptions) instrumentType.value = "EMPLOYEE_STOCK_OPTION";
+    else if (instrumentType.value === "EMPLOYEE_STOCK_OPTION") instrumentType.value = "STOCK";
+    instrumentType.disabled = employeeOptions;
+  }
+  const action = $("securityAction");
+  if (action) {
+    if (employeeOptions) action.value = "ADD";
+    action.disabled = employeeOptions;
+  }
+  if (employeeOptions) {
+    hideEmployeeOptionWizard();
+    renderEmployeeOptionGrants();
+  } else {
+    $("employeeOptionWizard").hidden = true;
+    $("employeeOptionsGuide").hidden = true;
+  }
+  refreshLocalAccountSelects();
+  refreshManualSecuritySelects();
+  toggleManualInstrumentFields();
+  toggleTransactionCompFields();
+  updateEmployeeOptionsAccountNotice();
+}
+
 function toggleManualInstrumentFields() {
   const type = valueOf("manualInstrumentType") || "STOCK";
   const isEmployeeOption = type === "EMPLOYEE_STOCK_OPTION";
+  setCurrencyOptions("manualSecurityCurrency", isEmployeeOption ? EMPLOYEE_OPTION_CURRENCIES : null);
   const isOption = type === "OPTION" || type === "STOCK_OPTION" || isEmployeeOption;
   const isDerivative = isOption || type === "FUTURE";
   document.querySelectorAll("[data-derivative-field]").forEach((node) => { node.hidden = !isDerivative; });
   document.querySelectorAll("[data-option-field]").forEach((node) => { node.hidden = !isOption; });
+  document.querySelectorAll("[data-non-employee-derivative-field]").forEach((node) => { node.hidden = !isDerivative || isEmployeeOption; });
+  document.querySelectorAll("[data-non-employee-option-field]").forEach((node) => { node.hidden = !isOption || isEmployeeOption; });
   document.querySelectorAll("[data-employee-option-field]").forEach((node) => { node.hidden = !isEmployeeOption; });
   const isPrivate = isEmployeeOption && valueOf("manualIssuerStatus") !== "PUBLIC";
   document.querySelectorAll("[data-private-issuer-field]").forEach((node) => { node.hidden = !isPrivate; });
+  document.querySelectorAll("[data-public-issuer-field]").forEach((node) => { node.hidden = isPrivate; });
   $("manualSecuritySymbol").disabled = isPrivate;
   $("manualSecurityMarket").disabled = isPrivate;
   $("manualSecuritySymbol").placeholder = isEmployeeOption ? (isPrivate ? "Not required for a private company" : "Public symbol") : "ID or symbol";
@@ -4725,17 +5385,20 @@ async function loadManualSecurities() {
   refreshManualSecuritySelects();
   const list = $("manualSecuritiesList");
   if (!list) return;
-  list.innerHTML = state.manualSecurities.length ? state.manualSecurities.map((item) => `
+  const visibleSecurities = employeeOptionsWorkflowActive()
+    ? state.manualSecurities.filter((item) => item.instrument_type === "EMPLOYEE_STOCK_OPTION")
+    : state.manualSecurities;
+  list.innerHTML = visibleSecurities.length ? visibleSecurities.map((item) => `
     <div class="stack-item management-item">
       <b>${esc(item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (item.company_name || item.name) : item.symbol)}</b>
       <div>${esc(item.name || item.symbol)} · ${esc(optionLabel(item.instrument_type))} · ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? `<span class="badge ${item.listing_status === "PUBLIC" ? "ok" : "warn"}">${esc(item.listing_status === "PUBLIC" ? `${item.public_symbol} · ${item.public_market}` : "Private Company")}</span>` : `${esc(item.stock_market)} · ${esc(item.currency)}`}</div>
-      <button class="secondary compact-button" type="button" data-use-manual-security="${esc(item.id)}">Use</button>
+      <button class="secondary compact-button" type="button" data-use-manual-security="${esc(item.id)}">${employeeOptionsWorkflowActive() ? "Add to account" : "Use"}</button>
       ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" && item.listing_status !== "PUBLIC" ? `<button class="secondary compact-button" type="button" data-link-employee-listing="${esc(item.id)}">Link public listing</button>` : ""}
       ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? `<button class="secondary compact-button" type="button" data-exercise-employee-option="${esc(item.id)}">Exercise</button>` : ""}
       <button class="secondary compact-button" type="button" data-delete-manual-security="${esc(item.id)}">Remove</button>
       <div class="sub">${esc(optionLabel(item.asset_class))}${item.grant_id ? ` · Grant ID ${esc(item.grant_id)}` : ""}${item.grant_date ? ` · Grant Date ${esc(formatDate(item.grant_date))}` : ""}${item.vesting_start_date ? ` · Vesting Start ${esc(formatDate(item.vesting_start_date))}` : ""}${item.underlying_symbol ? ` · Underlying ${esc(item.underlying_symbol)}` : ""}${item.option_type && item.instrument_type !== "EMPLOYEE_STOCK_OPTION" ? ` · ${esc(item.option_type)} option` : ""}${item.expiration_date ? ` · Exp ${esc(formatDate(item.expiration_date))}` : ""}${item.strike_price ? ` · Strike ${fmt(item.strike_price, 4)}` : ""}${item.instrument_type !== "EMPLOYEE_STOCK_OPTION" && item.contract_multiplier ? ` · Multiplier ${fmt(item.contract_multiplier, 4)}` : ""}${item.manual_share_value ? ` · Valuation ${money(item.manual_share_value, item.currency, 4)} on ${esc(formatDate(item.valuation_date))}` : ""}${item.comments ? ` · ${esc(item.comments)}` : ""}</div>
     </div>
-  `).join("") : '<div class="empty">No defined instruments yet</div>';
+  `).join("") : `<div class="empty">${employeeOptionsWorkflowActive() ? "No employee option grants yet. Enter your first grant above." : "No defined instruments yet"}</div>`;
 }
 
 function syncEmployeeIssuerFromCompany() {
@@ -4749,8 +5412,11 @@ function syncEmployeeIssuerFromCompany() {
   $("manualIssuerStatus").value = match.listing_status || "PRIVATE";
   $("manualSecuritySymbol").value = match.public_symbol || "";
   $("manualSecurityMarket").value = match.public_market || "";
-  $("manualSecurityCurrency").value = match.currency || valueOf("manualSecurityCurrency") || "USD";
-  $("manualSecurityLocation").value = match.location || valueOf("manualSecurityLocation") || "USA";
+  setCompanyLocationOptions(match.location || valueOf("manualSecurityLocation") || "USA");
+  const matchCurrency = String(match.currency || "").toUpperCase();
+  $("manualSecurityCurrency").value = EMPLOYEE_OPTION_CURRENCIES.includes(matchCurrency)
+    ? matchCurrency
+    : preferredCurrencyForLocation(valueOf("manualSecurityLocation")) || "USD";
   $("manualShareValue").value = Number(match.manual_share_value || 0) > 0 ? match.manual_share_value : "";
   setDateField("manualValuationDate", match.valuation_date || "");
   setDateField("manualRestrictionEndDate", match.restriction_end_date || "");
@@ -4761,12 +5427,18 @@ function syncEmployeeIssuerFromCompany() {
 async function saveManualSecurity() {
   const isEmployeeOption = valueOf("manualInstrumentType") === "EMPLOYEE_STOCK_OPTION";
   const listingStatus = valueOf("manualIssuerStatus") || "PRIVATE";
+  const currency = valueOf("manualSecurityCurrency") || "USD";
+  if (isEmployeeOption && !EMPLOYEE_OPTION_CURRENCIES.includes(currency)) {
+    $("manualSecurityStatus").textContent = "Employee stock-option currency must be ILS, USD, or EUR.";
+    $("manualSecurityCurrency").focus();
+    return;
+  }
   const payload = {
     symbol: isEmployeeOption && listingStatus === "PRIVATE" ? "" : cleanSecuritySymbol(valueOf("manualSecuritySymbol")),
     name: valueOf("manualSecurityName"),
     stock_market: isEmployeeOption && listingStatus === "PRIVATE" ? "" : valueOf("manualSecurityMarket"),
     instrument_type: valueOf("manualInstrumentType"),
-    currency: valueOf("manualSecurityCurrency") || "USD",
+    currency,
     location: valueOf("manualSecurityLocation") || "USA",
     underlying_symbol: cleanSecuritySymbol(valueOf("manualUnderlyingSymbol")),
     option_type: valueOf("manualOptionType"),
@@ -4788,12 +5460,28 @@ async function saveManualSecurity() {
     comments: valueOf("manualSecurityComments"),
   };
   const saved = await api("/api/local/manual-securities", { method: "POST", body: JSON.stringify(payload) });
-  $("manualSecurityStatus").textContent = `Instrument saved: ${saved.company_name || saved.symbol}${saved.grant_id ? ` · ${saved.grant_id}` : ""}`;
+  $("manualSecurityStatus").textContent = isEmployeeOption
+    ? `Grant details saved for ${saved.company_name || saved.symbol}. Complete the options and vesting step below.`
+    : `Instrument saved: ${saved.company_name || saved.symbol}${saved.grant_id ? ` · ${saved.grant_id}` : ""}`;
   ["manualSecuritySymbol", "manualSecurityName", "manualSecurityMarket", "manualCompanyName", "manualGrantId", "manualGrantDate", "manualVestingStartDate", "manualUnderlyingSymbol", "manualExpirationDate", "manualStrikePrice", "manualContractMultiplier", "manualTaxScheme", "manualShareValue", "manualValuationDate", "manualRestrictionEndDate", "manualSecurityComments"].forEach((id) => { $(id).value = ""; });
   $("manualEarlyExercise").checked = false;
   $("manualIssuerStatus").value = "PRIVATE";
   toggleManualInstrumentFields();
   await loadManualSecurities();
+  if (isEmployeeOption) {
+    $("securityKnownInstrument").value = saved.id;
+    applyInstrumentToForm(saved, "security");
+    const esopAccount = state.localAccounts.find((account) => String(account.type || "").toUpperCase() === "ESOP");
+    if (esopAccount) $("securityAccount").value = esopAccount.id;
+    setEmployeeOptionGuideStep(2);
+    $("securityStatus").textContent = esopAccount
+      ? "Grant selected. Enter the total options and confirm the vesting schedule."
+      : "Grant details are saved. Create an ESOP account to add the options and vesting schedule.";
+    requestAnimationFrame(() => {
+      $("accountTransactionSection")?.scrollIntoView({ block: "start", behavior: "smooth" });
+      $("securityQuantity")?.focus({ preventScroll: true });
+    });
+  }
   await loadPortfolio();
 }
 
@@ -4881,7 +5569,10 @@ async function loadLocalSecurities() {
   state.localTransactions = data.items || [];
   refreshMarketOptions();
   if (state.items?.length) renderAnalytics(state.items);
-  $("securitiesList").innerHTML = state.localTransactions.length ? state.localTransactions.map((tx) => `
+  const visibleTransactions = employeeOptionsWorkflowActive()
+    ? state.localTransactions.filter((tx) => tx.instrument_type === "EMPLOYEE_STOCK_OPTION")
+    : state.localTransactions;
+  $("securitiesList").innerHTML = visibleTransactions.length ? visibleTransactions.map((tx) => `
     <div class="stack-item management-item">
       <b>${esc(tx.action)} ${esc(tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (tx.company_name || tx.security_name || "Employee option") : tx.symbol)}</b>
       <span>${fmt(tx.quantity, 4)} @ ${fmt(tx.price_input, 4)} (${esc(tx.currency)} ${fmt(tx.price, 4)})${tx.instrument_type ? ` · ${esc(tx.instrument_type)}` : ""}</span>
@@ -4891,7 +5582,7 @@ async function loadLocalSecurities() {
            <button class="secondary compact-button" type="button" data-delete-security="${esc(tx.id)}">Delete</button>`}
       <div class="sub">${esc(tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (tx.listing_status === "PUBLIC" ? `${tx.public_symbol} · ${tx.public_market}` : "Private company") : tx.stock_market)} · ${esc(tx.asset_class)}${tx.grant_id ? ` · Grant ${esc(tx.grant_id)}` : ""}${tx.option_type && tx.instrument_type !== "EMPLOYEE_STOCK_OPTION" ? ` · ${esc(tx.option_type)}` : ""}${tx.expiration_date ? ` · Exp ${esc(formatDate(tx.expiration_date))}` : ""}${transactionVestingSummary(tx)}${tx.strike_price ? ` · Strike ${fmt(tx.strike_price, 4)}` : ""}${tx.purchase_price ? ` · Purchase ${fmt(tx.purchase_price, 4)}` : ""} · ${esc(formatDate(tx.trade_date))} · ${transactionCashImpact(tx) ? `Cash ${signedMoney(transactionCashImpact(tx), tx.currency)}` : "No cash movement"} · ${esc(tx.management_company || "")} ${esc(tx.account_id || "")}</div>
     </div>
-  `).join("") : '<div class="empty">No manual securities yet</div>';
+  `).join("") : `<div class="empty">${employeeOptionsWorkflowActive() ? "No employee option activity saved yet" : "No manual securities yet"}</div>`;
   renderAlarms();
   loadEquityCompQuotes().catch(reportBackgroundError);
 }
@@ -4920,12 +5611,17 @@ async function saveSecurity() {
     const editingId = state.editingTransactionId;
     const path = editingId ? `/api/local/securities/${encodeURIComponent(editingId)}` : "/api/local/securities";
     await api(path, { method: editingId ? "PUT" : "POST", body: JSON.stringify(payload) });
-    $("securityStatus").textContent = editingId ? "Security transaction updated" : "Security transaction saved";
+    $("securityStatus").textContent = employeeOptionsWorkflowActive()
+      ? (editingId ? "Employee option grant updated" : "Employee option grant saved with its vesting schedule")
+      : (editingId ? "Security transaction updated" : "Security transaction saved");
     clearSecurityForm();
     await loadLocalSecurities();
     await loadPortfolio();
+    if (employeeOptionsWorkflowActive()) setEmployeeOptionGuideStep(2, { complete: true });
   } catch (error) {
-    $("securityStatus").textContent = `Error: ${error.message}. Check "Manual if not found" to save a symbol without provider validation.`;
+    $("securityStatus").textContent = employeeOptionsWorkflowActive()
+      ? `Could not save the options and vesting schedule: ${error.message}. Your grant definition is still available above, so you can correct this step and retry.`
+      : `Error: ${error.message}. Check "Save manually if market data is unavailable" to save a symbol without provider validation.`;
   }
 }
 
@@ -5027,6 +5723,7 @@ function vestingAlarms() {
         kind: "vesting",
         tone: "vesting",
         transactionId: lot.transactionId,
+        trancheSequence: lot.trancheSequence,
         title: `${lot.symbol} ${unit}${singular ? " vests" : "s vest"} ${dueText}`,
         body: `${quantityLabel} ${singular ? "is" : "are"} scheduled to vest.`,
         meta: `Vest Date: ${formatDate(lot.vestDate)} · ${leadDays}-day notice window`,
@@ -5036,14 +5733,44 @@ function vestingAlarms() {
     .sort((a, b) => String(a.sortDate).localeCompare(String(b.sortDate)) || a.title.localeCompare(b.title));
 }
 
+function alarmDismissalId(alarm) {
+  if (alarm.kind === "vesting") {
+    return ["vesting", alarm.transactionId, alarm.trancheSequence || 1, alarm.sortDate].join(":");
+  }
+  const event = alarm.event || {};
+  return ["dividend", event.id || [event.symbol, event.event_date, event.status].join(":")].join(":");
+}
+
+function currentAlarms({ includeDismissed = false } = {}) {
+  const dismissed = new Set(state.dismissedAlarmIds);
+  const visible = (alarms) => includeDismissed
+    ? alarms
+    : alarms.filter((alarm) => !dismissed.has(alarmDismissalId(alarm)));
+  return {
+    dividends: visible(dividendAlarms()),
+    vesting: visible(vestingAlarms()),
+  };
+}
+
+function clearAlarms() {
+  const { dividends, vesting } = currentAlarms();
+  const alarms = [...vesting, ...dividends];
+  if (!alarms.length) return;
+  state.dismissedAlarmIds = [...state.dismissedAlarmIds, ...alarms.map(alarmDismissalId)];
+  saveAlarmDismissals();
+  renderAlarms();
+  $("alarmsStatus").textContent = `${alarms.length} alarm${alarms.length === 1 ? "" : "s"} cleared. New alarms will still appear.`;
+}
+
 function renderAlarms() {
-  const dividends = dividendAlarms();
-  const vesting = vestingAlarms();
+  const { dividends, vesting } = currentAlarms();
   const alarms = [...vesting, ...dividends];
   const count = $("alarmsCount");
   if (count) count.textContent = String(alarms.length);
   const button = $("alarmsButton");
   if (button) button.classList.toggle("has-alarms", alarms.length > 0);
+  const clearButton = $("clearAlarms");
+  if (clearButton) clearButton.disabled = alarms.length === 0;
   const status = $("alarmsStatus");
   if (status) {
     const future = dividends.filter((alarm) => alarm.event.status === "pending").length;
@@ -5088,6 +5815,8 @@ function openDividendAlarm(eventId) {
 function openVestingAlarm(transactionId) {
   const alarmsModal = $("alarmsModal");
   if (alarmsModal && !alarmsModal.hidden) closeModal(alarmsModal);
+  const transaction = state.localTransactions.find((item) => item.id === transactionId);
+  setSecuritiesWorkflow(transaction?.instrument_type === "EMPLOYEE_STOCK_OPTION" ? "employee-options" : "general");
   openModal("securitiesModal");
   if (transactionId) editSecurityTransaction(transactionId);
 }
@@ -7613,12 +8342,22 @@ function setResearchSection(section = "finance") {
   });
 }
 
-let researchModalReturnFocus = null;
+const modalReturnFocus = new Map();
 
-function openModal(id, returnFocus = document.activeElement) {
+function focusModalDestination(modal, { targetId = "", focusId = "" } = {}) {
+  const target = targetId ? $(targetId) : null;
+  const focusTarget = focusId ? $(focusId) : null;
+  if ((!target || !modal.contains(target)) && (!focusTarget || !modal.contains(focusTarget))) return;
+  requestAnimationFrame(() => {
+    if (target && modal.contains(target)) target.scrollIntoView({ block: "start" });
+    if (focusTarget && modal.contains(focusTarget)) focusTarget.focus({ preventScroll: Boolean(target) });
+  });
+}
+
+function openModal(id, returnFocus = document.activeElement, destination = {}) {
   const modal = $(id);
   if (!modal) return;
-  if (id === "researchModal") researchModalReturnFocus = returnFocus;
+  if (returnFocus instanceof HTMLElement) modalReturnFocus.set(id, returnFocus);
   modal.hidden = false;
   if (id === "accountsModal") {
     setAccountsTab("existing");
@@ -7626,7 +8365,20 @@ function openModal(id, returnFocus = document.activeElement) {
   }
   if (id === "brokersModal") loadBrokers();
   if (id === "familyModal") Promise.all([loadLocalAccounts(), loadFamilyMembers()]);
-  if (id === "securitiesModal") Promise.all([loadLocalAccounts(), loadLocalSecurities()]);
+  if (id === "securitiesModal") {
+    Promise.all([
+      loadLocalAccounts(),
+      loadLocalSecurities(),
+      employeeOptionsWorkflowActive() ? loadEmployeeOptionGrants() : Promise.resolve(),
+    ]).then(() => {
+      if (!employeeOptionsWorkflowActive()) return;
+      const focusTarget = state.employeeOptionWizardMode === "browse" ? $("newEmployeeOptionGrant") : employeeWizardFirstField(1);
+      requestAnimationFrame(() => focusTarget?.focus());
+    }).catch((error) => {
+      const status = employeeOptionsWorkflowActive() ? $("employeeOptionListStatus") : $("securityStatus");
+      if (status) status.textContent = `Error: ${error.message}`;
+    });
+  }
   if (id === "pricesModal") loadLocalPrices();
   if (id === "eventsModal") {
     loadEvents().catch((error) => { $("eventsStatus").textContent = `Error: ${error.message}`; });
@@ -7650,14 +8402,28 @@ function openModal(id, returnFocus = document.activeElement) {
   if (id === "settingsModal") loadCacheStatus();
   if (id === "backupScheduleModal") populateBackupScheduleForm();
   if (id === "aboutModal") loadAbout().catch((error) => { $("aboutContent").innerHTML = `<div class="empty">Error: ${esc(error.message)}</div>`; });
+  focusModalDestination(modal, destination);
 }
 
 function closeModal(modal) {
   if (!modal) return;
   modal.hidden = true;
-  if (modal.id === "researchModal" && researchModalReturnFocus?.isConnected) {
-    requestAnimationFrame(() => researchModalReturnFocus.focus());
+  if (modal.id === "accountsModal" && state.returnToEmployeeOptionsAfterAccount) {
+    state.returnToEmployeeOptionsAfterAccount = false;
   }
+  const returnFocus = modalReturnFocus.get(modal.id);
+  modalReturnFocus.delete(modal.id);
+  const fallbackSelector = modal.id === "securitiesModal" && employeeOptionsWorkflowActive()
+    ? '[data-modal="securitiesModal"][data-securities-workflow="employee-options"]'
+    : `[data-modal="${modal.id}"]`;
+  requestAnimationFrame(() => {
+    const focusTarget = returnFocus?.isConnected ? returnFocus : document.querySelector(fallbackSelector);
+    if (focusTarget instanceof HTMLElement) {
+      const parentMenu = focusTarget.closest("details");
+      if (parentMenu && !parentMenu.open) parentMenu.open = true;
+      focusTarget.focus();
+    }
+  });
 }
 
 document.addEventListener("keydown", (event) => {
@@ -7676,15 +8442,15 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
-  const researchModal = $("researchModal");
-  if (!researchModal || researchModal.hidden) return;
+  const activeModal = [...document.querySelectorAll(".modal:not([hidden])")].at(-1);
+  if (!activeModal) return;
   if (event.key === "Escape") {
     event.preventDefault();
-    closeModal(researchModal);
+    closeModal(activeModal);
     return;
   }
   if (event.key !== "Tab") return;
-  const focusable = [...researchModal.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])')]
+  const focusable = [...activeModal.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])')]
     .filter((element) => element.offsetParent !== null);
   if (!focusable.length) return;
   const currentIndex = focusable.indexOf(document.activeElement);
@@ -7705,7 +8471,34 @@ document.addEventListener("click", (event) => {
   const modalId = modalTrigger?.dataset.modal;
   if (modalId) {
     if (modalTrigger.dataset.researchSection) setResearchSection(modalTrigger.dataset.researchSection);
-    openModal(modalId, modalTrigger);
+    if (modalId === "securitiesModal") setSecuritiesWorkflow(modalTrigger.dataset.securitiesWorkflow || "general");
+    openModal(modalId, modalTrigger, {
+      targetId: modalTrigger.dataset.modalTarget || "",
+      focusId: modalTrigger.dataset.modalFocus || "",
+    });
+  }
+
+  const employeeWizardStep = Number(event.target.closest("[data-employee-guide-step]")?.dataset.employeeGuideStep || 0);
+  if (employeeWizardStep && employeeWizardStep <= state.employeeOptionWizardMaxStep) {
+    if (employeeWizardStep === 3) renderEmployeeWizardReview();
+    setEmployeeOptionGuideStep(employeeWizardStep);
+    requestAnimationFrame(() => employeeWizardFirstField(employeeWizardStep)?.focus());
+  }
+
+  const editEmployeeGrantId = event.target.closest("[data-edit-employee-option-grant]")?.dataset.editEmployeeOptionGrant;
+  if (editEmployeeGrantId) editEmployeeOptionGrant(editEmployeeGrantId);
+
+  const deleteEmployeeGrantId = event.target.closest("[data-delete-employee-option-grant]")?.dataset.deleteEmployeeOptionGrant;
+  if (deleteEmployeeGrantId) deleteEmployeeOptionGrant(deleteEmployeeGrantId);
+
+  if (event.target.id === "createEsopAccountFromOptions") {
+    state.returnToEmployeeOptionsAfterAccount = true;
+    closeModal($("securitiesModal"));
+    openModal("accountsModal", event.target);
+    setAccountsTab("new");
+    $("localAccountType").value = "ESOP";
+    $("accountsStatus").textContent = "Create an ESOP account for your employee stock option grants.";
+    requestAnimationFrame(() => $("localUsername")?.focus());
   }
 
   const researchTab = event.target.closest("[data-research-tab]")?.dataset.researchTab;
@@ -7853,6 +8646,8 @@ document.addEventListener("click", (event) => {
   const editSecurityId = event.target.closest("[data-edit-security]")?.dataset.editSecurity;
   if (editSecurityId) {
     if ($("securitiesModal")?.hidden) {
+      const transaction = state.localTransactions.find((item) => item.id === editSecurityId);
+      setSecuritiesWorkflow(transaction?.instrument_type === "EMPLOYEE_STOCK_OPTION" ? "employee-options" : "general");
       openModal("securitiesModal");
       Promise.resolve(loadLocalSecurities()).then(() => editSecurityTransaction(editSecurityId));
     } else {
@@ -7883,6 +8678,13 @@ document.addEventListener("click", (event) => {
     applyInstrumentToForm(item, "security");
     $("securityKnownInstrument").value = useManualSecurityId;
     $("securityStatus").textContent = `Using ${item?.company_name || item?.symbol || "instrument"} for the next transaction`;
+    if (item?.instrument_type === "EMPLOYEE_STOCK_OPTION") {
+      setEmployeeOptionGuideStep(2);
+      requestAnimationFrame(() => {
+        $("accountTransactionSection")?.scrollIntoView({ block: "start", behavior: "smooth" });
+        $("securityQuantity")?.focus({ preventScroll: true });
+      });
+    }
   }
 
   const listingSecurityId = event.target.closest("[data-link-employee-listing]")?.dataset.linkEmployeeListing;
@@ -8056,6 +8858,15 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  if (event.target.id === "employeeWizardCompanyStatus") toggleEmployeeWizardCompanyFields();
+  if (event.target.id === "employeeWizardCompany") syncEmployeeWizardIssuerFromCompany();
+  if (event.target.id === "employeeWizardLocation") syncCurrencyFromLocation("employeeWizardLocation", "employeeWizardCurrency");
+  if (["employeeWizardVestingStyle", "employeeWizardVestingMode"].includes(event.target.id)) renderEmployeeWizardVestingPreview();
+  if (event.target.id === "employeeWizardGrantDate" && !valueOf("employeeWizardVestingStart")) {
+    setDateField("employeeWizardVestingStart", dateValue("employeeWizardGrantDate"));
+    renderEmployeeWizardVestingPreview();
+  }
+
   const pensionPeriodInput = event.target.closest("[data-pension-period-index][data-pension-period-field]");
   if (pensionPeriodInput) {
     const index = Number(pensionPeriodInput.dataset.pensionPeriodIndex);
@@ -8146,6 +8957,7 @@ document.addEventListener("change", (event) => {
   if (event.target.id === "securityKnownInstrument") {
     applyInstrumentToForm(instrumentById(event.target.value), "security");
     toggleTransactionCompFields();
+    if (employeeOptionsWorkflowActive()) setEmployeeOptionGuideStep(event.target.value ? 2 : 1);
   }
 
   if (event.target.id === "securityAssetClass" || event.target.id === "securityAction") {
@@ -8241,6 +9053,11 @@ document.addEventListener("input", (event) => {
     "securityQuantity", "securityVestingStartDate", "securityVestingDuration", "securityVestingCliffMonths",
     "securityVestingCliffValue", "securityVestingInterval", "securityVestingInstallmentValue",
   ].includes(event.target.id)) renderVestingSchedulePreview();
+  if ([
+    "employeeWizardQuantity", "employeeWizardVestingStart", "employeeWizardSingleVestDate",
+    "employeeWizardFirstMonths", "employeeWizardFirstValue", "employeeWizardInstallmentValue",
+    "employeeWizardInterval", "employeeWizardExpiration",
+  ].includes(event.target.id)) renderEmployeeWizardVestingPreview();
 });
 
 document.addEventListener("focusin", (event) => {
@@ -8310,7 +9127,7 @@ $("saveBroker").addEventListener("click", () => saveBroker().catch((error) => { 
 $("clearBrokerForm").addEventListener("click", clearBrokerForm);
 $("saveFamilyMember").addEventListener("click", () => saveFamilyMember().catch((error) => { $("familyStatus").textContent = `Error: ${error.message}`; }));
 $("clearFamilyMemberForm").addEventListener("click", clearFamilyMemberForm);
-$("attachAccountToMember").addEventListener("click", () => attachAccountToMember().catch((error) => { $("familyStatus").textContent = `Error: ${error.message}`; }));
+$("attachAccountToMember").addEventListener("click", () => attachAccountToMember().catch((error) => { $("accountOwnershipStatus").textContent = `Error: ${error.message}`; }));
 $("attachLocalAccountPerson").addEventListener("click", () => attachFamilyMember("localAccountPersons", "localAccountFamilyMember", "accountsStatus", { single: !accountAllowsMultipleMembers({ type: valueOf("localAccountType") }) }));
 $("attachEditAccountPerson").addEventListener("click", () => attachFamilyMember("editAccountPersons", "editAccountFamilyMember", "editAccountStatus", { single: !accountAllowsMultipleMembers({ type: valueOf("editAccountType") }) }));
 $("importSource").addEventListener("click", () => importSourceToLocal().catch((error) => { $("accountsStatus").textContent = `Error: ${error.message}`; }));
@@ -8339,12 +9156,37 @@ $("dashboardEdit").addEventListener("click", () => setDashboardEdit(!state.dashb
 $("dashboardReset").addEventListener("click", resetDashboard);
 $("saveManualSecurity").addEventListener("click", () => saveManualSecurity().catch((error) => { $("manualSecurityStatus").textContent = `Error: ${error.message}`; }));
 $("saveSecurity").addEventListener("click", () => saveSecurity().catch((error) => { $("securityStatus").textContent = `Error: ${error.message}`; }));
+$("newEmployeeOptionGrant").addEventListener("click", beginNewEmployeeOptionGrant);
+$("cancelEmployeeOptionWizard").addEventListener("click", hideEmployeeOptionWizard);
+$("employeeWizardToVesting").addEventListener("click", () => {
+  if (!validateEmployeeWizardGrant()) return;
+  if (!dateValue("employeeWizardVestingStart")) setDateField("employeeWizardVestingStart", dateValue("employeeWizardGrantDate"));
+  renderEmployeeWizardVestingPreview();
+  setEmployeeOptionGuideStep(2);
+  requestAnimationFrame(() => employeeWizardFirstField(2)?.focus());
+});
+$("employeeWizardBackToGrant").addEventListener("click", () => {
+  setEmployeeOptionGuideStep(1);
+  requestAnimationFrame(() => employeeWizardFirstField(1)?.focus());
+});
+$("employeeWizardToReview").addEventListener("click", () => {
+  if (!validateEmployeeWizardVesting()) return;
+  renderEmployeeWizardReview();
+  setEmployeeOptionGuideStep(3);
+  requestAnimationFrame(() => employeeWizardFirstField(3)?.focus());
+});
+$("employeeWizardBackToVesting").addEventListener("click", () => {
+  setEmployeeOptionGuideStep(2);
+  requestAnimationFrame(() => employeeWizardFirstField(2)?.focus());
+});
+$("saveEmployeeOptionGrant").addEventListener("click", () => saveEmployeeOptionGrant().catch((error) => { $("employeeOptionWizardStatus").textContent = `Error: ${error.message}`; }));
 $("saveEmployeeListing").addEventListener("click", () => saveEmployeeListing().catch((error) => { $("employeeListingStatus").textContent = `Error: ${error.message}`; }));
 $("saveEmployeeExercise").addEventListener("click", () => saveEmployeeExercise().catch((error) => { $("employeeExerciseStatus").textContent = `Error: ${error.message}`; }));
 $("savePositionTransaction").addEventListener("click", () => savePositionTransaction().catch((error) => { $("positionTransactionStatus").textContent = `Error: ${error.message}`; }));
 $("positionTransactionAction").addEventListener("change", syncPositionTransactionLimit);
 $("runDividendEvents").addEventListener("click", () => runDividendEvents().catch((error) => { $("eventsStatus").textContent = `Error: ${error.message}`; }));
 $("saveAlarmSettings").addEventListener("click", saveVestingAlertSettings);
+$("clearAlarms").addEventListener("click", clearAlarms);
 $("savePrice").addEventListener("click", () => savePrice().catch((error) => { $("priceStatus").textContent = `Error: ${error.message}`; }));
 $("saveDetailPrice").addEventListener("click", () => saveSecurityDetailPrice().catch((error) => { $("securityDetailStatus").textContent = `Error: ${error.message}`; }));
 $("loadReports").addEventListener("click", () => loadReports().catch((error) => { $("reportsDetails").innerHTML = `<div class="empty">Error: ${esc(error.message)}</div>`; }));

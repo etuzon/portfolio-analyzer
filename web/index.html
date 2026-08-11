@@ -6,7 +6,7 @@
     <meta name="theme-color" content="#080d25" />
     <title>Portfolio Analyzer</title>
     <link rel="icon" type="image/svg+xml" href="/assets/app-icon.svg" />
-  <link rel="stylesheet" href="/styles.css?v=0.4.70" />
+  <link rel="stylesheet" href="/styles.css?v=0.4.75" />
   </head>
   <body>
     <div class="app-shell">
@@ -29,16 +29,24 @@
             <div class="nav-children">
               <button class="nav-item" type="button" data-modal="accountsModal">Accounts</button>
               <button class="nav-item" type="button" data-modal="brokersModal">Brokers</button>
+              <button class="nav-item" type="button" data-modal="securitiesModal" data-securities-workflow="employee-options">Employee Stock Options</button>
               <button class="nav-item" type="button" data-modal="securitiesModal">Securities</button>
               <button class="nav-item" type="button" data-modal="pricesModal">Prices</button>
               <button class="nav-item" type="button" data-modal="eventsModal">Events</button>
             </div>
           </details>
           <details class="nav-menu">
-            <summary>Household & Retirement</summary>
+            <summary>People</summary>
             <div class="nav-children">
-              <button class="nav-item" type="button" data-modal="familyModal">Family Members</button>
-              <button class="nav-item" type="button" data-modal="fundsModal">Pension/Funds</button>
+              <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="familyMembersSection" data-modal-focus="familyMemberFirstName">Family Members</button>
+              <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="accountOwnershipSection" data-modal-focus="familyAttachAccount">Account Ownership</button>
+            </div>
+          </details>
+          <details class="nav-menu">
+            <summary>Retirement</summary>
+            <div class="nav-children">
+              <button class="nav-item" type="button" data-modal="fundsModal" data-modal-target="fundsTitle" data-modal-focus="showFundCreate">Pensions & Funds</button>
+              <button class="nav-item" type="button" data-modal="fundsModal" data-modal-target="simulatorPanel" data-modal-focus="simPersonSource">Retirement Projections</button>
             </div>
           </details>
           <details class="nav-menu">
@@ -189,7 +197,7 @@
       </main>
     </div>
 
-    <div id="loadingOverlay" class="loading-overlay" role="dialog" aria-modal="true" aria-labelledby="loadingTitle" aria-describedby="loadingDetail" tabindex="-1" hidden>
+    <div id="loadingOverlay" class="loading-overlay" role="status" aria-live="polite" aria-labelledby="loadingTitle" aria-describedby="loadingDetail" hidden>
       <div class="loading-popup">
         <span class="loading-spinner" aria-hidden="true"></span>
         <span>
@@ -319,28 +327,44 @@
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="familyTitle">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Household</p>
-            <h2 id="familyTitle">Family members</h2>
+            <p class="eyebrow">People</p>
+            <h2 id="familyTitle">People and account ownership</h2>
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
-        <div class="management-form">
-          <input id="familyMemberFirstName" placeholder="First name" />
-          <input id="familyMemberLastName" placeholder="Last name" />
-          <select id="familyMemberGender">
-            <option value="">Gender</option>
-            <option value="Female">Female</option>
-            <option value="Male">Male</option>
-            <option value="Other">Other</option>
-          </select>
-          <input id="familyMemberBirthDate" class="date-field" inputmode="numeric" placeholder="Birthday dd/mm/yyyy" />
-          <input id="familyMemberRetireAge" type="number" min="0" step="0.1" placeholder="Retire age optional" />
-          <input id="familyMemberComments" placeholder="Comments" />
-          <button id="saveFamilyMember" type="button">Save person</button>
-          <button id="clearFamilyMemberForm" class="secondary" type="button">Clear form</button>
-        </div>
-        <div class="management-section">
-          <p class="form-caption">Attach account to member</p>
+        <section id="familyMembersSection" class="management-section" aria-labelledby="familyMembersSectionTitle">
+          <div class="section-head compact-head">
+            <div>
+              <p class="eyebrow">People</p>
+              <h3 id="familyMembersSectionTitle">Family members</h3>
+            </div>
+          </div>
+          <div class="management-form">
+            <input id="familyMemberFirstName" placeholder="First name" />
+            <input id="familyMemberLastName" placeholder="Last name" />
+            <select id="familyMemberGender">
+              <option value="">Gender</option>
+              <option value="Female">Female</option>
+              <option value="Male">Male</option>
+              <option value="Other">Other</option>
+            </select>
+            <input id="familyMemberBirthDate" class="date-field" inputmode="numeric" placeholder="Birthday dd/mm/yyyy" />
+            <input id="familyMemberRetireAge" type="number" min="0" step="0.1" placeholder="Retire age optional" />
+            <input id="familyMemberComments" placeholder="Comments" />
+            <button id="saveFamilyMember" type="button">Save person</button>
+            <button id="clearFamilyMemberForm" class="secondary" type="button">Clear form</button>
+          </div>
+          <p id="familyStatus" class="status-line" role="status" aria-live="polite"></p>
+          <div id="familyMembersList" class="stack management-list"></div>
+        </section>
+        <section id="accountOwnershipSection" class="management-section" aria-labelledby="accountOwnershipTitle">
+          <div class="section-head compact-head">
+            <div>
+              <p class="eyebrow">Ownership</p>
+              <h3 id="accountOwnershipTitle">Account ownership</h3>
+            </div>
+          </div>
+          <p class="form-caption">Attach an account to a family member</p>
           <div class="management-form">
             <select id="familyAttachAccount"></select>
             <select id="familyAttachMember"></select>
@@ -349,9 +373,8 @@
           <div class="info-strip">
             Investment and bank accounts can have multiple members. Pension and long-term savings accounts use one member.
           </div>
-        </div>
-        <p id="familyStatus" class="status-line"></p>
-        <div id="familyMembersList" class="stack management-list"></div>
+          <p id="accountOwnershipStatus" class="status-line" role="status" aria-live="polite"></p>
+        </section>
       </section>
     </div>
 
@@ -360,20 +383,158 @@
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="securitiesTitle">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Manual transactions</p>
+            <p id="securitiesEyebrow" class="eyebrow">Manual transactions</p>
             <h2 id="securitiesTitle">Securities</h2>
+            <p id="securitiesSubtitle" class="section-note">Define an instrument, then record it in an account.</p>
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
-        <div class="management-section">
-          <p class="form-caption">Instrument definition</p>
+        <section id="employeeOptionsGuide" class="employee-options-guide" aria-label="Employee stock option setup steps" hidden>
+          <button class="employee-guide-step active" type="button" data-employee-guide-step="1" aria-current="step">
+            <span class="employee-guide-number" aria-hidden="true">1</span>
+            <span><b>Grant</b><small>Company and grant terms</small></span>
+          </button>
+          <div class="employee-guide-connector" aria-hidden="true"></div>
+          <button class="employee-guide-step" type="button" data-employee-guide-step="2" disabled>
+            <span class="employee-guide-number" aria-hidden="true">2</span>
+            <span><b>Vesting</b><small>First vest, then repeat</small></span>
+          </button>
+          <div class="employee-guide-connector" aria-hidden="true"></div>
+          <button class="employee-guide-step" type="button" data-employee-guide-step="3" disabled>
+            <span class="employee-guide-number" aria-hidden="true">3</span>
+            <span><b>Review</b><small>Check dates and save</small></span>
+          </button>
+        </section>
+        <div id="employeeOptionsAccountNotice" class="employee-account-notice" role="status" hidden>
+          <span><b>An ESOP account is required.</b> Create one once, then add all employee grants to it.</span>
+          <button id="createEsopAccountFromOptions" class="secondary compact-button" type="button">Create ESOP account</button>
+        </div>
+        <section id="employeeOptionWizard" class="employee-option-wizard" aria-labelledby="employeeOptionWizardTitle" hidden>
+          <div class="employee-wizard-heading">
+            <div>
+              <p class="eyebrow">Guided setup</p>
+              <h3 id="employeeOptionWizardTitle">Add employee option grant</h3>
+              <p id="employeeOptionWizardHint">You will review every vesting date before anything is saved.</p>
+            </div>
+            <button id="cancelEmployeeOptionWizard" class="secondary compact-button" type="button">Cancel</button>
+          </div>
+
+          <section class="employee-wizard-panel" data-employee-wizard-panel="1" aria-labelledby="employeeWizardGrantTitle">
+            <div class="workflow-section-heading">
+              <span class="workflow-step-badge">Step 1</span>
+              <span>
+                <b id="employeeWizardGrantTitle">Enter the grant terms</b>
+                <small>Copy these values from the grant agreement. Fields marked * are required.</small>
+              </span>
+            </div>
+            <div class="employee-wizard-grid">
+              <label class="management-field"><span>Company Name *</span><input id="employeeWizardCompany" list="employeeCompanyOptions" autocomplete="organization" aria-required="true" placeholder="Employer or issuer" /></label>
+              <label class="management-field"><span>Grant ID</span><input id="employeeWizardGrantId" placeholder="Optional grant ID" /></label>
+              <label class="management-field"><span>Grant Date *</span><input id="employeeWizardGrantDate" class="date-field" inputmode="numeric" aria-required="true" placeholder="dd/mm/yyyy" /></label>
+              <label class="management-field"><span>Company Status *</span><select id="employeeWizardCompanyStatus"><option value="PRIVATE">Private Company</option><option value="PUBLIC">Public Company</option></select></label>
+              <label class="management-field"><span>Company Location *</span><select id="employeeWizardLocation" autocomplete="country-name" aria-required="true"></select></label>
+              <label class="management-field"><span>Currency *</span><select id="employeeWizardCurrency" aria-required="true"></select></label>
+              <label class="management-field"><span>Expiration Date *</span><input id="employeeWizardExpiration" class="date-field" inputmode="numeric" aria-required="true" placeholder="dd/mm/yyyy" /></label>
+              <label class="management-field"><span>Strike Price *</span><input id="employeeWizardStrikePrice" type="number" min="0.0001" step="0.0001" inputmode="decimal" aria-required="true" placeholder="Price per option" /></label>
+              <label class="management-field" data-employee-wizard-public hidden><span>Public Symbol *</span><input id="employeeWizardPublicSymbol" placeholder="Ticker" /></label>
+              <label class="management-field" data-employee-wizard-public hidden><span>Stock Market *</span><input id="employeeWizardPublicMarket" list="marketOptions" placeholder="NASDAQ, NYSE, TASE…" /></label>
+            </div>
+            <details class="employee-wizard-advanced">
+              <summary>Optional grant details</summary>
+              <div class="employee-wizard-grid">
+                <label class="management-field"><span>Tax/Plan Type</span><input id="employeeWizardTaxScheme" placeholder="For example, ISO or NSO" /></label>
+                <label class="management-field" data-employee-wizard-private><span>Latest Share Value</span><input id="employeeWizardShareValue" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Optional private valuation" /></label>
+                <label class="management-field" data-employee-wizard-private><span>Valuation Date</span><input id="employeeWizardValuationDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+                <label class="management-field"><span>Restriction End Date</span><input id="employeeWizardRestrictionEnd" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+                <label class="check employee-option-check"><input id="employeeWizardEarlyExercise" type="checkbox" /> Allow early exercise</label>
+                <label class="management-field field-wide"><span>Comments</span><input id="employeeWizardComments" placeholder="Optional notes" /></label>
+              </div>
+            </details>
+            <p id="employeeWizardGrantStatus" class="status-line" role="status" aria-live="polite"></p>
+            <div class="employee-wizard-actions end">
+              <button id="employeeWizardToVesting" type="button">Continue to vesting</button>
+            </div>
+          </section>
+
+          <section class="employee-wizard-panel" data-employee-wizard-panel="2" aria-labelledby="employeeWizardVestingTitle" hidden>
+            <div class="workflow-section-heading">
+              <span class="workflow-step-badge">Step 2</span>
+              <span>
+                <b id="employeeWizardVestingTitle">Define when options vest</b>
+                <small>Start with the first vest, then describe the repeating interval. The final date is calculated automatically.</small>
+              </span>
+            </div>
+            <div class="employee-wizard-grid vesting-basics-grid">
+              <label class="management-field"><span>ESOP Account *</span><select id="employeeWizardAccount" aria-required="true"></select></label>
+              <label class="management-field"><span>Total Options Granted *</span><input id="employeeWizardQuantity" type="number" min="0.0001" step="0.0001" inputmode="decimal" aria-required="true" placeholder="For example, 4,000" /></label>
+              <label class="management-field"><span>Vesting Starts On *</span><input id="employeeWizardVestingStart" class="date-field" inputmode="numeric" aria-required="true" placeholder="Defaults to Grant Date" /></label>
+              <label class="management-field"><span>Schedule Type *</span><select id="employeeWizardVestingStyle"><option value="SCHEDULE">First vest, then repeat</option><option value="SINGLE">One vest date</option></select></label>
+            </div>
+            <div id="employeeWizardRecurringFields" class="employee-vesting-sentence">
+              <span class="vesting-sentence-part">The first vest happens</span>
+              <label><span class="sr-only">Months until first vest</span><input id="employeeWizardFirstMonths" type="number" min="0" max="600" step="1" value="12" inputmode="numeric" /></label>
+              <span class="vesting-sentence-part">months after vesting starts, and vests</span>
+              <label><span class="sr-only">First vest amount</span><input id="employeeWizardFirstValue" type="number" min="0.0001" step="0.0001" value="25" inputmode="decimal" /></label>
+              <label><span class="sr-only">Vesting amount unit</span><select id="employeeWizardVestingMode"><option value="PERCENT">% of the grant</option><option value="ABSOLUTE">options</option></select></label>
+              <span class="vesting-sentence-part">Then vest</span>
+              <label><span class="sr-only">Recurring vest amount</span><input id="employeeWizardInstallmentValue" type="number" min="0.0001" step="0.0001" value="6.25" inputmode="decimal" /></label>
+              <span id="employeeWizardRecurringUnit" class="vesting-sentence-part">% of the grant every</span>
+              <label><span class="sr-only">Months between recurring vests</span><input id="employeeWizardInterval" type="number" min="1" max="600" step="1" value="3" inputmode="numeric" /></label>
+              <span class="vesting-sentence-part">months until all options are vested.</span>
+            </div>
+            <div id="employeeWizardSingleFields" class="employee-wizard-grid" hidden>
+              <label class="management-field"><span>Vest Date *</span><input id="employeeWizardSingleVestDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+            </div>
+            <div id="employeeWizardVestingPreview" class="employee-wizard-preview" role="status" aria-live="polite"></div>
+            <p id="employeeWizardVestingStatus" class="status-line" role="status" aria-live="polite"></p>
+            <div class="employee-wizard-actions">
+              <button id="employeeWizardBackToGrant" class="secondary" type="button">Back</button>
+              <button id="employeeWizardToReview" type="button">Review grant</button>
+            </div>
+          </section>
+
+          <section class="employee-wizard-panel" data-employee-wizard-panel="3" aria-labelledby="employeeWizardReviewTitle" hidden>
+            <div class="workflow-section-heading">
+              <span class="workflow-step-badge">Step 3</span>
+              <span>
+                <b id="employeeWizardReviewTitle">Review before saving</b>
+                <small>Confirm the grant and exact vesting dates. You can edit the grant later.</small>
+              </span>
+            </div>
+            <div id="employeeWizardReview" class="employee-wizard-review"></div>
+            <p id="employeeOptionWizardStatus" class="status-line" role="status" aria-live="polite"></p>
+            <div class="employee-wizard-actions">
+              <button id="employeeWizardBackToVesting" class="secondary" type="button">Back</button>
+              <button id="saveEmployeeOptionGrant" type="button">Save grant</button>
+            </div>
+          </section>
+        </section>
+        <section id="employeeOptionSavedSection" class="management-section employee-option-saved" aria-labelledby="employeeOptionSavedTitle" hidden>
+          <div class="employee-saved-heading">
+            <div>
+              <p class="eyebrow">Saved grants</p>
+              <h3 id="employeeOptionSavedTitle">Your employee option grants</h3>
+            </div>
+            <button id="newEmployeeOptionGrant" class="secondary compact-button" type="button">Add grant</button>
+          </div>
+          <p id="employeeOptionListStatus" class="status-line" role="status" aria-live="polite"></p>
+          <div id="employeeOptionGrantsList" class="employee-grants-list"></div>
+        </section>
+        <div id="instrumentDefinitionSection" class="management-section">
+          <div class="workflow-section-heading">
+            <span id="instrumentDefinitionBadge" class="workflow-step-badge" hidden>Step 1</span>
+            <span>
+              <b id="instrumentDefinitionTitle">Instrument definition</b>
+              <small id="instrumentDefinitionHint">Describe the security once so it can be reused in transactions and price history.</small>
+            </span>
+          </div>
           <div class="management-form instrument-form">
-            <input id="manualSecuritySymbol" placeholder="ID or symbol" />
-            <input id="manualSecurityName" placeholder="Name" />
-            <input id="manualSecurityMarket" list="marketOptions" placeholder="Market" />
-            <select id="manualInstrumentType"></select>
-            <select id="manualSecurityCurrency"></select>
-            <input id="manualSecurityLocation" list="countryOptions" placeholder="Location" />
+            <label class="management-field" data-public-issuer-field><span>Public Symbol *</span><input id="manualSecuritySymbol" placeholder="Ticker or security ID" /></label>
+            <label class="management-field" data-general-security-field><span>Instrument Name</span><input id="manualSecurityName" placeholder="Security name" /></label>
+            <label class="management-field" data-public-issuer-field><span>Stock Market *</span><input id="manualSecurityMarket" list="marketOptions" placeholder="NASDAQ, NYSE, TASE…" /></label>
+            <label class="management-field"><span>Instrument Type *</span><select id="manualInstrumentType"></select></label>
+            <label class="management-field"><span>Currency *</span><select id="manualSecurityCurrency" required aria-required="true"></select></label>
+            <label class="management-field"><span>Company Location *</span><select id="manualSecurityLocation" autocomplete="country-name" required aria-required="true"></select></label>
             <label class="management-field employee-option-field" data-employee-option-field hidden>
               <span>Company Name *</span>
               <input id="manualCompanyName" list="employeeCompanyOptions" autocomplete="organization" placeholder="Employer or issuer" aria-required="true" />
@@ -398,8 +559,8 @@
               <span>Vesting Start Date *</span>
               <input id="manualVestingStartDate" class="date-field" inputmode="numeric" placeholder="Defaults to Grant Date" aria-required="true" />
             </label>
-            <input id="manualUnderlyingSymbol" data-derivative-field placeholder="Underlying" />
-            <select id="manualOptionType" data-option-field></select>
+            <label class="management-field" data-derivative-field data-non-employee-derivative-field><span>Underlying Symbol *</span><input id="manualUnderlyingSymbol" placeholder="Underlying ticker" /></label>
+            <label class="management-field" data-option-field data-non-employee-option-field><span>Option Type *</span><select id="manualOptionType"></select></label>
             <label class="management-field" data-derivative-field>
               <span>Expiration Date *</span>
               <input id="manualExpirationDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-required="true" />
@@ -408,7 +569,7 @@
               <span>Strike Price *</span>
               <input id="manualStrikePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Strike" aria-required="true" />
             </label>
-            <input id="manualContractMultiplier" data-derivative-field type="number" step="0.0001" placeholder="Multiplier" />
+            <label class="management-field" data-derivative-field data-non-employee-derivative-field><span>Contract Multiplier</span><input id="manualContractMultiplier" type="number" min="0.0001" step="0.0001" inputmode="decimal" placeholder="Shares per contract" /></label>
             <label class="management-field employee-option-field" data-employee-option-field hidden>
               <span>Tax/Plan Type</span>
               <input id="manualTaxScheme" placeholder="Optional, e.g. ISO or NSO" />
@@ -426,19 +587,26 @@
               <input id="manualRestrictionEndDate" class="date-field" inputmode="numeric" placeholder="Optional dd/mm/yyyy" />
             </label>
             <label class="check employee-option-check" data-employee-option-field hidden><input id="manualEarlyExercise" type="checkbox" /> Allow early exercise</label>
-            <input id="manualSecurityComments" placeholder="Comments" />
+            <label class="management-field field-wide"><span>Comments</span><input id="manualSecurityComments" placeholder="Optional notes" /></label>
             <button id="saveManualSecurity" type="button">Save instrument</button>
           </div>
           <p class="info-strip" data-employee-option-field hidden>Grant Date is when the company issued the grant. Vesting Start Date controls the cliff and later vesting dates. The date you add it to this app is stored separately and never changes vesting calculations. A private share value is informational, not a formal tax valuation.</p>
-          <p id="manualSecurityStatus" class="status-line"></p>
+          <p id="manualSecurityStatus" class="status-line" role="status" aria-live="polite"></p>
+          <p id="definedInstrumentsLabel" class="form-caption list-head">Defined instruments</p>
           <div id="manualSecuritiesList" class="stack management-list compact-list"></div>
         </div>
-        <div class="management-section">
-          <p class="form-caption">Account transaction</p>
+        <div id="accountTransactionSection" class="management-section">
+          <div class="workflow-section-heading">
+            <span id="accountTransactionBadge" class="workflow-step-badge" hidden>Step 2</span>
+            <span>
+              <b id="accountTransactionTitle">Account transaction</b>
+              <small id="accountTransactionHint">Choose an account and record the security movement.</small>
+            </span>
+          </div>
           <div class="management-form transaction-form">
-            <select id="securityAccount"></select>
-            <select id="securityKnownInstrument"></select>
-            <select id="securityAction">
+            <label class="management-field"><span>Account *</span><select id="securityAccount"></select></label>
+            <label class="management-field"><span>Defined Instrument *</span><select id="securityKnownInstrument"></select></label>
+            <label class="management-field"><span>Action *</span><select id="securityAction">
               <option value="BUY">Buy</option>
               <option value="SELL">Sell</option>
               <option value="SHORT">Short</option>
@@ -447,16 +615,16 @@
               <option value="FEE">Fee</option>
               <option value="ADD">Add security</option>
               <option value="REMOVE">Remove security</option>
-            </select>
-            <input id="securitySymbol" placeholder="ID or symbol" />
-            <input id="securityMarket" list="marketOptions" placeholder="Stock market" />
-            <select id="securityAssetClass"></select>
-            <input id="securityQuantity" type="number" step="0.0001" placeholder="Amount" />
-            <input id="securityPrice" type="number" step="0.0001" placeholder="Price" />
-            <input id="securityDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
-            <input id="securityVestDate" class="date-field" data-equity-comp-field inputmode="numeric" placeholder="Vested date" hidden />
-            <input id="securityStrikePrice" data-option-grant-field type="number" min="0" step="0.0001" placeholder="Strike price required" hidden />
-            <input id="securityPurchasePrice" data-equity-comp-field type="number" min="0" step="0.0001" placeholder="Purchase price" hidden />
+            </select></label>
+            <label class="management-field" data-general-transaction-field><span>Symbol *</span><input id="securitySymbol" placeholder="Ticker or security ID" /></label>
+            <label class="management-field" data-general-transaction-field><span>Stock Market *</span><input id="securityMarket" list="marketOptions" placeholder="Market" /></label>
+            <label class="management-field" data-general-transaction-field><span>Asset Class *</span><select id="securityAssetClass"></select></label>
+            <label class="management-field"><span id="securityQuantityLabel">Quantity *</span><input id="securityQuantity" type="number" min="0.0001" step="0.0001" inputmode="decimal" placeholder="Number of units" /></label>
+            <label id="securityPriceField" class="management-field"><span>Entered Price *</span><input id="securityPrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Price" /></label>
+            <label class="management-field"><span id="securityDateLabel">Transaction Date *</span><input id="securityDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+            <label id="securityVestDateField" class="management-field" data-equity-comp-field hidden><span>Single Vest Date *</span><input id="securityVestDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+            <label class="management-field" data-option-grant-field data-employee-option-derived-field hidden><span>Strike Price *</span><input id="securityStrikePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Strike price" /></label>
+            <label class="management-field" data-equity-comp-field data-employee-option-derived-field hidden><span>Exercise/Purchase Price</span><input id="securityPurchasePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Optional" /></label>
             <section id="vestingSchedulePanel" class="vesting-schedule-panel" data-employee-option-transaction-field hidden aria-labelledby="vestingScheduleTitle">
               <div class="vesting-schedule-head">
                 <div>
@@ -506,13 +674,14 @@
               </div>
               <div id="vestingSchedulePreview" class="vesting-schedule-preview" role="status" aria-live="polite"></div>
             </section>
-            <label class="check"><input id="securityAllowManual" type="checkbox" /> Manual if not found</label>
-            <input id="securityComments" placeholder="Comments" />
+            <label class="check" data-general-transaction-field><input id="securityAllowManual" type="checkbox" /> Save manually if market data is unavailable</label>
+            <label class="management-field field-wide"><span>Comments</span><input id="securityComments" placeholder="Optional notes" /></label>
             <button id="saveSecurity" type="button">Save transaction</button>
             <button id="cancelSecurityEdit" class="secondary" type="button" hidden>Cancel edit</button>
           </div>
         </div>
-        <p id="securityStatus" class="status-line"></p>
+        <p id="securityStatus" class="status-line" role="status" aria-live="polite"></p>
+        <p id="savedTransactionsLabel" class="form-caption list-head">Saved transactions</p>
         <div id="securitiesList" class="stack management-list"></div>
       </section>
     </div>
@@ -768,7 +937,10 @@
           <button id="saveAlarmSettings" class="secondary" type="button">Save notice</button>
         </div>
         <p id="alarmSettingsStatus" class="status-line" role="status" aria-live="polite"></p>
-        <p id="alarmsStatus" class="status-line">Vesting and dividend alarms</p>
+        <div class="alarms-list-head">
+          <p id="alarmsStatus" class="status-line" role="status" aria-live="polite">Vesting and dividend alarms</p>
+          <button id="clearAlarms" class="secondary compact-button" type="button">Clear alarms</button>
+        </div>
         <div id="alarmsList" class="stack"></div>
       </section>
     </div>
@@ -1085,7 +1257,7 @@
           </div>
         </div>
         <div id="fundsList" class="stack management-list"></div>
-        <div class="simulator-panel">
+        <div id="simulatorPanel" class="simulator-panel">
           <div class="section-head">
             <div>
               <p class="eyebrow">Simulation</p>
@@ -1468,6 +1640,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="/app.js?v=0.4.72"></script>
+  <script src="/app.js?v=0.4.83"></script>
   </body>
 </html>

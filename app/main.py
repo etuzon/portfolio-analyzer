@@ -1769,6 +1769,45 @@ def delete_manual_security(security_id: str):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.get("/api/local/employee-option-grants")
+def list_employee_option_grants():
+    return {"items": local_store.list_employee_option_grants()}
+
+
+@app.post("/api/local/employee-option-grants")
+def save_employee_option_grant(payload: dict[str, Any]):
+    try:
+        result = local_store.save_employee_option_grant(payload or {})
+        clear_portfolio_cache()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/local/employee-option-grants/{security_id}")
+def update_employee_option_grant(security_id: str, payload: dict[str, Any]):
+    try:
+        result = local_store.save_employee_option_grant({**(payload or {}), "security_id": security_id})
+        clear_portfolio_cache()
+        return result
+    except ValueError as exc:
+        message = str(exc)
+        if "not found" in message.lower():
+            raise HTTPException(status_code=404, detail=message) from exc
+        raise HTTPException(status_code=400, detail=message) from exc
+
+
+@app.delete("/api/local/employee-option-grants/{security_id}")
+def delete_employee_option_grant(security_id: str):
+    try:
+        if not local_store.delete_employee_option_grant(security_id):
+            raise HTTPException(status_code=404, detail="Employee option grant not found")
+        clear_portfolio_cache()
+        return {"deleted": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/local/equity-transitions")
 def list_equity_transitions():
     return {"items": local_store.list_equity_transitions()}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import nullcontext
 from threading import RLock
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
@@ -47,6 +48,7 @@ INSTRUMENT_TYPES = [
 ]
 OPTION_TYPES = ["CALL", "PUT"]
 ISSUER_LISTING_STATUSES = ["PRIVATE", "PUBLIC"]
+EMPLOYEE_OPTION_CURRENCIES = {"ILS", "USD", "EUR"}
 COMPANY_OUTLOOK_ACCURACY_TARGET_PERCENT = 75.0
 COMPANY_OUTLOOK_MIN_EVALUATED_PREDICTIONS = 30
 TRANSACTION_ACTIONS = ["ADD", "REMOVE", "BUY", "SELL", "SHORT", "DIVIDEND", "INTEREST", "FEE"]
@@ -1318,7 +1320,12 @@ class LocalPortfolioStore:
             ).fetchall()
         return [_dict(row) for row in rows]
 
-    def save_manual_security(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def save_manual_security(
+        self,
+        payload: dict[str, Any],
+        *,
+        _conn: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
         instrument_type = _choice(payload.get("instrument_type"), INSTRUMENT_TYPES, "STOCK")
         asset_class = _asset_class_for_instrument(instrument_type, payload.get("asset_class"))
         location = str(payload.get("location") or "USA").strip()
@@ -1336,6 +1343,8 @@ class LocalPortfolioStore:
         existing = self.manual_security_by_id(security_id) if payload.get("id") else None
 
         if is_employee_option:
+            if currency not in EMPLOYEE_OPTION_CURRENCIES:
+                raise ValueError("Employee stock-option currency must be ILS, USD, or EUR")
             company_name = str(payload.get("company_name") or payload.get("issuer_name") or payload.get("name") or "").strip()
             if not company_name:
                 raise ValueError("Company name is required for employee stock options")
@@ -1467,7 +1476,8 @@ class LocalPortfolioStore:
                 record["name"] = f"{issuer_record['company_name']}{grant_label} employee options"
             else:
                 record["name"] = record["symbol"]
-        with self._connect() as conn:
+        connection_scope = nullcontext(_conn) if _conn is not None else self._connect()
+        with connection_scope as conn:
             if issuer_record:
                 conn.execute(
                     """
@@ -1524,6 +1534,20 @@ class LocalPortfolioStore:
                 """,
                 record,
             )
+        if _conn is not None:
+            return {
+                **record,
+                **({
+                    "company_name": issuer_record["company_name"],
+                    "listing_status": issuer_record["listing_status"],
+                    "public_symbol": issuer_record["public_symbol"],
+                    "public_market": issuer_record["public_market"],
+                    "listing_date": issuer_record["listing_date"],
+                    "restriction_end_date": issuer_record["restriction_end_date"],
+                    "manual_share_value": issuer_record["manual_share_value"],
+                    "valuation_date": issuer_record["valuation_date"],
+                } if issuer_record else {}),
+            }
         return self.manual_security_by_id(record["id"]) or self.manual_security(record["symbol"], record["stock_market"]) or record
 
     def delete_manual_security(self, security_id: str) -> bool:
@@ -1539,6 +1563,181 @@ class LocalPortfolioStore:
                     raise ValueError("Cannot remove an instrument that has transactions or lifecycle history")
             conn.execute("delete from manual_securities where id = ?", (security_id,))
         return bool(before)
+
+    def list_employee_option_grants(self) -> list[dict[str, Any]]:
+        securities = [
+            item for item in self.list_manual_securities()
+            if item.get("instrument_type") == "EMPLOYEE_STOCK_OPTION"
+        ]
+        transactions = self.list_transactions()
+        with self._connect() as conn:
+            transition_rows = conn.execute(
+                """
+                select source_security_id, target_security_id
+                from equity_transitions
+                where trim(source_security_id) != '' or trim(target_security_id) != ''
+                """
+            ).fetchall()
+        lifecycle_ids = {
+            str(security_id)
+            for row in transition_rows
+            for security_id in (row["source_security_id"], row["target_security_id"])
+            if str(security_id or "").strip()
+        }
+        grants: list[dict[str, Any]] = []
+        for security in securities:
+            related = [tx for tx in transactions if tx.get("security_id") == security["id"]]
+            setup_transactions = [
+                tx for tx in related
+                if tx.get("action") == "ADD" and not str(tx.get("transition_id") or "").strip()
+            ]
+            setup_transaction = min(
+                setup_transactions,
+                key=lambda tx: (str(tx.get("created_at") or ""), str(tx.get("id") or "")),
+                default=None,
+            )
+            has_lifecycle_history = security["id"] in lifecycle_ids or any(
+                str(tx.get("transition_id") or "").strip() for tx in related
+            )
+            simple_setup = len(related) <= 1 and (not related or setup_transaction is not None)
+            grants.append(
+                {
+                    "security": security,
+                    "transaction": setup_transaction,
+                    "activity_count": len(related),
+                    "has_lifecycle_history": has_lifecycle_history,
+                    "can_edit": not has_lifecycle_history and simple_setup,
+                    "can_delete": not has_lifecycle_history and simple_setup,
+                }
+            )
+        return grants
+
+    def employee_option_grant(self, security_id: Any) -> dict[str, Any] | None:
+        key = str(security_id or "").strip()
+        if not key:
+            return None
+        return next(
+            (grant for grant in self.list_employee_option_grants() if grant["security"]["id"] == key),
+            None,
+        )
+
+    def save_employee_option_grant(self, payload: dict[str, Any]) -> dict[str, Any]:
+        grant_payload = dict(payload.get("grant") or {})
+        vesting_payload = dict(payload.get("vesting") or {})
+        security_id = str(payload.get("security_id") or grant_payload.get("id") or "").strip()
+        transaction_id = str(payload.get("transaction_id") or vesting_payload.get("id") or "").strip()
+        if security_id:
+            grant_payload["id"] = security_id
+        grant_payload["instrument_type"] = "EMPLOYEE_STOCK_OPTION"
+        account = self._account(vesting_payload.get("account_db_id"))
+        if str(account.get("type") or "").upper() != "ESOP":
+            raise ValueError("Choose an ESOP account for the employee option grant")
+
+        with self._connect() as conn:
+            if security_id:
+                existing_security = conn.execute(
+                    "select instrument_type from manual_securities where id = ?",
+                    (security_id,),
+                ).fetchone()
+                if not existing_security:
+                    raise ValueError("Employee option grant not found")
+                if existing_security["instrument_type"] != "EMPLOYEE_STOCK_OPTION":
+                    raise ValueError("The selected instrument is not an employee option grant")
+                lifecycle_count = conn.execute(
+                    """
+                    select count(*) from equity_transitions
+                    where source_security_id = ? or target_security_id = ?
+                    """,
+                    (security_id, security_id),
+                ).fetchone()[0]
+                if lifecycle_count:
+                    raise ValueError("A grant with exercise or listing history cannot be edited")
+
+            existing_transaction = None
+            if transaction_id:
+                existing_transaction = conn.execute(
+                    "select * from transactions where id = ?",
+                    (transaction_id,),
+                ).fetchone()
+                if not existing_transaction:
+                    raise ValueError("Employee option vesting record not found")
+                if str(existing_transaction["transition_id"] or "").strip():
+                    raise ValueError("Lifecycle-generated transactions are read-only")
+                if security_id and existing_transaction["security_id"] != security_id:
+                    raise ValueError("The vesting record does not belong to this employee option grant")
+
+            security = self.save_manual_security(grant_payload, _conn=conn)
+            merged_vesting = {
+                **(_dict(existing_transaction) if existing_transaction else {}),
+                **vesting_payload,
+                "id": transaction_id or str(uuid4()),
+                "account_db_id": account["id"],
+                "action": "ADD",
+                "security_id": security["id"],
+                "symbol": security["symbol"],
+                "stock_market": security["stock_market"],
+                "asset_class": "EMPLOYEE_STOCK_OPTION",
+                "price_input": 0,
+                "strike_price": security["strike_price"],
+                "trade_date": vesting_payload.get("trade_date") or security["grant_date"],
+                "created_at": str(
+                    (existing_transaction["created_at"] if existing_transaction else "") or _now()
+                ),
+            }
+            transaction = self._transaction_record(
+                merged_vesting,
+                account=account,
+                metadata=security,
+            )
+            position_quantity = self._validate_position_ledger(
+                conn,
+                transaction,
+                exclude_id=transaction_id,
+            )
+            if existing_transaction:
+                self._update_transaction_record(conn, transaction)
+            else:
+                self._insert_transaction(conn, transaction)
+
+        saved = self.employee_option_grant(security["id"])
+        if not saved:
+            raise ValueError("Employee option grant could not be loaded after saving")
+        saved["position_quantity"] = position_quantity
+        return saved
+
+    def delete_employee_option_grant(self, security_id: str) -> bool:
+        key = str(security_id or "").strip()
+        with self._connect() as conn:
+            security = conn.execute(
+                "select instrument_type from manual_securities where id = ?",
+                (key,),
+            ).fetchone()
+            if not security:
+                return False
+            if security["instrument_type"] != "EMPLOYEE_STOCK_OPTION":
+                raise ValueError("The selected instrument is not an employee option grant")
+            lifecycle_count = conn.execute(
+                """
+                select count(*) from equity_transitions
+                where source_security_id = ? or target_security_id = ?
+                """,
+                (key, key),
+            ).fetchone()[0]
+            transactions = conn.execute(
+                "select id, action, transition_id from transactions where security_id = ?",
+                (key,),
+            ).fetchall()
+            simple_setup = len(transactions) <= 1 and all(
+                tx["action"] == "ADD" and not str(tx["transition_id"] or "").strip()
+                for tx in transactions
+            )
+            if lifecycle_count or not simple_setup:
+                raise ValueError(
+                    "This grant has exercise or additional activity. Remove that activity before deleting the grant"
+                )
+            conn.execute("delete from transactions where security_id = ?", (key,))
+            conn.execute("delete from manual_securities where id = ?", (key,))
+        return True
 
     def manual_security(self, symbol: Any, stock_market: Any) -> dict[str, Any] | None:
         symbol_key = _clean_security_symbol(symbol)
@@ -1630,13 +1829,20 @@ class LocalPortfolioStore:
             self._insert_transaction(conn, record)
         return self._transaction_with_position_status(record, position_quantity)
 
-    def _transaction_record(self, payload: dict[str, Any]) -> dict[str, Any]:
-        account = self._account(payload.get("account_db_id"))
+    def _transaction_record(
+        self,
+        payload: dict[str, Any],
+        *,
+        account: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        account = account or self._account(payload.get("account_db_id"))
         action = _choice(payload.get("action"), TRANSACTION_ACTIONS, "BUY")
         symbol = _clean_security_symbol(payload.get("symbol"))
         stock_market = str(payload.get("stock_market") or "").upper().strip()
         security_id = str(payload.get("security_id") or "").strip()
-        metadata = self.manual_security_by_id(security_id) if security_id else self.manual_security(symbol, stock_market)
+        if metadata is None:
+            metadata = self.manual_security_by_id(security_id) if security_id else self.manual_security(symbol, stock_market)
         if security_id and not metadata:
             raise ValueError("Defined instrument not found")
         if metadata:
@@ -1726,6 +1932,34 @@ class LocalPortfolioStore:
               (:id, :account_db_id, :action, :symbol, :stock_market, :asset_class, :quantity, :price_input, :price,
                :vest_date, :purchase_price, :strike_price, :security_id, :transition_id, :vesting_schedule,
                :currency, :location, :trade_date, :source, :comments, :created_at)
+            """,
+            record,
+        )
+
+    def _update_transaction_record(self, conn: sqlite3.Connection, record: dict[str, Any]) -> None:
+        conn.execute(
+            """
+            update transactions
+            set account_db_id = :account_db_id,
+                action = :action,
+                symbol = :symbol,
+                stock_market = :stock_market,
+                asset_class = :asset_class,
+                quantity = :quantity,
+                price_input = :price_input,
+                price = :price,
+                vest_date = :vest_date,
+                purchase_price = :purchase_price,
+                strike_price = :strike_price,
+                security_id = :security_id,
+                transition_id = :transition_id,
+                vesting_schedule = :vesting_schedule,
+                currency = :currency,
+                location = :location,
+                trade_date = :trade_date,
+                source = :source,
+                comments = :comments
+            where id = :id
             """,
             record,
         )
@@ -1829,32 +2063,7 @@ class LocalPortfolioStore:
                     stock_market=old_key[2],
                     exclude_id=transaction_id,
                 )
-            conn.execute(
-                """
-                update transactions
-                set account_db_id = :account_db_id,
-                    action = :action,
-                    symbol = :symbol,
-                    stock_market = :stock_market,
-                    asset_class = :asset_class,
-                    quantity = :quantity,
-                    price_input = :price_input,
-                    price = :price,
-                    vest_date = :vest_date,
-                    purchase_price = :purchase_price,
-                    strike_price = :strike_price,
-                    security_id = :security_id,
-                    transition_id = :transition_id,
-                    vesting_schedule = :vesting_schedule,
-                    currency = :currency,
-                    location = :location,
-                    trade_date = :trade_date,
-                    source = :source,
-                    comments = :comments
-                where id = :id
-                """,
-                record,
-            )
+            self._update_transaction_record(conn, record)
         return self._transaction_with_position_status(record, position_quantity)
 
     def delete_transaction(self, transaction_id: str) -> bool:

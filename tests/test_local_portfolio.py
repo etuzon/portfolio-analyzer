@@ -1442,6 +1442,31 @@ def test_private_employee_option_uses_issuer_identity_without_public_market(tmp_
     assert saved["contract_multiplier"] == 1
 
 
+def test_employee_option_currency_is_limited_to_ils_usd_and_eur(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+
+    def grant(currency, location):
+        return store.save_manual_security(
+            {
+                "company_name": f"{currency} Options Ltd",
+                "listing_status": "PRIVATE",
+                "instrument_type": "EMPLOYEE_STOCK_OPTION",
+                "grant_date": "01/01/2026",
+                "vesting_start_date": "01/01/2026",
+                "expiration_date": "01/01/2036",
+                "strike_price": 1,
+                "currency": currency,
+                "location": location,
+            }
+        )
+
+    assert grant("ILS", "Israel")["currency"] == "ILS"
+    assert grant("USD", "USA")["currency"] == "USD"
+    assert grant("EUR", "France")["currency"] == "EUR"
+    with pytest.raises(ValueError, match="currency must be ILS, USD, or EUR"):
+        grant("GBP", "United Kingdom")
+
+
 def test_employee_option_grants_for_same_company_share_issuer_lifecycle(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
     first = _save_private_employee_option(store)
@@ -1531,6 +1556,113 @@ def test_employee_option_percentage_schedule_is_saved_as_one_transaction(tmp_pat
     assert schedule["tranches"][-1]["vest_date"] == "2028-01-01"
     assert schedule["tranches"][-1]["cumulative_quantity"] == 4000
     assert sum(item["quantity"] for item in schedule["tranches"]) == 4000
+
+
+def test_employee_option_grant_wizard_crud_is_atomic(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = store.save_account({"type": "ESOP", "location": "Israel", "currency": "ILS", "username": "Options"})
+    payload = {
+        "grant": {
+            "company_name": "Wizard Labs",
+            "listing_status": "PRIVATE",
+            "grant_id": "W-2026",
+            "grant_date": "14/05/2026",
+            "vesting_start_date": "14/05/2026",
+            "expiration_date": "14/05/2036",
+            "strike_price": 45.46,
+            "currency": "ILS",
+            "location": "Israel",
+        },
+        "vesting": {
+            "account_db_id": account["id"],
+            "quantity": 4000,
+            "vesting_schedule": {
+                "enabled": True,
+                "mode": "PERCENT",
+                "vesting_start_date": "14/05/2026",
+                "duration_months": 48,
+                "cliff_months": 12,
+                "cliff_value": 25,
+                "interval_months": 3,
+                "installment_value": 6.25,
+            },
+        },
+    }
+
+    created = store.save_employee_option_grant(payload)
+    security_id = created["security"]["id"]
+    transaction_id = created["transaction"]["id"]
+    assert created["transaction"]["vesting_schedule"]["tranches"][0]["vest_date"] == "2027-05-14"
+    assert created["transaction"]["vesting_schedule"]["tranches"][-1]["vest_date"] == "2030-05-14"
+    assert created["can_edit"] is True
+    assert len(store.list_manual_securities()) == 1
+    assert len(store.list_transactions()) == 1
+
+    updated = store.save_employee_option_grant(
+        {
+            **payload,
+            "security_id": security_id,
+            "transaction_id": transaction_id,
+            "grant": {**payload["grant"], "id": security_id, "strike_price": 50},
+            "vesting": {
+                **payload["vesting"],
+                "id": transaction_id,
+                "quantity": 2000,
+                "vesting_schedule": {
+                    **payload["vesting"]["vesting_schedule"],
+                    "cliff_value": 50,
+                    "installment_value": 25,
+                    "duration_months": 18,
+                },
+            },
+        }
+    )
+    assert updated["security"]["strike_price"] == 50
+    assert updated["transaction"]["quantity"] == 2000
+    assert len(updated["transaction"]["vesting_schedule"]["tranches"]) == 3
+    assert len(store.list_manual_securities()) == 1
+    assert len(store.list_transactions()) == 1
+
+    assert store.delete_employee_option_grant(security_id) is True
+    assert store.list_manual_securities() == []
+    assert store.list_transactions() == []
+
+
+def test_employee_option_grant_wizard_rolls_back_an_invalid_schedule(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = store.save_account({"type": "ESOP", "location": "USA", "currency": "USD"})
+
+    with pytest.raises(ValueError, match="cannot continue after"):
+        store.save_employee_option_grant(
+            {
+                "grant": {
+                    "company_name": "Rollback Labs",
+                    "listing_status": "PRIVATE",
+                    "grant_date": "01/01/2026",
+                    "vesting_start_date": "01/01/2026",
+                    "expiration_date": "01/06/2027",
+                    "strike_price": 1,
+                    "currency": "USD",
+                    "location": "USA",
+                },
+                "vesting": {
+                    "account_db_id": account["id"],
+                    "quantity": 100,
+                    "vesting_schedule": {
+                        "enabled": True,
+                        "mode": "PERCENT",
+                        "duration_months": 48,
+                        "cliff_months": 12,
+                        "cliff_value": 25,
+                        "interval_months": 3,
+                        "installment_value": 6.25,
+                    },
+                },
+            }
+        )
+
+    assert store.list_manual_securities() == []
+    assert store.list_transactions() == []
 
 
 def test_employee_option_absolute_schedule_and_under_vesting_validation(tmp_path):
