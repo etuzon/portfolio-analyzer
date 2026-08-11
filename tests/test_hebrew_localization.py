@@ -48,7 +48,7 @@ def test_hebrew_is_the_default_document_language_and_direction():
     script = (ROOT / "web/app.js").read_text()
 
     assert '<html lang="he" dir="rtl">' in html
-    assert html.index('/i18n.js?v=1.0.2') < html.index('/app.js?v=0.4.84')
+    assert html.index('/i18n.js?v=1.0.3') < html.index('/app.js?v=0.4.85')
     assert 'language: "he"' in script
     assert 'state.language = saved === "en" ? "en" : "he"' in script
     assert 'window.PortfolioI18n?.applyToDocument(state.language)' in script
@@ -65,6 +65,28 @@ def test_localization_runtime_handles_dynamic_text_and_attributes():
     assert "source.replace(key" not in i18n
     assert 'field.setAttribute("dir", "auto")' in i18n
     assert 'field.setAttribute("dir", "ltr")' in i18n
+
+
+def test_donut_charts_localize_composed_titles_captions_and_legend_labels():
+    script = (ROOT / "web/app.js").read_text()
+    i18n = (ROOT / "web/i18n.js").read_text()
+
+    assert "const localizedTitle = optionLabel(title)" in script
+    assert ".filter(Boolean).map(optionLabel)" in script
+    assert "optionLabel(group.label)" in script
+    assert '["נכס", "מוביל"]' in script
+    assert '"Asset mix": "הרכב הנכסים"' in i18n
+
+
+def test_data_gap_badges_and_provider_names_use_localized_display_labels():
+    script = (ROOT / "web/app.js").read_text()
+    i18n = (ROOT / "web/i18n.js").read_text()
+
+    assert "const localizedMissing = item.missing.map(optionLabel)" in script
+    assert 'local_portfolio: "Local portfolio"' in script
+    assert "optionLabel(names[key] || cleanSourceLabel(value))" in script
+    assert '"income": "הכנסות"' in i18n
+    assert '"Import DB": "מסד הייבוא"' in i18n
 
 
 def test_rtl_layout_uses_semantic_direction_and_logical_properties():

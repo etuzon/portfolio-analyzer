@@ -1667,10 +1667,11 @@ function providerDisplayName(value) {
     sec_company_facts: "SEC",
     sec_company_tickers: "SEC",
     external_import_market_data: "Import DB",
+    local_portfolio: "Local portfolio",
     local: "Local",
     manual: "Manual",
   };
-  return names[key] || cleanSourceLabel(value);
+  return optionLabel(names[key] || cleanSourceLabel(value));
 }
 
 function isProviderName(value) {
@@ -1827,7 +1828,7 @@ function technicalsCell(sr, movingAverage, currency, maPeriod) {
 
 function providerStatusText(providerStatus) {
   return Object.entries(providerStatus || {})
-    .map(([provider, value]) => `${provider}: ${value}`)
+    .map(([provider, value]) => `${providerDisplayName(provider.split(".").pop())}: ${optionLabel(value)}`)
     .join("; ");
 }
 
@@ -1853,15 +1854,16 @@ function providerStatusHint(providerStatus) {
 function statusCell(item) {
   const providerText = providerStatusText(item.provider_status);
   const providerHint = providerStatusHint(item.provider_status);
+  const localizedMissing = item.missing.map(optionLabel);
   if (!item.missing.length) {
     return `<div class="status-cell" title="${esc(providerText || "All displayed metrics are available")}">
       <span class="badge ok">All displayed data available</span>
       ${providerHint ? `<small>${esc(providerHint)}</small>` : ""}
     </div>`;
   }
-  const visible = item.missing.slice(0, 3);
-  const hiddenCount = Math.max(0, item.missing.length - visible.length);
-  return `<div class="status-cell" title="${esc(`${item.missing.join(", ")}${providerText ? `; ${providerText}` : ""}`)}">
+  const visible = localizedMissing.slice(0, 3);
+  const hiddenCount = Math.max(0, localizedMissing.length - visible.length);
+  return `<div class="status-cell" title="${esc(`${localizedMissing.join(", ")}${providerText ? `; ${providerText}` : ""}`)}">
     <strong>${item.missing.length} data gaps</strong>
     <div class="status-badges">
       ${visible.map((m) => `<span class="badge warn">${esc(m)}</span>`).join("")}
@@ -2035,7 +2037,7 @@ function missingStats(items) {
   const topLabels = Object.entries(counts)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
-    .map(([label, count]) => `${label}: ${count}`)
+    .map(([label, count]) => `${optionLabel(label)}: ${count}`)
     .join("; ");
   return {
     total: items.reduce((sum, item) => sum + item.missing.length, 0),
@@ -2794,17 +2796,19 @@ function renderMarketCostBars(items) {
     </div>`;
 }
 
-function renderDonut(groups, title, centerLabel, total, centerSub = ["TOP", "ASSET"], extraClass = "") {
+function renderDonut(groups, title, centerLabel, total, centerSub = null, extraClass = "") {
   const circumference = 2 * Math.PI * 42;
   let offset = 0;
-  const centerSubLines = (centerSub || []).filter(Boolean);
+  const localizedTitle = optionLabel(title);
+  const requestedCenterSub = centerSub || (state.language === "he" ? ["נכס", "מוביל"] : ["TOP", "ASSET"]);
+  const centerSubLines = requestedCenterSub.filter(Boolean).map(optionLabel);
   const centerSubText = centerSubLines.length <= 1
     ? `<text x="65" y="82" class="donut-sub single">${esc(centerSubLines[0] || "")}</text>`
     : centerSubLines.slice(0, 2).map((line, index) => `<text x="65" y="${76 + index * 12}" class="donut-sub">${esc(line)}</text>`).join("");
   return `
     <div class="chart-card donut-card ${esc(extraClass)}">
-      <div class="chart-title">${esc(title)}</div>
-      <svg viewBox="0 0 130 130" role="img" aria-label="${esc(title)}">
+      <div class="chart-title">${esc(localizedTitle)}</div>
+      <svg viewBox="0 0 130 130" role="img" aria-label="${esc(localizedTitle)}">
         <circle cx="65" cy="65" r="42" fill="none" stroke="#202a3f" stroke-width="14"></circle>
         ${groups.slice(0, 6).map((group, index) => {
           const dash = total ? (group.value / total) * circumference : 0;
@@ -2818,7 +2822,7 @@ function renderDonut(groups, title, centerLabel, total, centerSub = ["TOP", "ASS
       </svg>
       <div class="donut-legend">
         ${groups.slice(0, 3).map((group, index) => `
-          <span><i style="background:${colorAt(index)}"></i>${esc(group.label)} ${total ? Math.round(group.value / total * 100) : 0}%</span>
+          <span><i style="background:${colorAt(index)}"></i>${esc(optionLabel(group.label))} ${total ? Math.round(group.value / total * 100) : 0}%</span>
         `).join("")}
       </div>
     </div>`;

@@ -1206,6 +1206,22 @@
     "No cash movement": "ללא תנועת מזומן",
     "Saved": "נצבר",
     "Funds": "קופות",
+    "Long-term savings": "חיסכון לטווח ארוך",
+    "Asset mix": "הרכב הנכסים",
+    "Portfolio snapshot": "תמונת מצב של התיק",
+    "Price history": "היסטוריית מחירים",
+    "Profit trend": "מגמת רווח",
+    "Dividend trend": "מגמת דיבידנד",
+    "Local portfolio": "תיק מקומי",
+    "Import DB": "מסד הייבוא",
+    "Local": "מקומי",
+    "income": "הכנסות",
+    "profit": "רווח",
+    "dividend": "דיבידנד",
+    "profit/market cap": "רווח / שווי שוק",
+    "industry": "ענף",
+    "price history": "היסטוריית מחירים",
+    "ok": "תקין",
   });
 
   const HEBREW_PATTERNS = Object.freeze([
