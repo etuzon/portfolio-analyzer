@@ -1418,11 +1418,13 @@ function accountHorizonYears(account) {
 }
 
 function riskBand(score) {
-  if (score <= 20) return { key: "low", label: "Low", symbol: "●" };
-  if (score <= 40) return { key: "moderate", label: "Moderate", symbol: "◆" };
-  if (score <= 60) return { key: "elevated", label: "Elevated", symbol: "▲" };
-  if (score <= 80) return { key: "high", label: "High", symbol: "⬟" };
-  return { key: "extreme", label: "Extreme", symbol: "!" };
+  let band;
+  if (score <= 20) band = { key: "low", label: "Low", symbol: "●" };
+  else if (score <= 40) band = { key: "moderate", label: "Moderate", symbol: "◆" };
+  else if (score <= 60) band = { key: "elevated", label: "Elevated", symbol: "▲" };
+  else if (score <= 80) band = { key: "high", label: "High", symbol: "⬟" };
+  else band = { key: "extreme", label: "Extreme", symbol: "!" };
+  return { ...band, label: optionLabel(band.label) };
 }
 
 function riskBadge(risk, compact = false) {
@@ -2108,7 +2110,7 @@ function renderPortfolioValueDashboard(items) {
       <div class="balance-panel">
         <p class="eyebrow">Portfolio value</p>
         <div class="balance-value" title="Securities ${money(securitiesValue, state.baseCurrency, 0)} + cash ${money(cashValue, state.baseCurrency, 0)}">${money(primaryValue, state.baseCurrency)}</div>
-        <div class="delta ${profitClass}" title="Holding profit converted to ${esc(state.baseCurrency)} using displayed FX rates when available">Holding Profit ${signedMoney(primaryProfit, state.baseCurrency)}</div>
+        <div class="delta ${profitClass}" title="Holding profit converted to ${esc(state.baseCurrency)} using displayed FX rates when available">${esc(optionLabel("Holding Profit"))} ${signedMoney(primaryProfit, state.baseCurrency)}</div>
         <details class="summary-drawer">
           <summary>Portfolio stats</summary>
           <div class="summary">${statsHtml}</div>
@@ -2261,8 +2263,8 @@ function renderRows(items) {
     const securityName = String(h.name || "").trim();
     const companyLine = securityName || String(h.symbol || "").trim();
     const industry = String(item.industry || h.industry || h.sector || "").trim();
-    const industryLine = `<div class="security-industry">Industry: ${esc(industry || "Not available")}</div>`;
-    const marketLine = `${h.asset_class || "Asset"} · ${h.currency || ""} · Market: ${market} · API: ${provider}`;
+    const industryLine = `<div class="security-industry">${esc(optionLabel("Industry"))}: ${esc(industry ? optionLabel(industry) : optionLabel("Not available"))}</div>`;
+    const marketLine = `${optionLabel(h.asset_class || "Asset")} · ${h.currency || ""} · ${optionLabel("Market")}: ${market} · API: ${provider}`;
     const rowRisk = state.riskSnapshot?.total?.position_risks?.get(item);
     const averageBuyPrice = Math.abs(Number(h.quantity || 0)) > 0
       ? Math.abs(Number(h.cost_basis || 0) / Number(h.quantity || 0))
@@ -2273,8 +2275,8 @@ function renderRows(items) {
       <td data-label="Risk">${riskBadge(rowRisk)}</td>
       <td data-label="Value / P&L"><div class="value-cell">
         <strong>${money(h.market_value, h.currency)}</strong>
-        <button class="units-history-link" type="button" data-position-history-symbol="${esc(h.symbol)}" data-position-history-market="${esc(marketKey)}" data-position-history-account-id="${esc(h.account_id || "")}" data-position-history-account="${esc(cleanSourceLabel(h.account) || "")}" data-position-history-currency="${esc(h.currency || state.baseCurrency)}" data-position-history-quantity="${esc(h.quantity || 0)}" data-position-history-average="${esc(averageBuyPrice)}" data-position-history-asset="${esc(h.asset_class || "EQUITY")}" data-position-history-location="${esc(h.country || h.location || "")}" title="Open buy and sell history">${fmt(h.quantity, 3)} units</button>
-        <span class="average-buy-price">Avg buy ${averageBuyPrice ? money(averageBuyPrice, h.currency, 2) : "Not available"}</span>
+        <button class="units-history-link" type="button" data-position-history-symbol="${esc(h.symbol)}" data-position-history-market="${esc(marketKey)}" data-position-history-account-id="${esc(h.account_id || "")}" data-position-history-account="${esc(cleanSourceLabel(h.account) || "")}" data-position-history-currency="${esc(h.currency || state.baseCurrency)}" data-position-history-quantity="${esc(h.quantity || 0)}" data-position-history-average="${esc(averageBuyPrice)}" data-position-history-asset="${esc(h.asset_class || "EQUITY")}" data-position-history-location="${esc(h.country || h.location || "")}" title="Open buy and sell history">${fmt(h.quantity, 3)} ${esc(optionLabel("units"))}</button>
+        <span class="average-buy-price">${esc(optionLabel("Avg buy"))} ${averageBuyPrice ? money(averageBuyPrice, h.currency, 2) : esc(optionLabel("Not available"))}</span>
         <b class="${Number(h.unrealized_profit) >= 0 ? "positive" : "negative"}">${signedMoney(h.unrealized_profit, h.currency)}</b>
       </div></td>
       <td data-label="1Y High / Low">${rangeCell(range, h.currency)}</td>
@@ -2471,7 +2473,9 @@ function renderAccountValueTrend() {
       <div class="chart-header">
         <div>
           <div class="chart-title">Account value trend</div>
-          <small class="chart-subtitle">${esc(selectedLabel)} · Value ${esc(trendAmount(last, "value"))} · Cash ${esc(trendAmount(last, "cash"))}</small>
+          <small class="chart-subtitle">${state.language === "he"
+            ? `${esc(optionLabel(selectedLabel))} · שווי ${esc(trendAmount(last, "value"))} · מזומן ${esc(trendAmount(last, "cash"))}`
+            : `${esc(selectedLabel)} · Value ${esc(trendAmount(last, "value"))} · Cash ${esc(trendAmount(last, "cash"))}`}</small>
         </div>
         <div class="chart-legend">
           <span><i style="background:#21a7ff"></i>Total amount</span>
@@ -2686,7 +2690,7 @@ function renderLongTermDashboard() {
       <div class="chart-header">
         <div>
           <div class="chart-title">Long-term funds</div>
-          <small class="chart-subtitle">Saved ${money(latest, state.baseCurrency, 0)} · <span class="${data.monthly ? "" : "muted-inline"}">Monthly pension estimate ${data.monthly ? fmt(data.monthly, 0) : "N/A"}</span></small>
+          <small class="chart-subtitle">${esc(optionLabel("Saved"))} ${money(latest, state.baseCurrency, 0)} · <span class="${data.monthly ? "" : "muted-inline"}">${esc(optionLabel("Monthly pension estimate"))} ${data.monthly ? fmt(data.monthly, 0) : optionLabel("N/A")}</span></small>
         </div>
         <div class="long-term-controls">
           <div class="dashboard-view-toggle long-term-toggle" aria-label="Long-term dashboard view">
@@ -2847,7 +2851,7 @@ function renderIndustrySplit(items) {
     result[label] = group;
     return result;
   }, {}))
-    .map((group) => ({ ...group, holdings: group.holdings.sort((a, b) => b.value - a.value) }))
+    .map((group) => ({ ...group, label: optionLabel(group.label), holdings: group.holdings.sort((a, b) => b.value - a.value) }))
     .sort((a, b) => b.value - a.value);
   const total = sum(groups.map((group) => group.value));
   return `
@@ -2855,7 +2859,7 @@ function renderIndustrySplit(items) {
       <div class="chart-header">
         <div>
           <div class="chart-title">Industry split</div>
-          <span class="chart-subtitle">${groups.length} industries · holdings listed inside each industry</span>
+          <span class="chart-subtitle">${state.language === "he" ? `${groups.length} ענפים · ההחזקות מוצגות בתוך כל ענף` : `${groups.length} industries · holdings listed inside each industry`}</span>
         </div>
         <div class="chart-legend"><span><i style="background:#21a7ff"></i>Portfolio value</span></div>
       </div>
@@ -2964,7 +2968,7 @@ function renderProfitBars(items) {
       <div class="chart-header">
         <div>
           <div class="chart-title">Unrealized P/L by holding</div>
-          <span class="chart-subtitle profit-total-summary">Total P/L ${money(total, state.baseCurrency, 0)}</span>
+          <span class="chart-subtitle profit-total-summary">${esc(optionLabel("Total P/L"))} ${money(total, state.baseCurrency, 0)}</span>
         </div>
         <div class="chart-legend"><span><i style="background:${gainColor}"></i>Gain</span><span><i style="background:${lossColor}"></i>Loss</span></div>
       </div>
@@ -3769,10 +3773,10 @@ async function loadLocalAccounts() {
   $("accountsList").innerHTML = state.localAccounts.length ? state.localAccounts.map((account) => `
     <div class="stack-item management-item">
       <b>${esc(accountLabel(account))}</b>
-      <span>${esc(account.type)} · ${esc(account.location)} · ${esc(account.currency)} · ${isImportedAccount(account) ? "Imported" : "Manual"}</span>
+      <span>${esc(optionLabel(account.type))} · ${esc(optionLabel(account.location))} · ${esc(account.currency)} · ${esc(optionLabel(isImportedAccount(account) ? "Imported" : "Manual"))}</span>
       <button class="secondary compact-button" type="button" data-edit-account="${esc(account.id)}">Edit</button>
       ${isImportedAccount(account) ? '<span class="badge ok" title="Synced from the configured import source. Refresh with Sync import.">Synced</span>' : '<span class="badge" title="Manual account">Manual</span>'}
-      <div class="sub">Initial cash ${fmt(account.initial_cash)}${(account.persons || []).length ? ` · ${(account.persons || []).map(personLabel).map(esc).join(" · ")}` : ""} · ${esc(cleanSourceLabel(account.comments) || "No comments")}</div>
+      <div class="sub">${esc(optionLabel("Initial cash"))} ${fmt(account.initial_cash)}${(account.persons || []).length ? ` · ${(account.persons || []).map(personLabel).map(esc).join(" · ")}` : ""} · ${esc(cleanSourceLabel(account.comments) || optionLabel("No comments"))}</div>
     </div>
   `).join("") : '<div class="empty">No local accounts yet</div>';
   renderPersonLists();
@@ -6377,21 +6381,23 @@ async function loadFunds() {
   $("fundsList").innerHTML = state.localFunds.length ? state.localFunds.map((fund) => {
     const hasMonthlyEstimate = fund.kind === "Pension" && fund.monthly_estimate !== null && fund.monthly_estimate !== undefined;
     const estimate = hasMonthlyEstimate
-      ? `<span>Saved ${fmt(fund.amount, 0)} · Monthly pension estimate ${fmt(fund.monthly_estimate, 0)}</span>`
-      : `<span>Saved ${fmt(fund.amount, 0)} · <em class="muted-inline">Monthly pension estimate N/A</em></span>`;
-    const accountText = fund.account_label ? ` · Account ${esc(fund.account_label)}` : "";
+      ? `<span>${esc(optionLabel("Saved"))} ${fmt(fund.amount, 0)} · ${esc(optionLabel("Monthly pension estimate"))} ${fmt(fund.monthly_estimate, 0)}</span>`
+      : `<span>${esc(optionLabel("Saved"))} ${fmt(fund.amount, 0)} · <em class="muted-inline">${esc(optionLabel("Monthly pension estimate"))} ${esc(optionLabel("N/A"))}</em></span>`;
+    const accountText = fund.account_label ? ` · ${esc(optionLabel("Account"))} ${esc(fund.account_label)}` : "";
     const historyChange = Number(fund.history_change || 0);
     const historyText = Number(fund.history_points || 0) > 1
-      ? `Progress ${historyChange > 0 ? "+" : ""}${fmt(historyChange, 0)} (${historyChange > 0 ? "+" : ""}${pct(fund.history_change_percent)}) since ${formatDate(fund.history_first_date)}`
-      : `${fmt(fund.history_points || 0, 0)} saved history point`;
+      ? (state.language === "he"
+        ? `התקדמות ${historyChange > 0 ? "+" : ""}${fmt(historyChange, 0)} (${historyChange > 0 ? "+" : ""}${pct(fund.history_change_percent)}) מאז ${formatDate(fund.history_first_date)}`
+        : `Progress ${historyChange > 0 ? "+" : ""}${fmt(historyChange, 0)} (${historyChange > 0 ? "+" : ""}${pct(fund.history_change_percent)}) since ${formatDate(fund.history_first_date)}`)
+      : (state.language === "he" ? `${fmt(fund.history_points || 0, 0)} נקודות היסטוריה שמורות` : `${fmt(fund.history_points || 0, 0)} saved history point`);
     return `
       <div class="stack-item management-item">
-        <b>${esc([fund.kind, fund.fund_name || "", fund.pension_id].filter(Boolean).join(" · "))}</b>
+        <b>${esc([optionLabel(fund.kind), fund.fund_name || "", fund.pension_id].filter(Boolean).join(" · "))}</b>
         ${estimate}
-        <button class="secondary compact-button" type="button" data-fund-history="${esc(fund.id)}">History</button>
+        <button class="secondary compact-button" type="button" data-fund-history="${esc(fund.id)}">${esc(optionLabel("History"))}</button>
         <button class="secondary compact-button" type="button" data-edit-fund="${esc(fund.id)}">Edit</button>
         <button class="secondary compact-button" type="button" data-delete-fund="${esc(fund.id)}">Remove</button>
-        <div class="sub">${esc(historyText)}${fund.history_latest_date ? ` · Updated ${esc(formatDate(fund.history_latest_date))}` : ""} · ${(fund.persons || []).length ? `${(fund.persons || []).map(personLabel).map(esc).join(" · ")} · ` : ""}${esc(fund.comments || "No comments")}${accountText}</div>
+        <div class="sub">${esc(historyText)}${fund.history_latest_date ? ` · ${esc(optionLabel("Updated"))} ${esc(formatDate(fund.history_latest_date))}` : ""} · ${(fund.persons || []).length ? `${(fund.persons || []).map(personLabel).map(esc).join(" · ")} · ` : ""}${esc(fund.comments || optionLabel("No comments"))}${accountText}</div>
       </div>
     `;
   }).join("") : '<div class="empty">No pension, provident, or savings funds yet</div>';
@@ -6564,7 +6570,7 @@ function ageFromBirthDate(value) {
 
 function personLabel(person) {
   const age = person.age ?? ageFromBirthDate(person.birth_date);
-  return `${personFullName(person)} · ${formatDate(person.birth_date)}${age ? ` · age ${fmt(age, 1)}` : ""}`;
+  return `${personFullName(person)} · ${formatDate(person.birth_date)}${age ? ` · ${optionLabel("Age")} ${fmt(age, 1)}` : ""}`;
 }
 
 function addPersonTo(listKey, nameId, birthDateId, statusId) {
@@ -7221,7 +7227,7 @@ function renderPensionSimulationResults() {
               <tr>
                 <td>
                   <b>${esc(scenario.name)}</b>
-                  <small>${esc(scenario.kind)} · Age ${fmt(scenario.current_age, 1)}-${fmt(scenario.retire_age, 1)} · ${scenario.income_periods?.length || 0} salary rows</small>
+                  <small>${esc(optionLabel(scenario.kind))} · ${esc(optionLabel("Age"))} ${fmt(scenario.current_age, 1)}-${fmt(scenario.retire_age, 1)} · ${scenario.income_periods?.length || 0} ${esc(optionLabel("salary rows"))}</small>
                 </td>
                 <td>${esc(scenario.return_periods?.length || 0)}</td>
                 <td><b>${money(result.monthly_pension || 0, state.baseCurrency, 0)}</b></td>

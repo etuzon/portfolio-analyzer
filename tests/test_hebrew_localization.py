@@ -48,7 +48,7 @@ def test_hebrew_is_the_default_document_language_and_direction():
     script = (ROOT / "web/app.js").read_text()
 
     assert '<html lang="he" dir="rtl">' in html
-    assert html.index('/i18n.js?v=1.0.3') < html.index('/app.js?v=0.4.85')
+    assert html.index('/i18n.js?v=1.0.4') < html.index('/app.js?v=0.4.86')
     assert 'language: "he"' in script
     assert 'state.language = saved === "en" ? "en" : "he"' in script
     assert 'window.PortfolioI18n?.applyToDocument(state.language)' in script
@@ -87,6 +87,20 @@ def test_data_gap_badges_and_provider_names_use_localized_display_labels():
     assert "optionLabel(names[key] || cleanSourceLabel(value))" in script
     assert '"income": "הכנסות"' in i18n
     assert '"Import DB": "מסד הייבוא"' in i18n
+
+
+def test_populated_dashboard_values_are_localized_at_composition_time():
+    script = (ROOT / "web/app.js").read_text()
+    i18n = (ROOT / "web/i18n.js").read_text()
+
+    assert 'return { ...band, label: optionLabel(band.label) }' in script
+    assert '.map((group) => ({ ...group, label: optionLabel(group.label)' in script
+    assert 'optionLabel("Holding Profit")' in script
+    assert 'optionLabel("Total P/L")' in script
+    assert 'optionLabel("units")' in script
+    assert 'optionLabel(isImportedAccount(account) ? "Imported" : "Manual")' in script
+    assert '"Elevated": "מוגבר"' in i18n
+    assert '"Financial Services": "שירותים פיננסיים"' in i18n
 
 
 def test_rtl_layout_uses_semantic_direction_and_logical_properties():
