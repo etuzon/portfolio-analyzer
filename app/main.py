@@ -3,26 +3,31 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
+import sqlite3
+import stat
+import tempfile
 import zipfile
 from datetime import date, datetime, time as clock_time, timedelta, timezone
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from threading import RLock
 import time
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+import yaml
 
 from . import __version__
 from .alerts import ALERT_JOB_ID, AlertStore, alert_rule_options, start_scheduler
 from .config import data_dir, load_config
-from .ghostfolio import GhostfolioClient
-from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, LocalPortfolioStore
+from .external_import import ExternalImportClient
+from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, SUPPORTED_MANAGEMENT_CURRENCIES, LocalPortfolioStore, validate_portfolio_ownership
 from .metrics import analyze_holding, moving_averages, screen, support_resistance, to_dict, volume_metrics
 from .models import Ohlcv
 from .providers import MarketDataHub
@@ -57,6 +62,10 @@ WEEKDAY_CRON = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 PORTFOLIO_CACHE_FILE = "portfolio-analysis-cache.json"
 FULL_BACKUP_KIND = "portfolio-analyzer-full-backup"
 FULL_BACKUP_VERSION = 1
+MAX_FULL_BACKUP_COMPRESSED_BYTES = 256 * 1024 * 1024
+MAX_FULL_BACKUP_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+MAX_FULL_BACKUP_FILES = 10_000
+FULL_RESTORE_CONFIRMATION = "replace-current-application-state"
 HISTORY_START_DATE = date(2026, 4, 14)
 US_STOCK_MARKETS = {"NASDAQ", "NYSE", "AMEX", "NYSEARCA", "OTC"}
 SUPPORTED_STOCK_MARKETS = {*US_STOCK_MARKETS, "TASE"}
@@ -64,6 +73,7 @@ CLIENT_STATE_PREF_KEY = "client_state"
 BACKUP_SETTINGS_PREF_KEY = "backup_settings"
 _portfolio_cache_lock = RLock()
 _portfolio_cache: dict[str, Any] | None = None
+_full_restore_lock = RLock()
 
 
 def _parse_query_date(value: str) -> date | None:
@@ -1209,6 +1219,10 @@ def write_full_backup(keep: int = 100) -> dict[str, Any]:
     manifest_payload = json.dumps(manifest, indent=2).encode("utf-8")
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     path = local_store.backup_dir() / f"portfolio-full-{timestamp}.zip"
+    suffix = 1
+    while path.exists():
+        path = local_store.backup_dir() / f"portfolio-full-{timestamp}-{suffix}.zip"
+        suffix += 1
     temporary_path = path.with_suffix(".zip.tmp")
     try:
         with zipfile.ZipFile(temporary_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -1239,6 +1253,291 @@ def write_full_backup(keep: int = 100) -> dict[str, Any]:
         "counts": local_store.export_data()["counts"],
         "contains": manifest["contains"],
     }
+
+
+def _valid_full_backup_member(name: str) -> bool:
+    if not name or "\\" in name:
+        return False
+    path = PurePosixPath(name)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        return False
+    if path.as_posix() != name:
+        return False
+    return (
+        name in {"RESTORE.md", "portfolio-data.json", "config.yaml"}
+        or (name.startswith("data/") and not name.startswith("data/backups/"))
+        or name.startswith("certs/")
+    )
+
+
+def _validated_full_backup_archive(payload: bytes) -> tuple[dict[str, Any], dict[str, bytes]]:
+    if not payload:
+        raise ValueError("Select a full backup ZIP file.")
+    if len(payload) > MAX_FULL_BACKUP_COMPRESSED_BYTES:
+        raise ValueError("The backup ZIP is larger than the supported restore limit.")
+    buffer = io.BytesIO(payload)
+    if not zipfile.is_zipfile(buffer):
+        raise ValueError("The selected file is not a valid ZIP archive.")
+    buffer.seek(0)
+    try:
+        with zipfile.ZipFile(buffer) as archive:
+            all_infos = archive.infolist()
+            all_names = [info.filename for info in all_infos]
+            if len(all_names) != len(set(all_names)):
+                raise ValueError("The backup ZIP contains duplicate file names.")
+            infos = [info for info in all_infos if not info.is_dir()]
+            if len(infos) > MAX_FULL_BACKUP_FILES:
+                raise ValueError("The backup ZIP contains too many files.")
+            info_by_name = {info.filename: info for info in infos}
+            manifest_info = info_by_name.get("manifest.json")
+            if manifest_info is None or manifest_info.file_size > 1024 * 1024:
+                raise ValueError("The full-backup manifest is missing or invalid.")
+            for info in infos:
+                if info.flag_bits & 0x1:
+                    raise ValueError("Encrypted ZIP members are not supported.")
+                file_type = (info.external_attr >> 16) & 0o170000
+                if file_type == stat.S_IFLNK:
+                    raise ValueError("Backup ZIP symbolic links are not allowed.")
+            total_size = sum(info.file_size for info in infos)
+            if total_size > MAX_FULL_BACKUP_UNCOMPRESSED_BYTES:
+                raise ValueError("The expanded backup is larger than the supported restore limit.")
+            try:
+                manifest = json.loads(archive.read(manifest_info))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise ValueError("The full-backup manifest is not valid JSON.") from exc
+            if not isinstance(manifest, dict) or manifest.get("kind") != FULL_BACKUP_KIND:
+                raise ValueError("This ZIP is not a Portfolio Analyzer full backup.")
+            if manifest.get("version") != FULL_BACKUP_VERSION:
+                raise ValueError("This full-backup version is not supported.")
+            manifest_items = manifest.get("files")
+            if not isinstance(manifest_items, list):
+                raise ValueError("The full-backup file list is missing.")
+            declared: dict[str, dict[str, Any]] = {}
+            for item in manifest_items:
+                if not isinstance(item, dict):
+                    raise ValueError("The full-backup file list is invalid.")
+                name = str(item.get("path") or "")
+                if name in declared or not _valid_full_backup_member(name):
+                    raise ValueError("The full-backup file list contains an unsafe path.")
+                declared[name] = item
+            actual_names = set(info_by_name) - {"manifest.json"}
+            if set(declared) != actual_names:
+                raise ValueError("The full-backup contents do not match its manifest.")
+            restored_files: dict[str, bytes] = {}
+            for name, item in declared.items():
+                info = info_by_name[name]
+                expected_size = item.get("size_bytes")
+                expected_sha = str(item.get("sha256") or "")
+                if not isinstance(expected_size, int) or expected_size != info.file_size or len(expected_sha) != 64:
+                    raise ValueError("The full-backup manifest metadata is invalid.")
+                value = archive.read(info)
+                if hashlib.sha256(value).hexdigest() != expected_sha:
+                    raise ValueError(f"Backup integrity validation failed for {name}.")
+                restored_files[name] = value
+    except zipfile.BadZipFile as exc:
+        raise ValueError("The selected ZIP archive is damaged.") from exc
+
+    database = restored_files.get("data/local-portfolio.sqlite3")
+    if not database or not database.startswith(b"SQLite format 3\x00"):
+        raise ValueError("The full backup does not contain a valid portfolio database.")
+    descriptor, database_path = tempfile.mkstemp(prefix="portfolio-restore-validation-", suffix=".sqlite3")
+    os.close(descriptor)
+    validation_path = Path(database_path)
+    validation_path.write_bytes(database)
+    connection = sqlite3.connect(validation_path)
+    connection.row_factory = sqlite3.Row
+    try:
+        integrity = connection.execute("pragma quick_check").fetchone()
+        if not integrity or integrity[0] != "ok":
+            raise ValueError("The portfolio database in the backup failed its integrity check.")
+        account_rows = [dict(row) for row in connection.execute("select id, type, persons from accounts").fetchall()]
+        fund_rows = [dict(row) for row in connection.execute("select id, account_id, persons, birth_date from funds").fetchall()]
+        try:
+            validate_portfolio_ownership(account_rows, fund_rows)
+        except ValueError as exc:
+            raise ValueError(f"The full backup has invalid account ownership: {exc}") from exc
+    except sqlite3.DatabaseError as exc:
+        raise ValueError("The portfolio database in the backup is damaged.") from exc
+    finally:
+        connection.close()
+        try:
+            validation_path.unlink()
+        except OSError:
+            pass
+
+    portable_data = restored_files.get("portfolio-data.json")
+    try:
+        if not portable_data or not isinstance(json.loads(portable_data), dict):
+            raise ValueError
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError("The portable data copy in the full backup is invalid.") from exc
+
+    if "config.yaml" in restored_files:
+        try:
+            parsed_config = yaml.safe_load(restored_files["config.yaml"].decode("utf-8"))
+        except (UnicodeDecodeError, yaml.YAMLError) as exc:
+            raise ValueError("config.yaml in the full backup is invalid.") from exc
+        if not isinstance(parsed_config, dict):
+            raise ValueError("config.yaml in the full backup must contain a configuration object.")
+
+    contains = {
+        "portfolio_database": "data/local-portfolio.sqlite3" in restored_files,
+        "portable_data_export": "portfolio-data.json" in restored_files,
+        "client_preferences_and_pension_simulations": True,
+        "application_config": "config.yaml" in restored_files,
+        "runtime_data_and_caches": any(name.startswith("data/") for name in restored_files),
+        "tls_certificates": any(name.startswith("certs/") for name in restored_files),
+    }
+    inspection = {
+        "kind": FULL_BACKUP_KIND,
+        "version": FULL_BACKUP_VERSION,
+        "app_version": str(manifest.get("app_version") or ""),
+        "created_at": str(manifest.get("created_at") or ""),
+        "sensitive": True,
+        "files": len(restored_files) + 1,
+        "total_size_bytes": sum(len(value) for value in restored_files.values()),
+        "contains": contains,
+    }
+    return inspection, restored_files
+
+
+def inspect_full_backup(payload: bytes) -> dict[str, Any]:
+    inspection, _files = _validated_full_backup_archive(payload)
+    return inspection
+
+
+def _full_restore_target(name: str) -> Path | None:
+    if name == "config.yaml":
+        return Path(config.path)
+    if name.startswith("data/"):
+        return data_dir().joinpath(*PurePosixPath(name).parts[1:])
+    if name.startswith("certs/"):
+        cert_root = Path(config.path).parent / "certs"
+        return cert_root.joinpath(*PurePosixPath(name).parts[1:])
+    return None
+
+
+def _write_restored_file(target: Path, value: bytes, allowed_root: Path | None = None) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if allowed_root is not None and not target.parent.resolve().is_relative_to(allowed_root.resolve()):
+        raise ValueError("A restore target resolves outside its allowed directory.")
+    if target.is_symlink():
+        target.unlink()
+    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{target.name}.restore-", dir=str(target.parent))
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(value)
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.chmod(0o600)
+        try:
+            temporary.replace(target)
+        except OSError:
+            if target != Path(config.path):
+                raise
+            with target.open("wb") as handle:
+                handle.write(value)
+                handle.flush()
+                os.fsync(handle.fileno())
+    finally:
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+
+
+def _remove_unrestored_files(root: Path, expected: set[Path], preserve_top_level: set[str] | None = None) -> None:
+    if not root.exists():
+        return
+    preserve = preserve_top_level or set()
+    for path in sorted(root.rglob("*"), key=lambda item: len(item.parts), reverse=True):
+        relative = path.relative_to(root)
+        if relative.parts and relative.parts[0] in preserve:
+            continue
+        if path.is_symlink() or path.is_file():
+            if path not in expected:
+                path.unlink()
+            continue
+        if path.is_dir():
+            try:
+                path.rmdir()
+            except OSError:
+                pass
+
+
+def _apply_full_backup_files(files: dict[str, bytes]) -> None:
+    data_root = data_dir()
+    cert_root = Path(config.path).parent / "certs"
+    expected_data: set[Path] = set()
+    expected_certs: set[Path] = set()
+    targets: list[tuple[Path, bytes, Path | None]] = []
+    for name, value in files.items():
+        target = _full_restore_target(name)
+        if target is None:
+            continue
+        allowed_root: Path | None = None
+        if name.startswith("data/"):
+            if PurePosixPath(name).parts[1] == "backups":
+                raise ValueError("Full backups cannot replace the backup history directory.")
+            allowed_root = data_root
+            expected_data.add(target)
+        elif name.startswith("certs/"):
+            allowed_root = cert_root
+            expected_certs.add(target)
+        targets.append((target, value, allowed_root))
+    for target, value, allowed_root in targets:
+        _write_restored_file(target, value, allowed_root)
+    _remove_unrestored_files(data_root, expected_data, {"backups"})
+    if expected_certs:
+        _remove_unrestored_files(cert_root, expected_certs)
+
+
+def restore_full_backup(payload: bytes) -> dict[str, Any]:
+    global config, _portfolio_cache
+    with _full_restore_lock:
+        inspection, files = _validated_full_backup_archive(payload)
+        backup_settings = load_runtime_settings()["backup"]
+        safety = write_full_backup(int(backup_settings.get("keep") or 100))
+        paused_scheduler = False
+        if scheduler is not None:
+            try:
+                scheduler.pause()
+                paused_scheduler = True
+            except Exception:
+                paused_scheduler = False
+        try:
+            _apply_full_backup_files(files)
+        except Exception as exc:
+            try:
+                safety_payload = Path(safety["path"]).read_bytes()
+                _inspection, safety_files = _validated_full_backup_archive(safety_payload)
+                _apply_full_backup_files(safety_files)
+            except Exception as rollback_exc:
+                raise RuntimeError(
+                    f"Restore failed and automatic rollback could not complete. Preserve safety backup {safety['filename']}."
+                ) from rollback_exc
+            raise RuntimeError("Restore failed; the previous application state was recovered from the safety backup.") from exc
+        finally:
+            if paused_scheduler:
+                try:
+                    scheduler.resume()
+                except Exception:
+                    pass
+
+        config = load_config()
+        hub.cache_clear()
+        with _portfolio_cache_lock:
+            _portfolio_cache = None
+        local_store._init_db()
+        restore_backup_settings_from_preferences()
+        configure_dividend_job()
+        return {
+            "status": "restored",
+            "restored_from": inspection,
+            "safety_backup": safety["filename"],
+            "restart_required": True,
+        }
 
 
 def backup_download_path(filename: str) -> Path:
@@ -1434,7 +1733,13 @@ def process_portfolio_dividends(force_refresh: bool = True) -> dict[str, Any]:
     ]
     for holding in holdings:
         checked += 1
-        dividends, status = hub().dividends(holding.symbol, force_refresh=force_refresh, to_date=to_date)
+        dividends, status = hub().dividends(
+            holding.symbol,
+            force_refresh=force_refresh,
+            to_date=to_date,
+            secondary_symbol=holding.secondary_symbol,
+            stock_market=holding.stock_market,
+        )
         statuses[f"{holding.account_id}:{holding.symbol}"] = status
         for row in dividends:
             event_date = _parse_query_date(str(row.get("date") or ""))
@@ -1511,22 +1816,28 @@ def backup_schedule_summary(backup: dict[str, Any]) -> str:
     return f"{days} at {time_label}"
 
 
-def ghostfolio_holdings_synced():
-    client = GhostfolioClient(config.db)
-    holdings, ghostfolio_status = client.load_holdings()
-    if not ghostfolio_status.get("ghostfolio", "").startswith("ok"):
-        return holdings, ghostfolio_status, {"accounts": 0, "positions": 0, "updated_positions": 0, "attached_positions": 0}
+def external_holdings_synced():
+    client = ExternalImportClient(config.db)
+    holdings, source_status = client.load_holdings()
+    if not source_status.get("external_import", "").startswith("ok"):
+        return holdings, source_status, {"accounts": 0, "positions": 0, "updated_positions": 0, "attached_positions": 0, "skipped_accounts": []}
     account_cash, account_status = client.load_account_cash()
-    ghostfolio_status = {**ghostfolio_status, **account_status}
+    source_status = {**source_status, **account_status}
     source_transactions, order_status = client.load_order_transactions() if hasattr(client, "load_order_transactions") else ([], {"source_orders": "not supported"})
-    ghostfolio_status = {**ghostfolio_status, **order_status}
+    source_status = {**source_status, **order_status}
     price_history, price_status = client.load_market_history(holdings, HISTORY_START_DATE) if hasattr(client, "load_market_history") else ([], {"source_price_history": "not supported"})
-    ghostfolio_status = {**ghostfolio_status, **price_status}
-    sync = local_store.import_ghostfolio(holdings, account_cash, source_transactions)
-    sync["price_history"] = local_store.import_price_history(price_history)["prices"] if hasattr(local_store, "import_price_history") else 0
+    source_status = {**source_status, **price_status}
+    sync = local_store.import_external(holdings, account_cash, source_transactions)
+    accepted_symbols = set(sync.pop("accepted_symbols", []))
+    accepted_price_history = [
+        item for item in price_history
+        if str(item.get("symbol") or "").upper().removeprefix("GF_") in accepted_symbols
+    ]
+    sync["price_history"] = local_store.import_price_history(accepted_price_history)["prices"] if hasattr(local_store, "import_price_history") else 0
+    sync["skipped_price_history"] = len(price_history) - len(accepted_price_history)
     sync["history_pruned"] = local_store.delete_history_before(HISTORY_START_DATE) if hasattr(local_store, "delete_history_before") else {"prices": 0, "account_snapshots": 0}
     local_store.capture_daily_snapshots()
-    return holdings, ghostfolio_status, sync
+    return holdings, source_status, sync
 
 
 def analyze_all():
@@ -1538,7 +1849,7 @@ def enriched_local_holdings():
     enriched = []
     market_hub = hub()
     for local_analysis in analyses:
-        if local_analysis.holding.data_source == "MANUAL":
+        if local_analysis.holding.data_source == "MANUAL" and not local_analysis.holding.secondary_symbol:
             enriched.append(local_analysis)
             continue
         provider_analysis = analyze_holding(local_analysis.holding, market_hub)
@@ -1548,6 +1859,16 @@ def enriched_local_holdings():
             provider_analysis.moving_averages = local_analysis.moving_averages
             provider_analysis.support_resistance = local_analysis.support_resistance
             provider_analysis.volume = local_analysis.volume
+        if local_analysis.holding.secondary_symbol:
+            current = _number_or_none((provider_analysis.price_ranges.get("5y") or {}).get("current"))
+            holding = provider_analysis.holding
+            if current is not None and current > 0:
+                holding.market_value = holding.quantity * current
+                if holding.quantity >= 0:
+                    holding.unrealized_profit = holding.market_value - holding.cost_basis
+                else:
+                    average = abs(holding.cost_basis / holding.quantity) if holding.quantity else 0
+                    holding.unrealized_profit = abs(holding.quantity) * (average - current)
         provider_analysis.provider_status = {**local_analysis.provider_status, **provider_analysis.provider_status}
         enriched.append(provider_analysis)
     return enriched
@@ -1746,16 +2067,11 @@ def local_options():
     }
 
 
-@app.post("/api/local/import/ghostfolio")
-def import_ghostfolio():
-    _, ghostfolio_status, sync = ghostfolio_holdings_synced()
-    clear_portfolio_cache()
-    return {**sync, "source": ghostfolio_status.get("ghostfolio", "not imported")}
-
-
 @app.post("/api/local/import/source")
 def import_source():
-    return import_ghostfolio()
+    _, source_status, sync = external_holdings_synced()
+    clear_portfolio_cache()
+    return {**sync, "source": source_status.get("external_import", "not imported")}
 
 
 @app.get("/api/local/accounts")
@@ -1826,7 +2142,11 @@ def save_local_account(payload: dict[str, Any]):
 
 @app.delete("/api/local/accounts/{account_id}")
 def delete_local_account(account_id: str):
-    if not local_store.delete_account(account_id):
+    try:
+        deleted = local_store.delete_account(account_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not deleted:
         raise HTTPException(status_code=404, detail="Account not found")
     clear_portfolio_cache()
     return {"deleted": True}
@@ -1883,8 +2203,17 @@ def list_manual_securities():
 
 @app.post("/api/local/manual-securities")
 def save_manual_security(payload: dict[str, Any]):
+    currency = str((payload or {}).get("currency") or "").upper().strip()
+    if currency not in SUPPORTED_MANAGEMENT_CURRENCIES:
+        raise HTTPException(status_code=400, detail="Security currency must be ILS, USD, or EUR")
+    instrument_type = str((payload or {}).get("instrument_type") or "").upper().strip()
+    if instrument_type == "RSU":
+        raise HTTPException(
+            status_code=400,
+            detail="RSU is a grant type, not a security type. Define the security as Stock and record the account transaction as RSU.",
+        )
     try:
-        result = local_store.save_manual_security(payload or {})
+        result = local_store.save_manual_security({**(payload or {}), "currency": currency})
         clear_portfolio_cache()
         return result
     except ValueError as exc:
@@ -2021,9 +2350,23 @@ def security_history(symbol: str, stock_market: str = "", period: str = "1y", da
     local_rows = local_store.price_history(symbol, stock_market, fetch_from_date, to_date)
     local_prices = [_local_price_ohlcv(row) for row in local_rows]
     local_chart_prices = [row for row in local_prices if row.date >= from_date]
-    if local_store.manual_security_exists(symbol, stock_market):
+    security = local_store.manual_security(symbol, stock_market) if hasattr(local_store, "manual_security") else None
+    known_manual = bool(security) or (
+        local_store.manual_security_exists(symbol, stock_market)
+        if hasattr(local_store, "manual_security_exists")
+        else False
+    )
+    primary_symbol = str((security or {}).get("symbol") or symbol).strip()
+    secondary_symbol = str((security or {}).get("secondary_symbol") or "").strip()
+    if known_manual and not secondary_symbol:
         return _security_history_response(symbol, stock_market, period, "manual", local_chart_prices, local_prices)
-    prices, status = hub().prices(symbol, fetch_from_date, to_date)
+    prices, status = hub().prices(
+        primary_symbol,
+        fetch_from_date,
+        to_date,
+        secondary_symbol=secondary_symbol,
+        stock_market=(security or {}).get("stock_market") or stock_market,
+    )
     if len(local_prices) >= len(prices):
         return _security_history_response(symbol, stock_market, period, "local", local_chart_prices, local_prices)
     by_date = {row.date.isoformat(): row for row in prices}
@@ -2336,6 +2679,52 @@ def list_local_backups():
 @app.get("/api/local/backups.zip")
 def download_local_backups_zip():
     return backup_archive_response()
+
+
+def _require_same_origin_restore(request: Request) -> None:
+    if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
+        raise HTTPException(status_code=403, detail="Cross-site full restore requests are not allowed")
+    origin = request.headers.get("origin")
+    if origin:
+        expected = f"{request.url.scheme}://{request.url.netloc}"
+        if origin.rstrip("/") != expected.rstrip("/"):
+            raise HTTPException(status_code=403, detail="Full restore must be started from this application")
+
+
+async def _full_backup_request_body(request: Request) -> bytes:
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_FULL_BACKUP_COMPRESSED_BYTES:
+                raise HTTPException(status_code=413, detail="The backup ZIP is larger than the supported restore limit")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length header")
+    payload = await request.body()
+    if len(payload) > MAX_FULL_BACKUP_COMPRESSED_BYTES:
+        raise HTTPException(status_code=413, detail="The backup ZIP is larger than the supported restore limit")
+    return payload
+
+
+@app.post("/api/local/backups/inspect")
+async def inspect_local_full_backup(request: Request):
+    try:
+        return inspect_full_backup(await _full_backup_request_body(request))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/local/backups/restore")
+async def restore_local_full_backup(request: Request):
+    _require_same_origin_restore(request)
+    if request.headers.get("x-restore-confirm") != FULL_RESTORE_CONFIRMATION:
+        raise HTTPException(status_code=400, detail="Explicit full-restore confirmation is required")
+    payload = await _full_backup_request_body(request)
+    try:
+        return restore_full_backup(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/local/backups/{filename}")

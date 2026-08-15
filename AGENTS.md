@@ -44,7 +44,7 @@ The Docker app is served at `https://localhost:6443`.
 - Do not commit or expose secrets from `config.yaml`.
 - Do not log passwords, API keys, tokens, connection strings, or provider credentials.
 - Treat `data/` as runtime state; avoid editing cached or generated data unless the task explicitly requires it.
-- Local portfolio edits must remain local and must not write back to Ghostfolio or any external import source.
+- Local portfolio edits must remain local and must not write back to any external import source.
 
 ## Frontend Notes
 

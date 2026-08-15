@@ -27,7 +27,16 @@ class AppConfig:
 
     @property
     def db(self) -> dict[str, Any]:
-        return self.raw.get("ghostfolio", {}).get("db", {})
+        configured = self.raw.get("external_import", {})
+        if isinstance(configured, dict) and isinstance(configured.get("db"), dict):
+            return configured["db"]
+        for section in self.raw.values():
+            if not isinstance(section, dict) or not isinstance(section.get("db"), dict):
+                continue
+            candidate = section["db"]
+            if candidate.get("host") or candidate.get("database"):
+                return candidate
+        return {}
 
     @property
     def market_data(self) -> dict[str, Any]:
@@ -54,4 +63,3 @@ def data_dir() -> Path:
     path = Path(os.getenv("DATA_DIR", "data"))
     path.mkdir(parents=True, exist_ok=True)
     return path
-

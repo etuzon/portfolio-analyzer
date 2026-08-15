@@ -48,25 +48,54 @@ def test_moving_average_windows():
 
 def test_provider_sector_is_applied_before_industry_missing_check():
     class Hub:
-        def prices(self, symbol, from_date, to_date):
+        def prices(self, symbol, from_date, to_date, **kwargs):
             return rows(), {"prices": "ok"}
 
-        def fundamentals(self, symbol):
+        def fundamentals(self, symbol, **kwargs):
             return {"income_statement": {"annualReports": [
                 {"fiscalDateEnding": "2024-12-31", "totalRevenue": 100, "netIncome": 10},
                 {"fiscalDateEnding": "2025-12-31", "totalRevenue": 110, "netIncome": 12},
             ]}}, {"fundamentals": "ok"}
 
-        def dividends(self, symbol):
+        def dividends(self, symbol, **kwargs):
             return [{"date": "2025-06-01", "amount": 0.5}], {"dividends": "ok"}
 
-        def profile(self, symbol):
+        def profile(self, symbol, **kwargs):
             return {"sector": "Financial Services"}, {"profile": "ok"}
 
     result = analyze_holding(Holding(symbol="FDUS"), Hub())
 
     assert result.industry == "Financial Services"
     assert "industry" not in result.missing
+
+
+def test_secondary_symbol_and_market_are_passed_for_provider_fallback_and_search():
+    calls = []
+
+    class Hub:
+        def prices(self, symbol, from_date, to_date, **kwargs):
+            calls.append(("prices", symbol, kwargs))
+            return rows(), {"prices": "ok"}
+
+        def fundamentals(self, symbol, **kwargs):
+            calls.append(("fundamentals", symbol, kwargs))
+            return {}, {"fundamentals": "missing"}
+
+        def dividends(self, symbol, **kwargs):
+            calls.append(("dividends", symbol, kwargs))
+            return [], {"dividends": "missing"}
+
+        def profile(self, symbol, **kwargs):
+            calls.append(("profile", symbol, kwargs))
+            return {}, {"profile": "missing"}
+
+    holding = Holding(symbol="1101534", secondary_symbol="CEL", name="Cellcom", stock_market="TASE")
+    analysis = analyze_holding(holding, Hub())
+
+    assert {symbol for _kind, symbol, _kwargs in calls} == {"1101534"}
+    assert all(kwargs == {"secondary_symbol": "CEL", "stock_market": "TASE"} for _kind, _symbol, kwargs in calls)
+    assert analysis.holding.symbol == "1101534"
+    assert screen([analysis], {"query": "cel"}) == [analysis]
 
 
 def test_screen_filters_account_currency_and_dividend_growth():

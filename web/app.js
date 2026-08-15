@@ -3,6 +3,8 @@ const DATE_PLACEHOLDER = "dd/mm/yyyy";
 
 const state = {
   items: [],
+  allPortfolioItems: [],
+  portfolioFilterCriteria: null,
   accountTrend: { accounts: [] },
   dashboard: null,
   bannerItems: [],
@@ -40,12 +42,12 @@ const state = {
   familyMembers: [],
   localAccountPersons: [],
   editAccountPersons: [],
-  fundPersons: [],
-  editFundPersons: [],
+  importSkippedAccounts: [],
   editingAccountId: "",
   editingBrokerId: "",
   editingFamilyMemberId: "",
   editingFundId: "",
+  editingManualSecurityId: "",
   editingTransactionId: "",
   securitiesWorkflow: "general",
   employeeOptionGrants: [],
@@ -79,7 +81,7 @@ const state = {
     account_types: ["Investment", "Long-Term Savings", "Bank", "ESOP"],
     fund_kinds: ["Pension", "Provident Fund", "Savings Fund"],
     asset_classes: ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"],
-    instrument_types: ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"],
+    instrument_types: ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"],
     option_types: ["CALL", "PUT"],
     issuer_listing_statuses: ["PRIVATE", "PUBLIC"],
   },
@@ -87,6 +89,8 @@ const state = {
   portfolioReady: false,
   tableMaPeriod: "30",
   backupSettings: null,
+  pendingFullRestoreFile: null,
+  pendingFullRestoreInspection: null,
   riskSnapshot: null,
   language: "he",
 };
@@ -164,7 +168,6 @@ const TRANSLATIONS = {
     overview: "Home",
     loadingPortfolio: "Loading portfolio",
     readingCachedAnalytics: "Reading cached analytics",
-    mainMenu: "Main Menu",
     dashboard: "Dashboard",
     reports: "Reports",
     research: "Research",
@@ -221,7 +224,6 @@ const TRANSLATIONS = {
     overview: "ראשי",
     loadingPortfolio: "טוען תיק",
     readingCachedAnalytics: "קורא נתוני ניתוח שמורים",
-    mainMenu: "תפריט ראשי",
     dashboard: "לוח בקרה",
     reports: "דוחות",
     research: "מחקר",
@@ -621,6 +623,14 @@ function formatDateTime(value) {
   }).format(date);
 }
 
+function formatBackupDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const twoDigits = (part) => String(part).padStart(2, "0");
+  return `${twoDigits(date.getDate())}/${twoDigits(date.getMonth() + 1)}/${date.getFullYear()} ${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`;
+}
+
 function dateValue(id) {
   return parseDateInput(valueOf(id));
 }
@@ -713,7 +723,6 @@ function ensureHierarchicalNav() {
   const nav = document.querySelector(".nav");
   if (!nav) return;
   nav.innerHTML = `
-    <div class="nav-title">${esc(t("mainMenu"))}</div>
     <details class="nav-menu" open>
       <summary>${esc(t("dashboard"))}</summary>
       <div class="nav-children">
@@ -1121,6 +1130,8 @@ function applyLanguage() {
   refreshBrokerSelects();
   renderBrokersList();
   renderLocalAccountsList();
+  renderImportSkippedAccounts();
+  renderFundAccountOwners();
   document.querySelectorAll("[data-i18n]").forEach((node) => {
     node.textContent = t(node.dataset.i18n);
   });
@@ -1884,11 +1895,16 @@ function stockMarketDisplay(h, marketKey = "") {
 
 function dataProviderDisplay(item, h, marketKey = "") {
   if (isProviderName(marketKey)) return providerDisplayName(marketKey);
-  if (h.data_source && h.data_source !== "LOCAL") return providerDisplayName(h.data_source);
-  const ok = Object.entries(item.provider_status || {}).find(([key, value]) => (
+  const usable = Object.entries(item.provider_status || {}).filter(([key, value]) => (
     ["ok", "stale"].some((stateName) => String(value).toLowerCase().includes(stateName)) && key.includes(".")
   ));
-  return ok ? providerDisplayName(ok[0].split(".").pop()) : providerDisplayName(h.data_source || "local");
+  const provider = usable.find(([key, value]) => key.startsWith("prices.") && String(value).toLowerCase() === "ok")
+    || usable.find(([key]) => key.startsWith("prices."))
+    || usable.find(([, value]) => String(value).toLowerCase() === "ok")
+    || usable[0];
+  if (provider) return providerDisplayName(provider[0].split(".").pop());
+  if (h.data_source && h.data_source !== "LOCAL") return providerDisplayName(h.data_source);
+  return providerDisplayName(h.data_source || "local");
 }
 
 function bestCurrencyTotal(totals) {
@@ -2079,6 +2095,70 @@ function criteriaFromForm() {
   };
 }
 
+function filterNumber(value) {
+  if (value === null || value === undefined || String(value).trim() === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function portfolioTechnicalMatch(item, criteria) {
+  const levelKind = String(criteria.technicalLevel || "").toLowerCase().trim();
+  const distanceLimit = filterNumber(criteria.technicalDistancePct);
+  if (!levelKind && distanceLimit === null) return true;
+  if (!["support", "resistance"].includes(levelKind) || distanceLimit === null) return true;
+  const levels = item.support_resistance?.[String(criteria.technicalPeriod || "1y").toLowerCase()] || {};
+  if (levels.state !== "ok") return false;
+  const levelPrice = filterNumber(levels[levelKind]?.price);
+  const current = filterNumber(levels.current_price);
+  const previous = filterNumber(levels.previous_price);
+  if (levelPrice === null || levelPrice <= 0 || current === null) return false;
+  const distance = ((current - levelPrice) / Math.abs(levelPrice)) * 100;
+  const limit = Math.abs(distanceLimit);
+  switch (String(criteria.technicalDirection || "near").toLowerCase()) {
+    case "up": return distance >= 0 && distance <= limit;
+    case "down": return distance >= -limit && distance <= 0;
+    case "cross_up": return previous !== null && previous <= levelPrice && current > levelPrice && distance >= 0 && distance <= limit;
+    case "cross_down": return previous !== null && previous >= levelPrice && current < levelPrice && distance >= -limit && distance <= 0;
+    default: return Math.abs(distance) <= limit;
+  }
+}
+
+function hasActivePortfolioFilter(criteria) {
+  if (!criteria) return false;
+  return Boolean(
+    criteria.query || criteria.account || criteria.accountType || criteria.location
+    || criteria.assetClass || criteria.currency || criteria.sector
+    || filterNumber(criteria.minHoldingValue) !== null
+    || filterNumber(criteria.maxHoldingValue) !== null
+    || (criteria.technicalLevel && filterNumber(criteria.technicalDistancePct) !== null)
+    || criteria.includeMissing === false
+  );
+}
+
+function filterPortfolioItems(items, criteria) {
+  if (!hasActivePortfolioFilter(criteria)) return portfolioItems(items);
+  const query = String(criteria.query || "").toLowerCase();
+  const account = String(criteria.account || "").toLowerCase();
+  const sector = String(criteria.sector || "").toLowerCase();
+  const minValue = filterNumber(criteria.minHoldingValue);
+  const maxValue = filterNumber(criteria.maxHoldingValue);
+  return (items || []).filter((item) => {
+    const holding = item.holding || {};
+    if (query && ![holding.symbol, holding.secondary_symbol, holding.name].some((value) => String(value || "").toLowerCase().includes(query))) return false;
+    if (account && !String(holding.account || "").toLowerCase().includes(account)) return false;
+    if (criteria.accountType && String(holding.account_type || "").toLowerCase() !== String(criteria.accountType).toLowerCase()) return false;
+    if (criteria.location && String(holding.location || holding.country || "").toLowerCase() !== String(criteria.location).toLowerCase()) return false;
+    if (criteria.assetClass && String(holding.asset_class || "").toUpperCase() !== String(criteria.assetClass).toUpperCase()) return false;
+    if (criteria.currency && String(holding.currency || "").toUpperCase() !== String(criteria.currency).toUpperCase()) return false;
+    if (sector && !String(holding.sector || "").toLowerCase().includes(sector)) return false;
+    if (minValue !== null && Number(holding.market_value || 0) < minValue) return false;
+    if (maxValue !== null && Number(holding.market_value || 0) > maxValue) return false;
+    if (!portfolioTechnicalMatch(item, criteria)) return false;
+    if (criteria.includeMissing === false && (item.missing || []).length) return false;
+    return true;
+  });
+}
+
 function setSelectOptions(id, values, label) {
   const select = $(id);
   const current = select.value;
@@ -2167,7 +2247,7 @@ function refreshLocalizedFormOptions() {
   ["localAccountCurrency", "editAccountCurrency", "brokerCurrency", "employeeWizardCurrency"]
     .forEach((id) => setCurrencyOptions(id, SUPPORTED_MANAGEMENT_CURRENCIES));
   setCurrencyOptions("priceCurrency");
-  setCurrencyOptions("manualSecurityCurrency", employeeOptionsWorkflowActive() ? SUPPORTED_MANAGEMENT_CURRENCIES : null);
+  setCurrencyOptions("manualSecurityCurrency", SUPPORTED_MANAGEMENT_CURRENCIES);
 }
 
 function syncCurrencyFromLocation(locationId, currencyId) {
@@ -2189,7 +2269,7 @@ function populateStaticOptions() {
   setOptions("editFundKind", state.localOptions.fund_kinds);
   setOptions("securityAssetClass", assetClasses);
   setOptions("priceAssetClass", assetClasses);
-  setOptions("manualInstrumentType", (state.localOptions.instrument_types || ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"])
+  setOptions("manualInstrumentType", (state.localOptions.instrument_types || ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"])
     .filter((type) => type !== "STOCK_OPTION"));
   setOptions("manualOptionType", state.localOptions.option_types || ["CALL", "PUT"]);
   $("localAccountLocation").value = "USA";
@@ -2474,7 +2554,7 @@ function renderRows(items) {
       ? Math.abs(Number(h.cost_basis || 0) / Number(h.quantity || 0))
       : 0;
     return `<tr>
-      <td data-label="Security"><div class="security-cell"><button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button><div class="security-name">${esc(companyLine)}</div>${industryLine}<div class="sub security-meta">${esc(marketLine)}</div></div></td>
+      <td data-label="Security"><div class="security-cell"><div class="security-symbols"><button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}</div><div class="security-name">${esc(companyLine)}</div>${industryLine}<div class="sub security-meta">${esc(marketLine)}</div></div></td>
       <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(accountMeta)}</div></td>
       <td data-label="Risk">${riskBadge(rowRisk)}</td>
       <td data-label="Value / P&L"><div class="value-cell">
@@ -3356,15 +3436,17 @@ function compensationPriceMap(items) {
     const entry = { price, currency: quoteRow.currency || state.baseCurrency, source: "market quote" };
     prices.set(txMarketKey(quoteRow.symbol), entry);
   });
-  items.forEach((item) => {
+  [...(state.allPortfolioItems || []), ...(items || [])].forEach((item) => {
     const h = item.holding || {};
     const quantity = Math.abs(Number(h.quantity || 0));
     if (!h.symbol || !quantity) return;
     const price = Math.abs(Number(h.market_value || 0)) / quantity;
     if (!Number.isFinite(price) || price <= 0) return;
     const entry = { price, currency: h.currency || state.baseCurrency, source: "current holding price" };
-    prices.set(txMarketKey(h.symbol, h.stock_market), entry);
-    if (!prices.has(txMarketKey(h.symbol))) prices.set(txMarketKey(h.symbol), entry);
+    [h.symbol, h.secondary_symbol].filter(Boolean).forEach((symbol) => {
+      prices.set(txMarketKey(symbol, h.stock_market), entry);
+      if (!prices.has(txMarketKey(symbol))) prices.set(txMarketKey(symbol), entry);
+    });
   });
   return prices;
 }
@@ -3383,7 +3465,7 @@ function equityCompQuoteSymbols() {
     })
     .map((tx) => {
       if (txInstrumentType(tx) === "EMPLOYEE_STOCK_OPTION") return tx.public_symbol;
-      return equityCompKind(tx) === "option" ? (tx.underlying_symbol || tx.symbol) : tx.symbol;
+      return equityCompKind(tx) === "option" ? (tx.underlying_symbol || tx.symbol) : (tx.secondary_symbol || tx.symbol);
     })
     .map(cleanSecuritySymbol)
     .filter(Boolean))];
@@ -3419,7 +3501,7 @@ function equityCompLots(kind, items) {
         const employeeOption = txInstrumentType(tx) === "EMPLOYEE_STOCK_OPTION";
         const priceSymbol = employeeOption
           ? (tx.public_symbol || "")
-          : kind === "option" ? (tx.underlying_symbol || tx.symbol) : tx.symbol;
+          : kind === "option" ? (tx.underlying_symbol || tx.symbol) : (tx.secondary_symbol || tx.symbol);
         const priceMarket = employeeOption ? tx.public_market : tx.stock_market;
         const marketPrice = prices.get(txMarketKey(priceSymbol, priceMarket))
           || prices.get(txMarketKey(priceSymbol))
@@ -3438,8 +3520,11 @@ function equityCompLots(kind, items) {
             trancheSequence: tranche.sequence,
             symbol: employeeOption ? (tx.company_name || tx.security_name || "Employee option") : (tx.symbol || "Unknown"),
             internalSymbol: tx.symbol || "",
+            secondarySymbol: tx.secondary_symbol || "",
             underlyingSymbol: employeeOption ? (tx.public_symbol || "") : (tx.underlying_symbol || tx.symbol || ""),
             stockMarket: employeeOption ? (tx.public_market || "PRIVATE") : (tx.stock_market || ""),
+            assetClass: tx.asset_class || (kind === "rsu" ? "EQUITY" : "OPTION"),
+            location: tx.location || tx.country || "",
             listingStatus: employeeOption ? (tx.listing_status || "PRIVATE") : "PUBLIC",
             quantity: tranche.quantity,
             vestDate: tranche.vestDate,
@@ -3568,6 +3653,28 @@ function equityCompPriceText(group) {
   return `${currentText}${source} / ${money(group.strikePrice || 0, group.currency || state.baseCurrency, 2)}`;
 }
 
+function equityCompPriceHtml(group) {
+  const text = equityCompPriceText(group);
+  const missingPrice = group.kind === "rsu"
+    ? Number(group.unitPrice || group.currentPrice || 0) <= 0
+    : group.publicMarket && !group.hasMarketPrice;
+  if (!missingPrice) return esc(text);
+  const priceSymbol = group.kind === "option"
+    ? (group.underlyingSymbol || group.internalSymbol || group.symbol)
+    : (group.internalSymbol || group.symbol);
+  return `
+    <div class="equity-price-cell">
+      <span class="muted-inline">${esc(text)}</span>
+      <button class="secondary compact-button equity-price-action" type="button"
+        data-price-history-symbol="${esc(priceSymbol)}"
+        data-price-history-market="${esc(group.stockMarket || "MANUAL")}"
+        data-price-history-asset="${esc(group.kind === "rsu" ? "EQUITY" : (group.assetClass || "OPTION"))}"
+        data-price-history-currency="${esc(group.currency || state.baseCurrency)}"
+        data-price-history-location="${esc(group.location || "")}">Add market price</button>
+    </div>
+  `;
+}
+
 function renderEquityCompTable(rsuLots, optionLots) {
   const groups = Object.values(equityCompRows(rsuLots, optionLots)).sort((a, b) => (
     a.kind.localeCompare(b.kind) || a.symbol.localeCompare(b.symbol) || Number(a.strikePrice || 0) - Number(b.strikePrice || 0)
@@ -3579,12 +3686,10 @@ function renderEquityCompTable(rsuLots, optionLots) {
         <thead>
           <tr>
             <th>Instrument</th>
-            <th>Type</th>
+            <th>Investment type</th>
+            <th>Market / strike price</th>
             <th>Vested</th>
-            <th>Vested value</th>
             <th>Unvested</th>
-            <th>Unvested value</th>
-            <th>Current / Strike</th>
           </tr>
         </thead>
         <tbody>
@@ -3592,19 +3697,28 @@ function renderEquityCompTable(rsuLots, optionLots) {
             const vestedQty = sum(group.vested.map((lot) => lot.quantity));
             const unvestedQty = sum(group.unvested.map((lot) => lot.quantity));
             const unitLabel = group.kind === "rsu" ? "RSU" : "options";
+            const vestedTitle = vestingDetailsTitle(group.vested, unitLabel);
             const unvestedTitle = vestingDetailsTitle(group.unvested, unitLabel);
             const instrumentDetail = group.kind === "option"
               ? `${group.publicMarket ? (group.stockMarket || "Public") : "Private company"}${group.underlyingSymbol ? ` · Linked ${group.underlyingSymbol}` : ""}${group.optionType ? ` · ${group.optionType}` : ""}`
               : (group.stockMarket || "No market");
             return `
               <tr>
-                <td><b>${esc(group.symbol)}</b><small>${esc(instrumentDetail)}</small></td>
+                <td><b>${esc(group.symbol)}${group.secondarySymbol ? ` · ${esc(group.secondarySymbol)}` : ""}</b><small>${esc(instrumentDetail)}</small></td>
                 <td><span class="equity-kind ${group.kind}">${group.kind === "rsu" ? "RSU" : "Option"}</span></td>
-                <td>${fmt(vestedQty, 2)}</td>
-                <td>${equityCompValueHtml(group.kind, group.vested)}</td>
-                <td class="${unvestedQty ? "vesting-tooltip-cell" : ""}" title="${esc(unvestedTitle)}">${fmt(unvestedQty, 2)}</td>
-                <td>${equityCompValueHtml(group.kind, group.unvested)}</td>
-                <td>${esc(equityCompPriceText(group))}</td>
+                <td>${equityCompPriceHtml(group)}</td>
+                <td class="equity-position-cell ${vestedQty ? "vesting-tooltip-cell" : ""}" title="${esc(vestedTitle)}">
+                  <div class="equity-position-content">
+                    <span class="equity-position-quantity">${fmt(vestedQty, 2)}</span>
+                    ${equityCompValueHtml(group.kind, group.vested)}
+                  </div>
+                </td>
+                <td class="equity-position-cell ${unvestedQty ? "vesting-tooltip-cell" : ""}" title="${esc(unvestedTitle)}">
+                  <div class="equity-position-content">
+                    <span class="equity-position-quantity">${fmt(unvestedQty, 2)}</span>
+                    ${equityCompValueHtml(group.kind, group.unvested)}
+                  </div>
+                </td>
               </tr>
             `;
           }).join("")}
@@ -3707,7 +3821,7 @@ function accountLabel(account) {
     .map(cleanSourceLabel)
     .filter(Boolean)
     .filter((value, index, values) => values.indexOf(value) === index);
-  return parts.join(" · ") || account.id;
+  return parts.join(" · ") || optionLabel("Unnamed account");
 }
 
 function accountOptionHtml(account) {
@@ -3847,7 +3961,7 @@ function refreshFamilyMemberSelects() {
   const options = '<option value="">Choose family member</option>' + state.familyMembers
     .map((member) => `<option value="${esc(member.id)}">${esc(memberLabel(member))}</option>`)
     .join("");
-  ["localAccountFamilyMember", "editAccountFamilyMember", "fundFamilyMember", "editFundFamilyMember", "familyAttachMember"].forEach((id) => {
+  ["localAccountFamilyMember", "editAccountFamilyMember", "familyAttachMember"].forEach((id) => {
     const select = $(id);
     if (!select) return;
     const current = select.value;
@@ -3960,7 +4074,21 @@ function attachFamilyMember(listKey, selectId, statusId, { single = false } = {}
 }
 
 function accountAllowsMultipleMembers(account) {
-  return account?.type !== "Long-Term Savings";
+  return !["Long-Term Savings", "ESOP"].includes(account?.type);
+}
+
+function validateAccountOwnership(type, persons, statusId) {
+  if (!persons.length) {
+    setStatusMessage(statusId, state.language === "he"
+      ? "יש לשייך כל חשבון לאדם אחד לפחות"
+      : "Every account must be assigned to at least one person");
+    return false;
+  }
+  if (!["Long-Term Savings", "ESOP"].includes(type) || persons.length === 1) return true;
+  setStatusMessage(statusId, state.language === "he"
+    ? "לחשבון חיסכון ארוך טווח או אופציות לעובדים חייב להיות אדם אחד בדיוק"
+    : "Long-Term Savings and ESOP accounts must have exactly one person");
+  return false;
 }
 
 function accountSavePayload(account, persons) {
@@ -4031,8 +4159,9 @@ function refreshLocalAccountSelects() {
 }
 
 function refreshFundAccountSelects() {
-  const accounts = (state.localAccounts || []).filter((account) => account.type === "Long-Term Savings");
-  const options = '<option value="">No linked long-term account</option>' + accounts.map(accountOptionHtml).join("");
+  const accounts = (state.localAccounts || []).filter((account) => account.type === "Long-Term Savings" && (account.persons || []).length === 1);
+  const emptyLabel = state.language === "he" ? "בחירת חשבון חיסכון ארוך טווח" : "Choose a long-term account";
+  const options = `<option value="">${esc(emptyLabel)}</option>` + accounts.map(accountOptionHtml).join("");
   ["fundAccount", "editFundAccount"].forEach((id) => {
     const select = $(id);
     if (!select) return;
@@ -4040,6 +4169,29 @@ function refreshFundAccountSelects() {
     select.innerHTML = options;
     if ([...select.options].some((option) => option.value === current)) select.value = current;
   });
+  renderFundAccountOwners();
+  updateFundActionStates();
+}
+
+function renderFundAccountOwner(selectId, targetId) {
+  const target = $(targetId);
+  if (!target) return;
+  const account = state.localAccounts.find((item) => item.id === valueOf(selectId));
+  const person = account?.persons?.[0];
+  if (!account || !person) {
+    target.textContent = state.language === "he"
+      ? "יש לבחור חשבון חיסכון ארוך טווח כדי להשתמש באדם המשויך אליו."
+      : "Choose a long-term account to use its assigned person.";
+    return;
+  }
+  target.textContent = state.language === "he"
+    ? `האדם ישויך אוטומטית מהחשבון: ${personLabel(person)}`
+    : `Person inherited automatically from the account: ${personLabel(person)}`;
+}
+
+function renderFundAccountOwners() {
+  renderFundAccountOwner("fundAccount", "fundAccountOwner");
+  renderFundAccountOwner("editFundAccount", "editFundAccountOwner");
 }
 
 async function loadLocalAccounts() {
@@ -4052,7 +4204,7 @@ async function loadLocalAccounts() {
   const importedAccounts = state.localAccounts.filter(isImportedAccount).length;
   const manualAccounts = state.localAccounts.length - importedAccounts;
   $("accountsSummary").innerHTML = [
-    ["Imported accounts", importedAccounts, "Accounts synced from the configured import source and protected from manual delete here"],
+    ["Imported accounts", importedAccounts, "Accounts synced from the configured import source"],
     ["Manual accounts", manualAccounts, "Accounts created directly in this dashboard"],
     ["Attached securities", data.sync?.attached_positions ?? data.status?.transactions ?? 0, "Imported securities linked to local account records"],
     ["Local DB records", data.status?.transactions ?? 0, "Stored security transactions and imported position links"],
@@ -4064,15 +4216,52 @@ async function loadLocalAccounts() {
 function renderLocalAccountsList() {
   const list = $("accountsList");
   if (!list) return;
-  list.innerHTML = state.localAccounts.length ? state.localAccounts.map((account) => `
-    <div class="stack-item management-item">
-      <b>${esc(accountLabel(account))}</b>
-      <span>${esc(optionLabel(account.type))} · ${esc(countryDisplayLabel(account.location))} · ${esc(currencyDisplayLabel(account.currency))} · ${esc(optionLabel(isImportedAccount(account) ? "Imported" : "Manual"))}</span>
-      <button class="secondary compact-button" type="button" data-edit-account="${esc(account.id)}">Edit</button>
-      ${isImportedAccount(account) ? '<span class="badge ok" title="Synced from the configured import source. Refresh with Sync import.">Synced</span>' : '<span class="badge" title="Manual account">Manual</span>'}
-      <div class="sub">${esc(optionLabel("Initial cash"))} ${fmt(account.initial_cash)}${(account.persons || []).length ? ` · ${(account.persons || []).map(personLabel).map(esc).join(" · ")}` : ""} · ${esc(cleanSourceLabel(account.comments) || optionLabel("No comments"))}</div>
-    </div>
-  `).join("") : '<div class="empty">No local accounts yet</div>';
+  list.innerHTML = state.localAccounts.length ? state.localAccounts.map((account) => {
+    const attachmentRows = [
+      ["transactions", "Security transactions"],
+      ["funds", "Pension and fund records"],
+      ["account_snapshots", "Account history points"],
+      ["events", "Account events"],
+      ["equity_transitions", "Equity transitions"],
+    ].map(([key, label]) => [Number(account.attachment_counts?.[key] || 0), label]).filter(([count]) => count > 0);
+    const removalDisabled = account.can_delete === false || attachmentRows.length > 0;
+    const removalHelp = removalDisabled ? `
+      <details class="row-action-help account-delete-help" style="--attachment-rows:${attachmentRows.length}">
+        <summary aria-label="${esc(optionLabel("Why account removal is disabled"))}" title="${esc(optionLabel("Why account removal is disabled"))}">i</summary>
+        <div class="row-action-help-popover" role="note">
+          <strong>${esc(optionLabel("Cannot remove this account while data is attached."))}</strong>
+          <span>${esc(optionLabel("Attached to this account"))}</span>
+          <ul>${attachmentRows.map(([count, label]) => `<li><span>${esc(optionLabel(label))}</span><b>${esc(fmt(count, 0))}</b></li>`).join("")}</ul>
+        </div>
+      </details>` : "";
+    return `
+      <div class="stack-item management-item account-management-item">
+        <div class="account-management-main">
+          <b>${esc(accountLabel(account))}</b>
+          <span>${esc(optionLabel(account.type))} · ${esc(countryDisplayLabel(account.location))} · ${esc(currencyDisplayLabel(account.currency))} · ${esc(optionLabel(isImportedAccount(account) ? "Imported" : "Manual"))}</span>
+          ${isImportedAccount(account) ? '<span class="badge ok" title="Synced from the configured import source. Refresh with Sync import.">Synced</span>' : '<span class="badge" title="Manual account">Manual</span>'}
+        </div>
+        <div class="row-actions account-management-actions">
+          <button class="secondary compact-button" type="button" data-edit-account="${esc(account.id)}">Edit</button>
+          <button class="secondary compact-button" type="button" data-delete-account="${esc(account.id)}"${removalDisabled ? " disabled" : ""}>Remove</button>
+          ${removalHelp}
+        </div>
+        <div class="sub">${esc(optionLabel("Initial cash"))} ${fmt(account.initial_cash)}${(account.persons || []).length ? ` · ${(account.persons || []).map(personLabel).map(esc).join(" · ")}` : ""} · ${esc(cleanSourceLabel(account.comments) || optionLabel("No comments"))}</div>
+      </div>
+    `;
+  }).join("") : '<div class="empty">No local accounts yet</div>';
+}
+
+async function removeLocalAccount(accountId) {
+  const account = state.localAccounts.find((item) => item.id === accountId);
+  if (!account || account.can_delete === false) return;
+  const question = state.language === "he"
+    ? `להסיר את החשבון ${accountLabel(account)}? לא ניתן לבטל פעולה זו.`
+    : `Remove account ${accountLabel(account)}? This cannot be undone.`;
+  if (!confirm(question)) return;
+  await api(`/api/local/accounts/${accountId}`, { method: "DELETE" });
+  setStatusMessage("accountsStatus", state.language === "he" ? "החשבון הוסר" : "Account removed");
+  await Promise.all([loadLocalAccounts(), loadPortfolio()]);
 }
 
 function setAccountsTab(tab) {
@@ -4086,8 +4275,10 @@ function setAccountsTab(tab) {
 
 async function saveLocalAccount() {
   const country = normalizeAccountCountry(valueOf("localAccountLocation"));
+  const accountType = valueOf("localAccountType");
+  if (!validateAccountOwnership(accountType, state.localAccountPersons, "accountsStatus")) return;
   const payload = {
-    type: valueOf("localAccountType"),
+    type: accountType,
     location: country,
     currency: valueOf("localAccountCurrency") || "USD",
     initial_cash: valueOf("localInitialCash") || 0,
@@ -4147,11 +4338,13 @@ async function saveEditAccount() {
     $("editAccountStatus").textContent = "Choose an account to edit";
     return;
   }
+  const accountType = valueOf("editAccountType");
+  if (!validateAccountOwnership(accountType, state.editAccountPersons, "editAccountStatus")) return;
   if (!confirm(`Save changes to ${accountLabel(account)}?`)) return;
   const country = normalizeAccountCountry(valueOf("editAccountLocation"));
   const payload = {
     id: account.id,
-    type: valueOf("editAccountType"),
+    type: accountType,
     location: country,
     currency: valueOf("editAccountCurrency") || "USD",
     initial_cash: valueOf("editInitialCash") || 0,
@@ -4173,6 +4366,8 @@ async function saveEditAccount() {
 
 async function importSourceToLocal() {
   setStatusMessage("accountsStatus", "Importing holdings");
+  state.importSkippedAccounts = [];
+  renderImportSkippedAccounts();
   appLog("source_import.start");
   const result = await api("/api/local/import/source", { method: "POST", body: "{}" });
   appLog("source_import.done", {
@@ -4180,13 +4375,83 @@ async function importSourceToLocal() {
     positions: result.positions,
     source_transactions: result.source_transactions,
     price_history: result.price_history,
+    skipped_accounts: (result.skipped_accounts || []).length,
+    skipped_positions: result.skipped_positions || 0,
+    skipped_transactions: result.skipped_transactions || 0,
     source: result.source,
   });
-  setStatusMessage("accountsStatus", `Imported ${result.positions} positions and ${result.accounts} accounts`);
+  state.importSkippedAccounts = result.skipped_accounts || [];
+  if (result.partial) {
+    setStatusMessage("accountsStatus", state.language === "he"
+      ? `הייבוא הושלם עם שגיאות: ${state.importSkippedAccounts.length} חשבונות דולגו, ${result.skipped_positions || 0} החזקות ו־${result.skipped_transactions || 0} תנועות לא יובאו.`
+      : `Import completed with errors: ${state.importSkippedAccounts.length} accounts skipped; ${result.skipped_positions || 0} positions and ${result.skipped_transactions || 0} transactions were not imported.`);
+  } else {
+    setStatusMessage("accountsStatus", state.language === "he"
+      ? `יובאו ${result.positions || 0} החזקות ועודכנו ${result.account_cash_updated || 0} חשבונות.`
+      : `Imported ${result.positions || 0} positions and updated ${result.account_cash_updated || 0} accounts.`);
+  }
+  renderImportSkippedAccounts();
   await loadLocalAccounts();
   await loadLocalSecurities();
   await loadLocalPrices();
   await loadPortfolio({ refresh: true });
+}
+
+function renderImportSkippedAccounts() {
+  const frame = $("importSkippedList");
+  if (!frame) return;
+  const items = state.importSkippedAccounts || [];
+  frame.hidden = !items.length;
+  frame.innerHTML = items.map((item, index) => {
+    const reason = item.reason === "account_owner_required"
+      ? (state.language === "he" ? "החשבון קיים אך חסר לו שיוך תקין לאדם." : "The account exists but does not have a valid person assignment.")
+      : (state.language === "he" ? "החשבון אינו קיים מקומית ולכן הנתונים שלו דולגו." : "The account does not exist locally, so its data was skipped.");
+    const facts = [
+      `${state.language === "he" ? "מטבע" : "Currency"}: ${currencyDisplayLabel(item.currency)}`,
+      item.has_cash ? `${state.language === "he" ? "מזומן שלא יובא" : "Cash not imported"}: ${fmt(item.cash, 2)}` : "",
+      `${state.language === "he" ? "החזקות שלא יובאו" : "Positions not imported"}: ${item.positions || 0}`,
+      `${state.language === "he" ? "תנועות שלא יובאו" : "Transactions not imported"}: ${item.transactions || 0}`,
+    ].filter(Boolean).join(" · ");
+    const action = item.existing_account_id
+      ? `<button class="secondary compact-button" type="button" data-fix-skipped-account="${index}">${state.language === "he" ? "שיוך אדם לחשבון" : "Assign a person"}</button>`
+      : `<button class="secondary compact-button" type="button" data-add-skipped-account="${index}">${state.language === "he" ? "הוספת החשבון ידנית" : "Add account manually"}</button>`;
+    return `
+      <div class="stack-item management-item import-skipped-item">
+        <b>${esc(state.language === "he" ? `לא יובא: ${item.account}` : `Not imported: ${item.account}`)}</b>
+        <span>${esc(reason)}</span>
+        ${action}
+        <div class="sub">${esc(facts)}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function prepareSkippedImportAccount(index) {
+  const item = state.importSkippedAccounts?.[Number(index)];
+  if (!item) return;
+  if (item.existing_account_id) {
+    editLocalAccount(item.existing_account_id);
+    $("editAccountStatus").textContent = state.language === "he"
+      ? "יש לשייך אדם אחד לפחות לפני הייבוא הבא."
+      : "Assign at least one person before the next import.";
+    requestAnimationFrame(() => $("editAccountFamilyMember")?.focus());
+    return;
+  }
+  resetNewAccountForm();
+  setAccountsTab("new");
+  $("localAccountType").value = "Investment";
+  $("localAccountLocation").value = item.currency === "ILS" ? "Israel" : "USA";
+  $("localAccountCurrency").value = item.currency || "USD";
+  $("localInitialCash").value = item.has_cash ? item.cash : 0;
+  $("localUsername").value = item.account || "";
+  $("localAccountId").value = item.required_account_id || item.account || "";
+  ensureBrokerOption(item.platform);
+  $("localAccountBroker").value = item.platform || "";
+  $("localAccountComments").value = state.language === "he" ? "נוצר ידנית עבור ייבוא חיצוני" : "Created manually for external import";
+  setStatusMessage("accountsStatus", state.language === "he"
+    ? "החשבון הוכן. יש לשייך אדם אחד לפחות ולאחר השמירה להפעיל שוב את הייבוא."
+    : "The account is ready. Assign at least one person, save it, then run the import again.");
+  requestAnimationFrame(() => $("localAccountFamilyMember")?.focus());
 }
 
 function transactionCashImpact(tx) {
@@ -4207,7 +4472,7 @@ function instrumentLabel(item) {
   const employeeOption = item.instrument_type === "EMPLOYEE_STOCK_OPTION";
   const displayIdentity = employeeOption
     ? `${item.company_name || item.name || "Employee option"}${item.grant_id ? ` · ${item.grant_id}` : ""}`
-    : item.symbol;
+    : `${item.symbol}${item.secondary_symbol ? ` · ${item.secondary_symbol}` : ""}`;
   const derivative = ["OPTION", "EMPLOYEE_STOCK_OPTION", "STOCK_OPTION"].includes(item.instrument_type)
     ? ` · ${item.option_type} ${fmt(item.strike_price, 4)} · exp ${formatDate(item.expiration_date)}`
     : item.instrument_type === "FUTURE"
@@ -4327,7 +4592,7 @@ function renderVestingSchedulePreview() {
 
 function toggleTransactionCompFields() {
   const type = selectedTransactionInstrumentType();
-  const isRsu = type === "RSU";
+  const isRsu = String(valueOf("securityAssetClass") || "").toUpperCase() === "RSU";
   const isEmployeeOption = type === "EMPLOYEE_STOCK_OPTION";
   const isEmployeeGrantAdd = isEmployeeOption && valueOf("securityAction") === "ADD";
   const isOptionGrant = type === "STOCK_OPTION" || isEmployeeOption;
@@ -4488,7 +4753,7 @@ function priceMatchesFocus(price) {
     && String(price.stock_market || "").toUpperCase() === String(focus.stock_market || "").toUpperCase();
 }
 
-function openPriceHistoryForSecurity(dataset) {
+function openPriceHistoryForSecurity(dataset, returnFocus = document.activeElement) {
   state.priceFocus = {
     symbol: cleanSecuritySymbol(dataset.priceHistorySymbol || dataset.securityDetailSymbol),
     stock_market: String(dataset.priceHistoryMarket || dataset.securityDetailMarketKey || "MANUAL").toUpperCase(),
@@ -4497,7 +4762,7 @@ function openPriceHistoryForSecurity(dataset) {
     location: dataset.priceHistoryLocation || dataset.securityDetailLocation || "USA",
   };
   fillPriceFormFromFocus();
-  openModal("pricesModal");
+  openModal("pricesModal", returnFocus, { focusId: "priceInput" });
 }
 
 function securityMatches(item, symbol, market) {
@@ -4681,7 +4946,7 @@ function renderPositionTransactionHistory() {
   $("positionTransactionsSubtitle").textContent = [detail.account, `${fmt(detail.quantity, 3)} units`, detail.average ? `Avg buy ${money(detail.average, detail.currency, 2)}` : ""].filter(Boolean).join(" · ");
   $("positionTransactionsRows").innerHTML = transactions.length ? transactions.map((tx) => {
     const displayAction = positionTransactionDisplayAction(tx);
-    const sourceLabel = String(tx.source || "").toLowerCase() === "ghostfolio_import" ? "Imported" : cleanSourceLabel(tx.source || "Manual");
+    const sourceLabel = String(tx.source || "").toLowerCase().endsWith("_import") ? "Imported" : cleanSourceLabel(tx.source || "Manual");
     const amount = Math.abs(Number(tx.quantity || 0) * Number(tx.price || 0));
     const actionClass = ["BUY", "ADD"].includes(displayAction) ? "positive" : "negative";
     return `<tr>
@@ -4718,18 +4983,19 @@ async function openPositionTransactionHistory(dataset) {
 }
 
 function priceMatchesSecurity(price, detail) {
-  return cleanSecuritySymbol(price.symbol) === cleanSecuritySymbol(detail.symbol)
+  return [detail.symbol, detail.secondary_symbol].some((symbol) => cleanSecuritySymbol(price.symbol) === cleanSecuritySymbol(symbol))
     && String(price.stock_market || "").toUpperCase() === String(detail.market_key || detail.stock_market || "").toUpperCase();
 }
 
 async function openSecurityDetail(dataset) {
   const symbol = cleanSecuritySymbol(dataset.securityDetailSymbol);
   const marketKey = String(dataset.securityDetailMarketKey || "MANUAL").toUpperCase();
-  const item = state.items.find((candidate) => securityMatches(candidate, symbol, marketKey));
+  const item = (state.allPortfolioItems || state.items).find((candidate) => securityMatches(candidate, symbol, marketKey));
   const h = item?.holding || {};
   state.securityDetail = {
     item,
     symbol,
+    secondary_symbol: h.secondary_symbol || "",
     market_key: marketKey,
     stock_market: dataset.securityDetailStockMarket || stockMarketDisplay(h, marketKey),
     data_provider: dataset.securityDetailProvider || dataProviderDisplay(item || {}, h, marketKey),
@@ -4772,9 +5038,10 @@ function renderSecurityDetail() {
   const detail = state.securityDetail;
   if (!detail) return;
   const h = detail.item?.holding || {};
-  $("securityDetailTitle").textContent = `${detail.symbol} overview`;
+  $("securityDetailTitle").textContent = `${detail.symbol}${detail.secondary_symbol ? ` · ${detail.secondary_symbol}` : ""} overview`;
   $("securityDetailOverview").innerHTML = [
     ["Name", h.name || detail.symbol],
+    ...(detail.secondary_symbol ? [["Secondary symbol", detail.secondary_symbol, "Optional alternate ticker used for market-data lookup."]] : []),
     ["Stock market", detail.stock_market, "The exchange/market where the security trades. This is not the API provider."],
     ["Data provider", detail.data_provider, "Where the market data was read from."],
     ["Type", h.asset_class || detail.asset_class],
@@ -5645,7 +5912,7 @@ function setSecuritiesWorkflow(workflow = "general") {
 function toggleManualInstrumentFields() {
   const type = valueOf("manualInstrumentType") || "STOCK";
   const isEmployeeOption = type === "EMPLOYEE_STOCK_OPTION";
-  setCurrencyOptions("manualSecurityCurrency", isEmployeeOption ? SUPPORTED_MANAGEMENT_CURRENCIES : null);
+  setCurrencyOptions("manualSecurityCurrency", SUPPORTED_MANAGEMENT_CURRENCIES);
   const isOption = type === "OPTION" || type === "STOCK_OPTION" || isEmployeeOption;
   const isDerivative = isOption || type === "FUTURE";
   document.querySelectorAll("[data-derivative-field]").forEach((node) => { node.hidden = !isDerivative; });
@@ -5694,17 +5961,35 @@ async function loadManualSecurities() {
   const visibleSecurities = employeeOptionsWorkflowActive()
     ? state.manualSecurities.filter((item) => item.instrument_type === "EMPLOYEE_STOCK_OPTION")
     : state.manualSecurities;
-  list.innerHTML = visibleSecurities.length ? visibleSecurities.map((item) => `
-    <div class="stack-item management-item">
-      <b>${esc(item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (item.company_name || item.name) : item.symbol)}</b>
-      <div>${esc(item.name || item.symbol)} · ${esc(optionLabel(item.instrument_type))} · ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? `<span class="badge ${item.listing_status === "PUBLIC" ? "ok" : "warn"}">${esc(item.listing_status === "PUBLIC" ? `${item.public_symbol} · ${item.public_market}` : "Private Company")}</span>` : `${esc(item.stock_market)} · ${esc(currencyDisplayLabel(item.currency))}`}</div>
-      <button class="secondary compact-button" type="button" data-use-manual-security="${esc(item.id)}">${employeeOptionsWorkflowActive() ? "Add to account" : "Use"}</button>
-      ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" && item.listing_status !== "PUBLIC" ? `<button class="secondary compact-button" type="button" data-link-employee-listing="${esc(item.id)}">Link public listing</button>` : ""}
-      ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? `<button class="secondary compact-button" type="button" data-exercise-employee-option="${esc(item.id)}">Exercise</button>` : ""}
-      <button class="secondary compact-button" type="button" data-delete-manual-security="${esc(item.id)}">Remove</button>
-      <div class="sub">${esc(optionLabel(item.asset_class))}${item.grant_id ? ` · Grant ID ${esc(item.grant_id)}` : ""}${item.grant_date ? ` · Grant Date ${esc(formatDate(item.grant_date))}` : ""}${item.vesting_start_date ? ` · Vesting Start ${esc(formatDate(item.vesting_start_date))}` : ""}${item.underlying_symbol ? ` · Underlying ${esc(item.underlying_symbol)}` : ""}${item.option_type && item.instrument_type !== "EMPLOYEE_STOCK_OPTION" ? ` · ${esc(item.option_type)} option` : ""}${item.expiration_date ? ` · Exp ${esc(formatDate(item.expiration_date))}` : ""}${item.strike_price ? ` · Strike ${fmt(item.strike_price, 4)}` : ""}${item.instrument_type !== "EMPLOYEE_STOCK_OPTION" && item.contract_multiplier ? ` · Multiplier ${fmt(item.contract_multiplier, 4)}` : ""}${item.manual_share_value ? ` · Valuation ${money(item.manual_share_value, item.currency, 4)} on ${esc(formatDate(item.valuation_date))}` : ""}${item.comments ? ` · ${esc(item.comments)}` : ""}</div>
-    </div>
-  `).join("") : `<div class="empty">${employeeOptionsWorkflowActive() ? "No employee option grants yet. Enter your first grant above." : "No defined instruments yet"}</div>`;
+  list.innerHTML = visibleSecurities.length ? visibleSecurities.map((item) => {
+    const attachmentRows = manualSecurityAttachmentRows(item);
+    const removalDisabled = item.can_delete === false || attachmentRows.length > 0;
+    const removalHelp = removalDisabled ? `
+      <details class="row-action-help security-delete-help" style="--attachment-rows:${attachmentRows.length}">
+        <summary aria-label="${esc(optionLabel("Why instrument removal is disabled"))}" title="${esc(optionLabel("Why instrument removal is disabled"))}">i</summary>
+        <div class="row-action-help-popover" role="note">
+          <strong>${esc(optionLabel("Cannot remove this instrument while data is attached."))}</strong>
+          <span>${esc(optionLabel("Attached to this instrument"))}</span>
+          <ul>${attachmentRows.map(([count, label]) => `<li><span>${esc(optionLabel(label))}</span><b>${esc(fmt(count, 0))}</b></li>`).join("")}</ul>
+        </div>
+      </details>` : "";
+    return `
+      <div class="stack-item management-item security-management-item">
+        <div class="security-management-main">
+          <b>${esc(item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (item.company_name || item.name) : `${item.symbol}${item.secondary_symbol ? ` · ${item.secondary_symbol}` : ""}`)}</b>
+          <span>${esc(item.name || item.symbol)} · ${esc(optionLabel(item.instrument_type))} · ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? `<span class="badge ${item.listing_status === "PUBLIC" ? "ok" : "warn"}">${esc(item.listing_status === "PUBLIC" ? `${item.public_symbol} · ${item.public_market}` : "Private Company")}</span>` : `${esc(item.stock_market)} · ${esc(currencyDisplayLabel(item.currency))}`}</span>
+          <div class="sub">${esc(optionLabel(item.asset_class))}${item.grant_id ? ` · Grant ID ${esc(item.grant_id)}` : ""}${item.grant_date ? ` · Grant Date ${esc(formatDate(item.grant_date))}` : ""}${item.vesting_start_date ? ` · Vesting Start ${esc(formatDate(item.vesting_start_date))}` : ""}${item.underlying_symbol ? ` · Underlying ${esc(item.underlying_symbol)}` : ""}${item.option_type && item.instrument_type !== "EMPLOYEE_STOCK_OPTION" ? ` · ${esc(item.option_type)} option` : ""}${item.expiration_date ? ` · Exp ${esc(formatDate(item.expiration_date))}` : ""}${item.strike_price ? ` · Strike ${fmt(item.strike_price, 4)}` : ""}${item.instrument_type !== "EMPLOYEE_STOCK_OPTION" && item.contract_multiplier ? ` · Multiplier ${fmt(item.contract_multiplier, 4)}` : ""}${item.manual_share_value ? ` · Valuation ${money(item.manual_share_value, item.currency, 4)} on ${esc(formatDate(item.valuation_date))}` : ""}${item.comments ? ` · ${esc(item.comments)}` : ""}</div>
+        </div>
+        <div class="row-actions security-management-actions">
+          <button class="secondary compact-button" type="button" data-use-manual-security="${esc(item.id)}">${employeeOptionsWorkflowActive() ? "Add to account" : "Use"}</button>
+          <button class="secondary compact-button" type="button" data-edit-manual-security="${esc(item.id)}">Edit</button>
+          ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" && item.listing_status !== "PUBLIC" ? `<button class="secondary compact-button" type="button" data-link-employee-listing="${esc(item.id)}">Link public listing</button>` : ""}
+          ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? `<button class="secondary compact-button" type="button" data-exercise-employee-option="${esc(item.id)}">Exercise</button>` : ""}
+          <button class="secondary compact-button" type="button" data-delete-manual-security="${esc(item.id)}"${removalDisabled ? " disabled" : ""}>Remove</button>
+          ${removalHelp}
+        </div>
+      </div>`;
+  }).join("") : `<div class="empty">${employeeOptionsWorkflowActive() ? "No employee option grants yet. Enter your first grant above." : "No defined instruments yet"}</div>`;
 }
 
 function syncEmployeeIssuerFromCompany() {
@@ -5730,17 +6015,91 @@ function syncEmployeeIssuerFromCompany() {
   $("manualSecurityStatus").textContent = `Using existing issuer details for ${match.company_name}. This grant remains separate.`;
 }
 
+function manualSecurityAttachmentRows(item) {
+  return [
+    ["transactions", "Security transactions"],
+    ["price_history", "Saved price history"],
+    ["events", "Security events"],
+    ["equity_transitions", "Equity transitions"],
+  ].map(([key, label]) => [Number(item.attachment_counts?.[key] || 0), label]).filter(([count]) => count > 0);
+}
+
+function clearManualSecurityForm() {
+  state.editingManualSecurityId = "";
+  [
+    "manualSecuritySymbol", "manualSecondarySymbol", "manualSecurityName", "manualSecurityMarket", "manualCompanyName", "manualGrantId",
+    "manualGrantDate", "manualVestingStartDate", "manualUnderlyingSymbol", "manualExpirationDate", "manualStrikePrice",
+    "manualContractMultiplier", "manualTaxScheme", "manualShareValue", "manualValuationDate",
+    "manualRestrictionEndDate", "manualSecurityComments",
+  ].forEach((id) => { $(id).value = ""; });
+  $("manualEarlyExercise").checked = false;
+  $("manualIssuerStatus").value = "PRIVATE";
+  $("manualInstrumentType").value = "STOCK";
+  $("manualSecuritySymbol").disabled = false;
+  $("manualSecurityMarket").disabled = false;
+  $("saveManualSecurity").textContent = "Save instrument";
+  $("cancelManualSecurityEdit").hidden = true;
+  toggleManualInstrumentFields();
+}
+
+function editManualSecurity(securityId) {
+  const item = instrumentById(securityId);
+  if (!item) return;
+  if (item.instrument_type === "EMPLOYEE_STOCK_OPTION") {
+    setSecuritiesWorkflow("employee-options");
+    editEmployeeOptionGrant(securityId);
+    return;
+  }
+  state.editingManualSecurityId = item.id;
+  $("manualSecuritySymbol").value = item.symbol || "";
+  $("manualSecondarySymbol").value = item.secondary_symbol || "";
+  $("manualSecurityName").value = item.name || "";
+  $("manualSecurityMarket").value = item.stock_market || "";
+  $("manualInstrumentType").value = item.instrument_type || "STOCK";
+  $("manualSecurityCurrency").value = item.currency || "USD";
+  setCompanyLocationOptions(item.location || "USA");
+  $("manualUnderlyingSymbol").value = item.underlying_symbol || "";
+  $("manualOptionType").value = item.option_type || "CALL";
+  setDateField("manualExpirationDate", item.expiration_date || "");
+  $("manualStrikePrice").value = Number(item.strike_price || 0) || "";
+  $("manualContractMultiplier").value = Number(item.contract_multiplier || 0) || "";
+  $("manualSecurityComments").value = item.comments || "";
+  toggleManualInstrumentFields();
+  const identityLocked = item.can_delete === false;
+  $("manualSecuritySymbol").disabled = identityLocked;
+  $("manualSecurityMarket").disabled = identityLocked;
+  $("saveManualSecurity").textContent = "Update instrument";
+  $("cancelManualSecurityEdit").hidden = false;
+  $("manualSecurityStatus").textContent = identityLocked
+    ? "Editing instrument. Its symbol and stock market stay locked while attached data exists."
+    : "Editing instrument.";
+  requestAnimationFrame(() => {
+    $("instrumentDefinitionSection")?.scrollIntoView({ block: "start", behavior: "smooth" });
+    $("manualSecurityName")?.focus({ preventScroll: true });
+  });
+}
+
 async function saveManualSecurity() {
+  const editing = Boolean(state.editingManualSecurityId);
   const isEmployeeOption = valueOf("manualInstrumentType") === "EMPLOYEE_STOCK_OPTION";
   const listingStatus = valueOf("manualIssuerStatus") || "PRIVATE";
   const currency = valueOf("manualSecurityCurrency") || "USD";
-  if (isEmployeeOption && !SUPPORTED_MANAGEMENT_CURRENCIES.includes(currency)) {
-    $("manualSecurityStatus").textContent = "Employee stock-option currency must be ILS, USD, or EUR.";
+  const primarySymbol = isEmployeeOption && listingStatus === "PRIVATE" ? "" : cleanSecuritySymbol(valueOf("manualSecuritySymbol"));
+  const secondarySymbol = isEmployeeOption ? "" : cleanSecuritySymbol(valueOf("manualSecondarySymbol"));
+  if (!SUPPORTED_MANAGEMENT_CURRENCIES.includes(currency)) {
+    $("manualSecurityStatus").textContent = "Security currency must be ILS, USD, or EUR.";
     $("manualSecurityCurrency").focus();
     return;
   }
+  if (secondarySymbol && secondarySymbol === primarySymbol) {
+    $("manualSecurityStatus").textContent = "Secondary symbol must be different from the primary symbol.";
+    $("manualSecondarySymbol").focus();
+    return;
+  }
   const payload = {
-    symbol: isEmployeeOption && listingStatus === "PRIVATE" ? "" : cleanSecuritySymbol(valueOf("manualSecuritySymbol")),
+    id: state.editingManualSecurityId || undefined,
+    symbol: primarySymbol,
+    secondary_symbol: secondarySymbol,
     name: valueOf("manualSecurityName"),
     stock_market: isEmployeeOption && listingStatus === "PRIVATE" ? "" : valueOf("manualSecurityMarket"),
     instrument_type: valueOf("manualInstrumentType"),
@@ -5768,11 +6127,8 @@ async function saveManualSecurity() {
   const saved = await api("/api/local/manual-securities", { method: "POST", body: JSON.stringify(payload) });
   $("manualSecurityStatus").textContent = isEmployeeOption
     ? `Grant details saved for ${saved.company_name || saved.symbol}. Complete the options and vesting step below.`
-    : `Instrument saved: ${saved.company_name || saved.symbol}${saved.grant_id ? ` · ${saved.grant_id}` : ""}`;
-  ["manualSecuritySymbol", "manualSecurityName", "manualSecurityMarket", "manualCompanyName", "manualGrantId", "manualGrantDate", "manualVestingStartDate", "manualUnderlyingSymbol", "manualExpirationDate", "manualStrikePrice", "manualContractMultiplier", "manualTaxScheme", "manualShareValue", "manualValuationDate", "manualRestrictionEndDate", "manualSecurityComments"].forEach((id) => { $(id).value = ""; });
-  $("manualEarlyExercise").checked = false;
-  $("manualIssuerStatus").value = "PRIVATE";
-  toggleManualInstrumentFields();
+    : `${editing ? "Instrument updated" : "Instrument saved"}: ${saved.company_name || saved.symbol}${saved.grant_id ? ` · ${saved.grant_id}` : ""}`;
+  clearManualSecurityForm();
   await loadManualSecurities();
   if (isEmployeeOption) {
     $("securityKnownInstrument").value = saved.id;
@@ -5880,7 +6236,7 @@ async function loadLocalSecurities() {
     : state.localTransactions;
   $("securitiesList").innerHTML = visibleTransactions.length ? visibleTransactions.map((tx) => `
     <div class="stack-item management-item">
-      <b>${esc(tx.action)} ${esc(tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (tx.company_name || tx.security_name || "Employee option") : tx.symbol)}</b>
+      <b>${esc(tx.action)} ${esc(tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (tx.company_name || tx.security_name || "Employee option") : `${tx.symbol}${tx.secondary_symbol ? ` · ${tx.secondary_symbol}` : ""}`)}</b>
       <span>${fmt(tx.quantity, 4)} @ ${fmt(tx.price_input, 4)} (${esc(currencyDisplayLabel(tx.currency))} ${fmt(tx.price, 4)})${tx.instrument_type ? ` · ${esc(tx.instrument_type)}` : ""}</span>
       ${tx.transition_id
         ? '<span class="badge ok" title="Created by an audited employee-option lifecycle action">Lifecycle transaction · read-only</span>'
@@ -6684,12 +7040,16 @@ async function loadFunds() {
         : `Progress ${historyChange > 0 ? "+" : ""}${fmt(historyChange, 0)} (${historyChange > 0 ? "+" : ""}${pct(fund.history_change_percent)}) since ${formatDate(fund.history_first_date)}`)
       : (state.language === "he" ? `${fmt(fund.history_points || 0, 0)} נקודות היסטוריה שמורות` : `${fmt(fund.history_points || 0, 0)} saved history point`);
     return `
-      <div class="stack-item management-item">
-        <b>${esc([optionLabel(fund.kind), fund.fund_name || "", fund.pension_id].filter(Boolean).join(" · "))}</b>
-        ${estimate}
-        <button class="secondary compact-button" type="button" data-fund-history="${esc(fund.id)}">${esc(optionLabel("History"))}</button>
-        <button class="secondary compact-button" type="button" data-edit-fund="${esc(fund.id)}">Edit</button>
-        <button class="secondary compact-button" type="button" data-delete-fund="${esc(fund.id)}">Remove</button>
+      <div class="stack-item management-item fund-management-item">
+        <div class="fund-management-main">
+          <b>${esc([optionLabel(fund.kind), fund.fund_name || "", fund.pension_id].filter(Boolean).join(" · "))}</b>
+          ${estimate}
+        </div>
+        <div class="row-actions fund-management-actions">
+          <button class="secondary compact-button" type="button" data-fund-history="${esc(fund.id)}">${esc(optionLabel("History"))}</button>
+          <button class="secondary compact-button" type="button" data-edit-fund="${esc(fund.id)}">Edit</button>
+          <button class="secondary compact-button" type="button" data-delete-fund="${esc(fund.id)}">Remove</button>
+        </div>
         <div class="sub">${esc(historyText)}${fund.history_latest_date ? ` · ${esc(optionLabel("Updated"))} ${esc(formatDate(fund.history_latest_date))}` : ""} · ${(fund.persons || []).length ? `${(fund.persons || []).map(personLabel).map(esc).join(" · ")} · ` : ""}${esc(fund.comments || optionLabel("No comments"))}${accountText}</div>
       </div>
     `;
@@ -6893,8 +7253,6 @@ function renderPersonList(id, people, deleteAttr) {
 function renderPersonLists() {
   renderPersonList("localAccountPersons", state.localAccountPersons, "data-delete-local-person");
   renderPersonList("editAccountPersons", state.editAccountPersons, "data-delete-edit-person");
-  renderPersonList("fundPersons", state.fundPersons, "data-delete-fund-person");
-  renderPersonList("editFundPersons", state.editFundPersons, "data-delete-edit-fund-person");
 }
 
 function renderPensionSimulatorControls() {
@@ -7739,16 +8097,15 @@ async function runPensionSimulation({ silent = false } = {}) {
 }
 
 function clearFundCreateForm() {
-  ["fundName", "fundPensionId", "fundAmount", "fundAccount", "fundComments", "fundFamilyMember"].forEach((id) => { $(id).value = ""; });
-  state.fundPersons = [];
-  renderPersonLists();
+  ["fundName", "fundPensionId", "fundAmount", "fundAccount", "fundComments"].forEach((id) => { $(id).value = ""; });
+  renderFundAccountOwners();
   updateFundActionStates();
 }
 
 function updateFundActionStates() {
   const button = $("saveFund");
   if (!button) return;
-  button.disabled = !valueOf("fundPensionId") || Number(valueOf("fundAmount") || 0) <= 0;
+  button.disabled = !valueOf("fundPensionId") || Number(valueOf("fundAmount") || 0) <= 0 || !valueOf("fundAccount");
 }
 
 function showFundCreate() {
@@ -7771,6 +8128,10 @@ async function saveFund() {
     $("fundStatus").textContent = "Saved amount is required";
     return;
   }
+  if (!valueOf("fundAccount")) {
+    $("fundStatus").textContent = state.language === "he" ? "יש לבחור חשבון חיסכון ארוך טווח" : "Choose a long-term account";
+    return;
+  }
   await api("/api/local/funds", {
     method: "POST",
     body: JSON.stringify({
@@ -7779,7 +8140,6 @@ async function saveFund() {
       pension_id: valueOf("fundPensionId"),
       amount: valueOf("fundAmount"),
       account_id: valueOf("fundAccount"),
-      persons: state.fundPersons.map((person) => ({ ...person })),
       comments: valueOf("fundComments"),
     }),
   });
@@ -7799,10 +8159,8 @@ function editFund(fundId) {
   refreshFundAccountSelects();
   $("editFundAccount").value = fund.account_id || "";
   $("editFundComments").value = fund.comments || "";
-  $("editFundFamilyMember").value = "";
-  state.editFundPersons = (fund.persons || []).map((person) => ({ ...person }));
+  renderFundAccountOwners();
   $("editFundStatus").textContent = [fund.kind, fund.fund_name, fund.pension_id].filter(Boolean).join(" · ");
-  renderPersonLists();
   openModal("fundEditModal");
 }
 
@@ -7820,6 +8178,10 @@ async function saveEditFund() {
     $("editFundStatus").textContent = "Saved amount is required";
     return;
   }
+  if (!valueOf("editFundAccount")) {
+    $("editFundStatus").textContent = state.language === "he" ? "יש לבחור חשבון חיסכון ארוך טווח" : "Choose a long-term account";
+    return;
+  }
   await api("/api/local/funds", {
     method: "POST",
     body: JSON.stringify({
@@ -7829,7 +8191,6 @@ async function saveEditFund() {
       pension_id: valueOf("editFundPensionId"),
       amount: valueOf("editFundAmount"),
       account_id: valueOf("editFundAccount"),
-      persons: state.editFundPersons.map((person) => ({ ...person })),
       comments: valueOf("editFundComments"),
     }),
   });
@@ -7837,7 +8198,6 @@ async function saveEditFund() {
   $("editFundStatus").textContent = "Fund updated";
   closeModal($("fundEditModal"));
   state.editingFundId = "";
-  state.editFundPersons = [];
   await loadFunds();
   await loadReports();
 }
@@ -7863,15 +8223,21 @@ async function loadPortfolio({ refresh = false } = {}) {
     state.localAccounts = accountData.items || [];
     state.localTransactions = transactionData.items || [];
     const allItems = data.items || [];
+    state.allPortfolioItems = allItems;
     state.items = portfolioItems(allItems);
     state.portfolioReady = true;
     state.accountTrend = {
       ...trend,
       accounts: (trend.accounts || []).filter((entry) => !isEquityCompAccount(entry.account)),
     };
-    populateOptions(state.items);
+    populateOptions(allItems);
     $("status").textContent = `${state.items.length} portfolio positions · ${Object.entries(data.status).map(([k, v]) => `${k}: ${v}`).join(", ")}`;
     renderPortfolio(state.items);
+    if (hasActivePortfolioFilter(state.portfolioFilterCriteria)) {
+      const matches = filterPortfolioItems(state.allPortfolioItems, state.portfolioFilterCriteria);
+      renderRows(matches);
+      $("status").textContent = `${matches.length} portfolio positions matched`;
+    }
     appLog("portfolio.load.done", {
       count: state.items.length,
       equity_comp_positions_excluded: allItems.length - state.items.length,
@@ -7897,7 +8263,7 @@ async function loadLocalOptions() {
       account_types: ["Investment", "Long-Term Savings", "Bank", "ESOP"],
       fund_kinds: ["Pension", "Provident Fund", "Savings Fund"],
       asset_classes: ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"],
-      instrument_types: ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"],
+      instrument_types: ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"],
       option_types: ["CALL", "PUT"],
       issuer_listing_statuses: ["PRIVATE", "PUBLIC"],
     };
@@ -7905,17 +8271,11 @@ async function loadLocalOptions() {
   populateStaticOptions();
 }
 
-async function applyFilter() {
-  $("status").textContent = "Applying portfolio filter";
-  setLoading(true, "Applying portfolio filter");
-  try {
-    const data = await api("/api/screener", { method: "POST", body: JSON.stringify(criteriaFromForm()) });
-    state.items = portfolioItems(data.items || []);
-    $("status").textContent = `${state.items.length} portfolio positions matched`;
-    renderPortfolio(state.items);
-  } finally {
-    setLoading(false);
-  }
+function applyFilter() {
+  state.portfolioFilterCriteria = criteriaFromForm();
+  const matches = filterPortfolioItems(state.allPortfolioItems, state.portfolioFilterCriteria);
+  $("status").textContent = `${matches.length} portfolio positions matched`;
+  renderRows(matches);
 }
 
 function loadSavedBannerItems() {
@@ -8408,17 +8768,136 @@ async function loadCacheStatus() {
     ["Backup directory", backup.directory || ""],
     ["Backup contents", backup.backup_type === "full" ? "Full application state · sensitive" : "Portfolio data only"],
     ["Schedule", backup.enabled === false ? "Disabled" : backup.schedule_summary || backupScheduleSummary(backup.schedule_config)],
-    ["Next run", backup.next_run || "Disabled"],
+    ["Next run", backup.next_run ? formatBackupDateTime(backup.next_run) : "Disabled"],
     ["Latest backup", backup.latest?.filename || "None"],
     ["Backup files", backup.backup_count ?? (backup.backups || []).length],
   ].map(([label, value]) => `<div class="setting-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
   const backupFiles = (backup.backups || []).map((file) => `
     <div class="setting-row backup-file-row">
-      <span>${esc(file.filename)}<small>${esc(file.type === "full" ? "Full backup · sensitive" : "Data-only backup")} · ${esc(file.modified_at || "")} · ${esc(file.size_kb || 0)} KB</small></span>
+      <span class="backup-file-summary">
+        <bdi class="backup-file-name" dir="ltr">${esc(file.filename)}</bdi>
+        <span class="backup-file-separator" aria-hidden="true">·</span>
+        <small>${esc(optionLabel(file.type === "full" ? "Full backup · sensitive" : "Data-only backup"))}</small>
+        <span class="backup-file-separator" aria-hidden="true">·</span>
+        <time datetime="${esc(file.modified_at || "")}" dir="ltr">${esc(formatBackupDateTime(file.modified_at))}</time>
+        <span class="backup-file-separator" aria-hidden="true">·</span>
+        <span class="backup-file-size" dir="ltr">${esc(fmt(file.size_kb ?? 0, 1))} KB</span>
+      </span>
       <button class="secondary compact-button" type="button" data-download-backup="${esc(file.filename)}">Download</button>
     </div>
   `).join("");
   $("backupStatus").innerHTML = backupRows + backupFiles;
+}
+
+const SETTINGS_SECTIONS = new Set(["display", "table", "data", "backup", "system"]);
+
+function setSettingsSection(requestedSection = "display", { focus = false } = {}) {
+  const section = SETTINGS_SECTIONS.has(requestedSection) ? requestedSection : "display";
+  document.querySelectorAll("[data-settings-section]").forEach((button) => {
+    const active = button.dataset.settingsSection === section;
+    button.classList.toggle("active", active);
+    if (active) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  });
+  document.querySelectorAll("[data-settings-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.settingsPanel !== section;
+  });
+  document.querySelectorAll(".settings-menu-help[open]").forEach((details) => details.removeAttribute("open"));
+  if (section === "backup" || section === "system") {
+    loadCacheStatus().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; });
+  }
+  if (focus) requestAnimationFrame(() => document.querySelector(`[data-settings-section="${section}"]`)?.focus());
+}
+
+function clearFullRestorePreview() {
+  state.pendingFullRestoreFile = null;
+  state.pendingFullRestoreInspection = null;
+  const input = $("fullRestoreFile");
+  if (input) input.value = "";
+  const preview = $("fullRestorePreview");
+  if (preview) {
+    preview.hidden = true;
+    preview.innerHTML = "";
+  }
+}
+
+function renderFullRestorePreview(file, inspection) {
+  const preview = $("fullRestorePreview");
+  if (!preview) return;
+  const contains = inspection.contains || {};
+  const included = [
+    contains.portfolio_database ? optionLabel("Portfolio database") : "",
+    contains.client_preferences_and_pension_simulations ? optionLabel("Pension simulations and preferences") : "",
+    contains.application_config ? "config.yaml" : "",
+    contains.runtime_data_and_caches ? optionLabel("Runtime data and caches") : "",
+    contains.tls_certificates ? optionLabel("TLS certificates") : "",
+  ].filter(Boolean).join(" · ");
+  preview.innerHTML = `
+    <h4>${esc(optionLabel("Full backup verified"))}</h4>
+    <dl class="restore-summary">
+      <dt>${esc(optionLabel("File"))}</dt><dd dir="ltr">${esc(file.name)}</dd>
+      <dt>${esc(optionLabel("Created"))}</dt><dd dir="ltr">${esc(formatBackupDateTime(inspection.created_at))}</dd>
+      <dt>${esc(optionLabel("Application version"))}</dt><dd dir="ltr">${esc(inspection.app_version || "Unknown")}</dd>
+      <dt>${esc(optionLabel("Contents"))}</dt><dd>${esc(included || optionLabel("No recognized contents"))}</dd>
+      <dt>${esc(optionLabel("Files"))}</dt><dd>${esc(fmt(inspection.files || 0, 0))} · ${esc(fmt((inspection.total_size_bytes || 0) / 1024, 1))} KB</dd>
+    </dl>
+    <p class="restore-warning">${esc(optionLabel("Restoring replaces the current application state. The app will first create a full safety backup automatically."))}</p>
+    <label class="restore-confirmation"><input id="confirmFullRestoreRisk" type="checkbox" /> <span>${esc(optionLabel("I understand that the current database, settings, configuration, caches, and certificates will be replaced."))}</span></label>
+    <div class="restore-actions">
+      <button id="runFullRestore" class="danger-button" type="button" disabled>${esc(optionLabel("Restore full backup"))}</button>
+      <button id="cancelFullRestore" class="secondary" type="button">${esc(optionLabel("Cancel"))}</button>
+    </div>`;
+  preview.hidden = false;
+}
+
+async function inspectFullRestore(file) {
+  if (!file) return;
+  $("settingsStatus").textContent = "Validating full backup";
+  const response = await fetch("/api/local/backups/inspect", {
+    method: "POST",
+    headers: { "Content-Type": "application/zip", "X-Backup-Filename": encodeURIComponent(file.name) },
+    body: file,
+  });
+  if (!response.ok) {
+    let detail = "Backup validation failed";
+    const responseText = await response.text();
+    try { detail = JSON.parse(responseText).detail || detail; } catch { detail = responseText || detail; }
+    throw new Error(optionLabel(detail));
+  }
+  const inspection = await response.json();
+  state.pendingFullRestoreFile = file;
+  state.pendingFullRestoreInspection = inspection;
+  renderFullRestorePreview(file, inspection);
+  $("settingsStatus").textContent = "Full backup verified. Review the details before restoring.";
+}
+
+async function restoreFullBackup() {
+  const file = state.pendingFullRestoreFile;
+  const confirmation = $("confirmFullRestoreRisk");
+  if (!file || !confirmation?.checked) return;
+  const restoreButton = $("runFullRestore");
+  if (restoreButton) restoreButton.disabled = true;
+  $("settingsStatus").textContent = "Creating a safety backup and restoring the full application";
+  const response = await fetch("/api/local/backups/restore", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/zip",
+      "X-Backup-Filename": encodeURIComponent(file.name),
+      "X-Restore-Confirm": "replace-current-application-state",
+    },
+    body: file,
+  });
+  if (!response.ok) {
+    let detail = "Full restore failed";
+    const responseText = await response.text();
+    try { detail = JSON.parse(responseText).detail || detail; } catch { detail = responseText || detail; }
+    if (restoreButton) restoreButton.disabled = false;
+    throw new Error(optionLabel(detail));
+  }
+  const result = await response.json();
+  clearFullRestorePreview();
+  $("settingsStatus").textContent = `Full restore completed. Safety backup: ${result.safety_backup}. Restart the application to load restored configuration and certificates.`;
+  await loadCacheStatus();
 }
 
 async function downloadResponse(response, defaultFilename) {
@@ -8719,7 +9198,11 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
     Promise.all([loadLocalAccounts(), loadFamilyMembers(), loadFunds()]);
   }
   if (id === "bannerModal") renderBannerSettings();
-  if (id === "settingsModal") loadCacheStatus();
+  if (id === "settingsModal") {
+    setSettingsSection("display", { focus: true });
+    clearFullRestorePreview();
+    $("settingsStatus").textContent = "";
+  }
   if (id === "backupScheduleModal") populateBackupScheduleForm();
   if (id === "aboutModal") loadAbout().catch((error) => { $("aboutContent").innerHTML = `<div class="empty">Error: ${esc(error.message)}</div>`; });
   focusModalDestination(modal, destination);
@@ -8747,6 +9230,12 @@ function closeModal(modal) {
 }
 
 document.addEventListener("keydown", (event) => {
+  if (event.target.id === "query" && event.key === "Enter") {
+    event.preventDefault();
+    applyFilter();
+    return;
+  }
+
   const activeResearchTab = event.target.closest?.("[data-research-tab]");
   if (activeResearchTab && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
     const tabs = [...document.querySelectorAll("[data-research-tab]")];
@@ -8787,6 +9276,22 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  const actionHelpSummary = event.target.closest(".row-action-help summary");
+  if (actionHelpSummary) {
+    requestAnimationFrame(() => {
+      const help = actionHelpSummary.parentElement;
+      if (!help?.open) return;
+      const popover = help.querySelector(".row-action-help-popover");
+      const scrollContainer = help.closest(".management-list");
+      help.classList.remove("open-up");
+      if (popover && scrollContainer) {
+        const availableBelow = scrollContainer.getBoundingClientRect().bottom - actionHelpSummary.getBoundingClientRect().bottom;
+        help.classList.toggle("open-up", availableBelow < popover.offsetHeight + 10);
+      }
+      actionHelpSummary.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }
+
   const modalTrigger = event.target.closest("[data-modal]");
   const modalId = modalTrigger?.dataset.modal;
   if (modalId) {
@@ -8796,6 +9301,14 @@ document.addEventListener("click", (event) => {
       targetId: modalTrigger.dataset.modalTarget || "",
       focusId: modalTrigger.dataset.modalFocus || "",
     });
+  }
+
+  const settingsSection = event.target.closest("[data-settings-section]")?.dataset.settingsSection;
+  if (settingsSection) setSettingsSection(settingsSection);
+
+  if (event.target.id === "cancelFullRestore") clearFullRestorePreview();
+  if (event.target.id === "runFullRestore") {
+    restoreFullBackup().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; });
   }
 
   const employeeWizardStep = Number(event.target.closest("[data-employee-guide-step]")?.dataset.employeeGuideStep || 0);
@@ -8900,7 +9413,9 @@ document.addEventListener("click", (event) => {
 
   const accountId = event.target.closest("[data-delete-account]")?.dataset.deleteAccount;
   if (accountId) {
-    api(`/api/local/accounts/${accountId}`, { method: "DELETE" }).then(() => Promise.all([loadLocalAccounts(), loadPortfolio()]));
+    removeLocalAccount(accountId).catch((error) => {
+      setStatusMessage("accountsStatus", `Error: ${error.message}`);
+    });
   }
 
   const securityDetailButton = event.target.closest("[data-security-detail-symbol]");
@@ -8950,6 +9465,9 @@ document.addEventListener("click", (event) => {
     });
   }
 
+  const equityPriceTrigger = event.target.closest("[data-price-history-symbol]");
+  if (equityPriceTrigger) openPriceHistoryForSecurity(equityPriceTrigger.dataset, equityPriceTrigger);
+
   if (event.target.closest("[data-clear-price-focus]")) {
     state.priceFocus = null;
     renderPriceFocusBar();
@@ -8983,6 +9501,20 @@ document.addEventListener("click", (event) => {
   const editAccountId = event.target.closest("[data-edit-account]")?.dataset.editAccount;
   if (editAccountId) {
     editLocalAccount(editAccountId);
+  }
+
+  const addSkippedAccount = event.target.closest("[data-add-skipped-account]")?.dataset.addSkippedAccount;
+  if (addSkippedAccount !== undefined) prepareSkippedImportAccount(addSkippedAccount);
+
+  const fixSkippedAccount = event.target.closest("[data-fix-skipped-account]")?.dataset.fixSkippedAccount;
+  if (fixSkippedAccount !== undefined) prepareSkippedImportAccount(fixSkippedAccount);
+
+  const editManualSecurityId = event.target.closest("[data-edit-manual-security]")?.dataset.editManualSecurity;
+  if (editManualSecurityId) editManualSecurity(editManualSecurityId);
+
+  if (event.target.id === "cancelManualSecurityEdit") {
+    clearManualSecurityForm();
+    $("manualSecurityStatus").textContent = "Edit cancelled.";
   }
 
   const manualSecurityId = event.target.closest("[data-delete-manual-security]")?.dataset.deleteManualSecurity;
@@ -9096,18 +9628,6 @@ document.addEventListener("click", (event) => {
     renderPersonLists();
   }
 
-  const fundPersonIndex = event.target.closest("[data-delete-fund-person]")?.dataset.deleteFundPerson;
-  if (fundPersonIndex !== undefined) {
-    state.fundPersons.splice(Number(fundPersonIndex), 1);
-    renderPersonLists();
-  }
-
-  const editFundPersonIndex = event.target.closest("[data-delete-edit-fund-person]")?.dataset.deleteEditFundPerson;
-  if (editFundPersonIndex !== undefined) {
-    state.editFundPersons.splice(Number(editFundPersonIndex), 1);
-    renderPersonLists();
-  }
-
   const periodIndex = event.target.closest("[data-delete-pension-period]")?.dataset.deletePensionPeriod;
   if (periodIndex !== undefined) {
     const scenario = activePensionScenario();
@@ -9183,6 +9703,10 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  if (event.target.id === "confirmFullRestoreRisk") {
+    const restoreButton = $("runFullRestore");
+    if (restoreButton) restoreButton.disabled = !event.target.checked;
+  }
   if (event.target.id === "employeeWizardCompanyStatus") toggleEmployeeWizardCompanyFields();
   if (event.target.id === "employeeWizardCompany") syncEmployeeWizardIssuerFromCompany();
   if (event.target.id === "employeeWizardLocation") syncCurrencyFromLocation("employeeWizardLocation", "employeeWizardCurrency");
@@ -9466,6 +9990,16 @@ $("importSource").addEventListener("click", () => importSourceToLocal().catch((e
 $("exportData").addEventListener("click", () => exportLocalData().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }));
 $("chooseImportData").addEventListener("click", () => $("importDataFile").click());
 $("importDataFile").addEventListener("change", (event) => importLocalData(event.target.files?.[0]).catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }).finally(() => { event.target.value = ""; }));
+$("chooseFullRestore").addEventListener("click", () => $("fullRestoreFile").click());
+$("fullRestoreFile").addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  clearFullRestorePreview();
+  if (!file) return;
+  inspectFullRestore(file).catch((error) => {
+    $("settingsStatus").textContent = `Error: ${error.message}`;
+    clearFullRestorePreview();
+  });
+});
 $("runBackupNow").addEventListener("click", () => runBackupNow().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }));
 $("downloadBackupsZip").addEventListener("click", () => downloadBackupsZip().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }));
 $("saveBackupSettings").addEventListener("click", () => saveBackupSettings().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }));
@@ -9482,6 +10016,7 @@ $("saveDisplaySettings").addEventListener("click", () => {
   renderFundsOverview();
   renderSummary(state.items || []);
   renderAnalytics(state.items || []);
+  loadCacheStatus().catch(reportBackgroundError);
   $("settingsStatus").textContent = t("displaySettingsSaved");
 });
 $("dashboardEdit").addEventListener("click", () => setDashboardEdit(!state.dashboard.edit));
@@ -9534,8 +10069,8 @@ $("saveFund").addEventListener("click", () => saveFund().catch((error) => { $("f
 $("saveFundHistory").addEventListener("click", () => saveFundAmountHistory().catch((error) => { $("fundHistoryStatus").textContent = `Error: ${error.message}`; }));
 $("cancelFundHistoryEdit").addEventListener("click", () => { resetFundHistoryForm(); $("fundHistoryStatus").textContent = "Edit cancelled"; });
 $("saveEditFund").addEventListener("click", () => saveEditFund().catch((error) => { $("editFundStatus").textContent = `Error: ${error.message}`; }));
-$("attachFundPerson").addEventListener("click", () => attachFamilyMember("fundPersons", "fundFamilyMember", "fundStatus", { single: true }));
-$("attachEditFundPerson").addEventListener("click", () => attachFamilyMember("editFundPersons", "editFundFamilyMember", "editFundStatus", { single: true }));
+$("fundAccount").addEventListener("change", () => { renderFundAccountOwners(); updateFundActionStates(); });
+$("editFundAccount").addEventListener("change", renderFundAccountOwners);
 $("addPensionPeriod").addEventListener("click", addPensionPeriod);
 $("addPensionRate").addEventListener("click", addPensionRate);
 $("addPensionScenario").addEventListener("click", addPensionScenario);
@@ -9546,7 +10081,7 @@ $("localAccountLocation").addEventListener("change", () => syncCurrencyFromLocat
 $("editAccountLocation").addEventListener("change", () => syncCurrencyFromLocation("editAccountLocation", "editAccountCurrency"));
 $("brokerCountry").addEventListener("change", () => syncCurrencyFromLocation("brokerCountry", "brokerCurrency"));
 $("priceLocation").addEventListener("change", () => syncCurrencyFromLocation("priceLocation", "priceCurrency"));
-["manualSecuritySymbol", "manualUnderlyingSymbol", "securitySymbol", "priceSymbol", "financeReportSymbol", "outlookSymbol"].forEach((id) => {
+["manualSecuritySymbol", "manualSecondarySymbol", "manualUnderlyingSymbol", "securitySymbol", "priceSymbol", "financeReportSymbol", "outlookSymbol"].forEach((id) => {
   $(id).addEventListener("blur", () => { $(id).value = cleanSecuritySymbol($(id).value); });
 });
 

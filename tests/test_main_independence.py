@@ -1,4 +1,5 @@
 import io
+import hashlib
 import json
 import sqlite3
 import zipfile
@@ -8,9 +9,68 @@ from types import SimpleNamespace
 import pytest
 
 from app import main
+from app.config import AppConfig
 from app.models import Ohlcv
 from app.providers import SqliteCache
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
+
+
+def test_external_db_config_accepts_a_structurally_valid_legacy_section(tmp_path):
+    expected = {"host": "source-db", "database": "portfolio", "username": "reader"}
+    config = AppConfig(raw={"legacy_source": {"db": expected}}, path=tmp_path / "config.yaml")
+
+    assert config.db == expected
+
+
+def test_delete_account_returns_conflict_when_data_is_attached(monkeypatch):
+    class Store:
+        def delete_account(self, account_id):
+            raise ValueError("Account has attached data and cannot be removed: funds=1")
+
+    monkeypatch.setattr(main, "local_store", Store())
+
+    with pytest.raises(HTTPException) as exc_info:
+        main.delete_local_account("account-1")
+
+    assert exc_info.value.status_code == 409
+    assert "funds=1" in exc_info.value.detail
+
+
+def test_manual_security_api_rejects_currencies_outside_ils_usd_eur(monkeypatch):
+    class Store:
+        def save_manual_security(self, payload):
+            raise AssertionError("Unsupported currency must be rejected before storage")
+
+    monkeypatch.setattr(main, "local_store", Store())
+
+    with pytest.raises(HTTPException) as exc_info:
+        main.save_manual_security({"symbol": "GBP-ASSET", "currency": "GBP"})
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Security currency must be ILS, USD, or EUR"
+
+
+def test_manual_security_api_rejects_rsu_as_an_instrument_type(monkeypatch):
+    class Store:
+        def save_manual_security(self, payload):
+            raise AssertionError("RSU instrument types must be rejected before storage")
+
+    monkeypatch.setattr(main, "local_store", Store())
+
+    with pytest.raises(HTTPException) as exc_info:
+        main.save_manual_security({"symbol": "AAPL", "currency": "USD", "instrument_type": "RSU"})
+
+    assert exc_info.value.status_code == 400
+    assert "grant type" in exc_info.value.detail
+    assert "transaction as RSU" in exc_info.value.detail
+
+
+def test_rsu_is_available_for_transactions_but_not_instrument_definitions():
+    options = main.local_options()
+
+    assert "RSU" in options["asset_classes"]
+    assert "RSU" not in options["instrument_types"]
 
 
 class _LocalStore:
@@ -20,7 +80,7 @@ class _LocalStore:
     def holdings(self):
         return []
 
-    def import_ghostfolio(self, holdings, account_cash=None, source_transactions=None):
+    def import_external(self, holdings, account_cash=None, source_transactions=None):
         self.imported = True
         self.account_cash = account_cash or []
         self.source_transactions = source_transactions or []
@@ -30,15 +90,15 @@ class _LocalStore:
         self.snapshots_captured = True
 
 
-def test_portfolio_reads_local_store_without_ghostfolio_sync(monkeypatch, tmp_path):
-    class GhostfolioShouldNotLoad:
+def test_portfolio_reads_local_store_without_external_sync(monkeypatch, tmp_path):
+    class ExternalSourceShouldNotLoad:
         def __init__(self, db_config):
             pass
 
         def load_holdings(self):
-            raise AssertionError("portfolio should not sync Ghostfolio")
+            raise AssertionError("portfolio should not sync the external source")
 
-    monkeypatch.setattr(main, "GhostfolioClient", GhostfolioShouldNotLoad)
+    monkeypatch.setattr(main, "ExternalImportClient", ExternalSourceShouldNotLoad)
     monkeypatch.setattr(main, "local_store", _LocalStore())
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
 
@@ -48,25 +108,25 @@ def test_portfolio_reads_local_store_without_ghostfolio_sync(monkeypatch, tmp_pa
     assert result["items"] == []
 
 
-def test_ghostfolio_import_is_explicit(monkeypatch):
-    class GhostfolioSource:
+def test_external_import_is_explicit(monkeypatch):
+    class ExternalSource:
         def __init__(self, db_config):
             pass
 
         def load_holdings(self):
-            return [object()], {"ghostfolio": "ok (1 positions)"}
+            return [object()], {"external_import": "ok (1 positions)"}
 
         def load_account_cash(self):
-            return [{"account": "Main", "currency": "USD", "cash": 123}], {"ghostfolio_accounts": "ok (1 accounts)"}
+            return [{"account": "Main", "currency": "USD", "cash": 123}], {"source_accounts": "ok (1 accounts)"}
 
         def load_order_transactions(self):
             return [{"account": "Main", "account_currency": "USD", "symbol": "ABC", "quantity": 1}], {"source_orders": "ok (1 transactions)"}
 
     store = _LocalStore()
-    monkeypatch.setattr(main, "GhostfolioClient", GhostfolioSource)
+    monkeypatch.setattr(main, "ExternalImportClient", ExternalSource)
     monkeypatch.setattr(main, "local_store", store)
 
-    result = main.import_ghostfolio()
+    result = main.import_source()
 
     assert store.imported is True
     assert store.account_cash == [{"account": "Main", "currency": "USD", "cash": 123}]
@@ -102,7 +162,7 @@ def test_security_history_clamps_requested_start_date(monkeypatch):
             return False
 
     class Hub:
-        def prices(self, symbol, from_date, to_date):
+        def prices(self, symbol, from_date, to_date, **kwargs):
             self.from_date = from_date
             return [], {"provider": "empty"}
 
@@ -127,7 +187,7 @@ def test_security_history_returns_ohlcv_and_chart_metrics(monkeypatch):
             return False
 
     class Hub:
-        def prices(self, symbol, from_date, to_date):
+        def prices(self, symbol, from_date, to_date, **kwargs):
             start = date.today() - timedelta(days=39)
             rows = [
                 Ohlcv(
@@ -154,6 +214,44 @@ def test_security_history_returns_ohlcv_and_chart_metrics(monkeypatch):
     assert result["moving_averages"]["30"]["state"] == "ok"
     assert result["support_resistance"]["1m"]["state"] == "ok"
     assert result["volume"]["average_20d"] is not None
+
+
+def test_security_history_passes_primary_secondary_and_tase_market_to_provider(monkeypatch):
+    class Store:
+        def price_history(self, symbol, stock_market, from_date, to_date):
+            return []
+
+        def manual_security(self, symbol, stock_market):
+            return {
+                "symbol": "1101534",
+                "secondary_symbol": "CEL",
+                "stock_market": "TASE",
+            }
+
+    class Hub:
+        def prices(self, symbol, from_date, to_date, **kwargs):
+            self.call = (symbol, kwargs)
+            return [
+                Ohlcv(
+                    date=to_date,
+                    open=32,
+                    high=33,
+                    low=31,
+                    close=32.47,
+                    adjusted_close=32.47,
+                    volume=100,
+                )
+            ], {"yahoo_finance": "ok"}
+
+    hub = Hub()
+    monkeypatch.setattr(main, "local_store", Store())
+    monkeypatch.setattr(main, "hub", lambda: hub)
+
+    result = main.security_history("1101534", "TASE", period="1m")
+
+    assert hub.call == ("1101534", {"secondary_symbol": "CEL", "stock_market": "TASE"})
+    assert result["points"][-1]["price"] == 32.47
+    assert result["status"] == {"yahoo_finance": "ok"}
 
 
 def test_us_transaction_validation_accepts_sec_ticker_without_quote(monkeypatch):
@@ -610,3 +708,181 @@ def test_full_backup_contains_all_persistent_application_state(tmp_path, monkeyp
     ).fetchone()
     restored_market_cache.close()
     assert store.list_backups()[0]["type"] == "full"
+
+    inspection = main.inspect_full_backup(archive_path.read_bytes())
+    assert inspection["kind"] == main.FULL_BACKUP_KIND
+    assert inspection["files"] == len(names)
+    assert inspection["contains"] == {
+        "portfolio_database": True,
+        "portable_data_export": True,
+        "client_preferences_and_pension_simulations": True,
+        "application_config": True,
+        "runtime_data_and_caches": True,
+        "tls_certificates": True,
+    }
+
+
+def test_full_backup_inspection_rejects_tampered_payload(tmp_path, monkeypatch):
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("dashboard:\n  base_currency: ILS\n")
+    monkeypatch.setenv("DATA_DIR", str(data_root))
+    store = main.LocalPortfolioStore(data_root / "local-portfolio.sqlite3")
+    monkeypatch.setattr(main, "local_store", store)
+    monkeypatch.setattr(main, "config", SimpleNamespace(path=config_path))
+    result = main.write_full_backup(keep=5)
+    original_path = data_root / "backups" / result["filename"]
+    tampered = io.BytesIO()
+    with zipfile.ZipFile(original_path) as source, zipfile.ZipFile(tampered, "w", compression=zipfile.ZIP_DEFLATED) as target:
+        for info in source.infolist():
+            value = source.read(info)
+            if info.filename == "portfolio-data.json":
+                value = bytes([value[0] ^ 1]) + value[1:]
+            target.writestr(info, value)
+
+    with pytest.raises(ValueError, match="integrity validation failed"):
+        main.inspect_full_backup(tampered.getvalue())
+
+
+def test_full_restore_replaces_complete_state_and_creates_safety_backup(tmp_path, monkeypatch):
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        "dashboard:\n  base_currency: ILS\nalerts:\n  timezone: Asia/Jerusalem\nbackup:\n  enabled: false\n  keep: 10\n"
+    )
+    cert_root = tmp_path / "certs"
+    cert_root.mkdir()
+    (cert_root / "server.crt").write_text("original-certificate")
+    (cert_root / "server.key").write_text("original-private-key")
+    (data_root / "settings.json").write_text('{"backup": {"enabled": false, "keep": 10}}')
+    (data_root / "saved-cache.json").write_text('{"state": "from-backup"}')
+    monkeypatch.setenv("DATA_DIR", str(data_root))
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(main, "config", main.load_config())
+    store = main.LocalPortfolioStore(data_root / "local-portfolio.sqlite3")
+    store.set_preference("client_state", {"marker": "from-backup"})
+    monkeypatch.setattr(main, "local_store", store)
+    result = main.write_full_backup(keep=10)
+    archive_path = data_root / "backups" / result["filename"]
+    restore_payload = archive_path.read_bytes()
+
+    store.set_preference("client_state", {"marker": "current-state"})
+    config_path.write_text("dashboard:\n  base_currency: USD\n")
+    (data_root / "saved-cache.json").write_text('{"state": "current"}')
+    (data_root / "stale-after-backup.json").write_text('{"remove": true}')
+    (cert_root / "server.crt").write_text("current-certificate")
+
+    restored = main.restore_full_backup(restore_payload)
+
+    assert restored["status"] == "restored"
+    assert restored["restart_required"] is True
+    assert restored["safety_backup"].startswith("portfolio-full-")
+    assert restored["safety_backup"] != result["filename"]
+    assert store.get_preference("client_state") == {"marker": "from-backup"}
+    assert "base_currency: ILS" in config_path.read_text()
+    assert (data_root / "saved-cache.json").read_text() == '{"state": "from-backup"}'
+    assert not (data_root / "stale-after-backup.json").exists()
+    assert (cert_root / "server.crt").read_text() == "original-certificate"
+    assert (data_root / "backups" / restored["safety_backup"]).exists()
+
+
+def test_full_restore_rejects_cross_site_requests():
+    cross_site = SimpleNamespace(
+        headers={"sec-fetch-site": "cross-site"},
+        url=SimpleNamespace(scheme="https", netloc="localhost:6443"),
+    )
+    with pytest.raises(HTTPException) as exc:
+        main._require_same_origin_restore(cross_site)
+    assert exc.value.status_code == 403
+
+    wrong_origin = SimpleNamespace(
+        headers={"origin": "https://example.invalid"},
+        url=SimpleNamespace(scheme="https", netloc="localhost:6443"),
+    )
+    with pytest.raises(HTTPException) as exc:
+        main._require_same_origin_restore(wrong_origin)
+    assert exc.value.status_code == 403
+
+
+def test_full_backup_inspection_rejects_unsafe_paths_and_size_limit(monkeypatch):
+    unsafe_value = b"not allowed"
+    manifest = {
+        "kind": main.FULL_BACKUP_KIND,
+        "version": main.FULL_BACKUP_VERSION,
+        "app_version": "test",
+        "created_at": "2026-08-15T12:00:00Z",
+        "files": [{
+            "path": "../config.yaml",
+            "size_bytes": len(unsafe_value),
+            "sha256": hashlib.sha256(unsafe_value).hexdigest(),
+        }],
+    }
+    archive_bytes = io.BytesIO()
+    with zipfile.ZipFile(archive_bytes, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+        archive.writestr("../config.yaml", unsafe_value)
+    with pytest.raises(ValueError, match="unsafe path"):
+        main.inspect_full_backup(archive_bytes.getvalue())
+
+    monkeypatch.setattr(main, "MAX_FULL_BACKUP_COMPRESSED_BYTES", 3)
+    with pytest.raises(ValueError, match="larger than"):
+        main.inspect_full_backup(b"four")
+
+
+def test_full_restore_rolls_back_to_safety_backup_on_write_failure(tmp_path, monkeypatch):
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("dashboard:\n  base_currency: ILS\nbackup:\n  enabled: false\n  keep: 10\n")
+    (data_root / "settings.json").write_text('{"backup": {"enabled": false, "keep": 10}}')
+    monkeypatch.setenv("DATA_DIR", str(data_root))
+    monkeypatch.setenv("CONFIG_PATH", str(config_path))
+    monkeypatch.setattr(main, "config", main.load_config())
+    store = main.LocalPortfolioStore(data_root / "local-portfolio.sqlite3")
+    monkeypatch.setattr(main, "local_store", store)
+    store.set_preference("client_state", {"marker": "incoming-backup"})
+    incoming_result = main.write_full_backup(keep=10)
+    incoming_payload = (data_root / "backups" / incoming_result["filename"]).read_bytes()
+
+    store.set_preference("client_state", {"marker": "state-before-failed-restore"})
+    config_path.write_text("dashboard:\n  base_currency: EUR\nbackup:\n  enabled: false\n  keep: 10\n")
+    original_apply = main._apply_full_backup_files
+    attempts = 0
+
+    def fail_first_apply(files):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            config_path.write_text("dashboard:\n  base_currency: BROKEN\n")
+            raise OSError("injected restore failure")
+        original_apply(files)
+
+    monkeypatch.setattr(main, "_apply_full_backup_files", fail_first_apply)
+    with pytest.raises(RuntimeError, match="recovered from the safety backup"):
+        main.restore_full_backup(incoming_payload)
+
+    assert attempts == 2
+    assert store.get_preference("client_state") == {"marker": "state-before-failed-restore"}
+    assert "base_currency: EUR" in config_path.read_text()
+    assert len(store.list_backups()) >= 2
+
+
+def test_full_restore_api_requires_confirmation_and_rejects_invalid_zip():
+    client = TestClient(main.app, base_url="https://localhost:6443")
+    response = client.post(
+        "/api/local/backups/restore",
+        content=b"not-a-zip",
+        headers={"Origin": "https://localhost:6443", "Content-Type": "application/zip"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Explicit full-restore confirmation is required"
+
+    response = client.post(
+        "/api/local/backups/inspect",
+        content=b"not-a-zip",
+        headers={"Content-Type": "application/zip"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "The selected file is not a valid ZIP archive."

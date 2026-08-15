@@ -1,6 +1,8 @@
 import time
 from datetime import date, timedelta
 
+import pytest
+
 from app.models import Ohlcv
 from app import providers
 from app.providers import MarketDataHub, NasdaqQuoteProvider, SecCompanyFactsProvider, SqliteCache, YahooChartProvider
@@ -169,6 +171,64 @@ def test_market_data_hub_chooses_fuller_price_series(monkeypatch, tmp_path):
     assert status == {"sparse": "ok", "full": "ok"}
 
 
+def test_market_data_hub_uses_yahoo_tase_secondary_symbol_when_primary_is_missing(monkeypatch, tmp_path):
+    class YahooProvider:
+        name = "yahoo_finance"
+
+        def __init__(self):
+            self.calls = []
+
+        def prices(self, symbol, from_date, to_date):
+            self.calls.append(symbol)
+            if symbol == "1101534.TA":
+                raise providers.ProviderError("symbol not found")
+            return [Ohlcv(date=to_date, open=32, high=33, low=31, close=32.47, adjusted_close=32.47, volume=100)]
+
+    monkeypatch.setattr(providers, "data_dir", lambda: tmp_path)
+    hub = MarketDataHub({"primary": "frankfurter_fx", "fallback": [], "experimental_fallback": []}, {})
+    provider = YahooProvider()
+    hub.providers = [provider]
+
+    rows, status = hub.prices(
+        "1101534",
+        date(2026, 8, 1),
+        date(2026, 8, 14),
+        secondary_symbol="CEL",
+        stock_market="TASE",
+    )
+
+    assert provider.calls == ["1101534.TA", "CEL.TA"]
+    assert rows[-1].close == 32.47
+    assert status == {"yahoo_finance": "ok"}
+
+
+def test_market_data_hub_does_not_use_secondary_when_yahoo_primary_succeeds(monkeypatch, tmp_path):
+    class YahooProvider:
+        name = "yahoo_finance"
+
+        def __init__(self):
+            self.calls = []
+
+        def prices(self, symbol, from_date, to_date):
+            self.calls.append(symbol)
+            return [Ohlcv(date=to_date, open=10, high=11, low=9, close=10, adjusted_close=10, volume=100)]
+
+    monkeypatch.setattr(providers, "data_dir", lambda: tmp_path)
+    hub = MarketDataHub({"primary": "frankfurter_fx", "fallback": [], "experimental_fallback": []}, {})
+    provider = YahooProvider()
+    hub.providers = [provider]
+
+    hub.prices(
+        "PRIMARY",
+        date(2026, 8, 1),
+        date(2026, 8, 14),
+        secondary_symbol="SECONDARY",
+        stock_market="TASE",
+    )
+
+    assert provider.calls == ["PRIMARY.TA"]
+
+
 def test_historical_cache_prefixes_do_not_expire(tmp_path):
     cache = SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=1, max_mb=1)
     cache.set("sec:companyfacts:0000000001", {"facts": {"ok": True}})
@@ -265,7 +325,7 @@ def test_yahoo_summary_maps_fundamentals_and_profile(monkeypatch, tmp_path):
                             ]
                         },
                         "assetProfile": {"industry": "Medical Instruments", "sector": "Healthcare"},
-                        "price": {"longName": "Bruker Corporation", "marketCap": {"raw": 1000}},
+                        "price": {"longName": "Bruker Corporation", "currency": {"raw": "ILA"}, "marketCap": {"raw": 1000}},
                     }
                 ]
             }
@@ -279,7 +339,44 @@ def test_yahoo_summary_maps_fundamentals_and_profile(monkeypatch, tmp_path):
     assert fundamentals["income_statement"]["annualReports"][0]["totalRevenue"] == 200
     assert fundamentals["income_statement"]["annualReports"][1]["netIncome"] == 10
     assert profile["industry"] == "Medical Instruments"
+    assert profile["currency"] == "ILS"
     assert profile["market_cap"] == 1000
+
+
+def test_yahoo_normalizes_tase_agorot_prices_and_dividends_to_ils(monkeypatch, tmp_path):
+    provider = YahooChartProvider({}, SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1))
+    trading_day = date(2026, 8, 14)
+    timestamp = int(time.mktime(trading_day.timetuple()))
+
+    def fake_get_json(url, params, cache_key, force_refresh=False):
+        return {
+            "chart": {
+                "result": [
+                    {
+                        "meta": {"currency": "ILA"},
+                        "timestamp": [timestamp],
+                        "indicators": {
+                            "quote": [{"open": [3200], "high": [3300], "low": [3100], "close": [3247], "volume": [1234]}],
+                            "adjclose": [{"adjclose": [3247]}],
+                        },
+                        "events": {"dividends": {"one": {"date": timestamp, "amount": 118.81}}},
+                    }
+                ]
+            }
+        }
+
+    monkeypatch.setattr(provider, "_get_json", fake_get_json)
+
+    prices = provider.prices("CEL.TA", trading_day, trading_day)
+    dividends = provider.dividends("CEL.TA", force_refresh=True, to_date=trading_day)
+
+    assert prices[0].open == 32
+    assert prices[0].high == 33
+    assert prices[0].low == 31
+    assert prices[0].close == pytest.approx(32.47)
+    assert prices[0].adjusted_close == pytest.approx(32.47)
+    assert prices[0].volume == 1234
+    assert dividends == [{"date": "2026-08-14", "amount": pytest.approx(1.1881)}]
 
 
 def test_sec_company_facts_maps_net_income_revenue_and_shares(monkeypatch, tmp_path):

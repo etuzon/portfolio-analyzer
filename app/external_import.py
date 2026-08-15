@@ -7,7 +7,7 @@ from .models import Holding
 from .postgres import connect_postgres
 
 
-class GhostfolioClient:
+class ExternalImportClient:
     def __init__(self, db_config: dict[str, Any]):
         self.db_config = db_config
 
@@ -16,7 +16,7 @@ class GhostfolioClient:
 
     def load_holdings(self) -> tuple[list[Holding], dict[str, str]]:
         if not self.db_config.get("host"):
-            return sample_holdings(), {"ghostfolio": "missing config"}
+            return sample_holdings(), {"external_import": "missing config"}
 
         try:
             with self._connect() as conn:
@@ -26,17 +26,17 @@ class GhostfolioClient:
                 account_table = self._pick(tables, ["Account", "accounts"])
                 platform_table = self._pick(tables, ["Platform", "platforms"])
                 if not order_table:
-                    return sample_holdings(), {"ghostfolio": "order table not found"}
+                    return sample_holdings(), {"external_import": "order table not found"}
                 rows = self._load_order_rows(conn, order_table, profile_table, account_table, platform_table)
                 market_prices = self._load_latest_market_prices(conn) if "MarketData" in tables else {}
                 holdings = self._aggregate(rows, market_prices)
-                return holdings, {"ghostfolio": f"ok ({len(holdings)} positions)"}
+                return holdings, {"external_import": f"ok ({len(holdings)} positions)"}
         except Exception as exc:
-            return sample_holdings(), {"ghostfolio": f"error: {exc.__class__.__name__}"}
+            return sample_holdings(), {"external_import": f"error: {exc.__class__.__name__}"}
 
     def load_account_cash(self) -> tuple[list[dict[str, Any]], dict[str, str]]:
         if not self.db_config.get("host"):
-            return [], {"ghostfolio_accounts": "missing config"}
+            return [], {"source_accounts": "missing config"}
 
         try:
             with self._connect() as conn:
@@ -45,11 +45,11 @@ class GhostfolioClient:
                 platform_table = self._pick(tables, ["Platform", "platforms"])
                 balance_table = self._pick(tables, ["AccountBalance", "account_balances"])
                 if not account_table:
-                    return [], {"ghostfolio_accounts": "account table not found"}
+                    return [], {"source_accounts": "account table not found"}
                 rows = self._load_account_cash_rows(conn, account_table, platform_table, balance_table)
-                return rows, {"ghostfolio_accounts": f"ok ({len(rows)} accounts)"}
+                return rows, {"source_accounts": f"ok ({len(rows)} accounts)"}
         except Exception as exc:
-            return [], {"ghostfolio_accounts": f"error: {exc.__class__.__name__}"}
+            return [], {"source_accounts": f"error: {exc.__class__.__name__}"}
 
     def load_order_transactions(self) -> tuple[list[dict[str, Any]], dict[str, str]]:
         if not self.db_config.get("host"):

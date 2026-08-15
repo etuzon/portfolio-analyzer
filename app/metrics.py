@@ -21,10 +21,19 @@ PERIODS = {
 
 def analyze_holding(holding: Holding, hub: MarketDataHub) -> SymbolAnalysis:
     today = date.today()
-    prices, price_status = hub.prices(holding.symbol, today - timedelta(days=PERIODS["5y"]), today)
-    fundamentals, fundamental_status = hub.fundamentals(holding.symbol)
-    dividends, dividend_status = hub.dividends(holding.symbol)
-    profile, profile_status = hub.profile(holding.symbol)
+    provider_context = {
+        "secondary_symbol": holding.secondary_symbol,
+        "stock_market": holding.stock_market,
+    }
+    prices, price_status = hub.prices(
+        holding.symbol,
+        today - timedelta(days=PERIODS["5y"]),
+        today,
+        **provider_context,
+    )
+    fundamentals, fundamental_status = hub.fundamentals(holding.symbol, **provider_context)
+    dividends, dividend_status = hub.dividends(holding.symbol, **provider_context)
+    profile, profile_status = hub.profile(holding.symbol, **provider_context)
 
     if profile.get("name") and (not holding.name or holding.name.upper() == holding.symbol.upper()):
         holding.name = str(profile.get("name") or holding.name)
@@ -209,7 +218,7 @@ def screen(items: list[SymbolAnalysis], criteria: dict[str, Any]) -> list[Symbol
     for item in items:
         h = item.holding
         text = (criteria.get("query") or "").lower()
-        if text and text not in h.symbol.lower() and text not in h.name.lower():
+        if text and text not in h.symbol.lower() and text not in h.secondary_symbol.lower() and text not in h.name.lower():
             continue
         if criteria.get("industry") and criteria["industry"].lower() not in item.industry.lower():
             continue

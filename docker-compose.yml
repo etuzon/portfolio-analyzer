@@ -5,7 +5,7 @@ services:
     ports:
       - "6443:6443"
     volumes:
-      - ./config.yaml:/app/config.yaml:ro
+      - ./config.yaml:/app/config.yaml
       - ./data:/app/data
       - ./certs:/app/certs
     environment:
@@ -15,10 +15,10 @@ services:
       FMP_API_KEY: ${FMP_API_KEY:-}
     networks:
       - default
-      - ghostfolio
+      - external_import
     restart: unless-stopped
 
 networks:
-  ghostfolio:
+  external_import:
     external: true
-    name: ghostfolio_default
+    name: external_import_default

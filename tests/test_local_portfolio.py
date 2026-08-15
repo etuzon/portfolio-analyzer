@@ -7,6 +7,20 @@ from app.local_portfolio import LocalPortfolioStore, age_from_birth_date, monthl
 from app.models import Holding
 
 
+TEST_OWNER = {"name": "Test Owner", "birth_date": "01/01/1990"}
+
+
+def _save_owned_account(store, payload):
+    return store.save_account({**payload, "persons": payload.get("persons") or [dict(TEST_OWNER)]})
+
+
+def _save_long_term_account(store, **overrides):
+    return _save_owned_account(
+        store,
+        {"type": "Long-Term Savings", "location": "Israel", "currency": "ILS", "username": "Retirement", **overrides},
+    )
+
+
 def test_market_price_units_are_normalized():
     assert normalize_price(425, "Israel", "EQUITY") == 4.25
     assert normalize_price(98.5, "USA", "BOND") == 0.985
@@ -16,7 +30,8 @@ def test_market_price_units_are_normalized():
 
 def test_local_portfolio_aggregates_transactions_and_trends(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account(
+    account = _save_owned_account(
+        store,
         {
             "type": "Investment",
             "location": "USA",
@@ -70,7 +85,7 @@ def test_local_portfolio_aggregates_transactions_and_trends(tmp_path):
 
 def test_trade_quantity_validation_and_long_position_close(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account({"type": "Investment", "location": "USA", "currency": "USD", "initial_cash": 1000, "username": "Eyal"})
+    account = _save_owned_account(store, {"type": "Investment", "location": "USA", "currency": "USD", "initial_cash": 1000, "username": "Eyal"})
     base = {
         "account_db_id": account["id"],
         "symbol": "ABC",
@@ -94,7 +109,7 @@ def test_trade_quantity_validation_and_long_position_close(tmp_path):
 
 def test_short_cover_validation_and_close(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account({"type": "Investment", "location": "USA", "currency": "USD", "initial_cash": 1000, "username": "Eyal"})
+    account = _save_owned_account(store, {"type": "Investment", "location": "USA", "currency": "USD", "initial_cash": 1000, "username": "Eyal"})
     base = {
         "account_db_id": account["id"],
         "symbol": "XYZ",
@@ -117,7 +132,7 @@ def test_short_cover_validation_and_close(tmp_path):
 
 def test_short_cannot_cross_a_long_position_and_edit_keeps_ledger_valid(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account({"type": "Investment", "location": "USA", "currency": "USD", "initial_cash": 1000, "username": "Eyal"})
+    account = _save_owned_account(store, {"type": "Investment", "location": "USA", "currency": "USD", "initial_cash": 1000, "username": "Eyal"})
     base = {
         "account_db_id": account["id"],
         "symbol": "ABC",
@@ -138,7 +153,8 @@ def test_short_cannot_cross_a_long_position_and_edit_keeps_ledger_valid(tmp_path
 
 def test_account_update_preserves_transactions(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account(
+    account = _save_owned_account(
+        store,
         {
             "type": "Investment",
             "location": "USA",
@@ -173,7 +189,8 @@ def test_account_update_preserves_transactions(tmp_path):
 
 def test_account_history_snapshots_can_override_and_delete_trend_points(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account(
+    account = _save_owned_account(
+        store,
         {
             "type": "Investment",
             "location": "USA",
@@ -209,6 +226,10 @@ def test_account_history_snapshots_can_override_and_delete_trend_points(tmp_path
 
 def test_import_updates_source_account_cash(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = _save_owned_account(
+        store,
+        {"type": "Investment", "location": "USA", "currency": "USD", "account_id": "Broker Main", "initial_cash": 0},
+    )
     holdings = [
         Holding(
             symbol="ABC",
@@ -222,19 +243,71 @@ def test_import_updates_source_account_cash(tmp_path):
         )
     ]
 
-    result = store.import_ghostfolio(holdings, [{"account": "Broker Main", "currency": "USD", "cash": 123.45}])
+    result = store.import_external(holdings, [{"account": "Broker Main", "currency": "USD", "cash": 123.45}])
     accounts = store.list_accounts()
 
-    assert result["accounts"] == 1
+    assert result["accounts"] == 0
     assert result["account_cash_updated"] == 1
     assert accounts[0]["initial_cash"] == 123.45
 
-    store.import_ghostfolio(holdings, [{"account": "Broker Main", "currency": "USD", "cash": 500}])
+    store.import_external(holdings, [{"account": "Broker Main", "currency": "USD", "cash": 500}])
     assert store.list_accounts()[0]["initial_cash"] == 500
+    assert account["id"] == store.list_accounts()[0]["id"]
+
+
+def test_external_import_skips_unassigned_source_account_and_continues(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    mapped = _save_owned_account(
+        store,
+        {"type": "Investment", "location": "USA", "currency": "USD", "account_id": "Mapped", "initial_cash": 0},
+    )
+    holdings = [
+        Holding(symbol="AAA", asset_class="EQUITY", data_source="NASDAQ", currency="USD", quantity=1, cost_basis=10, market_value=11, account="Mapped"),
+        Holding(symbol="BBB", asset_class="EQUITY", data_source="NASDAQ", currency="USD", quantity=2, cost_basis=20, market_value=22, account="Needs Owner"),
+    ]
+    source_transactions = [
+        {"account": "Mapped", "account_currency": "USD", "symbol": "AAA", "stock_market": "NASDAQ", "asset_class": "EQUITY", "quantity": 1, "price": 10, "currency": "USD", "trade_date": "2026-08-01"},
+        {"account": "Needs Owner", "account_currency": "USD", "symbol": "BBB", "stock_market": "NASDAQ", "asset_class": "EQUITY", "quantity": 2, "price": 10, "currency": "USD", "trade_date": "2026-08-01"},
+    ]
+
+    result = store.import_external(
+        holdings,
+        [
+            {"account": "Mapped", "currency": "USD", "cash": 100},
+            {"account": "Needs Owner", "currency": "USD", "cash": 250},
+        ],
+        source_transactions,
+    )
+
+    assert result["partial"] is True
+    assert result["positions"] == 1
+    assert result["source_transactions"] == 1
+    assert result["skipped_positions"] == 1
+    assert result["skipped_transactions"] == 1
+    assert result["skipped_cash_accounts"] == 1
+    assert result["skipped_accounts"] == [
+        {
+            "account": "Needs Owner",
+            "currency": "USD",
+            "platform": "",
+            "required_account_id": "Needs Owner",
+            "existing_account_id": "",
+            "reason": "account_not_found",
+            "cash": 250.0,
+            "has_cash": True,
+            "positions": 1,
+            "transactions": 1,
+        }
+    ]
+    assert len(store.list_accounts()) == 1
+    assert store.list_accounts()[0]["id"] == mapped["id"]
+    assert store.list_accounts()[0]["initial_cash"] == 100
+    assert [transaction["symbol"] for transaction in store.list_transactions()] == ["AAA"]
 
 
 def test_source_order_import_preserves_historic_trend_dates(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    _save_owned_account(store, {"type": "Investment", "location": "USA", "currency": "USD", "account_id": "Broker Main"})
     holdings = [
         Holding(
             symbol="ABC",
@@ -248,7 +321,7 @@ def test_source_order_import_preserves_historic_trend_dates(tmp_path):
         )
     ]
 
-    result = store.import_ghostfolio(
+    result = store.import_external(
         holdings,
         [{"account": "Broker Main", "currency": "USD", "cash": 100}],
         [
@@ -279,6 +352,7 @@ def test_source_order_import_preserves_historic_trend_dates(tmp_path):
 
 def test_source_manual_instrument_import_keeps_profile_name(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    _save_owned_account(store, {"type": "Investment", "location": "Israel", "currency": "ILS", "account_id": "Broker Main"})
     holdings = [
         Holding(
             symbol="5136924",
@@ -292,7 +366,7 @@ def test_source_manual_instrument_import_keeps_profile_name(tmp_path):
         )
     ]
 
-    store.import_ghostfolio(
+    store.import_external(
         holdings,
         [{"account": "Broker Main", "currency": "ILS", "cash": 0}],
         [
@@ -322,8 +396,8 @@ def test_source_manual_instrument_import_keeps_profile_name(tmp_path):
 
 def test_account_trends_align_accounts_for_total_aggregation(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account_a = store.save_account({"type": "Investment", "location": "USA", "currency": "USD", "initial_cash": 10, "username": "A"})
-    account_b = store.save_account({"type": "Investment", "location": "USA", "currency": "USD", "initial_cash": 20, "username": "B"})
+    account_a = _save_owned_account(store, {"type": "Investment", "location": "USA", "currency": "USD", "initial_cash": 10, "username": "A"})
+    account_b = _save_owned_account(store, {"type": "Investment", "location": "USA", "currency": "USD", "initial_cash": 20, "username": "B"})
     store.add_transaction(
         {
             "account_db_id": account_a["id"],
@@ -364,7 +438,8 @@ def test_account_trends_align_accounts_for_total_aggregation(tmp_path):
 def test_export_import_and_backup_round_trip(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account(
+    account = _save_owned_account(
+        store,
         {
             "type": "Investment",
             "location": "USA",
@@ -406,7 +481,8 @@ def test_export_import_and_backup_round_trip(tmp_path, monkeypatch):
 
 def test_manual_security_metadata_normalizes_id_and_attaches_to_transactions(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account(
+    account = _save_owned_account(
+        store,
         {
             "type": "Investment",
             "location": "USA",
@@ -469,7 +545,8 @@ def test_manual_security_metadata_normalizes_id_and_attaches_to_transactions(tmp
 
 def test_esop_account_supports_rsu_and_stock_options(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account(
+    account = _save_owned_account(
+        store,
         {
             "type": "ESOP",
             "location": "USA",
@@ -481,10 +558,10 @@ def test_esop_account_supports_rsu_and_stock_options(tmp_path):
     )
     rsu = store.save_manual_security(
         {
-            "symbol": "AAPL-RSU",
-            "name": "Apple RSU grant",
-            "stock_market": "ESOP",
-            "instrument_type": "RSU",
+            "symbol": "AAPL",
+            "name": "Apple",
+            "stock_market": "NASDAQ",
+            "instrument_type": "STOCK",
             "currency": "USD",
             "location": "USA",
         }
@@ -507,8 +584,10 @@ def test_esop_account_supports_rsu_and_stock_options(tmp_path):
         {
             "account_db_id": account["id"],
             "action": "ADD",
-            "symbol": "AAPL-RSU",
-            "stock_market": "ESOP",
+            "security_id": rsu["id"],
+            "symbol": "AAPL",
+            "stock_market": "NASDAQ",
+            "asset_class": "RSU",
             "quantity": 10,
             "price_input": 0,
             "vest_date": "31/07/2026",
@@ -531,22 +610,202 @@ def test_esop_account_supports_rsu_and_stock_options(tmp_path):
     holdings = {item.holding.symbol: item.holding for item in store.holdings()}
 
     assert account["type"] == "ESOP"
-    assert rsu["asset_class"] == "RSU"
+    assert rsu["instrument_type"] == "STOCK"
+    assert rsu["asset_class"] == "EQUITY"
     assert option["asset_class"] == "STOCK_OPTION"
     assert option["contract_multiplier"] == 100
-    assert holdings["AAPL-RSU"].account_type == "ESOP"
-    assert holdings["AAPL-RSU"].asset_class == "RSU"
+    assert holdings["AAPL"].account_type == "ESOP"
+    assert holdings["AAPL"].asset_class == "RSU"
     assert holdings["AAPL-OPT-50"].asset_class == "STOCK_OPTION"
     assert holdings["AAPL-OPT-50"].asset_sub_class == "STOCK_OPTION"
     tx = {item["symbol"]: item for item in store.list_transactions()}
-    assert tx["AAPL-RSU"]["vest_date"] == "2026-07-31"
-    assert tx["AAPL-RSU"]["purchase_price"] == 0
+    assert tx["AAPL"]["instrument_type"] == "STOCK"
+    assert tx["AAPL"]["asset_class"] == "RSU"
+    assert tx["AAPL"]["vest_date"] == "2026-07-31"
+    assert tx["AAPL"]["purchase_price"] == 0
     assert tx["AAPL-OPT-50"]["strike_price"] == 50
+
+
+def test_rsu_is_a_grant_transaction_for_a_stock_security_and_legacy_data_migrates(tmp_path):
+    database = tmp_path / "local.sqlite3"
+    store = LocalPortfolioStore(database)
+    account = _save_owned_account(
+        store,
+        {"type": "ESOP", "location": "Israel", "currency": "ILS", "username": "Employee shares"},
+    )
+    security = store.save_manual_security(
+        {
+            "symbol": "1101534",
+            "name": "Cellcom",
+            "stock_market": "TASE",
+            "instrument_type": "RSU",
+            "currency": "ILS",
+            "location": "Israel",
+        }
+    )
+    assert security["instrument_type"] == "STOCK"
+    assert security["asset_class"] == "EQUITY"
+
+    store.add_transaction(
+        {
+            "account_db_id": account["id"],
+            "security_id": security["id"],
+            "action": "ADD",
+            "symbol": security["symbol"],
+            "stock_market": security["stock_market"],
+            "asset_class": "RSU",
+            "quantity": 182,
+            "price_input": 0,
+            "trade_date": "15/08/2026",
+        }
+    )
+    store.save_price(
+        {
+            "symbol": security["symbol"],
+            "stock_market": security["stock_market"],
+            "asset_class": "RSU",
+            "location": "Israel",
+            "currency": "ILS",
+            "price_input": 22,
+            "price_date": "15/08/2026",
+        }
+    )
+    with sqlite3.connect(database) as conn:
+        conn.execute(
+            "update manual_securities set instrument_type = 'RSU', asset_class = 'RSU' where id = ?",
+            (security["id"],),
+        )
+
+    migrated = LocalPortfolioStore(database)
+    saved = migrated.list_manual_securities()[0]
+    transaction = migrated.list_transactions()[0]
+    holding = migrated.holdings()[0].holding
+
+    assert saved["instrument_type"] == "STOCK"
+    assert saved["asset_class"] == "EQUITY"
+    assert saved["can_delete"] is False
+    assert saved["attachment_counts"]["transactions"] == 1
+    assert saved["attachment_counts"]["price_history"] == 1
+    assert transaction["instrument_type"] == "STOCK"
+    assert transaction["asset_class"] == "RSU"
+    assert holding.asset_class == "RSU"
+
+    updated = migrated.save_manual_security({**saved, "name": "Cellcom Israel"})
+    assert updated["name"] == "Cellcom Israel"
+    with pytest.raises(ValueError, match="cannot change"):
+        migrated.save_manual_security({**saved, "symbol": "CEL"})
+    with pytest.raises(ValueError, match="attached data"):
+        migrated.delete_manual_security(security["id"])
+
+
+def test_optional_secondary_symbol_can_be_added_to_an_in_use_stock_and_used_for_prices(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = _save_owned_account(
+        store,
+        {"type": "ESOP", "location": "Israel", "currency": "ILS", "username": "Employee shares"},
+    )
+    security = store.save_manual_security(
+        {
+            "symbol": "1101534",
+            "name": "Cellcom",
+            "stock_market": "TASE",
+            "instrument_type": "STOCK",
+            "currency": "ILS",
+            "location": "Israel",
+        }
+    )
+    assert security["secondary_symbol"] == ""
+    store.add_transaction(
+        {
+            "account_db_id": account["id"],
+            "security_id": security["id"],
+            "action": "ADD",
+            "asset_class": "RSU",
+            "quantity": 182,
+            "price_input": 0,
+            "trade_date": "15/08/2026",
+        }
+    )
+
+    updated = store.save_manual_security({**security, "secondary_symbol": "cel"})
+    store.save_price(
+        {
+            "symbol": "CEL",
+            "stock_market": "TASE",
+            "price_input": 3247,
+            "price_date": "15/08/2026",
+        }
+    )
+    transaction = store.list_transactions()[0]
+    holding = store.holdings()[0].holding
+
+    assert updated["secondary_symbol"] == "CEL"
+    assert store.manual_security("CEL", "TASE")["id"] == security["id"]
+    assert transaction["symbol"] == "1101534"
+    assert transaction["secondary_symbol"] == "CEL"
+    assert holding.symbol == "1101534"
+    assert holding.secondary_symbol == "CEL"
+    assert holding.market_value == pytest.approx(182 * 32.47)
+    assert store.list_manual_securities()[0]["attachment_counts"]["price_history"] == 1
+
+    exported = store.export_data()
+    restored = LocalPortfolioStore(tmp_path / "restored.sqlite3")
+    restored.import_data(exported)
+    assert restored.manual_security_by_id(security["id"])["secondary_symbol"] == "CEL"
+
+    legacy_export = {
+        **exported,
+        "data": {
+            **exported["data"],
+            "manual_securities": [
+                {key: value for key, value in row.items() if key != "secondary_symbol"}
+                for row in exported["data"]["manual_securities"]
+            ],
+        },
+    }
+    legacy_restored = LocalPortfolioStore(tmp_path / "legacy-restored.sqlite3")
+    legacy_restored.import_data(legacy_export)
+    assert legacy_restored.manual_security_by_id(security["id"])["secondary_symbol"] == ""
+
+
+def test_secondary_symbol_must_be_distinct_and_does_not_conflict_on_the_same_market(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    store.save_manual_security(
+        {
+            "symbol": "1101534",
+            "secondary_symbol": "CEL",
+            "stock_market": "TASE",
+            "instrument_type": "STOCK",
+            "currency": "ILS",
+            "location": "Israel",
+        }
+    )
+    with pytest.raises(ValueError, match="different from the primary"):
+        store.save_manual_security(
+            {
+                "symbol": "FDUS",
+                "secondary_symbol": "fdus",
+                "stock_market": "NASDAQ",
+                "instrument_type": "STOCK",
+                "currency": "USD",
+                "location": "USA",
+            }
+        )
+    with pytest.raises(ValueError, match="already uses"):
+        store.save_manual_security(
+            {
+                "symbol": "CEL",
+                "stock_market": "TASE",
+                "instrument_type": "STOCK",
+                "currency": "ILS",
+                "location": "Israel",
+            }
+        )
 
 
 def test_free_option_transaction_requires_strike_price(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account({"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
+    account = _save_owned_account(store, {"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
     payload = {
         "account_db_id": account["id"],
         "action": "ADD",
@@ -625,7 +884,7 @@ def test_import_price_history_stores_source_prices_without_renormalizing(tmp_pat
 
 def test_delete_history_before_prunes_old_price_and_account_history(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account({"type": "Investment", "location": "USA", "currency": "USD", "username": "A"})
+    account = _save_owned_account(store, {"type": "Investment", "location": "USA", "currency": "USD", "username": "A"})
     store.import_price_history(
         [
             {"symbol": "TRIN", "stock_market": "YAHOO", "asset_class": "EQUITY", "location": "USA", "currency": "USD", "price": 1, "price_date": "2026-06-14"},
@@ -645,17 +904,67 @@ def test_delete_history_before_prunes_old_price_and_account_history(tmp_path):
 def test_pension_monthly_estimate_defaults_to_factor_200(tmp_path):
     assert monthly_pension(100000) == 500
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    fund = store.save_fund({"kind": "Pension", "fund_name": "Migdal Pension", "pension_id": "P1", "amount": 100000, "comments": "main"})
+    account = _save_long_term_account(store)
+    fund = store.save_fund({"kind": "Pension", "fund_name": "Migdal Pension", "pension_id": "P1", "amount": 100000, "account_id": account["id"], "comments": "main"})
     assert fund["fund_name"] == "Migdal Pension"
     assert fund["monthly_estimate"] == 500
     assert store.list_funds()[0]["monthly_estimate"] == 500
 
 
+def test_account_ownership_rules_are_enforced(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    second_owner = {"name": "Second Owner", "birth_date": "02/02/1992"}
+
+    with pytest.raises(ValueError, match="at least one person"):
+        store.save_account({"type": "Investment", "location": "USA", "currency": "USD"})
+
+    for account_type in ["Long-Term Savings", "ESOP"]:
+        with pytest.raises(ValueError, match="exactly one person"):
+            store.save_account(
+                {"type": account_type, "location": "Israel", "currency": "ILS", "persons": [TEST_OWNER, second_owner]}
+            )
+
+    for account_type in ["Investment", "Bank"]:
+        account = store.save_account(
+            {"type": account_type, "location": "USA", "currency": "USD", "persons": [TEST_OWNER, second_owner]}
+        )
+        assert len(account["persons"]) == 2
+
+
+def test_fund_requires_account_and_inherits_current_account_owner(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    owner_a = {"name": "Owner A", "birth_date": "01/01/1990"}
+    owner_b = {"name": "Owner B", "birth_date": "02/02/1992"}
+    account = store.save_account(
+        {"type": "Long-Term Savings", "location": "Israel", "currency": "ILS", "persons": [owner_a]}
+    )
+
+    with pytest.raises(ValueError, match="Long-term account is required"):
+        store.save_fund({"kind": "Pension", "pension_id": "NO-ACCOUNT", "amount": 1000})
+
+    fund = store.save_fund(
+        {
+            "kind": "Pension",
+            "pension_id": "P-OWNER",
+            "amount": 1000,
+            "account_id": account["id"],
+            "persons": [{"name": "Wrong Owner", "birth_date": "03/03/1993"}],
+        }
+    )
+    assert [person["name"] for person in fund["persons"]] == ["Owner A"]
+
+    store.save_account({**account, "persons": [owner_b]})
+    refreshed = store.list_funds()[0]
+    assert [person["name"] for person in refreshed["persons"]] == ["Owner B"]
+    assert refreshed["birth_date"] == "1992-02-02"
+
+
 def test_non_pension_funds_do_not_have_monthly_estimates(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = _save_long_term_account(store)
 
-    provident = store.save_fund({"kind": "Provident Fund", "fund_name": "Provident", "pension_id": "G1", "amount": 199441})
-    savings = store.save_fund({"kind": "Savings Fund", "fund_name": "Savings", "pension_id": "S1", "amount": 9605})
+    provident = store.save_fund({"kind": "Provident Fund", "fund_name": "Provident", "pension_id": "G1", "amount": 199441, "account_id": account["id"]})
+    savings = store.save_fund({"kind": "Savings Fund", "fund_name": "Savings", "pension_id": "S1", "amount": 9605, "account_id": account["id"]})
 
     assert provident["monthly_estimate"] is None
     assert savings["monthly_estimate"] is None
@@ -665,18 +974,19 @@ def test_non_pension_funds_do_not_have_monthly_estimates(tmp_path):
 
 def test_fund_can_link_to_long_term_account(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account({"type": "Long-Term Savings", "location": "Israel", "currency": "ILS", "username": "Metav"})
+    account = _save_long_term_account(store, username="Metav")
 
     fund = store.save_fund({"kind": "Pension", "pension_id": "P1", "amount": 100000, "account_id": account["id"]})
 
     assert fund["account_id"] == account["id"]
     assert "Metav" in fund["account_label"]
     assert fund["account"]["type"] == "Long-Term Savings"
+    assert fund["persons"] == account["persons"]
 
 
 def test_fund_rejects_non_long_term_account_link(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account({"type": "Investment", "location": "USA", "currency": "USD", "username": "Broker"})
+    account = _save_owned_account(store, {"type": "Investment", "location": "USA", "currency": "USD", "username": "Broker"})
 
     try:
         store.save_fund({"kind": "Pension", "pension_id": "P1", "amount": 100000, "account_id": account["id"]})
@@ -689,7 +999,8 @@ def test_fund_rejects_non_long_term_account_link(tmp_path):
 def test_hebrew_text_persists_for_accounts_funds_and_securities(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
 
-    account = store.save_account(
+    account = _save_owned_account(
+        store,
         {
             "type": "Long-Term Savings",
             "location": "Israel",
@@ -736,10 +1047,11 @@ def test_hebrew_text_persists_for_accounts_funds_and_securities(tmp_path):
 
 def test_fund_requires_id_and_saved_amount(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = _save_long_term_account(store)
 
     for payload in [
-        {"kind": "Pension", "amount": 100000},
-        {"kind": "Pension", "pension_id": "P1", "amount": 0},
+        {"kind": "Pension", "amount": 100000, "account_id": account["id"]},
+        {"kind": "Pension", "pension_id": "P1", "amount": 0, "account_id": account["id"]},
     ]:
         try:
             store.save_fund(payload)
@@ -751,7 +1063,8 @@ def test_fund_requires_id_and_saved_amount(tmp_path):
 
 def test_fund_name_export_import_round_trip(tmp_path):
     source = LocalPortfolioStore(tmp_path / "source.sqlite3")
-    source.save_fund({"kind": "Provident Fund", "fund_name": "Altshuler", "pension_id": "G1", "amount": 2000})
+    account = _save_long_term_account(source)
+    source.save_fund({"kind": "Provident Fund", "fund_name": "Altshuler", "pension_id": "G1", "amount": 2000, "account_id": account["id"]})
 
     target = LocalPortfolioStore(tmp_path / "target.sqlite3")
     target.import_data(source.export_data())
@@ -764,6 +1077,7 @@ def test_fund_name_export_import_round_trip(tmp_path):
 
 def test_fund_amount_history_crud_updates_current_saved_amount(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    account = _save_long_term_account(store)
     fund = store.save_fund(
         {
             "kind": "Provident Fund",
@@ -771,6 +1085,7 @@ def test_fund_amount_history_crud_updates_current_saved_amount(tmp_path):
             "pension_id": "G-HISTORY",
             "amount": 100000,
             "amount_date": "2026-01-01",
+            "account_id": account["id"],
         }
     )
 
@@ -801,7 +1116,8 @@ def test_fund_amount_history_crud_updates_current_saved_amount(tmp_path):
 
 def test_fund_amount_history_rejects_duplicate_dates_and_survives_export(tmp_path):
     source = LocalPortfolioStore(tmp_path / "source.sqlite3")
-    fund = source.save_fund({"kind": "Savings Fund", "pension_id": "S-HISTORY", "amount": 5000, "amount_date": "2026-01-01"})
+    account = _save_long_term_account(source)
+    fund = source.save_fund({"kind": "Savings Fund", "pension_id": "S-HISTORY", "amount": 5000, "amount_date": "2026-01-01", "account_id": account["id"]})
     source.save_fund_amount_history(fund["id"], {"amount_date": "2026-02-01", "amount": 5500})
 
     with pytest.raises(ValueError, match="already exists"):
@@ -1188,6 +1504,69 @@ def test_family_member_cannot_be_deleted_when_attached_to_account(tmp_path):
     assert saved["attached_account_items"][0]["type"] == "Investment"
 
 
+def test_account_removal_is_allowed_only_when_no_data_is_attached(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    member = store.save_family_member({"name": "Dana Levi", "birth_date": "31/07/1990"})
+    empty_account = store.save_account({"type": "Investment", "location": "USA", "currency": "USD", "persons": [member]})
+    attached_account = store.save_account({"type": "Long-Term Savings", "location": "Israel", "currency": "ILS", "persons": [member]})
+    store.add_transaction(
+        {
+            "account_db_id": attached_account["id"],
+            "symbol": "ATTACHED",
+            "stock_market": "MANUAL",
+            "quantity": 1,
+            "price_input": 100,
+            "trade_date": "15/08/2026",
+        }
+    )
+    store.save_account_snapshot(
+        {
+            "account_db_id": attached_account["id"],
+            "snapshot_date": "15/08/2026",
+            "value": 100,
+        }
+    )
+    store.save_fund(
+        {
+            "kind": "Pension",
+            "pension_id": "fund-attached",
+            "amount": 100,
+            "account_id": attached_account["id"],
+        }
+    )
+
+    accounts = {item["id"]: item for item in store.list_accounts()}
+    assert accounts[empty_account["id"]]["can_delete"] is True
+    assert accounts[empty_account["id"]]["attached_records"] == 0
+    assert accounts[attached_account["id"]]["can_delete"] is False
+    assert accounts[attached_account["id"]]["attachment_counts"]["transactions"] == 1
+    assert accounts[attached_account["id"]]["attachment_counts"]["funds"] == 1
+    assert accounts[attached_account["id"]]["attachment_counts"]["account_snapshots"] == 1
+
+    with pytest.raises(ValueError, match="attached data"):
+        store.delete_account(attached_account["id"])
+    assert store.delete_account(empty_account["id"]) is True
+
+
+def test_empty_external_account_id_stays_empty_instead_of_exposing_internal_uuid(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    member = store.save_family_member({"name": "Dana Levi", "birth_date": "31/07/1990"})
+
+    account = store.save_account(
+        {
+            "type": "Investment",
+            "location": "USA",
+            "currency": "USD",
+            "account_id": "",
+            "persons": [member],
+        }
+    )
+
+    assert account["id"]
+    assert account["account_id"] == ""
+    assert store.list_accounts()[0]["account_id"] == ""
+
+
 def test_family_member_update_and_multiple_account_members(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
     dana = store.save_family_member({"name": "Dana Katz", "birth_date": "31/07/1990"})
@@ -1253,7 +1632,7 @@ def test_broker_crud_and_delete_guard(tmp_path):
     euro = store.save_broker({"name": "European Broker", "country": "USA", "currency": "EUR"})
     assert euro["currency"] == "EUR"
 
-    store.save_account({"type": "Investment", "location": "Israel", "currency": "ILS", "management_company": "IBKR"})
+    _save_owned_account(store, {"type": "Investment", "location": "Israel", "currency": "ILS", "management_company": "IBKR"})
     renamed = store.save_broker({"id": broker["id"], "name": "IBKR Israel", "country": "Israel", "currency": "ILS"})
     assert renamed["attached_accounts"] == 1
     assert store.list_accounts()[0]["management_company"] == "IBKR Israel"
@@ -1272,7 +1651,7 @@ def test_broker_crud_and_delete_guard(tmp_path):
 def test_existing_account_brokers_seed_broker_list(tmp_path):
     path = tmp_path / "local.sqlite3"
     store = LocalPortfolioStore(path)
-    store.save_account({"type": "Investment", "location": "Israel", "currency": "ILS", "management_company": "Psagot"})
+    _save_owned_account(store, {"type": "Investment", "location": "Israel", "currency": "ILS", "management_company": "Psagot"})
 
     migrated = LocalPortfolioStore(path)
     brokers = migrated.list_brokers()
@@ -1519,7 +1898,7 @@ def test_employee_option_grants_for_same_company_share_issuer_lifecycle(tmp_path
 
 def test_employee_option_percentage_schedule_is_saved_as_one_transaction(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account({"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
+    account = _save_owned_account(store, {"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
     option = _save_private_employee_option(store)
 
     saved = store.add_transaction(
@@ -1563,7 +1942,7 @@ def test_employee_option_percentage_schedule_is_saved_as_one_transaction(tmp_pat
 
 def test_employee_option_grant_wizard_crud_is_atomic(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account({"type": "ESOP", "location": "Israel", "currency": "ILS", "username": "Options"})
+    account = _save_owned_account(store, {"type": "ESOP", "location": "Israel", "currency": "ILS", "username": "Options"})
     payload = {
         "grant": {
             "company_name": "Wizard Labs",
@@ -1633,7 +2012,7 @@ def test_employee_option_grant_wizard_crud_is_atomic(tmp_path):
 
 def test_employee_option_grant_wizard_rolls_back_an_invalid_schedule(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account({"type": "ESOP", "location": "USA", "currency": "USD"})
+    account = _save_owned_account(store, {"type": "ESOP", "location": "USA", "currency": "USD"})
 
     with pytest.raises(ValueError, match="cannot continue after"):
         store.save_employee_option_grant(
@@ -1670,7 +2049,7 @@ def test_employee_option_grant_wizard_rolls_back_an_invalid_schedule(tmp_path):
 
 def test_employee_option_absolute_schedule_and_under_vesting_validation(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account({"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
+    account = _save_owned_account(store, {"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
     option = _save_private_employee_option(store)
     base = {
         "account_db_id": account["id"],
@@ -1719,7 +2098,7 @@ def test_employee_option_absolute_schedule_and_under_vesting_validation(tmp_path
 
 def test_employee_option_transaction_requires_a_defined_grant(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account({"type": "ESOP", "location": "USA", "currency": "USD"})
+    account = _save_owned_account(store, {"type": "ESOP", "location": "USA", "currency": "USD"})
 
     with pytest.raises(ValueError, match="Define the employee stock option grant"):
         store.add_transaction(
@@ -1738,7 +2117,7 @@ def test_employee_option_transaction_requires_a_defined_grant(tmp_path):
 
 def test_employee_option_listing_and_exercise_are_audited_and_atomic(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
-    account = store.save_account({"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
+    account = _save_owned_account(store, {"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
     option = _save_private_employee_option(store)
     store.add_transaction(
         {
@@ -1801,7 +2180,7 @@ def test_employee_option_listing_and_exercise_are_audited_and_atomic(tmp_path):
 
 def test_employee_option_schedule_round_trips_in_backup(tmp_path):
     source = LocalPortfolioStore(tmp_path / "source.sqlite3")
-    account = source.save_account({"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
+    account = _save_owned_account(source, {"type": "ESOP", "location": "USA", "currency": "USD", "username": "Equity Plan"})
     option = _save_private_employee_option(source)
     source.add_transaction(
         {

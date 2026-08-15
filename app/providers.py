@@ -27,6 +27,35 @@ PERSISTENT_CACHE_PREFIXES = (
 )
 
 
+def _provider_symbol_candidates(
+    provider_name: str,
+    primary_symbol: str,
+    secondary_symbol: str = "",
+    stock_market: str = "",
+) -> list[str]:
+    symbols: list[str] = []
+    for value in (primary_symbol, secondary_symbol):
+        symbol = str(value or "").strip().upper()
+        if symbol and symbol not in symbols:
+            symbols.append(symbol)
+
+    market = str(stock_market or "").strip().upper().replace(" ", "")
+    if provider_name != "yahoo_finance" or market not in {"TASE", "TLV", "TELAVIV"}:
+        return symbols
+
+    yahoo_symbols: list[str] = []
+    for symbol in symbols:
+        if symbol.endswith(".TA"):
+            yahoo_symbol = symbol
+        elif symbol.endswith(":TLV") or symbol.endswith(":TASE"):
+            yahoo_symbol = f"{symbol.rsplit(':', 1)[0]}.TA"
+        else:
+            yahoo_symbol = f"{symbol}.TA"
+        if yahoo_symbol not in yahoo_symbols:
+            yahoo_symbols.append(yahoo_symbol)
+    return yahoo_symbols
+
+
 class MarketDataHub:
     def __init__(self, config: dict[str, Any], db_config: dict[str, Any] | None = None):
         self.config = config
@@ -59,152 +88,216 @@ class MarketDataHub:
                 providers.append(StooqProvider({}, self.cache))
             elif name == "sec_company_facts":
                 providers.append(SecCompanyFactsProvider({}, self.cache))
-            elif name in {"ghostfolio_market_data", "external_import_market_data"}:
-                providers.append(GhostfolioMarketDataProvider(self.db_config, self.cache))
+            elif name == "external_import_market_data":
+                providers.append(ExternalImportMarketDataProvider(self.db_config, self.cache))
             elif name == "yahoo_finance" and self.config.get("yahoo_finance", {}).get("enabled"):
                 providers.append(YahooChartProvider({}, self.cache))
             elif name == "google_finance" and self.config.get("google_finance", {}).get("enabled"):
                 providers.append(UnsupportedProvider("google_finance", "Google Finance has no supported backend API"))
         return providers
 
-    def prices(self, symbol: str, from_date: date, to_date: date) -> tuple[list[Ohlcv], dict[str, str]]:
+    def prices(
+        self,
+        symbol: str,
+        from_date: date,
+        to_date: date,
+        *,
+        secondary_symbol: str = "",
+        stock_market: str = "",
+    ) -> tuple[list[Ohlcv], dict[str, str]]:
         status = {}
         best_prices: list[Ohlcv] = []
         for provider in self.providers:
-            saved_prices = self.cache.get_prices(provider.name, symbol, from_date, to_date)
-            try:
-                prices = provider.prices(symbol, from_date, to_date)
+            saved_prices: list[Ohlcv] = []
+            errors: list[Exception] = []
+            live_found = False
+            for provider_symbol in _provider_symbol_candidates(provider.name, symbol, secondary_symbol, stock_market):
+                candidate_saved = self.cache.get_prices(provider.name, provider_symbol, from_date, to_date)
+                if _price_score(candidate_saved, from_date, to_date) > _price_score(saved_prices, from_date, to_date):
+                    saved_prices = candidate_saved
+                try:
+                    prices = provider.prices(provider_symbol, from_date, to_date)
+                except Exception as exc:
+                    errors.append(exc)
+                    continue
                 if prices:
                     status[provider.name] = "ok"
-                    self.cache.set_prices(provider.name, symbol, prices)
+                    self.cache.set_prices(provider.name, provider_symbol, prices)
                     if _price_score(prices, from_date, to_date) > _price_score(best_prices, from_date, to_date):
                         best_prices = prices
-                    continue
-                if saved_prices:
-                    status[provider.name] = "stale (saved local history)"
-                    if _price_score(saved_prices, from_date, to_date) > _price_score(best_prices, from_date, to_date):
-                        best_prices = saved_prices
-                else:
-                    status[provider.name] = "missing"
-            except Exception as exc:
-                if saved_prices:
-                    status[provider.name] = f"stale (saved local history; {exc.__class__.__name__})"
-                    if _price_score(saved_prices, from_date, to_date) > _price_score(best_prices, from_date, to_date):
-                        best_prices = saved_prices
-                else:
-                    status[provider.name] = f"error: {exc.__class__.__name__}"
+                    live_found = True
+                    break
+            if live_found:
+                continue
+            if saved_prices:
+                error_suffix = f"; {errors[-1].__class__.__name__}" if errors else ""
+                status[provider.name] = f"stale (saved local history{error_suffix})"
+                if _price_score(saved_prices, from_date, to_date) > _price_score(best_prices, from_date, to_date):
+                    best_prices = saved_prices
+            elif errors:
+                status[provider.name] = f"error: {errors[-1].__class__.__name__}"
+            else:
+                status[provider.name] = "missing"
         return best_prices, status or {"providers": "none configured"}
 
-    def fundamentals(self, symbol: str) -> tuple[dict[str, Any], dict[str, str]]:
+    def fundamentals(
+        self,
+        symbol: str,
+        *,
+        secondary_symbol: str = "",
+        stock_market: str = "",
+    ) -> tuple[dict[str, Any], dict[str, str]]:
         status = {}
         saved_fallback: dict[str, Any] | None = None
         for provider in self.providers:
-            saved = self.cache.get_security_snapshot(provider.name, symbol, "fundamentals")
-            try:
-                data = provider.fundamentals(symbol)
+            provider_saved: dict[str, Any] | None = None
+            errors: list[Exception] = []
+            for provider_symbol in _provider_symbol_candidates(provider.name, symbol, secondary_symbol, stock_market):
+                saved = self.cache.get_security_snapshot(provider.name, provider_symbol, "fundamentals")
+                provider_saved = provider_saved or saved
+                try:
+                    data = provider.fundamentals(provider_symbol)
+                except Exception as exc:
+                    errors.append(exc)
+                    continue
                 if data:
                     status[provider.name] = "ok"
-                    self.cache.set_security_snapshot(provider.name, symbol, "fundamentals", data)
+                    self.cache.set_security_snapshot(provider.name, provider_symbol, "fundamentals", data)
                     return data, status
-                if saved is not None:
-                    status[provider.name] = "stale (saved local history)"
-                    saved_fallback = saved_fallback or saved
-                else:
-                    status[provider.name] = "missing"
-            except Exception as exc:
-                if saved is not None:
-                    status[provider.name] = f"stale (saved local history; {exc.__class__.__name__})"
-                    saved_fallback = saved_fallback or saved
-                else:
-                    status[provider.name] = f"error: {exc.__class__.__name__}"
+            if provider_saved is not None:
+                error_suffix = f"; {errors[-1].__class__.__name__}" if errors else ""
+                status[provider.name] = f"stale (saved local history{error_suffix})"
+                saved_fallback = saved_fallback or provider_saved
+            elif errors:
+                status[provider.name] = f"error: {errors[-1].__class__.__name__}"
+            else:
+                status[provider.name] = "missing"
         if saved_fallback is not None:
             return saved_fallback, status
         if not self._has_fundamental_provider():
             status["fundamentals_api"] = "missing Alpha Vantage or FMP API key"
         return {}, status or {"providers": "none configured"}
 
-    def fundamentals_as_of(self, symbol: str, as_of: date) -> tuple[dict[str, Any], dict[str, str]]:
+    def fundamentals_as_of(
+        self,
+        symbol: str,
+        as_of: date,
+        *,
+        secondary_symbol: str = "",
+        stock_market: str = "",
+    ) -> tuple[dict[str, Any], dict[str, str]]:
         status = {}
         data_type = f"fundamentals_as_of:{as_of.isoformat()}"
         saved_fallback: dict[str, Any] | None = None
         for provider in self.providers:
-            saved = self.cache.get_security_snapshot(provider.name, symbol, data_type)
-            try:
-                data = provider.fundamentals_as_of(symbol, as_of)
+            provider_saved: dict[str, Any] | None = None
+            errors: list[Exception] = []
+            for provider_symbol in _provider_symbol_candidates(provider.name, symbol, secondary_symbol, stock_market):
+                saved = self.cache.get_security_snapshot(provider.name, provider_symbol, data_type)
+                provider_saved = provider_saved or saved
+                try:
+                    data = provider.fundamentals_as_of(provider_symbol, as_of)
+                except Exception as exc:
+                    errors.append(exc)
+                    continue
                 if data:
                     status[provider.name] = "ok"
-                    self.cache.set_security_snapshot(provider.name, symbol, data_type, data)
+                    self.cache.set_security_snapshot(provider.name, provider_symbol, data_type, data)
                     return data, status
-                if saved is not None:
-                    status[provider.name] = "stale (saved local history)"
-                    saved_fallback = saved_fallback or saved
-                else:
-                    status[provider.name] = "missing"
-            except Exception as exc:
-                if saved is not None:
-                    status[provider.name] = f"stale (saved local history; {exc.__class__.__name__})"
-                    saved_fallback = saved_fallback or saved
-                else:
-                    status[provider.name] = f"error: {exc.__class__.__name__}"
+            if provider_saved is not None:
+                error_suffix = f"; {errors[-1].__class__.__name__}" if errors else ""
+                status[provider.name] = f"stale (saved local history{error_suffix})"
+                saved_fallback = saved_fallback or provider_saved
+            elif errors:
+                status[provider.name] = f"error: {errors[-1].__class__.__name__}"
+            else:
+                status[provider.name] = "missing"
         if saved_fallback is not None:
             return saved_fallback, status
         if not self._has_fundamental_provider():
             status["fundamentals_api"] = "missing Alpha Vantage or FMP API key"
         return {}, status or {"providers": "none configured"}
 
-    def dividends(self, symbol: str, force_refresh: bool = False, to_date: date | None = None) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    def dividends(
+        self,
+        symbol: str,
+        force_refresh: bool = False,
+        to_date: date | None = None,
+        *,
+        secondary_symbol: str = "",
+        stock_market: str = "",
+    ) -> tuple[list[dict[str, Any]], dict[str, str]]:
         status = {}
         data_type = f"dividends_as_of:{to_date.isoformat()}" if to_date else "dividends"
         saved_fallback: list[dict[str, Any]] | None = None
         for provider in self.providers:
-            saved = self.cache.get_security_snapshot(provider.name, symbol, data_type)
-            try:
-                data = provider.dividends(symbol, force_refresh=force_refresh, to_date=to_date)
+            provider_saved: list[dict[str, Any]] | None = None
+            errors: list[Exception] = []
+            for provider_symbol in _provider_symbol_candidates(provider.name, symbol, secondary_symbol, stock_market):
+                saved = self.cache.get_security_snapshot(provider.name, provider_symbol, data_type)
+                provider_saved = provider_saved or saved
+                try:
+                    data = provider.dividends(provider_symbol, force_refresh=force_refresh, to_date=to_date)
+                except Exception as exc:
+                    errors.append(exc)
+                    continue
                 if data:
                     status[provider.name] = "ok"
-                    self.cache.set_security_snapshot(provider.name, symbol, data_type, data)
+                    self.cache.set_security_snapshot(provider.name, provider_symbol, data_type, data)
                     return data, status
-                if saved is not None:
-                    status[provider.name] = "stale (saved local history)"
-                    saved_fallback = saved_fallback or saved
-                else:
-                    status[provider.name] = "missing"
-            except Exception as exc:
-                if saved is not None:
-                    status[provider.name] = f"stale (saved local history; {exc.__class__.__name__})"
-                    saved_fallback = saved_fallback or saved
-                else:
-                    status[provider.name] = f"error: {exc.__class__.__name__}"
+            if provider_saved is not None:
+                error_suffix = f"; {errors[-1].__class__.__name__}" if errors else ""
+                status[provider.name] = f"stale (saved local history{error_suffix})"
+                saved_fallback = saved_fallback or provider_saved
+            elif errors:
+                status[provider.name] = f"error: {errors[-1].__class__.__name__}"
+            else:
+                status[provider.name] = "missing"
         if saved_fallback is not None:
             return saved_fallback, status
         if not self._has_fundamental_provider():
             status["dividend_api"] = "missing Alpha Vantage or FMP API key"
         return [], status or {"providers": "none configured"}
 
-    def profile(self, symbol: str) -> tuple[dict[str, Any], dict[str, str]]:
+    def profile(
+        self,
+        symbol: str,
+        *,
+        secondary_symbol: str = "",
+        stock_market: str = "",
+    ) -> tuple[dict[str, Any], dict[str, str]]:
         status = {}
         live_merged: dict[str, Any] = {}
         saved_merged: dict[str, Any] = {}
         for provider in self.providers:
-            saved = self.cache.get_security_snapshot(provider.name, symbol, "profile")
-            try:
-                data = provider.profile(symbol)
+            provider_saved: dict[str, Any] = {}
+            errors: list[Exception] = []
+            live_found = False
+            for provider_symbol in _provider_symbol_candidates(provider.name, symbol, secondary_symbol, stock_market):
+                saved = self.cache.get_security_snapshot(provider.name, provider_symbol, "profile")
+                if isinstance(saved, dict):
+                    provider_saved.update({key: value for key, value in saved.items() if value not in (None, "")})
+                try:
+                    data = provider.profile(provider_symbol)
+                except Exception as exc:
+                    errors.append(exc)
+                    continue
                 if data:
                     status[provider.name] = "ok"
-                    self.cache.set_security_snapshot(provider.name, symbol, "profile", data)
+                    self.cache.set_security_snapshot(provider.name, provider_symbol, "profile", data)
                     live_merged.update({key: value for key, value in data.items() if value not in (None, "")})
-                    continue
-                if saved is not None:
-                    status[provider.name] = "stale (saved local history)"
-                    saved_merged.update({key: value for key, value in saved.items() if value not in (None, "")})
-                else:
-                    status[provider.name] = "missing"
-            except Exception as exc:
-                if saved is not None:
-                    status[provider.name] = f"stale (saved local history; {exc.__class__.__name__})"
-                    saved_merged.update({key: value for key, value in saved.items() if value not in (None, "")})
-                else:
-                    status[provider.name] = f"error: {exc.__class__.__name__}"
+                    live_found = True
+                    break
+            if live_found:
+                continue
+            if provider_saved:
+                error_suffix = f"; {errors[-1].__class__.__name__}" if errors else ""
+                status[provider.name] = f"stale (saved local history{error_suffix})"
+                saved_merged.update(provider_saved)
+            elif errors:
+                status[provider.name] = f"error: {errors[-1].__class__.__name__}"
+            else:
+                status[provider.name] = "missing"
         return {**saved_merged, **live_merged}, status or {"providers": "none configured"}
 
     def fx(self, pair: str) -> tuple[dict[str, Any], dict[str, str]]:
@@ -1113,7 +1206,7 @@ class SecCompanyFactsProvider(MarketDataProvider):
         return data
 
 
-class GhostfolioMarketDataProvider(MarketDataProvider):
+class ExternalImportMarketDataProvider(MarketDataProvider):
     name = "external_import_market_data"
 
     def __init__(self, db_config: dict[str, Any], cache: SqliteCache):
@@ -1122,12 +1215,12 @@ class GhostfolioMarketDataProvider(MarketDataProvider):
 
     def _connect(self):
         if not self.db_config.get("host"):
-            raise ProviderError("missing Ghostfolio DB config")
+            raise ProviderError("missing external import DB config")
         return connect_postgres(self.db_config)
 
     def prices(self, symbol: str, from_date: date, to_date: date) -> list[Ohlcv]:
         def fetch(start: date, end: date) -> list[Ohlcv]:
-            cache_key = f"ghostfolio:prices:{symbol}:{start}:{end}"
+            cache_key = f"external_import:prices:{symbol}:{start}:{end}"
             cached = self.cache.get(cache_key)
             if cached is not None:
                 return [_ohlcv_from_dict(row) for row in cached]
@@ -1215,6 +1308,11 @@ class GhostfolioMarketDataProvider(MarketDataProvider):
 class YahooChartProvider(MarketDataProvider):
     name = "yahoo_finance"
 
+    @staticmethod
+    def _price_factor(result: dict[str, Any]) -> float:
+        currency = str((result.get("meta") or {}).get("currency") or "").upper()
+        return 0.01 if currency == "ILA" else 1.0
+
     def _summary(self, symbol: str) -> dict[str, Any]:
         data = self._get_json(
             f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}",
@@ -1235,6 +1333,7 @@ class YahooChartProvider(MarketDataProvider):
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
             data = self._get_json(url, {"period1": period1, "period2": period2, "interval": "1d", "events": "div"}, cache_key)
             result = (data.get("chart", {}).get("result") or [{}])[0]
+            price_factor = self._price_factor(result)
             timestamps = result.get("timestamp") or []
             quote = (result.get("indicators", {}).get("quote") or [{}])[0]
             adj = (result.get("indicators", {}).get("adjclose") or [{}])[0].get("adjclose") or quote.get("close") or []
@@ -1246,11 +1345,11 @@ class YahooChartProvider(MarketDataProvider):
                 rows.append(
                     Ohlcv(
                         date=date.fromtimestamp(ts),
-                        open=float(_at(quote.get("open"), idx) or close),
-                        high=float(_at(quote.get("high"), idx) or close),
-                        low=float(_at(quote.get("low"), idx) or close),
-                        close=float(close),
-                        adjusted_close=float(_at(adj, idx) or close),
+                        open=float(_at(quote.get("open"), idx) or close) * price_factor,
+                        high=float(_at(quote.get("high"), idx) or close) * price_factor,
+                        low=float(_at(quote.get("low"), idx) or close) * price_factor,
+                        close=float(close) * price_factor,
+                        adjusted_close=float(_at(adj, idx) or close) * price_factor,
                         volume=float(_at(quote.get("volume"), idx) or 0),
                     )
                 )
@@ -1271,9 +1370,10 @@ class YahooChartProvider(MarketDataProvider):
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
         data = self._get_json(url, {"period1": period1, "period2": period2, "interval": "1d", "events": "div"}, f"yahoo:chart:div:{symbol}", force_refresh=force_refresh)
         result = (data.get("chart", {}).get("result") or [{}])[0]
+        price_factor = self._price_factor(result)
         dividends = result.get("events", {}).get("dividends", {})
         rows = [
-            {"date": date.fromtimestamp(item["date"]).isoformat(), "amount": float(item.get("amount") or 0)}
+            {"date": date.fromtimestamp(item["date"]).isoformat(), "amount": float(item.get("amount") or 0) * price_factor}
             for item in dividends.values()
             if item.get("date") and item.get("amount")
         ]
@@ -1297,11 +1397,13 @@ class YahooChartProvider(MarketDataProvider):
         summary = self._summary(symbol)
         asset = summary.get("assetProfile") or {}
         price = summary.get("price") or {}
+        currency = str(_yahoo_value(price.get("currency")) or "").upper()
         return {
             "name": _yahoo_value(price.get("longName")) or _yahoo_value(price.get("shortName")),
             "industry": asset.get("industry"),
             "sector": asset.get("sector"),
             "exchange": _yahoo_value(price.get("exchangeName")) or _yahoo_value(price.get("fullExchangeName")) or _yahoo_value(price.get("exchange")),
+            "currency": "ILS" if currency == "ILA" else currency,
             "market_cap": _yahoo_raw(price.get("marketCap")),
         }
 

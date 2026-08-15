@@ -16,7 +16,7 @@
       }
     </style>
     <link rel="icon" type="image/svg+xml" href="/assets/app-icon.svg?v=0.5.1" />
-  <link rel="stylesheet" href="/styles.css?v=0.5.3" />
+  <link rel="stylesheet" href="/styles.css?v=0.7.10" />
   </head>
   <body>
     <div class="app-shell">
@@ -26,7 +26,6 @@
           <span class="brand-label"><span class="brand-name">Portfolio</span><span id="brandVersion" class="brand-version" aria-label="Application version" hidden></span></span>
         </div>
         <nav class="nav">
-          <div class="nav-title">Main Menu</div>
           <details class="nav-menu" open>
             <summary>Dashboard</summary>
             <div class="nav-children">
@@ -260,7 +259,7 @@
             <label class="field"><span>Currency</span><select id="localAccountCurrency" title="Account base currency"></select></label>
             <label class="field"><span>Initial cash</span><input id="localInitialCash" type="number" step="0.01" placeholder="0" title="Opening cash balance. Buy/sell/short transactions affect cash; add/remove security does not." /></label>
             <label class="field"><span>Username</span><input id="localUsername" placeholder="Owner / login" title="Owner or username shown in account reports" /></label>
-            <label class="field"><span>Account id</span><input id="localAccountId" placeholder="Account id" title="External account id from broker, bank, pension company, or import sync" /></label>
+            <label class="field"><span>Account ID (optional)</span><input id="localAccountId" placeholder="Account ID (optional)" title="Optional identifier supplied by the broker, bank, pension company, or import source" /></label>
             <label class="field"><span>Broker</span><select id="localAccountBroker" title="Broker, bank, pension company, or platform"></select></label>
             <label class="field"><span>Comments</span><input id="localAccountComments" placeholder="Comments" title="Optional operational notes for finance managers" /></label>
             <label class="field"><span>Existing person</span><select id="localAccountFamilyMember"></select></label>
@@ -268,6 +267,7 @@
             <button class="secondary" type="button" data-modal="brokersModal">Manage brokers</button>
             <button class="secondary" type="button" data-modal="familyModal">Manage people</button>
             <div id="localAccountPersons" class="person-list"></div>
+            <div class="info-strip account-owner-rule" role="note">Every account needs at least one person. Long-Term Savings and ESOP accounts must have exactly one person.</div>
             <div class="form-actions">
               <button id="saveLocalAccount" type="button" title="Create a manual account">Create account</button>
             </div>
@@ -284,6 +284,7 @@
           <div id="accountsList" class="stack management-list"></div>
         </div>
         <p id="accountsStatus" class="status-line" role="status" aria-live="polite"></p>
+        <div id="importSkippedList" class="stack import-skipped-list" aria-live="polite" hidden></div>
       </section>
     </div>
 
@@ -303,7 +304,7 @@
           <label class="field"><span>Currency</span><select id="editAccountCurrency" title="Account base currency"></select></label>
           <label class="field"><span>Initial cash</span><input id="editInitialCash" type="number" step="0.01" placeholder="0" title="Opening cash balance. Buy/sell/short transactions affect cash; add/remove security does not." /></label>
           <label class="field"><span>Username</span><input id="editUsername" placeholder="Owner / login" title="Owner or username shown in account reports" /></label>
-          <label class="field"><span>Account id</span><input id="editAccountId" placeholder="Account id" title="External account id from broker, bank, pension company, or import sync" /></label>
+          <label class="field"><span>Account ID (optional)</span><input id="editAccountId" placeholder="Account ID (optional)" title="Optional identifier supplied by the broker, bank, pension company, or import source" /></label>
           <label class="field"><span>Broker</span><select id="editAccountBroker" title="Broker, bank, pension company, or platform"></select></label>
           <label class="field"><span>Comments</span><input id="editAccountComments" placeholder="Comments" title="Optional operational notes for finance managers" /></label>
           <label class="field"><span>Existing person</span><select id="editAccountFamilyMember"></select></label>
@@ -311,6 +312,7 @@
           <button class="secondary" type="button" data-modal="brokersModal">Manage brokers</button>
           <button class="secondary" type="button" data-modal="familyModal">Manage people</button>
           <div id="editAccountPersons" class="person-list"></div>
+          <div class="info-strip account-owner-rule" role="note">Every account needs at least one person. Long-Term Savings and ESOP accounts must have exactly one person.</div>
           <div class="form-actions">
             <button id="saveEditAccount" type="button" title="Update this account after confirmation">Save changes</button>
             <button class="secondary" type="button" data-close>Cancel</button>
@@ -550,7 +552,11 @@
             </span>
           </div>
           <div class="management-form instrument-form">
-            <label class="management-field" data-public-issuer-field><span>Public Symbol *</span><input id="manualSecuritySymbol" placeholder="Ticker or security ID" /></label>
+            <label class="management-field" data-public-issuer-field><span>Primary Symbol *</span><input id="manualSecuritySymbol" placeholder="Ticker or security ID" /></label>
+            <label class="management-field" data-general-security-field>
+              <span class="field-label">Secondary Symbol <em tabindex="0" title="Optional alternate ticker used for market data, for example CEL for 1101534." aria-label="Optional alternate ticker used for market data, for example CEL for 1101534.">i</em></span>
+              <input id="manualSecondarySymbol" placeholder="Optional alternate ticker" />
+            </label>
             <label class="management-field" data-general-security-field><span>Instrument Name</span><input id="manualSecurityName" placeholder="Security name" /></label>
             <label class="management-field" data-public-issuer-field><span>Stock Market *</span><input id="manualSecurityMarket" list="marketOptions" placeholder="NASDAQ, NYSE, TASE…" /></label>
             <label class="management-field"><span>Instrument Type *</span><select id="manualInstrumentType"></select></label>
@@ -609,7 +615,10 @@
             </label>
             <label class="check employee-option-check" data-employee-option-field hidden><input id="manualEarlyExercise" type="checkbox" /> Allow early exercise</label>
             <label class="management-field field-wide"><span>Comments</span><input id="manualSecurityComments" placeholder="Optional notes" /></label>
-            <button id="saveManualSecurity" type="button">Save instrument</button>
+            <div class="form-actions manual-security-form-actions">
+              <button id="saveManualSecurity" type="button">Save instrument</button>
+              <button id="cancelManualSecurityEdit" class="secondary" type="button" hidden>Cancel edit</button>
+            </div>
           </div>
           <p class="info-strip" data-employee-option-field hidden>Grant Date is when the company issued the grant. Vesting Start Date controls the cliff and later vesting dates. The date you add it to this app is stored separately and never changes vesting calculations. A private share value is informational, not a formal tax valuation.</p>
           <p id="manualSecurityStatus" class="status-line" role="status" aria-live="polite"></p>
@@ -639,7 +648,10 @@
             </select></label>
             <label class="management-field" data-general-transaction-field><span>Symbol *</span><input id="securitySymbol" placeholder="Ticker or security ID" /></label>
             <label class="management-field" data-general-transaction-field><span>Stock Market *</span><input id="securityMarket" list="marketOptions" placeholder="Market" /></label>
-            <label class="management-field" data-general-transaction-field><span>Asset Class *</span><select id="securityAssetClass"></select></label>
+            <label class="management-field" data-general-transaction-field>
+              <span class="field-label">Holding / grant type * <em tabindex="0" title="Choose RSU for shares granted by an employer; choose Equity for shares bought on the market." aria-label="Choose RSU for shares granted by an employer; choose Equity for shares bought on the market.">i</em></span>
+              <select id="securityAssetClass"></select>
+            </label>
             <label class="management-field"><span id="securityQuantityLabel">Quantity *</span><input id="securityQuantity" type="number" min="0.0001" step="0.0001" inputmode="decimal" placeholder="Number of units" /></label>
             <label id="securityPriceField" class="management-field"><span>Entered Price *</span><input id="securityPrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Price" /></label>
             <label class="management-field"><span id="securityDateLabel">Transaction Date *</span><input id="securityDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
@@ -1260,10 +1272,9 @@
             <label class="field"><span class="field-label">Fund name <em title="The pension company or fund display name, for example Mashlima.">?</em></span><input id="fundName" placeholder="Pension fund name" /></label>
             <label class="field"><span class="field-label">Fund ID <em title="The official pension, provident, or savings fund identifier. Required.">?</em></span><input id="fundPensionId" placeholder="Pension / fund id" /></label>
             <label class="field"><span class="field-label">Saved amount <em title="Current saved balance in the selected fund. Required.">?</em></span><input id="fundAmount" type="number" step="0.01" placeholder="Amount saved" /></label>
-            <label class="field"><span class="field-label">Long-term account <em title="Optional link to an existing account whose type is Long-Term Savings.">?</em></span><select id="fundAccount"></select></label>
+            <label class="field"><span class="field-label">Long-term account <em title="Required. The pension or fund automatically uses the single person assigned to this account.">?</em></span><select id="fundAccount" required></select></label>
             <label class="field"><span class="field-label">Comments <em title="Optional note shown only inside this dashboard.">?</em></span><input id="fundComments" placeholder="Comments" /></label>
-            <label class="field connected-field"><span class="field-label">Family member <em title="Attach the saved fund to one existing family member.">?</em></span><span class="connected-control"><select id="fundFamilyMember"></select><button id="attachFundPerson" class="secondary" type="button">Attach person</button></span></label>
-            <div id="fundPersons" class="person-list"></div>
+            <div id="fundAccountOwner" class="info-strip fund-account-owner" role="status" aria-live="polite">Choose a long-term account to use its assigned person.</div>
             <div class="form-actions fund-actions">
               <button id="saveFund" type="button" disabled>Add fund</button>
               <button id="cancelFundCreate" class="secondary" type="button">Cancel</button>
@@ -1396,10 +1407,9 @@
           <label class="field"><span class="field-label">Fund name <em title="The pension company or fund display name, for example Mashlima.">?</em></span><input id="editFundName" placeholder="Pension fund name" /></label>
           <label class="field"><span class="field-label">Fund ID <em title="The official pension, provident, or savings fund identifier. Required.">?</em></span><input id="editFundPensionId" placeholder="Pension / fund id" /></label>
           <label class="field"><span class="field-label">Saved amount <em title="Current saved balance in the selected fund. Required.">?</em></span><input id="editFundAmount" type="number" step="0.01" placeholder="Amount saved" /></label>
-          <label class="field"><span class="field-label">Long-term account <em title="Optional link to an existing account whose type is Long-Term Savings.">?</em></span><select id="editFundAccount"></select></label>
+          <label class="field"><span class="field-label">Long-term account <em title="Required. The pension or fund automatically uses the single person assigned to this account.">?</em></span><select id="editFundAccount" required></select></label>
           <label class="field"><span class="field-label">Comments <em title="Optional note shown only inside this dashboard.">?</em></span><input id="editFundComments" placeholder="Comments" /></label>
-          <label class="field connected-field"><span class="field-label">Family member <em title="Attach the saved fund to one existing family member.">?</em></span><span class="connected-control"><select id="editFundFamilyMember"></select><button id="attachEditFundPerson" class="secondary" type="button">Attach person</button></span></label>
-          <div id="editFundPersons" class="person-list"></div>
+          <div id="editFundAccountOwner" class="info-strip fund-account-owner" role="status" aria-live="polite">Choose a long-term account to use its assigned person.</div>
           <div class="form-actions">
             <button id="saveEditFund" type="button">Save changes</button>
             <button class="secondary" type="button" data-close>Cancel</button>
@@ -1578,7 +1588,7 @@
 
     <div id="settingsModal" class="modal" hidden>
       <div class="modal-backdrop" data-close></div>
-      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <section class="modal-card wide settings-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
         <div class="section-head">
           <div>
             <p class="eyebrow">Runtime and data</p>
@@ -1586,53 +1596,88 @@
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
-        <div class="settings-section">
-          <div class="settings-section-title">
-            <h3 data-i18n="display">Display</h3>
-          </div>
-          <div class="management-form settings-form">
-            <label class="field"><span data-i18n="appLanguage">App language</span><select id="appLanguage"><option value="en">English</option><option value="he">עברית</option></select></label>
-            <button id="saveDisplaySettings" type="button" data-i18n="saveDisplaySettings">Save display settings</button>
+        <div class="settings-layout">
+          <nav class="settings-menu" aria-label="Settings sections">
+            <button id="settingsNavDisplay" class="settings-menu-button active" type="button" data-settings-section="display" aria-controls="settingsPanelDisplay" aria-current="page">Display and language</button>
+            <button id="settingsNavTable" class="settings-menu-button" type="button" data-settings-section="table" aria-controls="settingsPanelTable">Table settings</button>
+            <div class="settings-menu-entry">
+              <button id="settingsNavData" class="settings-menu-button" type="button" data-settings-section="data" aria-controls="settingsPanelData">Portfolio data import and export</button>
+              <details class="settings-menu-help">
+                <summary aria-label="About portfolio data import and export">i</summary>
+                <p>Moves portable portfolio records between installations using JSON. It does not include application configuration, caches, or TLS certificates.</p>
+              </details>
+            </div>
+            <div class="settings-menu-entry">
+              <button id="settingsNavBackup" class="settings-menu-button" type="button" data-settings-section="backup" aria-controls="settingsPanelBackup">Full backup and restore</button>
+              <details class="settings-menu-help">
+                <summary aria-label="About full backup and restore">i</summary>
+                <p>Protects or replaces the complete application state, including the database, pension simulations, preferences, configuration, caches, and TLS certificates.</p>
+              </details>
+            </div>
+            <button id="settingsNavSystem" class="settings-menu-button" type="button" data-settings-section="system" aria-controls="settingsPanelSystem">Cache and system status</button>
+          </nav>
+
+          <div class="settings-content">
+            <p id="settingsStatus" class="status-line" role="status" aria-live="polite"></p>
+
+            <section id="settingsPanelDisplay" class="settings-section settings-panel" data-settings-panel="display" aria-labelledby="settingsNavDisplay">
+              <div class="settings-section-title"><h3>Display and language</h3></div>
+              <div class="management-form settings-form">
+                <label class="field"><span data-i18n="appLanguage">App language</span><select id="appLanguage"><option value="en">English</option><option value="he">עברית</option></select></label>
+                <button id="saveDisplaySettings" type="button" data-i18n="saveDisplaySettings">Save display settings</button>
+              </div>
+            </section>
+
+            <section id="settingsPanelTable" class="settings-section settings-panel" data-settings-panel="table" aria-labelledby="settingsNavTable" hidden>
+              <div class="settings-section-title"><h3>Table settings</h3></div>
+              <div class="management-form settings-form">
+                <label class="field"><span data-i18n="tableMaPeriod">Table MA period</span><select id="tableMaPeriod"><option value="7">MA 7</option><option value="15">MA 15</option><option value="30">MA 30</option></select></label>
+                <button id="saveTableSettings" type="button" data-i18n="saveTableSettings">Save table settings</button>
+              </div>
+            </section>
+
+            <section id="settingsPanelData" class="settings-section settings-panel" data-settings-panel="data" aria-labelledby="settingsNavData" hidden>
+              <div class="settings-section-title"><h3>Portfolio data import and export</h3></div>
+              <p class="settings-section-description">Use JSON to move portfolio records between installations. Import replaces the current portable portfolio data only.</p>
+              <div class="settings-actions">
+                <button id="exportData" type="button">Export portfolio data</button>
+                <button id="chooseImportData" class="secondary" type="button">Import portfolio data</button>
+                <input id="importDataFile" type="file" accept="application/json,.json" hidden />
+              </div>
+            </section>
+
+            <section id="settingsPanelBackup" class="settings-section settings-panel" data-settings-panel="backup" aria-labelledby="settingsNavBackup" hidden>
+              <div class="settings-section-title"><h3>Full backup and restore</h3></div>
+              <p class="settings-section-description">Create, download, schedule, or restore a complete application backup.</p>
+              <div class="settings-actions">
+                <button id="runBackupNow" type="button">Create full backup</button>
+                <button id="downloadBackupsZip" class="secondary" type="button">Download all backups</button>
+                <button id="chooseFullRestore" class="secondary danger-outline" type="button">Choose full backup to restore</button>
+                <input id="fullRestoreFile" type="file" accept="application/zip,.zip" hidden />
+              </div>
+              <p class="backup-sensitivity-note" role="note"><b>Full backup:</b> Includes the portfolio database, pension simulations, dashboard preferences, alerts, runtime settings, config.yaml, caches, and TLS certificates. Backup ZIP files contain credentials and private keys; store them securely.</p>
+              <div id="fullRestorePreview" class="full-restore-preview" role="region" aria-live="polite" hidden></div>
+
+              <div class="settings-subsection">
+                <div class="settings-section-title"><h4>Automatic backup schedule</h4></div>
+                <div class="management-form settings-form">
+                  <label class="field"><span>Backup enabled</span><select id="backupEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
+                  <label class="field"><span>Timezone</span><input id="backupTimezone" placeholder="Asia/Jerusalem" /></label>
+                  <label class="field"><span>Keep files</span><input id="backupKeep" type="number" min="1" step="1" placeholder="100" /></label>
+                  <div id="backupScheduleSummary" class="schedule-summary"></div>
+                  <button id="editBackupSchedule" class="secondary" type="button" data-modal="backupScheduleModal">Edit schedule</button>
+                  <button id="saveBackupSettings" type="button">Save backup schedule</button>
+                </div>
+              </div>
+              <div id="backupStatus" class="settings-grid"></div>
+            </section>
+
+            <section id="settingsPanelSystem" class="settings-section settings-panel" data-settings-panel="system" aria-labelledby="settingsNavSystem" hidden>
+              <div class="settings-section-title"><h3>Cache and system status</h3></div>
+              <div id="cacheStatus" class="settings-grid"></div>
+            </section>
           </div>
         </div>
-        <div class="settings-section">
-          <div class="settings-section-title">
-            <h3 data-i18n="tableDisplay">Table display</h3>
-          </div>
-          <div class="management-form settings-form">
-          <label class="field"><span data-i18n="tableMaPeriod">Table MA period</span><select id="tableMaPeriod"><option value="7">MA 7</option><option value="15">MA 15</option><option value="30">MA 30</option></select></label>
-            <button id="saveTableSettings" type="button" data-i18n="saveTableSettings">Save table settings</button>
-          </div>
-        </div>
-        <div class="settings-section">
-          <div class="settings-section-title">
-            <h3 data-i18n="data">Data</h3>
-          </div>
-          <div class="settings-actions">
-            <button id="exportData" type="button">Export data</button>
-            <button id="chooseImportData" class="secondary" type="button">Import data</button>
-            <button id="runBackupNow" class="secondary" type="button">Full backup now</button>
-            <button id="downloadBackupsZip" class="secondary" type="button">Download backups ZIP</button>
-            <input id="importDataFile" type="file" accept="application/json" hidden />
-          </div>
-          <p class="backup-sensitivity-note" role="note"><b>Full backup:</b> Includes the portfolio database, pension simulations, dashboard preferences, alerts, runtime settings, config.yaml, caches, and TLS certificates. Backup ZIP files contain credentials and private keys; store them securely.</p>
-        </div>
-        <div class="settings-section">
-          <div class="settings-section-title">
-            <h3 data-i18n="backupSchedule">Backup schedule</h3>
-          </div>
-          <div class="management-form settings-form">
-            <label class="field"><span>Backup enabled</span><select id="backupEnabled"><option value="true">Enabled</option><option value="false">Disabled</option></select></label>
-            <label class="field"><span>Timezone</span><input id="backupTimezone" placeholder="Asia/Jerusalem" /></label>
-            <label class="field"><span>Keep files</span><input id="backupKeep" type="number" min="1" step="1" placeholder="100" /></label>
-            <div id="backupScheduleSummary" class="schedule-summary"></div>
-            <button id="editBackupSchedule" class="secondary" type="button" data-modal="backupScheduleModal">Edit schedule</button>
-            <button id="saveBackupSettings" type="button">Save backup</button>
-          </div>
-        </div>
-        <p id="settingsStatus" class="status-line"></p>
-        <div id="cacheStatus" class="settings-grid"></div>
-        <div id="backupStatus" class="settings-grid"></div>
       </section>
     </div>
 
@@ -1662,7 +1707,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="/i18n.js?v=1.0.13"></script>
-  <script src="/app.js?v=0.5.5"></script>
+  <script src="/i18n.js?v=1.0.20"></script>
+  <script src="/app.js?v=0.7.10"></script>
   </body>
 </html>

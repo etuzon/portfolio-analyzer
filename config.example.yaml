@@ -1,9 +1,9 @@
-ghostfolio:
+external_import:
   db:
-    host: "gf-postgres"
+    host: "portfolio-source-db"
     port: 5432
-    database: "ghostfolio"
-    username: "ghostfolio"
+    database: "portfolio_source"
+    username: "portfolio_reader"
     password: "change-me"
     ssl: false
 

@@ -10,6 +10,7 @@ TrendDirection = Literal["up", "down", "flat", "missing"]
 @dataclass
 class Holding:
     symbol: str
+    secondary_symbol: str = ""
     name: str = ""
     asset_class: str = "UNKNOWN"
     asset_sub_class: str = ""

@@ -22,6 +22,8 @@ from .models import Holding, Ohlcv, SymbolAnalysis, Trend
 
 
 ACCOUNT_TYPES = ["Investment", "Long-Term Savings", "Bank", "ESOP"]
+SINGLE_OWNER_ACCOUNT_TYPES = {"Long-Term Savings", "ESOP"}
+EXTERNAL_IMPORT_SOURCE = "external_import"
 FUND_KINDS = ["Pension", "Provident Fund", "Savings Fund"]
 ASSET_CLASSES = [
     "EQUITY",
@@ -42,14 +44,13 @@ INSTRUMENT_TYPES = [
     "BOND",
     "OPTION",
     "FUTURE",
-    "RSU",
     "EMPLOYEE_STOCK_OPTION",
     "PRIVATE_STOCK",
     "STOCK_OPTION",
 ]
 OPTION_TYPES = ["CALL", "PUT"]
 ISSUER_LISTING_STATUSES = ["PRIVATE", "PUBLIC"]
-EMPLOYEE_OPTION_CURRENCIES = {"ILS", "USD", "EUR"}
+SUPPORTED_MANAGEMENT_CURRENCIES = {"ILS", "USD", "EUR"}
 COMPANY_OUTLOOK_ACCURACY_TARGET_PERCENT = 75.0
 COMPANY_OUTLOOK_MIN_EVALUATED_PREDICTIONS = 30
 TRANSACTION_ACTIONS = ["ADD", "REMOVE", "BUY", "SELL", "SHORT", "DIVIDEND", "INTEREST", "FEE"]
@@ -91,6 +92,7 @@ EXPORT_TABLES = {
     "manual_securities": [
         "id",
         "symbol",
+        "secondary_symbol",
         "name",
         "stock_market",
         "asset_class",
@@ -222,7 +224,7 @@ class LocalPortfolioStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._sync_lock = RLock()
         self._init_db()
-        self.remove_source_branding()
+        self.normalize_source_data()
 
     def _connect(self):
         conn = sqlite3.connect(self.path, timeout=30)
@@ -313,6 +315,7 @@ class LocalPortfolioStore:
                     create table if not exists manual_securities (
                         id text primary key,
                         symbol text not null,
+                        secondary_symbol text not null default '',
                         name text not null default '',
                         stock_market text not null,
                         asset_class text not null,
@@ -514,6 +517,7 @@ class LocalPortfolioStore:
                 self._ensure_column(conn, "transactions", "transition_id", "text not null default ''")
                 self._ensure_column(conn, "transactions", "vesting_schedule", "text not null default '{}'")
                 self._ensure_column(conn, "manual_securities", "issuer_id", "text not null default ''")
+                self._ensure_column(conn, "manual_securities", "secondary_symbol", "text not null default ''")
                 self._ensure_column(conn, "manual_securities", "grant_id", "text not null default ''")
                 self._ensure_column(conn, "manual_securities", "grant_date", "text not null default ''")
                 self._ensure_column(conn, "manual_securities", "vesting_start_date", "text not null default ''")
@@ -561,9 +565,26 @@ class LocalPortfolioStore:
                   )
                 """
             )
+        conn.execute(
+            """
+            update manual_securities
+            set secondary_symbol = substr(secondary_symbol, 4)
+            where upper(substr(secondary_symbol, 1, 3)) = 'GF_'
+            """
+        )
 
     def _migrate_equity_instruments(self, conn: sqlite3.Connection) -> None:
         """Add stable identities without rewriting legacy grant symbols or transactions."""
+        # RSU describes how shares were granted, not the underlying security.
+        # Keep transaction.asset_class as RSU while migrating the reusable
+        # instrument definition to an ordinary stock.
+        conn.execute(
+            """
+            update manual_securities
+            set instrument_type = 'STOCK', asset_class = 'EQUITY'
+            where instrument_type = 'RSU' or asset_class = 'RSU'
+            """
+        )
         rows = conn.execute(
             """
             select * from manual_securities
@@ -666,9 +687,17 @@ class LocalPortfolioStore:
                 (str(uuid4()), row["id"], amount_date, float(row["amount"] or 0), created_at, now),
             )
 
-    def remove_source_branding(self) -> None:
+    def normalize_source_data(self) -> None:
         try:
             with self._connect() as conn:
+                conn.execute(
+                    "update transactions set source = ? where source like '%_import' and source <> ?",
+                    (EXTERNAL_IMPORT_SOURCE, EXTERNAL_IMPORT_SOURCE),
+                )
+                conn.execute(
+                    "update price_history set source = ? where source like '%_import' and source <> ?",
+                    (EXTERNAL_IMPORT_SOURCE, EXTERNAL_IMPORT_SOURCE),
+                )
                 rows = conn.execute("select id, username, account_id, management_company, comments from accounts").fetchall()
                 for row in rows:
                     updates = {
@@ -768,6 +797,7 @@ class LocalPortfolioStore:
             table: [self._clean_import_row(row, columns) for row in data.get(table, [])]
             for table, columns in EXPORT_TABLES.items()
         }
+        validate_portfolio_ownership(prepared["accounts"], prepared["funds"], sync_fund_persons=True)
         with self._sync_lock:
             with self._connect() as conn:
                 conn.execute("delete from equity_transitions")
@@ -808,16 +838,18 @@ class LocalPortfolioStore:
                 "value": value if isinstance(value, str) else json.dumps(value if value is not None else {}, default=str),
                 "updated_at": str(record.get("updated_at") or _now()),
             }
-        for key in ["id", "key", "account_db_id", "fund_id", "issuer_id", "security_id", "transition_id", "source_security_id", "target_security_id", "symbol", "stock_market", "asset_class", "instrument_type", "option_type", "underlying_symbol", "public_symbol", "public_market", "currency", "location", "trade_date", "price_date", "amount_date", "snapshot_date", "event_date", "effective_date", "expiration_date", "vest_date", "grant_id", "grant_date", "vesting_start_date", "tax_scheme", "listing_status", "listing_date", "restriction_end_date", "valuation_date", "transition_type", "source_key", "transaction_id", "status", "company_name", "industry", "horizon_date", "model_version", "label", "direction", "confidence", "actual_direction", "evaluation", "evaluated_at"]:
+        for key in ["id", "key", "account_db_id", "fund_id", "issuer_id", "security_id", "transition_id", "source_security_id", "target_security_id", "symbol", "secondary_symbol", "stock_market", "asset_class", "instrument_type", "option_type", "underlying_symbol", "public_symbol", "public_market", "currency", "location", "trade_date", "price_date", "amount_date", "snapshot_date", "event_date", "effective_date", "expiration_date", "vest_date", "grant_id", "grant_date", "vesting_start_date", "tax_scheme", "listing_status", "listing_date", "restriction_end_date", "valuation_date", "transition_type", "source_key", "transaction_id", "status", "company_name", "industry", "horizon_date", "model_version", "label", "direction", "confidence", "actual_direction", "evaluation", "evaluated_at"]:
             if key in record and record[key] is not None:
                 record[key] = str(record[key])
         if "symbol" in record:
             record["symbol"] = _clean_security_symbol(record["symbol"])
+        if "secondary_symbol" in record:
+            record["secondary_symbol"] = _clean_security_symbol(record["secondary_symbol"])
         if "underlying_symbol" in record:
             record["underlying_symbol"] = _clean_security_symbol(record["underlying_symbol"])
         if "value" in record:
             record["value"] = record["value"] if isinstance(record.get("value"), str) else json.dumps(record.get("value") if record.get("value") is not None else {}, default=str)
-        for key in ["type", "name", "first_name", "last_name", "gender", "username", "account_id", "management_company", "comments", "source", "kind", "fund_name", "pension_id", "created_at", "updated_at", "birth_date", "vest_date", "country", "currency", "details", "vesting_schedule", "baseline", "thesis", "mermaid", "actual", "issuer_id", "security_id", "transition_id", "source_security_id", "target_security_id", "grant_id", "grant_date", "vesting_start_date", "tax_scheme", "listing_date", "restriction_end_date", "valuation_date", "public_symbol", "public_market"]:
+        for key in ["type", "name", "first_name", "last_name", "gender", "username", "account_id", "management_company", "comments", "source", "kind", "fund_name", "pension_id", "created_at", "updated_at", "birth_date", "vest_date", "country", "currency", "details", "vesting_schedule", "baseline", "thesis", "mermaid", "actual", "issuer_id", "security_id", "transition_id", "source_security_id", "target_security_id", "grant_id", "grant_date", "vesting_start_date", "tax_scheme", "listing_date", "restriction_end_date", "valuation_date", "public_symbol", "public_market", "secondary_symbol"]:
             if key in record:
                 default_text = "{}" if key in {"details", "vesting_schedule", "actual"} else ""
                 value = record.get(key)
@@ -1093,7 +1125,26 @@ class LocalPortfolioStore:
     def list_accounts(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute("select * from accounts order by management_company, username, account_id").fetchall()
-        return [self._account_out(row) for row in rows]
+            accounts = []
+            for row in rows:
+                account = self._account_out(row)
+                account.update(self._account_deletion_state(conn, row["id"]))
+                accounts.append(account)
+        return accounts
+
+    def _account_deletion_state(self, conn: sqlite3.Connection, account_db_id: str) -> dict[str, Any]:
+        counts = {
+            "transactions": conn.execute("select count(*) from transactions where account_db_id = ?", (account_db_id,)).fetchone()[0],
+            "funds": conn.execute("select count(*) from funds where account_id = ?", (account_db_id,)).fetchone()[0],
+            "account_snapshots": conn.execute("select count(*) from account_snapshots where account_db_id = ?", (account_db_id,)).fetchone()[0],
+            "events": conn.execute("select count(*) from events where account_db_id = ?", (account_db_id,)).fetchone()[0],
+            "equity_transitions": conn.execute("select count(*) from equity_transitions where account_db_id = ?", (account_db_id,)).fetchone()[0],
+        }
+        return {
+            "attachment_counts": counts,
+            "attached_records": sum(counts.values()),
+            "can_delete": not any(counts.values()),
+        }
 
     def list_brokers(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -1280,21 +1331,21 @@ class LocalPortfolioStore:
     def save_account(self, payload: dict[str, Any]) -> dict[str, Any]:
         account_id = str(payload.get("id") or uuid4())
         location = str(payload.get("location") or "USA").strip()
+        account_type = _choice(payload.get("type"), ACCOUNT_TYPES, "Investment")
+        persons = _validated_account_persons(account_type, payload.get("persons"))
         record = {
             "id": account_id,
-            "type": _choice(payload.get("type"), ACCOUNT_TYPES, "Investment"),
+            "type": account_type,
             "location": location,
             "currency": str(payload.get("currency") or _currency_for_location(location)).upper().strip(),
             "initial_cash": _number(payload.get("initial_cash"), 0),
             "username": str(payload.get("username") or "").strip(),
             "account_id": str(payload.get("account_id") or "").strip(),
             "management_company": str(payload.get("management_company") or "").strip(),
-            "persons": json.dumps(_clean_persons(payload.get("persons"))),
+            "persons": json.dumps(persons),
             "comments": str(payload.get("comments") or "").strip(),
             "created_at": str(payload.get("created_at") or _now()),
         }
-        if not record["account_id"]:
-            record["account_id"] = account_id[:8]
         with self._connect() as conn:
             conn.execute(
                 """
@@ -1315,12 +1366,23 @@ class LocalPortfolioStore:
                 """,
                 record,
             )
+            if record["type"] == "Long-Term Savings":
+                conn.execute("update funds set persons = ?, birth_date = ? where account_id = ?", (record["persons"], persons[0]["birth_date"], record["id"]))
             row = conn.execute("select * from accounts where id = ?", (record["id"],)).fetchone()
         return self._account_out(row or record)
 
     def delete_account(self, account_db_id: str) -> bool:
         with self._connect() as conn:
             before = conn.execute("select count(*) from accounts where id = ?", (account_db_id,)).fetchone()[0]
+            if before:
+                deletion_state = self._account_deletion_state(conn, account_db_id)
+                if not deletion_state["can_delete"]:
+                    attached = ", ".join(
+                        f"{name}={count}"
+                        for name, count in deletion_state["attachment_counts"].items()
+                        if count
+                    )
+                    raise ValueError(f"Account has attached data and cannot be removed: {attached}")
             conn.execute("delete from accounts where id = ?", (account_db_id,))
         return bool(before)
 
@@ -1342,7 +1404,52 @@ class LocalPortfolioStore:
                 order by coalesce(i.company_name, s.name), s.grant_date, s.symbol
                 """
             ).fetchall()
-        return [_dict(row) for row in rows]
+            items = []
+            for row in rows:
+                item = _dict(row)
+                item.update(self._manual_security_deletion_state(conn, item))
+                items.append(item)
+        return items
+
+    def _manual_security_deletion_state(
+        self,
+        conn: sqlite3.Connection,
+        security: dict[str, Any] | sqlite3.Row,
+    ) -> dict[str, Any]:
+        security_id = str(security["id"] or "")
+        symbol = str(security["symbol"] or "")
+        secondary_symbol = str(security["secondary_symbol"] or "")
+        stock_market = str(security["stock_market"] or "")
+        counts = {
+            "transactions": conn.execute(
+                """
+                select count(*) from transactions
+                where security_id = ?
+                   or (trim(security_id) = '' and symbol = ? and stock_market = ?)
+                """,
+                (security_id, symbol, stock_market),
+            ).fetchone()[0],
+            "price_history": conn.execute(
+                "select count(*) from price_history where symbol in (?, ?) and stock_market = ?",
+                (symbol, secondary_symbol, stock_market),
+            ).fetchone()[0],
+            "events": conn.execute(
+                "select count(*) from events where symbol in (?, ?) and stock_market = ?",
+                (symbol, secondary_symbol, stock_market),
+            ).fetchone()[0],
+            "equity_transitions": conn.execute(
+                """
+                select count(*) from equity_transitions
+                where source_security_id = ? or target_security_id = ?
+                """,
+                (security_id, security_id),
+            ).fetchone()[0],
+        }
+        return {
+            "attachment_counts": counts,
+            "attached_records": sum(counts.values()),
+            "can_delete": not any(counts.values()),
+        }
 
     def save_manual_security(
         self,
@@ -1350,7 +1457,12 @@ class LocalPortfolioStore:
         *,
         _conn: sqlite3.Connection | None = None,
     ) -> dict[str, Any]:
-        instrument_type = _choice(payload.get("instrument_type"), INSTRUMENT_TYPES, "STOCK")
+        requested_instrument_type = str(payload.get("instrument_type") or "").upper().strip()
+        instrument_type = "STOCK" if requested_instrument_type == "RSU" else _choice(
+            requested_instrument_type,
+            INSTRUMENT_TYPES,
+            "STOCK",
+        )
         asset_class = _asset_class_for_instrument(instrument_type, payload.get("asset_class"))
         location = str(payload.get("location") or "USA").strip()
         currency = str(payload.get("currency") or _currency_for_location(location)).upper().strip()
@@ -1367,7 +1479,7 @@ class LocalPortfolioStore:
         existing = self.manual_security_by_id(security_id) if payload.get("id") else None
 
         if is_employee_option:
-            if currency not in EMPLOYEE_OPTION_CURRENCIES:
+            if currency not in SUPPORTED_MANAGEMENT_CURRENCIES:
                 raise ValueError("Employee stock-option currency must be ILS, USD, or EUR")
             company_name = str(payload.get("company_name") or payload.get("issuer_name") or payload.get("name") or "").strip()
             if not company_name:
@@ -1451,9 +1563,15 @@ class LocalPortfolioStore:
         else:
             issuer_record = None
             symbol = _clean_security_symbol(payload.get("symbol"))
+            secondary_symbol = _clean_security_symbol(payload.get("secondary_symbol"))
             stock_market = str(payload.get("stock_market") or "").upper().strip()
             underlying_symbol = _clean_security_symbol(payload.get("underlying_symbol"))
             multiplier_default = 100 if (is_exchange_option or is_legacy_option_grant) else 1
+
+        if is_employee_option:
+            secondary_symbol = ""
+        if secondary_symbol and secondary_symbol == symbol:
+            raise ValueError("Secondary symbol must be different from the primary symbol")
 
         if is_exchange_option or is_legacy_option_grant:
             option_type = _choice(option_type, OPTION_TYPES, "CALL")
@@ -1470,6 +1588,7 @@ class LocalPortfolioStore:
         record = {
             "id": security_id,
             "symbol": symbol,
+            "secondary_symbol": secondary_symbol,
             "name": str(payload.get("name") or "").strip(),
             "stock_market": stock_market,
             "asset_class": asset_class,
@@ -1502,6 +1621,20 @@ class LocalPortfolioStore:
                 record["name"] = record["symbol"]
         connection_scope = nullcontext(_conn) if _conn is not None else self._connect()
         with connection_scope as conn:
+            symbol_conflict = conn.execute(
+                """
+                select id from manual_securities
+                where stock_market = ? and id != ?
+                  and (
+                    secondary_symbol = ?
+                    or (? != '' and (symbol = ? or secondary_symbol = ?))
+                  )
+                limit 1
+                """,
+                (record["stock_market"], record["id"], record["symbol"], record["secondary_symbol"], record["secondary_symbol"], record["secondary_symbol"]),
+            ).fetchone()
+            if symbol_conflict:
+                raise ValueError("Another instrument already uses one of these symbols on this stock market")
             if issuer_record:
                 conn.execute(
                     """
@@ -1527,37 +1660,84 @@ class LocalPortfolioStore:
                     """,
                     issuer_record,
                 )
-            conn.execute(
-                """
-                insert into manual_securities
-                  (id, symbol, name, stock_market, asset_class, instrument_type, option_type, underlying_symbol,
-                   expiration_date, strike_price, contract_multiplier, issuer_id, grant_id, grant_date,
-                   vesting_start_date, tax_scheme, early_exercise_allowed, currency, location, comments, created_at)
-                values
-                  (:id, :symbol, :name, :stock_market, :asset_class, :instrument_type, :option_type, :underlying_symbol,
-                   :expiration_date, :strike_price, :contract_multiplier, :issuer_id, :grant_id, :grant_date,
-                   :vesting_start_date, :tax_scheme, :early_exercise_allowed, :currency, :location, :comments, :created_at)
-                on conflict(symbol, stock_market) do update set
-                  name = excluded.name,
-                  asset_class = excluded.asset_class,
-                  instrument_type = excluded.instrument_type,
-                  option_type = excluded.option_type,
-                  underlying_symbol = excluded.underlying_symbol,
-                  expiration_date = excluded.expiration_date,
-                  strike_price = excluded.strike_price,
-                  contract_multiplier = excluded.contract_multiplier,
-                  issuer_id = excluded.issuer_id,
-                  grant_id = excluded.grant_id,
-                  grant_date = excluded.grant_date,
-                  vesting_start_date = excluded.vesting_start_date,
-                  tax_scheme = excluded.tax_scheme,
-                  early_exercise_allowed = excluded.early_exercise_allowed,
-                  currency = excluded.currency,
-                  location = excluded.location,
-                  comments = excluded.comments
-                """,
-                record,
-            )
+            if existing:
+                identity_changed = (
+                    str(existing.get("symbol") or "") != record["symbol"]
+                    or str(existing.get("stock_market") or "") != record["stock_market"]
+                )
+                deletion_state = self._manual_security_deletion_state(conn, existing)
+                if identity_changed and not deletion_state["can_delete"]:
+                    raise ValueError("Symbol and stock market cannot change while the instrument is in use")
+                duplicate = conn.execute(
+                    """
+                    select id from manual_securities
+                    where symbol = ? and stock_market = ? and id != ?
+                    limit 1
+                    """,
+                    (record["symbol"], record["stock_market"], record["id"]),
+                ).fetchone()
+                if duplicate:
+                    raise ValueError("Another instrument already uses this symbol and stock market")
+                conn.execute(
+                    """
+                    update manual_securities
+                    set symbol = :symbol,
+                        secondary_symbol = :secondary_symbol,
+                        name = :name,
+                        stock_market = :stock_market,
+                        asset_class = :asset_class,
+                        instrument_type = :instrument_type,
+                        option_type = :option_type,
+                        underlying_symbol = :underlying_symbol,
+                        expiration_date = :expiration_date,
+                        strike_price = :strike_price,
+                        contract_multiplier = :contract_multiplier,
+                        issuer_id = :issuer_id,
+                        grant_id = :grant_id,
+                        grant_date = :grant_date,
+                        vesting_start_date = :vesting_start_date,
+                        tax_scheme = :tax_scheme,
+                        early_exercise_allowed = :early_exercise_allowed,
+                        currency = :currency,
+                        location = :location,
+                        comments = :comments
+                    where id = :id
+                    """,
+                    record,
+                )
+            else:
+                conn.execute(
+                    """
+                    insert into manual_securities
+                      (id, symbol, secondary_symbol, name, stock_market, asset_class, instrument_type, option_type, underlying_symbol,
+                       expiration_date, strike_price, contract_multiplier, issuer_id, grant_id, grant_date,
+                       vesting_start_date, tax_scheme, early_exercise_allowed, currency, location, comments, created_at)
+                    values
+                      (:id, :symbol, :secondary_symbol, :name, :stock_market, :asset_class, :instrument_type, :option_type, :underlying_symbol,
+                       :expiration_date, :strike_price, :contract_multiplier, :issuer_id, :grant_id, :grant_date,
+                       :vesting_start_date, :tax_scheme, :early_exercise_allowed, :currency, :location, :comments, :created_at)
+                    on conflict(symbol, stock_market) do update set
+                      secondary_symbol = excluded.secondary_symbol,
+                      name = excluded.name,
+                      asset_class = excluded.asset_class,
+                      instrument_type = excluded.instrument_type,
+                      option_type = excluded.option_type,
+                      underlying_symbol = excluded.underlying_symbol,
+                      expiration_date = excluded.expiration_date,
+                      strike_price = excluded.strike_price,
+                      contract_multiplier = excluded.contract_multiplier,
+                      issuer_id = excluded.issuer_id,
+                      grant_id = excluded.grant_id,
+                      grant_date = excluded.grant_date,
+                      vesting_start_date = excluded.vesting_start_date,
+                      tax_scheme = excluded.tax_scheme,
+                      early_exercise_allowed = excluded.early_exercise_allowed,
+                      currency = excluded.currency,
+                      location = excluded.location,
+                      comments = excluded.comments
+                    """,
+                    record,
+                )
         if _conn is not None:
             return {
                 **record,
@@ -1576,17 +1756,19 @@ class LocalPortfolioStore:
 
     def delete_manual_security(self, security_id: str) -> bool:
         with self._connect() as conn:
-            before = conn.execute("select count(*) from manual_securities where id = ?", (security_id,)).fetchone()[0]
-            if before:
-                transactions = conn.execute("select count(*) from transactions where security_id = ?", (security_id,)).fetchone()[0]
-                transitions = conn.execute(
-                    "select count(*) from equity_transitions where source_security_id = ? or target_security_id = ?",
-                    (security_id, security_id),
-                ).fetchone()[0]
-                if transactions or transitions:
-                    raise ValueError("Cannot remove an instrument that has transactions or lifecycle history")
+            security = conn.execute("select * from manual_securities where id = ?", (security_id,)).fetchone()
+            before = bool(security)
+            if security:
+                deletion_state = self._manual_security_deletion_state(conn, security)
+                if not deletion_state["can_delete"]:
+                    attached = ", ".join(
+                        f"{name}={count}"
+                        for name, count in deletion_state["attachment_counts"].items()
+                        if count
+                    )
+                    raise ValueError(f"Instrument has attached data or lifecycle history and cannot be removed: {attached}")
             conn.execute("delete from manual_securities where id = ?", (security_id,))
-        return bool(before)
+        return before
 
     def list_employee_option_grants(self) -> list[dict[str, Any]]:
         securities = [
@@ -1775,9 +1957,11 @@ class LocalPortfolioStore:
                        i.listing_date, i.restriction_end_date, i.manual_share_value, i.valuation_date
                 from manual_securities s
                 left join issuers i on i.id = s.issuer_id
-                where s.symbol = ? and s.stock_market = ?
+                where (s.symbol = ? or s.secondary_symbol = ?) and s.stock_market = ?
+                order by case when s.symbol = ? then 0 else 1 end
+                limit 1
                 """,
-                (symbol_key, market_key),
+                (symbol_key, symbol_key, market_key, symbol_key),
             ).fetchone()
         return _dict(row) if row else None
 
@@ -1807,6 +1991,7 @@ class LocalPortfolioStore:
                 """
                 select t.*, a.username, a.account_id, a.management_company,
                        s.name as security_name,
+                       s.secondary_symbol,
                        s.instrument_type,
                        s.option_type,
                        s.underlying_symbol,
@@ -2466,8 +2651,16 @@ class LocalPortfolioStore:
     def price_history(self, symbol: Any, stock_market: Any, from_date: date | None = None, to_date: date | None = None) -> list[dict[str, Any]]:
         symbol_key = _clean_security_symbol(symbol)
         market_key = str(stock_market or "").upper().strip()
-        args: list[Any] = [symbol_key, market_key]
-        where = "where symbol = ? and stock_market = ?"
+        metadata = self.manual_security(symbol_key, market_key)
+        primary_symbol = _clean_security_symbol((metadata or {}).get("symbol") or symbol_key)
+        secondary_symbol = _clean_security_symbol((metadata or {}).get("secondary_symbol"))
+        aliases = [item for item in [secondary_symbol, primary_symbol] if item]
+        aliases = list(dict.fromkeys(aliases))
+        if not aliases or not market_key:
+            return []
+        placeholders = ", ".join("?" for _item in aliases)
+        args: list[Any] = [*aliases, market_key]
+        where = f"where symbol in ({placeholders}) and stock_market = ?"
         if from_date:
             where += " and price_date >= ?"
             args.append(from_date.isoformat())
@@ -2475,8 +2668,12 @@ class LocalPortfolioStore:
             where += " and price_date <= ?"
             args.append(to_date.isoformat())
         with self._connect() as conn:
-            rows = conn.execute(f"select * from price_history {where} order by price_date", args).fetchall()
-        return [_dict(row) for row in rows]
+            rows = conn.execute(
+                f"select * from price_history {where} order by price_date, case when symbol = ? then 1 else 0 end",
+                [*args, primary_symbol],
+            ).fetchall()
+        by_date = {str(row["price_date"]): _dict(row) for row in rows}
+        return [by_date[day] for day in sorted(by_date)]
 
     def save_price(self, payload: dict[str, Any]) -> dict[str, Any]:
         symbol = _clean_security_symbol(payload.get("symbol"))
@@ -2697,6 +2894,16 @@ class LocalPortfolioStore:
         return [self._fund_out(row) for row in rows]
 
     def save_fund(self, payload: dict[str, Any]) -> dict[str, Any]:
+        account_id = str(payload.get("account_id") or "").strip()
+        if not account_id:
+            raise ValueError("Long-term account is required")
+        with self._connect() as conn:
+            account = conn.execute("select * from accounts where id = ?", (account_id,)).fetchone()
+        if not account:
+            raise ValueError("Long-term account not found")
+        if account["type"] != "Long-Term Savings":
+            raise ValueError("Fund can only be linked to a Long-Term Savings account")
+        account_persons = _validated_account_persons(account["type"], account["persons"])
         record = {
             "id": str(payload.get("id") or uuid4()),
             "kind": _choice(payload.get("kind"), FUND_KINDS, "Pension"),
@@ -2704,9 +2911,9 @@ class LocalPortfolioStore:
             "pension_id": str(payload.get("pension_id") or "").strip(),
             "amount": _number(payload.get("amount"), 0),
             "factor": _number(payload.get("factor"), 200) or 200,
-            "account_id": str(payload.get("account_id") or "").strip(),
-            "birth_date": _clean_birth_date(payload.get("birth_date") or payload.get("birthday")),
-            "persons": json.dumps(_clean_persons(payload.get("persons"))),
+            "account_id": account_id,
+            "birth_date": account_persons[0]["birth_date"],
+            "persons": json.dumps(account_persons),
             "comments": str(payload.get("comments") or "").strip(),
             "created_at": str(payload.get("created_at") or _now()),
         }
@@ -2717,12 +2924,6 @@ class LocalPortfolioStore:
         with self._sync_lock:
             with self._connect() as conn:
                 existing = conn.execute("select * from funds where id = ?", (record["id"],)).fetchone()
-                if record["account_id"]:
-                    account = conn.execute("select * from accounts where id = ?", (record["account_id"],)).fetchone()
-                    if not account:
-                        raise ValueError("Long-term account not found")
-                    if account["type"] != "Long-Term Savings":
-                        raise ValueError("Fund can only be linked to a Long-Term Savings account")
                 conn.execute(
                     """
                     insert into funds
@@ -2965,7 +3166,7 @@ class LocalPortfolioStore:
         accounts = {row["id"]: row for row in self.list_accounts()}
         transactions = self.list_transactions()
         if not include_imported:
-            transactions = [tx for tx in transactions if tx["source"] != "ghostfolio_import"]
+            transactions = [tx for tx in transactions if not _is_external_import_source(tx["source"])]
         positions: dict[tuple[str, str, str], dict[str, Any]] = {}
         for tx in sorted(transactions, key=lambda item: item["trade_date"]):
             key = (tx["account_db_id"], tx["symbol"], tx["stock_market"])
@@ -2974,6 +3175,7 @@ class LocalPortfolioStore:
                 {
                     "account": accounts.get(tx["account_db_id"]),
                     "symbol": tx["symbol"],
+                    "secondary_symbol": tx.get("secondary_symbol") or "",
                     "stock_market": tx["stock_market"],
                     "asset_class": tx["asset_class"],
                     "security_name": tx.get("security_name") or tx["symbol"],
@@ -3014,7 +3216,7 @@ class LocalPortfolioStore:
                 item["points"] = _fill_trend_dates(item["points"], all_dates)
         return {"from": from_date.isoformat(), "to": to_date.isoformat(), "accounts": points_by_account}
 
-    def enrich_ghostfolio_holdings(self, holdings: list[Holding]) -> list[Holding]:
+    def enrich_external_holdings(self, holdings: list[Holding]) -> list[Holding]:
         for holding in holdings:
             account = self._account_by_external(holding.account, holding.currency)
             if not account:
@@ -3079,7 +3281,7 @@ class LocalPortfolioStore:
             },
         }
 
-    def import_ghostfolio(
+    def import_external(
         self,
         holdings: list[Holding],
         account_cash: list[dict[str, Any]] | None = None,
@@ -3093,41 +3295,81 @@ class LocalPortfolioStore:
                 for item in account_cash
                 if item.get("account")
             }
+            holdings_by_key: dict[tuple[str, str], list[Holding]] = {}
+            for holding in holdings:
+                holdings_by_key.setdefault(_source_account_key(holding.account, holding.currency), []).append(holding)
+            transactions_by_key: dict[tuple[str, str], list[dict[str, Any]]] = {}
+            for transaction in source_transactions:
+                key = _source_account_key(transaction.get("account"), transaction.get("account_currency") or transaction.get("currency"))
+                transactions_by_key.setdefault(key, []).append(transaction)
+
             accounts_by_key: dict[tuple[str, str], dict[str, Any]] = {}
-            imported_accounts = 0
+            skipped_accounts: list[dict[str, Any]] = []
             updated_account_cash = 0
             imported_positions = 0
             updated_positions = 0
             attached_positions = 0
             imported_source_transactions = 0
+            accepted_symbols: set[str] = set()
 
-            for item in cash_by_account.values():
-                account, created, cash_updated = self._save_imported_account(
-                    item.get("account"),
-                    item.get("currency"),
-                    item.get("cash"),
-                    item.get("platform"),
+            all_keys = sorted(set(cash_by_account) | set(holdings_by_key) | set(transactions_by_key))
+            for key in all_keys:
+                cash_item = cash_by_account.get(key, {})
+                source_holding = (holdings_by_key.get(key) or [None])[0]
+                source_transaction = (transactions_by_key.get(key) or [None])[0]
+                source_account = (
+                    cash_item.get("account")
+                    or (source_holding.account if source_holding else "")
+                    or (source_transaction.get("account") if source_transaction else "")
                 )
-                accounts_by_key[_source_account_key(item.get("account"), item.get("currency"))] = account
-                imported_accounts += int(created)
-                updated_account_cash += int(cash_updated)
+                source_currency = key[1]
+                source_platform = (
+                    cash_item.get("platform")
+                    or (source_holding.platform if source_holding else "")
+                    or (source_transaction.get("platform") if source_transaction else "")
+                )
+                clean_account = _clean_source_label(source_account)
+                account = self._account_by_external(clean_account, source_currency)
+                reason = ""
+                if not account:
+                    reason = "account_not_found"
+                else:
+                    try:
+                        _validated_account_persons(account.get("type"), account.get("persons"))
+                    except ValueError:
+                        reason = "account_owner_required"
+                if reason:
+                    skipped_accounts.append(
+                        {
+                            "account": clean_account or "Unnamed source account",
+                            "currency": source_currency,
+                            "platform": _clean_source_label(source_platform),
+                            "required_account_id": clean_account or "account",
+                            "existing_account_id": account.get("id", "") if account else "",
+                            "reason": reason,
+                            "cash": _number(cash_item.get("cash"), 0),
+                            "has_cash": bool(cash_item),
+                            "positions": len(holdings_by_key.get(key, [])),
+                            "transactions": len(transactions_by_key.get(key, [])),
+                        }
+                    )
+                    continue
+                accounts_by_key[key] = account
+                if cash_item and abs(float(account.get("initial_cash") or 0) - _number(cash_item.get("cash"), 0)) > 1e-9:
+                    with self._connect() as conn:
+                        conn.execute("update accounts set initial_cash = ? where id = ?", (_number(cash_item.get("cash"), 0), account["id"]))
+                    accounts_by_key[key] = self._account_out(self._account(account["id"]))
+                    updated_account_cash += 1
 
             if source_transactions:
-                updated_positions = self._delete_all_imported_positions()
+                updated_positions = self._delete_imported_positions_for_accounts({account["id"] for account in accounts_by_key.values()})
                 for tx in source_transactions:
                     key = _source_account_key(tx.get("account"), tx.get("account_currency") or tx.get("currency"))
-                    account = accounts_by_key.get(key) or self._account_by_external(_clean_source_label(tx.get("account")), key[1])
+                    account = accounts_by_key.get(key)
                     if not account:
-                        account, created, cash_updated = self._save_imported_account(
-                            tx.get("account"),
-                            tx.get("account_currency") or tx.get("currency"),
-                            cash_by_account.get(key, {}).get("cash", 0),
-                            tx.get("platform"),
-                        )
-                        imported_accounts += int(created)
-                        updated_account_cash += int(cash_updated)
-                    accounts_by_key[key] = account
+                        continue
                     clean_symbol = _clean_security_symbol(tx.get("symbol"))
+                    accepted_symbols.add(clean_symbol)
                     stock_market = str(tx.get("stock_market") or "MANUAL").upper().strip()
                     location = str(tx.get("location") or ("Israel" if str(tx.get("currency") or "").upper() == "ILS" else "USA"))
                     asset_class = str(tx.get("asset_class") or "EQUITY").upper().strip()
@@ -3157,7 +3399,7 @@ class LocalPortfolioStore:
                             "currency": tx.get("currency") or account["currency"],
                             "location": location,
                             "trade_date": tx.get("trade_date"),
-                            "source": "ghostfolio_import",
+                            "source": EXTERNAL_IMPORT_SOURCE,
                             "comments": tx.get("comments") or "Imported source order",
                         }
                     )
@@ -3165,18 +3407,11 @@ class LocalPortfolioStore:
 
             for holding in holdings:
                 key = _source_account_key(holding.account, holding.currency)
-                account = accounts_by_key.get(key) or self._account_by_external(holding.account, holding.currency)
+                account = accounts_by_key.get(key)
                 if not account:
-                    account, created, cash_updated = self._save_imported_account(
-                        holding.account,
-                        holding.currency,
-                        cash_by_account.get(key, {}).get("cash", 0),
-                        holding.platform,
-                    )
-                    imported_accounts += int(created)
-                    updated_account_cash += int(cash_updated)
-                accounts_by_key[key] = account
+                    continue
                 clean_symbol = _clean_security_symbol(holding.symbol)
+                accepted_symbols.add(clean_symbol)
                 if not source_transactions and self._has_imported_position(account["id"], clean_symbol):
                     self._delete_imported_position(account["id"], clean_symbol)
                     updated_positions += 1
@@ -3195,7 +3430,7 @@ class LocalPortfolioStore:
                             "currency": holding.currency,
                             "location": location,
                             "trade_date": date.today().isoformat(),
-                            "source": "ghostfolio_import",
+                            "source": EXTERNAL_IMPORT_SOURCE,
                             "comments": f"Imported quantity {holding.quantity}",
                         }
                     )
@@ -3209,52 +3444,25 @@ class LocalPortfolioStore:
                             "currency": holding.currency,
                             "price_input": denormalize_price(abs(holding.market_value / holding.quantity), location, holding.asset_class),
                             "price_date": date.today().isoformat(),
-                            "source": "ghostfolio_import",
+                            "source": EXTERNAL_IMPORT_SOURCE,
                         }
                     )
                 imported_positions += 1
                 attached_positions += 1
             return {
-                "accounts": imported_accounts,
+                "accounts": 0,
                 "account_cash_updated": updated_account_cash,
                 "positions": imported_positions,
                 "updated_positions": updated_positions,
                 "attached_positions": attached_positions,
                 "source_transactions": imported_source_transactions,
+                "skipped_accounts": skipped_accounts,
+                "skipped_positions": sum(item["positions"] for item in skipped_accounts),
+                "skipped_transactions": sum(item["transactions"] for item in skipped_accounts),
+                "skipped_cash_accounts": sum(1 for item in skipped_accounts if item["has_cash"]),
+                "accepted_symbols": sorted(accepted_symbols),
+                "partial": bool(skipped_accounts),
             }
-
-    def _save_imported_account(
-        self,
-        source_account: Any,
-        currency: Any,
-        cash: Any,
-        platform: Any = "",
-    ) -> tuple[dict[str, Any], bool, bool]:
-        clean_account = _clean_source_label(source_account) or "Imported"
-        account_currency = str(currency or "USD").upper().strip()
-        account = self._account_by_external(clean_account, account_currency)
-        imported_cash = _number(cash, 0)
-        if account:
-            if abs(float(account.get("initial_cash") or 0) - imported_cash) > 1e-9:
-                with self._connect() as conn:
-                    conn.execute("update accounts set initial_cash = ? where id = ?", (imported_cash, account["id"]))
-                account = self._account(account["id"])
-                return account, False, True
-            return account, False, False
-
-        account = self.save_account(
-            {
-                "type": "Investment",
-                "location": "Israel" if account_currency == "ILS" else "USA",
-                "currency": account_currency,
-                "initial_cash": imported_cash,
-                "username": clean_account,
-                "account_id": f"import-{clean_account}",
-                "management_company": _clean_source_label(platform) or "Imported",
-                "comments": "Imported",
-            }
-        )
-        return account, True, bool(imported_cash)
 
     def _account(self, account_db_id: Any) -> dict[str, Any]:
         if not account_db_id:
@@ -3273,12 +3481,12 @@ class LocalPortfolioStore:
                 "select * from accounts where account_id in (?, ?) and currency = ?",
                 (external_id, clean_id, currency or "USD"),
             ).fetchone()
-        return _dict(row) if row else None
+        return self._account_out(row) if row else None
 
     def _has_imported_position(self, account_db_id: str, symbol: str) -> bool:
         with self._connect() as conn:
             count = conn.execute(
-                "select count(*) from transactions where account_db_id = ? and symbol = ? and source = 'ghostfolio_import'",
+                "select count(*) from transactions where account_db_id = ? and symbol = ? and source like '%_import'",
                 (account_db_id, symbol),
             ).fetchone()[0]
         return bool(count)
@@ -3286,14 +3494,24 @@ class LocalPortfolioStore:
     def _delete_imported_position(self, account_db_id: str, symbol: str) -> None:
         with self._connect() as conn:
             conn.execute(
-                "delete from transactions where account_db_id = ? and symbol = ? and source = 'ghostfolio_import'",
+                "delete from transactions where account_db_id = ? and symbol = ? and source like '%_import'",
                 (account_db_id, symbol),
             )
 
-    def _delete_all_imported_positions(self) -> int:
+    def _delete_imported_positions_for_accounts(self, account_ids: set[str]) -> int:
+        if not account_ids:
+            return 0
+        placeholders = ", ".join("?" for _ in account_ids)
+        values = sorted(account_ids)
         with self._connect() as conn:
-            count = conn.execute("select count(*) from transactions where source = 'ghostfolio_import'").fetchone()[0]
-            conn.execute("delete from transactions where source = 'ghostfolio_import'")
+            count = conn.execute(
+                f"select count(*) from transactions where source like '%_import' and account_db_id in ({placeholders})",
+                values,
+            ).fetchone()[0]
+            conn.execute(
+                f"delete from transactions where source like '%_import' and account_db_id in ({placeholders})",
+                values,
+            )
         return int(count)
 
     def _filtered_accounts(self, filters: dict[str, Any]) -> list[dict[str, Any]]:
@@ -3375,6 +3593,7 @@ class LocalPortfolioStore:
         account_name = _account_label(account)
         holding = Holding(
             symbol=position["symbol"],
+            secondary_symbol=position.get("secondary_symbol") or "",
             name=position.get("security_name") or position["symbol"],
             asset_class=position["asset_class"],
             asset_sub_class=position.get("instrument_type") or "",
@@ -3413,16 +3632,7 @@ class LocalPortfolioStore:
         return analysis
 
     def _prices(self, symbol: str, stock_market: str, asset_class: str, location: str, currency: str, up_to: date | None = None) -> list[Ohlcv]:
-        args: list[Any] = [symbol, stock_market]
-        where = "where symbol = ? and stock_market = ?"
-        if up_to:
-            where += " and price_date <= ?"
-            args.append(up_to.isoformat())
-        with self._connect() as conn:
-            rows = conn.execute(
-                f"select * from price_history {where} order by price_date",
-                args,
-            ).fetchall()
+        rows = self.price_history(symbol, stock_market, to_date=up_to)
         return [
             Ohlcv(
                 date=date.fromisoformat(row["price_date"]),
@@ -3541,9 +3751,6 @@ class LocalPortfolioStore:
 
     def _fund_out(self, row) -> dict[str, Any]:
         item = _dict(row)
-        item["persons"] = _clean_persons(item.get("persons"))
-        if not item["persons"] and item.get("birth_date"):
-            item["persons"] = [{"name": "Person 1", "birth_date": item["birth_date"], "age": age_from_birth_date(item["birth_date"])}]
         item["monthly_estimate"] = monthly_pension(item["amount"], item["factor"]) if item.get("kind") == "Pension" else None
         with self._connect() as conn:
             history_rows = conn.execute(
@@ -3573,6 +3780,10 @@ class LocalPortfolioStore:
             if account:
                 item["account"] = self._account_out(account)
                 item["account_label"] = _account_label(item["account"])
+                item["persons"] = list(item["account"]["persons"])
+                item["birth_date"] = item["persons"][0]["birth_date"] if item["persons"] else ""
+        if item["account"] is None:
+            item["persons"] = _clean_persons(item.get("persons"))
         return item
 
     def _event_out(self, row) -> dict[str, Any]:
@@ -3711,6 +3922,43 @@ def _clean_persons(value: Any) -> list[dict[str, Any]]:
             person["retire_age"] = retire_age
         persons.append(person)
     return persons
+
+
+def _validated_account_persons(account_type: Any, value: Any) -> list[dict[str, Any]]:
+    clean_type = _choice(account_type, ACCOUNT_TYPES, "Investment")
+    persons = _clean_persons(value)
+    if not persons:
+        raise ValueError("Every account must be assigned to at least one person")
+    if clean_type in SINGLE_OWNER_ACCOUNT_TYPES and len(persons) != 1:
+        raise ValueError(f"{clean_type} accounts must be assigned to exactly one person")
+    return persons
+
+
+def validate_portfolio_ownership(
+    accounts: list[dict[str, Any]],
+    funds: list[dict[str, Any]],
+    *,
+    sync_fund_persons: bool = False,
+) -> None:
+    accounts_by_id: dict[str, dict[str, Any]] = {}
+    for account in accounts:
+        persons = _validated_account_persons(account.get("type"), account.get("persons"))
+        accounts_by_id[str(account.get("id") or "")] = {**account, "persons": persons}
+        if sync_fund_persons:
+            account["persons"] = json.dumps(persons)
+    for fund in funds:
+        account_id = str(fund.get("account_id") or "").strip()
+        if not account_id:
+            raise ValueError("Every pension or fund record must be linked to a Long-Term Savings account")
+        account = accounts_by_id.get(account_id)
+        if not account:
+            raise ValueError("A pension or fund record is linked to a missing account")
+        if account.get("type") != "Long-Term Savings":
+            raise ValueError("A pension or fund record must use a Long-Term Savings account")
+        owner = _validated_account_persons(account.get("type"), account.get("persons"))[0]
+        if sync_fund_persons:
+            fund["persons"] = json.dumps([owner])
+            fund["birth_date"] = owner["birth_date"]
 
 
 def _split_person_name(value: Any) -> tuple[str, str]:
@@ -3862,10 +4110,9 @@ def _account_label(account: dict[str, Any]) -> str:
 
 def _clean_source_label(value: Any) -> str:
     text = str(value or "").strip()
-    for prefix in ("Ghostfolio-", "ghostfolio-"):
-        if text.startswith(prefix):
-            text = "import-" + text[len(prefix):]
-    return " ".join(text.replace("Ghostfolio", "").replace("ghostfolio", "").replace("import-", "").split()).strip(" -")
+    if text.casefold().startswith("import-"):
+        text = text[len("import-"):]
+    return " ".join(text.split()).strip(" -")
 
 
 def _clean_security_symbol(value: Any) -> str:
@@ -3883,7 +4130,6 @@ def _asset_class_for_instrument(instrument_type: str, requested: Any = "") -> st
         "BOND": "BOND",
         "OPTION": "OPTION",
         "FUTURE": "FUTURE",
-        "RSU": "RSU",
         "EMPLOYEE_STOCK_OPTION": "EMPLOYEE_STOCK_OPTION",
         "PRIVATE_STOCK": "PRIVATE_STOCK",
         "STOCK_OPTION": "STOCK_OPTION",
@@ -4002,6 +4248,10 @@ def _build_vesting_schedule(payload: dict[str, Any], total_quantity: float, defa
 
 def _source_account_key(account: Any, currency: Any) -> tuple[str, str]:
     return (_clean_source_label(account).casefold(), str(currency or "USD").upper().strip())
+
+
+def _is_external_import_source(value: Any) -> bool:
+    return str(value or "").strip().lower().endswith("_import")
 
 
 def _now() -> str:
