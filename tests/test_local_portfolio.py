@@ -1250,12 +1250,15 @@ def test_broker_crud_and_delete_guard(tmp_path):
     assert updated["country"] == "Israel"
     assert updated["currency"] == "ILS"
 
+    euro = store.save_broker({"name": "European Broker", "country": "USA", "currency": "EUR"})
+    assert euro["currency"] == "EUR"
+
     store.save_account({"type": "Investment", "location": "Israel", "currency": "ILS", "management_company": "IBKR"})
     renamed = store.save_broker({"id": broker["id"], "name": "IBKR Israel", "country": "Israel", "currency": "ILS"})
     assert renamed["attached_accounts"] == 1
     assert store.list_accounts()[0]["management_company"] == "IBKR Israel"
 
-    saved = store.list_brokers()[0]
+    saved = next(item for item in store.list_brokers() if item["id"] == broker["id"])
     assert saved["attached_accounts"] == 1
 
     try:

@@ -33,7 +33,117 @@ def test_sqlite_cache_persists_daily_prices_and_checked_date(tmp_path):
     assert cache.status()["price_entries"] == 2
 
 
-def test_market_data_hub_chooses_fuller_price_series(tmp_path):
+def test_sqlite_cache_persists_normalized_security_snapshots(tmp_path):
+    path = tmp_path / "market-cache.sqlite3"
+    cache = SqliteCache(path, ttl_hours=1, max_mb=1)
+    cache.set_security_snapshot(
+        "provider",
+        "fdus",
+        "fundamentals",
+        {"income_statement": {"annualReports": [{"totalRevenue": 100, "netIncome": 20}]}},
+    )
+
+    reopened = SqliteCache(path, ttl_hours=1, max_mb=1)
+
+    assert reopened.get_security_snapshot("provider", "FDUS", "fundamentals")["income_statement"]["annualReports"][0]["netIncome"] == 20
+    assert reopened.status()["security_snapshots"] == 1
+    assert reopened.status()["security_symbols"] == 1
+
+
+def test_market_data_hub_uses_saved_security_history_when_provider_is_offline(monkeypatch, tmp_path):
+    class SwitchableProvider:
+        name = "switchable"
+        offline = False
+
+        def _check(self):
+            if self.offline:
+                raise ConnectionError("offline")
+
+        def prices(self, symbol, from_date, to_date):
+            self._check()
+            return [Ohlcv(date=to_date, open=10, high=11, low=9, close=10, adjusted_close=10, volume=100)]
+
+        def fundamentals(self, symbol):
+            self._check()
+            return {"income_statement": {"annualReports": [{"totalRevenue": 100, "netIncome": 20}]}}
+
+        def dividends(self, symbol, force_refresh=False, to_date=None):
+            self._check()
+            return [{"date": "2026-06-01", "amount": 0.5}]
+
+        def profile(self, symbol):
+            self._check()
+            return {"name": "Saved Corp", "sector": "Financial Services"}
+
+        def quote(self, symbol):
+            self._check()
+            return {"symbol": symbol, "price": 10, "currency": "USD"}
+
+        def fx(self, pair):
+            self._check()
+            return {"pair": pair, "rate": 3.2}
+
+    monkeypatch.setattr(providers, "data_dir", lambda: tmp_path)
+    hub = MarketDataHub({"primary": "frankfurter_fx", "fallback": [], "experimental_fallback": [], "cache_ttl_hours": 24}, {})
+    hub.cache = SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1)
+    provider = SwitchableProvider()
+    hub.providers = [provider]
+    from_date = date(2026, 1, 1)
+    to_date = date(2026, 8, 1)
+
+    assert hub.prices("FDUS", from_date, to_date)[0][-1].close == 10
+    assert hub.fundamentals("FDUS")[0]["income_statement"]["annualReports"][0]["netIncome"] == 20
+    assert hub.dividends("FDUS")[0][0]["amount"] == 0.5
+    assert hub.profile("FDUS")[0]["sector"] == "Financial Services"
+    assert hub.quote("FDUS")[0]["price"] == 10
+    assert hub.fx("USD/ILS")[0]["rate"] == 3.2
+
+    provider.offline = True
+
+    saved_prices, price_status = hub.prices("FDUS", from_date, to_date)
+    saved_fundamentals, fundamental_status = hub.fundamentals("FDUS")
+    saved_dividends, dividend_status = hub.dividends("FDUS")
+    saved_profile, profile_status = hub.profile("FDUS")
+    saved_quote, quote_status = hub.quote("FDUS")
+    saved_fx, fx_status = hub.fx("USD/ILS")
+
+    assert saved_prices[-1].close == 10
+    assert saved_fundamentals["income_statement"]["annualReports"][0]["totalRevenue"] == 100
+    assert saved_dividends[0]["amount"] == 0.5
+    assert saved_profile["name"] == "Saved Corp"
+    assert saved_quote["price"] == 10
+    assert saved_fx["rate"] == 3.2
+    for status in [price_status, fundamental_status, dividend_status, profile_status, quote_status, fx_status]:
+        assert "stale (saved local history; ConnectionError)" in status.values()
+
+
+def test_live_provider_wins_over_earlier_saved_fallback(monkeypatch, tmp_path):
+    class OfflineProvider:
+        name = "offline"
+
+        def fundamentals(self, symbol):
+            raise ConnectionError("offline")
+
+    class LiveProvider:
+        name = "live"
+
+        def fundamentals(self, symbol):
+            return {"income_statement": {"annualReports": [{"totalRevenue": 200}]}}
+
+    monkeypatch.setattr(providers, "data_dir", lambda: tmp_path)
+    hub = MarketDataHub({"primary": "frankfurter_fx", "fallback": [], "experimental_fallback": [], "cache_ttl_hours": 24}, {})
+    hub.cache = SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1)
+    hub.cache.set_security_snapshot("offline", "FDUS", "fundamentals", {"income_statement": {"annualReports": [{"totalRevenue": 100}]}})
+    hub.providers = [OfflineProvider(), LiveProvider()]
+
+    data, status = hub.fundamentals("FDUS")
+
+    assert data["income_statement"]["annualReports"][0]["totalRevenue"] == 200
+    assert status["offline"].startswith("stale")
+    assert status["live"] == "ok"
+
+
+def test_market_data_hub_chooses_fuller_price_series(monkeypatch, tmp_path):
     class SparseProvider:
         name = "sparse"
 
@@ -49,6 +159,7 @@ def test_market_data_hub_chooses_fuller_price_series(tmp_path):
                 for idx in range(35)
             ]
 
+    monkeypatch.setattr(providers, "data_dir", lambda: tmp_path)
     hub = MarketDataHub({"primary": "frankfurter_fx", "fallback": [], "experimental_fallback": [], "cache_ttl_hours": 24}, {})
     hub.providers = [SparseProvider(), FullProvider()]
 
@@ -79,6 +190,7 @@ def test_market_screener_falls_back_to_sec_ticker_lookup(monkeypatch, tmp_path):
             return [{"symbol": "CSCO", "name": "CISCO SYSTEMS, INC.", "price": None}]
 
     monkeypatch.setattr(providers, "SecCompanyTickerProvider", StubSecProvider)
+    monkeypatch.setattr(providers, "data_dir", lambda: tmp_path)
     hub = MarketDataHub({"primary": "frankfurter_fx", "fallback": [], "experimental_fallback": [], "cache_ttl_hours": 24}, {})
     hub.cache = SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1)
 
@@ -216,6 +328,33 @@ def test_sec_company_facts_maps_net_income_revenue_and_shares(monkeypatch, tmp_p
     assert fundamentals["income_statement"]["annualReports"][-1]["netIncome"] == 180
     assert fundamentals["income_statement"]["annualReports"][-1]["totalRevenue"] == 1200
     assert profile["shares_outstanding"] == 50000000
+
+
+def test_sec_company_facts_maps_investment_company_income_as_revenue(monkeypatch, tmp_path):
+    provider = SecCompanyFactsProvider({}, SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1))
+    monkeypatch.setattr(provider, "_ticker_row", lambda symbol: {"cik": "0000000001", "title": "Investment Corp"})
+    monkeypatch.setattr(
+        provider,
+        "_company_facts",
+        lambda cik: {
+            "facts": {
+                "us-gaap": {
+                    "GrossInvestmentIncomeOperating": {"units": {"USD": [
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "end": "2025-12-31", "val": 125000000}
+                    ]}},
+                    "NetIncomeLoss": {"units": {"USD": [
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "end": "2025-12-31", "val": 82000000}
+                    ]}},
+                },
+                "dei": {},
+            }
+        },
+    )
+
+    reports = provider.fundamentals("FDUS")["income_statement"]["annualReports"]
+
+    assert reports[-1]["totalRevenue"] == 125000000
+    assert reports[-1]["netIncome"] == 82000000
 
 
 def test_sec_company_facts_as_of_uses_filing_available_at_historical_cutoff(monkeypatch, tmp_path):

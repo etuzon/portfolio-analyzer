@@ -10,6 +10,7 @@ import json
 import math
 import calendar
 from pathlib import Path
+import tempfile
 from typing import Any
 from uuid import uuid4
 
@@ -625,7 +626,7 @@ class LocalPortfolioStore:
         for row in rows:
             country = _broker_country(row["location"])
             currency = str(row["currency"] or _currency_for_location(country)).upper().strip()
-            if currency not in {"USD", "ILS"}:
+            if currency not in {"USD", "ILS", "EUR"}:
                 currency = _currency_for_location(country)
             conn.execute(
                 """
@@ -1036,6 +1037,23 @@ class LocalPortfolioStore:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    def sqlite_snapshot_bytes(self) -> bytes:
+        """Return a transactionally consistent SQLite snapshot for full backups."""
+        snapshot_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(prefix="portfolio-snapshot-", suffix=".sqlite3", delete=False) as snapshot:
+                snapshot_path = Path(snapshot.name)
+            with self._sync_lock:
+                with self._connect() as source, sqlite3.connect(snapshot_path) as target:
+                    source.backup(target)
+            return snapshot_path.read_bytes()
+        finally:
+            if snapshot_path is not None:
+                try:
+                    snapshot_path.unlink()
+                except OSError:
+                    pass
+
     def write_backup(self, keep: int = 30) -> dict[str, Any]:
         backup_dir = self.backup_dir()
         timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
@@ -1054,12 +1072,18 @@ class LocalPortfolioStore:
     def list_backups(self) -> list[dict[str, Any]]:
         backup_dir = self.backup_dir()
         backups = []
-        for path in sorted(backup_dir.glob("portfolio-data-*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+        paths = [
+            path
+            for pattern in ("portfolio-full-*.zip", "portfolio-data-*.json")
+            for path in backup_dir.glob(pattern)
+        ]
+        for path in sorted(paths, key=lambda item: item.stat().st_mtime, reverse=True):
             stat = path.stat()
             backups.append(
                 {
                     "filename": path.name,
                     "path": str(path),
+                    "type": "full" if path.suffix.lower() == ".zip" else "data",
                     "size_kb": round(stat.st_size / 1024, 1),
                     "modified_at": datetime.utcfromtimestamp(stat.st_mtime).isoformat() + "Z",
                 }
@@ -1089,8 +1113,8 @@ class LocalPortfolioStore:
         }
         if not record["name"]:
             raise ValueError("Broker name is required")
-        if record["currency"] not in {"USD", "ILS"}:
-            raise ValueError("Broker currency must be USD or ILS")
+        if record["currency"] not in {"USD", "ILS", "EUR"}:
+            raise ValueError("Broker currency must be ILS, USD, or EUR")
         with self._connect() as conn:
             existing = conn.execute("select * from brokers where id = ?", (record["id"],)).fetchone()
             if existing:

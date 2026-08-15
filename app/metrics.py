@@ -28,11 +28,11 @@ def analyze_holding(holding: Holding, hub: MarketDataHub) -> SymbolAnalysis:
 
     if profile.get("name") and (not holding.name or holding.name.upper() == holding.symbol.upper()):
         holding.name = str(profile.get("name") or holding.name)
+    if profile.get("sector") and not holding.sector:
+        holding.sector = str(profile.get("sector") or "")
     industry = profile.get("industry") or holding.industry or holding.sector or ""
     if industry:
         holding.industry = str(industry)
-    if profile.get("sector") and not holding.sector:
-        holding.sector = str(profile.get("sector") or "")
     if profile.get("exchange") and not holding.stock_market:
         holding.stock_market = str(profile.get("exchange") or "")
     market_cap = profile.get("market_cap")

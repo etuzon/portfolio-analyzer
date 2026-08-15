@@ -35,6 +35,7 @@ const state = {
   fundHistoryFundId: "",
   editingFundHistoryId: "",
   longTermView: "total",
+  longTermIncludePension: true,
   brokers: [],
   familyMembers: [],
   localAccountPersons: [],
@@ -93,19 +94,20 @@ const state = {
 const $ = (id) => document.getElementById(id);
 
 const DASHBOARD_WIDGETS = [
-  { id: "portfolio_value", title: "Portfolio value", view: "basic", size: "wide" },
-  { id: "long_term_savings", title: "Long-term savings", view: "basic", size: "wide" },
-  { id: "account_trend", title: "Account value trend", view: "basic", size: "wide" },
-  { id: "long_term", title: "Long-term funds", view: "basic", size: "wide" },
-  { id: "market_cost", title: "Market vs cost basis", view: "basic", size: "wide" },
-  { id: "asset_mix", title: "Asset mix", view: "basic", size: "compact" },
-  { id: "industry_split", title: "Industry split", view: "basic", size: "wide" },
-  { id: "top_holdings", title: "Top holdings", view: "basic", size: "wide" },
-  { id: "coverage", title: "Provider data coverage", view: "expanded", size: "medium" },
-  { id: "currency", title: "Currency allocation", view: "expanded", size: "compact" },
-  { id: "equity_comp", title: "Equity compensation", view: "expanded", size: "wide" },
-  { id: "profit", title: "Unrealized P/L by holding", view: "expanded", size: "wide" },
-  { id: "snapshot", title: "Portfolio snapshot", view: "expanded", size: "wide" },
+  { id: "portfolio_value", title: "Portfolio value", view: "basic", size: "wide", area: "investments" },
+  { id: "long_term_savings", title: "Long-term savings", view: "basic", size: "wide", area: "long_term" },
+  { id: "account_trend", title: "Account value trend", view: "basic", size: "wide", area: "investments" },
+  { id: "long_term", title: "Long-term funds", view: "basic", size: "wide", area: "long_term" },
+  { id: "market_cost", title: "Market vs cost basis", view: "basic", size: "wide", area: "investments" },
+  { id: "asset_mix", title: "Asset mix", view: "basic", size: "compact", area: "investments" },
+  { id: "cash_currency", title: "Cash by currency", view: "basic", size: "compact", area: "investments" },
+  { id: "industry_split", title: "Industry split", view: "basic", size: "wide", area: "investments" },
+  { id: "top_holdings", title: "Top holdings", view: "basic", size: "wide", area: "investments" },
+  { id: "coverage", title: "Provider data coverage", view: "expanded", size: "medium", area: "investments" },
+  { id: "currency", title: "Currency allocation", view: "expanded", size: "compact", area: "investments" },
+  { id: "equity_comp", title: "Equity compensation", view: "expanded", size: "wide", area: "employee" },
+  { id: "profit", title: "Unrealized P/L by holding", view: "expanded", size: "wide", area: "investments" },
+  { id: "snapshot", title: "Portfolio snapshot", view: "expanded", size: "wide", area: "investments" },
 ];
 
 const DASHBOARD_STORAGE_KEY = "portfolioAnalyzer.dashboard";
@@ -134,6 +136,12 @@ const DASHBOARD_SECTIONS = [
   { view: "expanded", label: "Full" },
   { view: "hidden", label: "Hidden" },
 ];
+const DASHBOARD_AREAS = ["all", "investments", "long_term", "employee"];
+const DASHBOARD_AREA_FEATURES = {
+  investments: ["portfolio_value", "account_trend", "asset_mix", "top_holdings"],
+  long_term: ["long_term_savings", "long_term"],
+  employee: ["equity_comp"],
+};
 const SUPPORT_RESISTANCE_PERIODS = [
   { key: "5y", label: "5Y" },
   { key: "3y", label: "3Y" },
@@ -142,16 +150,18 @@ const SUPPORT_RESISTANCE_PERIODS = [
   { key: "1m", label: "1M" },
 ];
 
-const REGION_CODES = "AF AX AL DZ AS AD AO AI AQ AG AR AM AW AU AT AZ BS BH BD BB BY BE BZ BJ BM BT BO BQ BA BW BV BR IO BN BG BF BI CV KH CM CA KY CF TD CL CN CX CC CO KM CG CD CK CR CI HR CU CW CY CZ DK DJ DM DO EC EG SV GQ ER EE SZ ET FK FO FJ FI FR GF PF TF GA GM GE DE GH GI GR GL GD GP GU GT GG GN GW GY HT HM VA HN HK HU IS IN ID IR IQ IE IM IL IT JM JP JE JO KZ KE KI KP KR KW KG LA LV LB LS LR LY LI LT LU MO MG MW MY MV ML MT MH MQ MR MU YT MX FM MD MC MN ME MS MA MZ MM NA NR NP NL NC NZ NI NE NG NU NF MK MP NO OM PK PW PS PA PG PY PE PH PN PL PT PR QA RE RO RU RW BL SH KN LC MF PM VC WS SM ST SA SN RS SC SL SG SX SK SI SB SO ZA GS SS ES LK SD SR SJ SE CH SY TW TJ TZ TH TL TG TK TO TT TN TR TM TC TV UG UA AE GB US UM UY UZ VU VE VN VG VI WF EH YE ZM ZW".split(" ");
+const REGION_CODES = "AF AX AL DZ AS AD AO AI AQ AG AR AM AW AU AT AZ BS BH BD BB BY BE BZ BJ BM BT BO BQ BA BW BV BR IO BN BG BF BI CV KH CM CA KY CF TD CL CN CX CC CO KM CG CD CK CR CI HR CU CW CY CZ DK DJ DM DO EC EG SV GQ ER EE SZ ET FK FO FJ FI FR GF PF TF GA GM GE DE GH GI GR GL GD GP GU GT GG GN GW GY HT HM VA HN HK HU IS IN ID IR IQ IE IM IL IT JM JP JE JO KZ KE KI KP KR KW KG LA LV LB LS LR LY LI LT LU MO MG MW MY MV ML MT MH MQ MR MU YT MX FM MD MC MN ME MS MA MZ MM NA NR NP NL NC NZ NI NE NG NU NF MK MP NO OM PK PW PA PG PY PE PH PN PL PT PR QA RE RO RU RW BL SH KN LC MF PM VC WS SM ST SA SN RS SC SL SG SX SK SI SB SO ZA GS SS ES LK SD SR SJ SE CH SY TW TJ TZ TH TL TG TK TO TT TN TR TM TC TV UG UA AE GB US UM UY UZ VU VE VN VG VI WF EH YE ZM ZW".split(" ");
 const ACCOUNT_COUNTRIES = ["USA", "Israel"];
+const ACCOUNT_COUNTRY_CODES = { USA: "US", Israel: "IL" };
 const MARKET_OPTIONS = ["NASDAQ", "NYSE", "AMEX", "NYSEARCA", "OTC", "TASE"];
 const FALLBACK_CURRENCIES = "USD ILS EUR GBP JPY CHF CAD AUD NZD CNY HKD SGD INR KRW MXN BRL ARS CLP COP ZAR AED SAR TRY PLN CZK HUF SEK NOK DKK ISK RUB UAH RON BGN HRK RSD THB IDR MYR PHP VND TWD ILS".split(" ");
-const EMPLOYEE_OPTION_CURRENCIES = ["ILS", "USD", "EUR"];
+const SUPPORTED_MANAGEMENT_CURRENCIES = ["ILS", "USD", "EUR"];
+const HEBREW_CURRENCY_NAMES = { ILS: "שקל חדש", USD: "דולר אמריקאי", EUR: "אירו" };
 const TRANSLATIONS = {
   en: {
     appName: "Portfolio analyzer",
     brand: "Portfolio",
-    overview: "Overview",
+    overview: "Home",
     loadingPortfolio: "Loading portfolio",
     readingCachedAnalytics: "Reading cached analytics",
     mainMenu: "Main Menu",
@@ -208,7 +218,7 @@ const TRANSLATIONS = {
   he: {
     appName: "מנהל תיק השקעות",
     brand: "תיק השקעות",
-    overview: "סקירה",
+    overview: "ראשי",
     loadingPortfolio: "טוען תיק",
     readingCachedAnalytics: "קורא נתוני ניתוח שמורים",
     mainMenu: "תפריט ראשי",
@@ -289,15 +299,41 @@ function flagFor(code) {
   return code.replace(/./g, (char) => String.fromCodePoint(127397 + char.charCodeAt(0)));
 }
 
-function countryName(code) {
+function bidiIsolate(value, direction = "auto") {
+  const opener = direction === "rtl" ? "\u2067" : direction === "ltr" ? "\u2066" : "\u2068";
+  return `${opener}${String(value || "")}\u2069`;
+}
+
+function countryName(code, language = state.language) {
   try {
     const names = typeof Intl.DisplayNames === "function"
-      ? new Intl.DisplayNames([locale() || navigator.language || "en"], { type: "region" })
+      ? new Intl.DisplayNames([language === "he" ? "he-IL" : "en"], { type: "region" })
       : null;
     return names?.of(code) || code;
   } catch {
     return code;
   }
+}
+
+function countryCodeForLocation(location) {
+  const text = String(location || "").trim().toLowerCase();
+  if (!text) return "";
+  if (["usa", "us", "u.s.", "u.s.a.", "united states", "united states of america", "ארצות הברית"].includes(text)) return "US";
+  if (["israel", "il", "state of israel", "ישראל"].includes(text)) return "IL";
+  return REGION_CODES.find((code) => (
+    code.toLowerCase() === text
+    || countryName(code, "en").toLowerCase() === text
+    || countryName(code, "he").toLowerCase() === text
+  )) || "";
+}
+
+function countryDisplayLabel(location) {
+  const code = countryCodeForLocation(location);
+  if (!code) return String(location || "").trim();
+  const label = state.language === "he"
+    ? `${countryName(code)} ${flagFor(code)}`
+    : `${flagFor(code)} ${countryName(code)}`;
+  return state.language === "he" ? bidiIsolate(label, "rtl") : label;
 }
 
 function currencySymbol(code) {
@@ -309,6 +345,27 @@ function currencySymbol(code) {
   } catch {
     return code;
   }
+}
+
+function currencyName(code) {
+  if (state.language === "he" && HEBREW_CURRENCY_NAMES[code]) return HEBREW_CURRENCY_NAMES[code];
+  try {
+    const names = typeof Intl.DisplayNames === "function"
+      ? new Intl.DisplayNames([locale() || navigator.language || "en"], { type: "currency" })
+      : null;
+    return names?.of(code) || code;
+  } catch {
+    return code;
+  }
+}
+
+function currencyDisplayLabel(code) {
+  const normalized = String(code || "").trim().toUpperCase();
+  if (!normalized) return "";
+  const label = state.language === "he"
+    ? `${currencyName(normalized)} ${currencySymbol(normalized)}`
+    : `${currencySymbol(normalized)} ${normalized}`;
+  return state.language === "he" ? bidiIsolate(label, "rtl") : label;
 }
 
 function bannerValueSymbol(item) {
@@ -591,6 +648,39 @@ function pickerBoundsForDateField(input) {
   return { min, max };
 }
 
+function datePickerAnchorPosition(input) {
+  const rect = input.getBoundingClientRect();
+  const viewportWidth = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+  const viewportHeight = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+  const margin = 12;
+  const gap = 10;
+  const estimatedPopupWidth = Math.min(280, Math.max(1, viewportWidth - margin * 2));
+  const estimatedPopupHeight = Math.min(330, Math.max(1, viewportHeight - margin * 2));
+  const fieldCenter = rect.left + rect.width / 2;
+  const towardCenterLeft = fieldCenter <= viewportWidth / 2
+    ? rect.right + gap
+    : rect.left - estimatedPopupWidth - gap;
+  const maxLeft = Math.max(margin, viewportWidth - estimatedPopupWidth - margin);
+  const left = Math.min(Math.max(towardCenterLeft, margin), maxLeft);
+  const below = rect.bottom + gap;
+  const above = rect.top - estimatedPopupHeight - gap;
+  const maxTop = Math.max(margin, viewportHeight - estimatedPopupHeight - margin);
+  const top = below + estimatedPopupHeight <= viewportHeight - margin
+    ? below
+    : Math.min(Math.max(above, margin), maxTop);
+  return { left: Math.round(left), top: Math.round(top) };
+}
+
+function positionNativeDatePicker(picker, input) {
+  const position = datePickerAnchorPosition(input);
+  picker.style.insetInlineStart = "auto";
+  picker.style.insetInlineEnd = "auto";
+  picker.style.right = "auto";
+  picker.style.bottom = "auto";
+  picker.style.left = `${position.left}px`;
+  picker.style.top = `${position.top}px`;
+}
+
 function openDatePickerFor(input) {
   if (!input || input.hidden || input.disabled || input.readOnly) return;
   const now = Date.now();
@@ -601,6 +691,7 @@ function openDatePickerFor(input) {
   picker.min = min;
   picker.max = max;
   picker.value = parseDateInput(input.value) || (min && todayString() < min ? min : todayString());
+  positionNativeDatePicker(picker, input);
   picker.onchange = () => {
     if (!picker.value) return;
     input.value = formatDate(picker.value);
@@ -791,6 +882,7 @@ function colorAt(index) {
 function defaultDashboard() {
   return {
     mode: "basic",
+    area: "all",
     edit: false,
     accountTrendAccountId: "total",
     widgets: DASHBOARD_WIDGETS.map((widget, index) => ({ id: widget.id, view: widget.view, order: index })),
@@ -803,11 +895,13 @@ function loadDashboardSettings() {
     const saved = JSON.parse(localStorage.getItem(DASHBOARD_STORAGE_KEY) || "{}");
     const savedWidgets = new Map((saved.widgets || []).map((widget) => [widget.id, widget]));
     base.mode = ["basic", "expanded"].includes(saved.mode) ? saved.mode : base.mode;
+    base.area = DASHBOARD_AREAS.includes(saved.area) ? saved.area : base.area;
     base.edit = false;
     base.accountTrendAccountId = saved.accountTrendAccountId || localStorage.getItem(DASHBOARD_ACCOUNT_STORAGE_KEY) || base.accountTrendAccountId;
     state.longTermView = ["total", "people", "funds"].includes(saved.longTermView)
       ? saved.longTermView
       : localStorage.getItem(DASHBOARD_LONG_TERM_STORAGE_KEY) || state.longTermView;
+    state.longTermIncludePension = saved.longTermIncludePension !== false;
     base.widgets = DASHBOARD_WIDGETS.map((widget, index) => {
       const savedWidget = savedWidgets.get(widget.id) || {};
       return {
@@ -824,7 +918,11 @@ function loadDashboardSettings() {
 
 function saveDashboardSettings() {
   if (!state.dashboard) return;
-  localStorage.setItem(DASHBOARD_STORAGE_KEY, JSON.stringify({ ...state.dashboard, longTermView: state.longTermView }));
+  localStorage.setItem(DASHBOARD_STORAGE_KEY, JSON.stringify({
+    ...state.dashboard,
+    longTermView: state.longTermView,
+    longTermIncludePension: state.longTermIncludePension,
+  }));
   scheduleClientStateSync();
 }
 
@@ -901,7 +999,11 @@ function collectClientState() {
   return {
     version: 1,
     saved_at: new Date().toISOString(),
-    dashboard: state.dashboard ? { ...state.dashboard, longTermView: state.longTermView } : readLocalJson(DASHBOARD_STORAGE_KEY, {}),
+    dashboard: state.dashboard ? {
+      ...state.dashboard,
+      longTermView: state.longTermView,
+      longTermIncludePension: state.longTermIncludePension,
+    } : readLocalJson(DASHBOARD_STORAGE_KEY, {}),
     table: { maPeriod: state.tableMaPeriod || "30" },
     language: state.language || "en",
     bannerItems: Array.isArray(state.bannerItems) ? state.bannerItems : readLocalJson("portfolioAnalyzer.bannerItems", []),
@@ -995,7 +1097,7 @@ function applyLanguage() {
   document.documentElement.lang = state.language === "he" ? "he" : "en";
   document.documentElement.dir = state.language === "he" ? "rtl" : "ltr";
   document.title = t("appName");
-  const brand = document.querySelector(".brand span:last-child");
+  const brand = document.querySelector(".brand-name");
   if (brand) brand.textContent = t("brand");
   const topEyebrow = document.querySelector(".topbar .eyebrow");
   if (topEyebrow) topEyebrow.textContent = t("overview");
@@ -1015,6 +1117,10 @@ function applyLanguage() {
   if (loadingDetail && !loadingDetail.textContent.trim()) loadingDetail.textContent = t("readingCachedAnalytics");
   const languageSelect = $("appLanguage");
   if (languageSelect) languageSelect.value = state.language;
+  refreshLocalizedFormOptions();
+  refreshBrokerSelects();
+  renderBrokersList();
+  renderLocalAccountsList();
   document.querySelectorAll("[data-i18n]").forEach((node) => {
     node.textContent = t(node.dataset.i18n);
   });
@@ -1023,6 +1129,10 @@ function applyLanguage() {
   applyAutoDirection();
   window.PortfolioI18n?.applyToDocument(state.language);
   window.PortfolioI18n?.observe();
+}
+
+function revealInitializedApp() {
+  document.documentElement.classList.remove("i18n-pending");
 }
 
 function normalizeDashboardOrders() {
@@ -1044,11 +1154,25 @@ function visibleDashboardWidgets() {
   const sections = DASHBOARD_SECTIONS.filter((section) => (
     section.view === "basic" || (dashboard.mode === "expanded" && section.view === "expanded")
   ));
-  return sections.flatMap((section) => (
+  const visible = sections.flatMap((section) => (
     dashboard.widgets
       .filter((widget) => widget.view === section.view)
       .sort((a, b) => a.order - b.order)
   ));
+  if (dashboard.area === "all") return visible;
+  const areaWidgetIds = new Set(DASHBOARD_WIDGETS
+    .filter((widget) => widget.area === dashboard.area)
+    .map((widget) => widget.id));
+  if (dashboard.mode === "expanded") {
+    return visible.filter((widget) => areaWidgetIds.has(widget.id));
+  }
+  const featuredIds = new Set(DASHBOARD_AREA_FEATURES[dashboard.area] || []);
+  return dashboard.widgets
+    .filter((widget) => widget.view !== "hidden" && areaWidgetIds.has(widget.id) && featuredIds.has(widget.id))
+    .sort((left, right) => (
+      (DASHBOARD_AREA_FEATURES[dashboard.area]?.indexOf(left.id) ?? 0)
+      - (DASHBOARD_AREA_FEATURES[dashboard.area]?.indexOf(right.id) ?? 0)
+    ));
 }
 
 function dashboardWidgetConfig(id) {
@@ -1086,7 +1210,15 @@ function moveDashboardWidget(id, direction) {
 }
 
 function setDashboardMode(mode) {
+  if (!["basic", "expanded"].includes(mode)) return;
   state.dashboard.mode = mode;
+  saveDashboardSettings();
+  renderAnalytics(state.items || []);
+}
+
+function setDashboardArea(area) {
+  if (!DASHBOARD_AREAS.includes(area)) return;
+  state.dashboard.area = area;
   saveDashboardSettings();
   renderAnalytics(state.items || []);
 }
@@ -1188,7 +1320,14 @@ function renderDashboardEditor(renderers) {
 function renderDashboardControls() {
   const dashboard = state.dashboard || defaultDashboard();
   document.querySelectorAll("[data-dashboard-mode]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.dashboardMode === dashboard.mode);
+    const active = button.dataset.dashboardMode === dashboard.mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+  document.querySelectorAll("[data-dashboard-area]").forEach((button) => {
+    const active = button.dataset.dashboardArea === dashboard.area;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
   });
   const editButton = $("dashboardEdit");
   if (editButton) {
@@ -1257,6 +1396,31 @@ function isEquityCompHolding(item) {
 
 function portfolioItems(items) {
   return (items || []).filter((item) => !isEquityCompHolding(item));
+}
+
+function portfolioCashValue() {
+  return sum(portfolioAccounts().map(accountCashValue));
+}
+
+function assetMixGroups(items) {
+  const groups = groupValues(items, (item) => item.holding.asset_class);
+  groups.push({ label: "Cash", value: portfolioCashValue() });
+  return groups.sort((left, right) => Number(right.value || 0) - Number(left.value || 0));
+}
+
+function currencyAllocationGroups(items) {
+  const totals = Object.fromEntries(
+    groupValues(items, (item) => item.holding.currency).map((group) => [group.label, group.value]),
+  );
+  portfolioAccounts().forEach((account) => {
+    const currency = account.currency || state.baseCurrency;
+    const cash = accountCashValue(account);
+    if (cash <= 0.005) return;
+    totals[currency] = (totals[currency] || 0) + cash;
+  });
+  return Object.entries(totals)
+    .map(([label, value]) => ({ label, value }))
+    .sort((left, right) => Number(right.value || 0) - Number(left.value || 0));
 }
 
 function groupByAccount(items) {
@@ -1447,13 +1611,14 @@ function riskTooltip(risk) {
   }[band.key];
   const simpleDriver = (driver) => {
     const text = String(driver || "");
-    if (text.startsWith("Top holding ")) return `one holding is a large part of the portfolio (${text.slice(12)})`;
+    if (text.startsWith("Top holding ")) return `the largest single holding is ${text.slice(12)} of total value, including cash`;
     if (text.startsWith("Holding weight ")) return `this holding is ${text.slice(15)} of the portfolio`;
     if (text.startsWith("Foreign currency ")) return `${text.slice(17)} is exposed to foreign currencies`;
     if (text.startsWith("Options/futures/leverage ")) return `${text.slice(25)} uses options, futures, or leverage`;
     if (text.startsWith("1Y volatility proxy ")) return `its recent price movement is about ${text.slice(20)}`;
     if (text.startsWith("Horizon ")) return `the investment horizon is ${text.slice(8)}`;
     if (text.startsWith("Issuer concentration ")) return `one issuer represents ${text.slice(21)}`;
+    if (text.startsWith("Symbol concentration ")) return `after combining holdings with the same symbol, one security is ${text.slice(21)} of securities value, excluding cash`;
     if (text.startsWith("Country concentration ")) return `one country represents ${text.slice(22)}`;
     if (text.startsWith("Low cash ")) return `the cash buffer is low (${text.slice(9)})`;
     if (text.startsWith("High cash ")) return `a large share is held in cash (${text.slice(10)})`;
@@ -1461,16 +1626,24 @@ function riskTooltip(risk) {
     if (text.startsWith("Asset factor ")) return "its asset type carries market risk";
     if (text === "ETF/fund treated as diversified proxy") return "the fund is treated as diversified";
     if (text === "Option/future/leveraged instrument") return "it uses an option, future, or leveraged instrument";
-    if (text.startsWith("Missing ")) return `${text.toLowerCase()} data makes the estimate less certain`;
+    if (text.startsWith("Missing ")) {
+      const missingField = text.slice(8).trim();
+      return state.language === "he"
+        ? `היעדר נתוני ${optionLabel(missingField)} מקטין את ודאות האומדן`
+        : `Missing ${missingField.toLowerCase()} data makes the estimate less certain`;
+    }
     return text.toLowerCase();
   };
-  const drivers = (risk.drivers || []).slice(0, 4).map(simpleDriver);
+  const drivers = (risk.drivers || []).slice(0, 4).map(simpleDriver).map(optionLabel);
+  const title = state.language === "he"
+    ? `${optionLabel("Risk")} ${band.label} · ${risk.score}/100`
+    : `${band.label} risk · ${risk.score}/100`;
   return [
-    `${band.label} risk · ${risk.score}/100`,
-    meaning,
+    title,
+    optionLabel(meaning),
     "",
-    "Main reasons:",
-    ...(drivers.length ? drivers.map((driver) => `• ${driver}`) : ["• No single factor stands out"]),
+    optionLabel("Main reasons:"),
+    ...(drivers.length ? drivers.map((driver) => `• ${driver}`) : [`• ${optionLabel("No single factor stands out")}`]),
   ].join("\n");
 }
 
@@ -1550,10 +1723,15 @@ function riskScoreForItems(items, options = {}) {
     horizon = Math.min((shortHorizonPressure * (riskyAssetPct / 100) + longHorizonUnderRisk) * 10, 10);
   }
 
-  const issuerTotals = rows.reduce((totals, item) => {
+  const issuerRiskTotals = rows.reduce((totals, item) => {
     const issuer = issuerLabel(item);
     const fundLookThroughWeight = diversifiedFund(item) ? 0.35 : 1;
     totals[issuer] = (totals[issuer] || 0) + Math.abs(normalizedField(item, "market_value")) * fundLookThroughWeight;
+    return totals;
+  }, {});
+  const symbolTotals = rows.reduce((totals, item) => {
+    const symbol = issuerLabel(item);
+    totals[symbol] = (totals[symbol] || 0) + Math.abs(normalizedField(item, "market_value"));
     return totals;
   }, {});
   const countryTotals = rows.reduce((totals, item) => {
@@ -1561,9 +1739,10 @@ function riskScoreForItems(items, options = {}) {
     totals[country] = (totals[country] || 0) + Math.abs(normalizedField(item, "market_value"));
     return totals;
   }, {});
-  const largestIssuerPct = holdingsValue ? Math.max(0, ...Object.values(issuerTotals)) / holdingsValue * 100 : 0;
+  const largestIssuerRiskPct = holdingsValue ? Math.max(0, ...Object.values(issuerRiskTotals)) / holdingsValue * 100 : 0;
+  const largestSymbolPct = holdingsValue ? Math.max(0, ...Object.values(symbolTotals)) / holdingsValue * 100 : 0;
   const largestCountryPct = holdingsValue ? Math.max(0, ...Object.values(countryTotals)) / holdingsValue * 100 : 0;
-  const issuerCountry = Math.min(largestIssuerPct / 35, 1) * 4 + Math.max(0, Math.min((largestCountryPct - 55) / 35, 1)) * 4;
+  const issuerCountry = Math.min(largestIssuerRiskPct / 35, 1) * 4 + Math.max(0, Math.min((largestCountryPct - 55) / 35, 1)) * 4;
 
   const missingPricePct = holdingsValue ? rows.filter((item) => (item.missing || []).includes("price history")).reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")), 0) / holdingsValue * 100 : 0;
   const missingClassPct = holdingsValue ? rows.filter((item) => !item.holding.asset_class || !item.holding.currency).reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")), 0) / holdingsValue * 100 : 0;
@@ -1588,7 +1767,7 @@ function riskScoreForItems(items, options = {}) {
     derivativePct > 0 ? `Options/futures/leverage ${fmt(derivativePct, 1)}%` : "",
     avgVolatilityPct > 35 ? `1Y volatility proxy ${fmt(avgVolatilityPct, 1)}%` : "",
     horizonYears !== null && horizonYears !== undefined ? `Horizon ${fmt(horizonYears, 1)} years` : "",
-    largestIssuerPct > 25 ? `Issuer concentration ${fmt(largestIssuerPct, 1)}%` : "",
+    largestSymbolPct > 25 ? `Symbol concentration ${fmt(largestSymbolPct, 1)}%` : "",
     largestCountryPct > 70 ? `Country concentration ${fmt(largestCountryPct, 1)}%` : "",
     cashPct < 5 ? `Low cash ${fmt(cashPct, 1)}%` : cashPct > 20 ? `High cash ${fmt(cashPct, 1)}%` : "",
     missingIndustryPct > 20 ? `Missing industry ${fmt(missingIndustryPct, 1)}%` : "",
@@ -1700,13 +1879,15 @@ function holdingMarketKey(h) {
 
 function stockMarketDisplay(h, marketKey = "") {
   const candidate = h.stock_market && !isProviderName(h.stock_market) ? h.stock_market : (!isProviderName(marketKey) ? marketKey : "");
-  return candidate ? cleanSourceLabel(candidate).toUpperCase() : "Unknown";
+  return candidate ? cleanSourceLabel(candidate).toUpperCase() : optionLabel("Not available");
 }
 
 function dataProviderDisplay(item, h, marketKey = "") {
   if (isProviderName(marketKey)) return providerDisplayName(marketKey);
   if (h.data_source && h.data_source !== "LOCAL") return providerDisplayName(h.data_source);
-  const ok = Object.entries(item.provider_status || {}).find(([key, value]) => value === "ok" && key.includes("."));
+  const ok = Object.entries(item.provider_status || {}).find(([key, value]) => (
+    ["ok", "stale"].some((stateName) => String(value).toLowerCase().includes(stateName)) && key.includes(".")
+  ));
   return ok ? providerDisplayName(ok[0].split(".").pop()) : providerDisplayName(h.data_source || "local");
 }
 
@@ -1839,12 +2020,16 @@ function providerStatusHint(providerStatus) {
   const okProviders = [...new Set(entries
     .filter(([, value]) => String(value).toLowerCase() === "ok")
     .map(([key]) => providerDisplayName(key.split(".").pop())))];
+  const staleProviders = [...new Set(entries
+    .filter(([, value]) => String(value).toLowerCase().includes("stale"))
+    .map(([key]) => providerDisplayName(key.split(".").pop())))];
   const failedProviders = [...new Set(entries
     .filter(([, value]) => String(value).toLowerCase().includes("error"))
     .map(([key]) => providerDisplayName(key.split(".").pop())))];
   const missingKeyProviders = [...new Set(entries
     .filter(([, value]) => String(value).toLowerCase().includes("api key"))
     .map(([key]) => providerDisplayName(key.split(".").pop())))];
+  if (staleProviders.length) return `Saved local history: ${staleProviders.slice(0, 2).join(", ")}${staleProviders.length > 2 ? ` +${staleProviders.length - 2}` : ""}`;
   if (okProviders.length) return `Data from ${okProviders.slice(0, 2).join(", ")}${okProviders.length > 2 ? ` +${okProviders.length - 2}` : ""}`;
   if (missingKeyProviders.length) return `Missing key: ${missingKeyProviders.slice(0, 2).join(", ")}`;
   if (failedProviders.length) return `Fallback failed: ${failedProviders.slice(0, 2).join(", ")}`;
@@ -1900,7 +2085,7 @@ function setSelectOptions(id, values, label) {
   select.innerHTML = `<option value="">${label}</option>` + values
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b))
-    .map((value) => `<option value="${esc(value)}">${esc(optionLabel(value))}</option>`)
+    .map((value) => `<option value="${esc(value)}">${esc(id === "currency" ? currencyDisplayLabel(value) : optionLabel(value))}</option>`)
     .join("");
   select.value = values.includes(current) ? current : "";
 }
@@ -1924,8 +2109,18 @@ function setCurrencyOptions(id, supportedCodes = null) {
   const codes = Array.isArray(supportedCodes)
     ? [...new Set(supportedCodes)]
     : [...new Set(currencyCodes())].sort();
-  select.innerHTML = codes.map((code) => `<option value="${esc(code)}">${esc(currencySymbol(code))} ${esc(code)}</option>`).join("");
+  select.innerHTML = codes.map((code) => `<option value="${esc(code)}">${esc(currencyDisplayLabel(code))}</option>`).join("");
   select.value = codes.includes(current) ? current : (codes.includes("USD") ? "USD" : codes[0]);
+}
+
+function setAccountCountryOptions(selectId, preferred = "") {
+  const select = $(selectId);
+  if (!select) return;
+  const current = normalizeAccountCountry(preferred || select.value);
+  select.innerHTML = ACCOUNT_COUNTRIES.map((value) => {
+    return `<option value="${esc(value)}">${esc(countryDisplayLabel(ACCOUNT_COUNTRY_CODES[value]))}</option>`;
+  }).join("");
+  select.value = current;
 }
 
 function companyCountryChoices() {
@@ -1937,14 +2132,10 @@ function companyCountryChoices() {
 }
 
 function normalizedCompanyLocation(location, choices = companyCountryChoices()) {
-  const text = String(location || "").trim().toLowerCase();
-  if (["usa", "us", "u.s.", "u.s.a.", "united states", "united states of america"].includes(text)) return "USA";
-  if (["israel", "il", "state of israel"].includes(text)) return "Israel";
-  return choices.find((choice) => (
-    choice.code.toLowerCase() === text
-    || choice.name.toLowerCase() === text
-    || choice.value.toLowerCase() === text
-  ))?.value || "";
+  const code = countryCodeForLocation(location);
+  if (code === "US") return "USA";
+  if (code === "IL") return "Israel";
+  return choices.find((choice) => choice.code === code)?.value || "";
 }
 
 function setCompanyLocationOptions(preferred = "", selectId = "manualSecurityLocation") {
@@ -1953,9 +2144,30 @@ function setCompanyLocationOptions(preferred = "", selectId = "manualSecurityLoc
   const choices = companyCountryChoices();
   const current = normalizedCompanyLocation(preferred || select.value, choices);
   select.innerHTML = choices.map((choice) => (
-    `<option value="${esc(choice.value)}">${esc(flagFor(choice.code))} ${esc(choice.name)}</option>`
+    `<option value="${esc(choice.value)}">${esc(countryDisplayLabel(choice.code))}</option>`
   )).join("");
   select.value = current || "USA";
+}
+
+function refreshCountryDatalist() {
+  const datalist = $("countryOptions");
+  if (!datalist) return;
+  datalist.innerHTML = REGION_CODES.map((code) => {
+    const name = countryName(code);
+    return `<option value="${esc(name)}" label="${esc(countryDisplayLabel(code))}"></option>`;
+  }).join("");
+}
+
+function refreshLocalizedFormOptions() {
+  refreshCountryDatalist();
+  ["localAccountLocation", "editAccountLocation", "brokerCountry"]
+    .forEach((id) => setAccountCountryOptions(id, valueOf(id) || "USA"));
+  setCompanyLocationOptions(valueOf("manualSecurityLocation") || "USA");
+  setCompanyLocationOptions(valueOf("employeeWizardLocation") || "USA", "employeeWizardLocation");
+  ["localAccountCurrency", "editAccountCurrency", "brokerCurrency", "employeeWizardCurrency"]
+    .forEach((id) => setCurrencyOptions(id, SUPPORTED_MANAGEMENT_CURRENCIES));
+  setCurrencyOptions("priceCurrency");
+  setCurrencyOptions("manualSecurityCurrency", employeeOptionsWorkflowActive() ? SUPPORTED_MANAGEMENT_CURRENCIES : null);
 }
 
 function syncCurrencyFromLocation(locationId, currencyId) {
@@ -1967,24 +2179,11 @@ function syncCurrencyFromLocation(locationId, currencyId) {
 }
 
 function populateStaticOptions() {
-  $("countryOptions").innerHTML = REGION_CODES
-    .map((code) => {
-      const name = countryName(code);
-      return `<option value="${esc(name)}" label="${esc(flagFor(code))} ${esc(name)}"></option>`;
-    })
-    .join("");
   refreshMarketOptions();
-  ["localAccountCurrency", "editAccountCurrency", "priceCurrency", "manualSecurityCurrency"].forEach((id) => setCurrencyOptions(id));
-  setCurrencyOptions("employeeWizardCurrency", EMPLOYEE_OPTION_CURRENCIES);
-  setCompanyLocationOptions("USA");
-  setCompanyLocationOptions("USA", "employeeWizardLocation");
+  refreshLocalizedFormOptions();
   const assetClasses = state.localOptions.asset_classes || ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"];
   setOptions("localAccountType", state.localOptions.account_types);
   setOptions("editAccountType", state.localOptions.account_types);
-  setOptions("localAccountLocation", ACCOUNT_COUNTRIES);
-  setOptions("editAccountLocation", ACCOUNT_COUNTRIES);
-  setOptions("brokerCountry", ACCOUNT_COUNTRIES);
-  setOptions("brokerCurrency", ["USD", "ILS"]);
   setOptions("reportAccountType", state.localOptions.account_types, "Any account type");
   setOptions("fundKind", state.localOptions.fund_kinds);
   setOptions("editFundKind", state.localOptions.fund_kinds);
@@ -2084,7 +2283,7 @@ function renderPortfolioValueDashboard(items) {
         .map(([currency, value]) => money(value, currency, 0));
       const localLine = localAmounts.length ? `<small>${esc(localAmounts.join(" · "))}</small>` : "";
       const cashText = account.cashCurrency ? `; Cash: ${money(account.cashLocal || 0, account.cashCurrency, 2)}` : "";
-      const title = `Account: ${account.account}; ${account.type || "Account"}${account.location ? ` · ${account.location}` : ""}; Securities: ${symbolsText || "None"}${more}; Source currencies: ${account.currencies.join(", ")}${cashText}`;
+      const title = `Account: ${account.account}; ${account.type || "Account"}${account.location ? ` · ${countryDisplayLabel(account.location)}` : ""}; Securities: ${symbolsText || "None"}${more}; Source currencies: ${account.currencies.map(currencyDisplayLabel).join(", ")}${cashText}`;
       return `<span class="account-chip" title="${esc(title)}"><b>${esc(account.account)}</b><span class="account-chip-values"><strong>${money(account.value, state.baseCurrency, 0)}</strong>${localLine}</span>${riskBadge(accountRisk, true)}</span>`;
     })
     .join("");
@@ -2264,14 +2463,19 @@ function renderRows(items) {
     const companyLine = securityName || String(h.symbol || "").trim();
     const industry = String(item.industry || h.industry || h.sector || "").trim();
     const industryLine = `<div class="security-industry">${esc(optionLabel("Industry"))}: ${esc(industry ? optionLabel(industry) : optionLabel("Not available"))}</div>`;
-    const marketLine = `${optionLabel(h.asset_class || "Asset")} · ${h.currency || ""} · ${optionLabel("Market")}: ${market} · API: ${provider}`;
+    const marketLine = `${optionLabel(h.asset_class || "Asset")} · ${currencyDisplayLabel(h.currency || "")} · ${optionLabel("Market")}: ${market} · API: ${provider}`;
+    const accountMeta = h.account_type
+      ? optionLabel(h.account_type)
+      : h.location
+        ? countryDisplayLabel(h.location)
+        : cleanSourceLabel(h.sector || "");
     const rowRisk = state.riskSnapshot?.total?.position_risks?.get(item);
     const averageBuyPrice = Math.abs(Number(h.quantity || 0)) > 0
       ? Math.abs(Number(h.cost_basis || 0) / Number(h.quantity || 0))
       : 0;
     return `<tr>
       <td data-label="Security"><div class="security-cell"><button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button><div class="security-name">${esc(companyLine)}</div>${industryLine}<div class="sub security-meta">${esc(marketLine)}</div></div></td>
-      <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(cleanSourceLabel(h.account_type || h.location || h.sector || ""))}</div></td>
+      <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(accountMeta)}</div></td>
       <td data-label="Risk">${riskBadge(rowRisk)}</td>
       <td data-label="Value / P&L"><div class="value-cell">
         <strong>${money(h.market_value, h.currency)}</strong>
@@ -2586,7 +2790,9 @@ function longTermData() {
   const details = [];
   let monthly = 0;
 
-  (state.localFunds || []).forEach((fund) => {
+  (state.localFunds || [])
+    .filter((fund) => state.longTermIncludePension || String(fund.kind || "").trim().toLowerCase() !== "pension")
+    .forEach((fund) => {
     const amount = normalizedAmount(fund.amount, state.baseCurrency);
     const values = Object.fromEntries(dates.map((date) => [date, amount]));
     const people = (fund.persons || []).length ? fund.persons : [{ name: "Unassigned" }];
@@ -2601,7 +2807,7 @@ function longTermData() {
       : null;
     monthly += Number(monthlyEstimate || 0);
     details.push({ label: [fund.kind, fund.fund_name || "", fund.pension_id].filter(Boolean).join(" · "), value: amount, monthly: monthlyEstimate, type: fund.kind || "Fund" });
-  });
+    });
 
   longTermAccountSeries(dates).forEach(({ account, values }) => {
     if (!longTermSeriesHasValue(values, dates)) return;
@@ -2641,13 +2847,19 @@ function renderLongTermDashboard() {
   const view = ["total", "people", "funds"].includes(state.longTermView) ? state.longTermView : "total";
   const lines = data.lineSets[view] || data.lineSets.total;
   const latest = Number(data.total[data.today] || 0);
+  const pensionToggle = `
+    <label class="long-term-pension-toggle">
+      <input type="checkbox" data-long-term-include-pension ${state.longTermIncludePension ? "checked" : ""} />
+      <span>${esc(optionLabel("Include pension"))}</span>
+    </label>`;
   if (!data.details.length || !lines.length) {
     return `
       <div class="chart-card long-term-card">
         <div class="chart-header">
           <div class="chart-title">Long-term funds</div>
+          <div class="long-term-controls">${pensionToggle}</div>
         </div>
-        <div class="empty">No long-term funds or savings accounts yet</div>
+        <div class="empty">${state.longTermIncludePension ? "No long-term funds or savings accounts yet" : "No non-pension savings to display"}</div>
       </div>`;
   }
 
@@ -2685,18 +2897,24 @@ function renderLongTermDashboard() {
   const personStats = Object.entries(data.byPerson)
     .sort(([, left], [, right]) => Number(right[data.today] || 0) - Number(left[data.today] || 0))
     .slice(0, 4);
+  const monthlySummary = state.longTermIncludePension
+    ? ` · <span class="${data.monthly ? "" : "muted-inline"}">${esc(optionLabel("Monthly pension estimate"))} ${data.monthly ? fmt(data.monthly, 0) : optionLabel("N/A")}</span>`
+    : "";
   return `
     <div class="chart-card long-term-card">
       <div class="chart-header">
         <div>
           <div class="chart-title">Long-term funds</div>
-          <small class="chart-subtitle">${esc(optionLabel("Saved"))} ${money(latest, state.baseCurrency, 0)} · <span class="${data.monthly ? "" : "muted-inline"}">${esc(optionLabel("Monthly pension estimate"))} ${data.monthly ? fmt(data.monthly, 0) : optionLabel("N/A")}</span></small>
+          <small class="chart-subtitle">${esc(optionLabel("Saved"))} ${money(latest, state.baseCurrency, 0)}${monthlySummary}</small>
         </div>
         <div class="long-term-controls">
-          <div class="dashboard-view-toggle long-term-toggle" aria-label="Long-term dashboard view">
-            <button type="button" data-long-term-view="total" class="${view === "total" ? "active" : ""}">Total</button>
-            <button type="button" data-long-term-view="people" class="${view === "people" ? "active" : ""}">People</button>
-            <button type="button" data-long-term-view="funds" class="${view === "funds" ? "active" : ""}">Funds</button>
+          <div class="long-term-control-row">
+            ${pensionToggle}
+            <div class="dashboard-view-toggle long-term-toggle" aria-label="Long-term dashboard view">
+              <button type="button" data-long-term-view="total" class="${view === "total" ? "active" : ""}">Total</button>
+              <button type="button" data-long-term-view="people" class="${view === "people" ? "active" : ""}">People</button>
+              <button type="button" data-long-term-view="funds" class="${view === "funds" ? "active" : ""}">Funds</button>
+            </div>
           </div>
           <div class="chart-legend long-term-legend">${lineLegend}</div>
         </div>
@@ -2803,6 +3021,7 @@ function renderMarketCostBars(items) {
 function renderDonut(groups, title, centerLabel, total, centerSub = null, extraClass = "") {
   const circumference = 2 * Math.PI * 42;
   let offset = 0;
+  const visibleGroups = groups.slice(0, 6);
   const localizedTitle = optionLabel(title);
   const requestedCenterSub = centerSub || (state.language === "he" ? ["נכס", "מוביל"] : ["TOP", "ASSET"]);
   const centerSubLines = requestedCenterSub.filter(Boolean).map(optionLabel);
@@ -2814,9 +3033,11 @@ function renderDonut(groups, title, centerLabel, total, centerSub = null, extraC
       <div class="chart-title">${esc(localizedTitle)}</div>
       <svg viewBox="0 0 130 130" role="img" aria-label="${esc(localizedTitle)}">
         <circle cx="65" cy="65" r="42" fill="none" stroke="#202a3f" stroke-width="14"></circle>
-        ${groups.slice(0, 6).map((group, index) => {
+        ${visibleGroups.map((group, index) => {
           const dash = total ? (group.value / total) * circumference : 0;
-          const circle = `<circle cx="65" cy="65" r="42" fill="none" stroke="${colorAt(index)}" stroke-width="14" stroke-dasharray="${dash.toFixed(1)} ${(circumference - dash).toFixed(1)}" stroke-dashoffset="${(-offset).toFixed(1)}" transform="rotate(-90 65 65)"></circle>`;
+          const percent = total ? Math.round(group.value / total * 100) : 0;
+          const tooltip = `${optionLabel(group.label)}\n${money(group.value, state.baseCurrency, 0)}\n${percent}%`;
+          const circle = `<circle cx="65" cy="65" r="42" fill="none" stroke="${colorAt(index)}" stroke-width="14" stroke-dasharray="${dash.toFixed(1)} ${(circumference - dash).toFixed(1)}" stroke-dashoffset="${(-offset).toFixed(1)}" transform="rotate(-90 65 65)"><title>${esc(tooltip)}</title></circle>`;
           offset += dash;
           return circle;
         }).join("")}
@@ -2825,9 +3046,12 @@ function renderDonut(groups, title, centerLabel, total, centerSub = null, extraC
         ${centerSubText}
       </svg>
       <div class="donut-legend">
-        ${groups.slice(0, 3).map((group, index) => `
-          <span><i style="background:${colorAt(index)}"></i>${esc(optionLabel(group.label))} ${total ? Math.round(group.value / total * 100) : 0}%</span>
-        `).join("")}
+        ${visibleGroups.map((group, index) => {
+          const percent = total ? Math.round(group.value / total * 100) : 0;
+          const cashAmount = group.label === "Cash" ? ` · ${money(group.value, state.baseCurrency, 0)}` : "";
+          const tooltip = `${optionLabel(group.label)} · ${money(group.value, state.baseCurrency, 0)} · ${percent}%`;
+          return `<span title="${esc(tooltip)}"><i style="background:${colorAt(index)}"></i>${esc(optionLabel(group.label))} ${percent}%${cashAmount}</span>`;
+        }).join("")}
       </div>
     </div>`;
 }
@@ -2835,6 +3059,55 @@ function renderDonut(groups, title, centerLabel, total, centerSub = null, extraC
 function renderCurrencyAllocation(groups, total) {
   const topPercent = total ? Math.round((groups[0]?.value || 0) / total * 100) : 0;
   return renderDonut(groups, "Currency allocation", `${topPercent}%`, total, [groups[0]?.label || state.baseCurrency], "currency-allocation-card");
+}
+
+function cashByCurrencyData() {
+  const totals = {};
+  portfolioAccounts().forEach((account) => {
+    const currency = account.currency || state.baseCurrency;
+    const amount = Math.max(0, accountCashBalance(account));
+    if (amount <= 0.005) return;
+    totals[currency] = (totals[currency] || 0) + amount;
+  });
+  return Object.entries(totals)
+    .map(([currency, amount]) => ({
+      currency,
+      amount,
+      baseValue: normalizedAmount(amount, currency),
+    }))
+    .sort((left, right) => right.baseValue - left.baseValue);
+}
+
+function renderCashByCurrencyBars() {
+  const rows = cashByCurrencyData();
+  const title = optionLabel("Cash by currency");
+  if (!rows.length) {
+    return `
+      <div class="chart-card cash-currency-card">
+        <div class="chart-title">${esc(title)}</div>
+        <div class="empty">${esc(optionLabel("No cash balances"))}</div>
+      </div>`;
+  }
+  const max = Math.max(...rows.map((row) => row.baseValue), 1);
+  return `
+    <div class="chart-card cash-currency-card">
+      <div class="chart-title">${esc(title)}</div>
+      <div class="cash-currency-bars" role="img" aria-label="${esc(title)}">
+        ${rows.map((row, index) => {
+          const width = Math.max(row.baseValue / max * 100, 2);
+          const amount = fmt(row.amount, 0);
+          const tooltip = `${currencyDisplayLabel(row.currency)}\n${amount}\n${optionLabel("Base equivalent")}: ${money(row.baseValue, state.baseCurrency, 0)}`;
+          return `
+            <div class="cash-currency-row" title="${esc(tooltip)}">
+              <div class="cash-currency-label">
+                <span>${esc(currencyDisplayLabel(row.currency))}</span>
+                <b>${esc(amount)}</b>
+              </div>
+              <div class="cash-currency-track"><i style="width:${width.toFixed(1)}%;background:${colorAt(index)}"></i></div>
+            </div>`;
+        }).join("")}
+      </div>
+    </div>`;
 }
 
 function renderIndustrySplit(items) {
@@ -3369,24 +3642,26 @@ function renderAnalytics(items) {
   if (!board) return;
   if (!state.dashboard) loadDashboardSettings();
   renderDashboardControls();
-  if (!items.length && !(state.localFunds || []).length) {
+  if (!items.length && !(state.localFunds || []).length && state.dashboard.area !== "employee") {
     board.innerHTML = '<div class="empty">No portfolio data</div>';
     return;
   }
-  const total = sum(items.map((item) => normalizedField(item, "market_value"))) || 1;
-  const assetGroups = groupValues(items, (item) => item.holding.asset_class);
-  const currencyGroups = groupValues(items, (item) => item.holding.currency);
+  const assetGroups = assetMixGroups(items);
+  const assetTotal = sum(assetGroups.map((group) => group.value)) || 1;
+  const currencyGroups = currencyAllocationGroups(items);
+  const currencyTotal = sum(currencyGroups.map((group) => group.value)) || 1;
   const renderers = {
     portfolio_value: () => renderPortfolioValueDashboard(items),
     long_term_savings: () => renderFundsOverviewDashboard(),
     account_trend: () => renderAccountValueTrend(),
     long_term: () => renderLongTermDashboard(),
     market_cost: () => renderMarketCostBars(items),
-    asset_mix: () => renderDonut(assetGroups, "Asset mix", `${Math.round((assetGroups[0]?.value || 0) / total * 100)}%`, total),
+    asset_mix: () => renderDonut(assetGroups, "Asset mix", `${Math.round((assetGroups[0]?.value || 0) / assetTotal * 100)}%`, assetTotal, null, "asset-mix-card"),
+    cash_currency: () => renderCashByCurrencyBars(),
     industry_split: () => renderIndustrySplit(items),
     top_holdings: () => renderMiniBars(items),
     coverage: () => renderCompleteness(items),
-    currency: () => renderCurrencyAllocation(currencyGroups, total),
+    currency: () => renderCurrencyAllocation(currencyGroups, currencyTotal),
     equity_comp: () => renderEquityCompDashboard(items),
     profit: () => renderProfitBars(items),
     snapshot: () => renderBubbles(items),
@@ -3398,7 +3673,7 @@ function renderAnalytics(items) {
   const visible = visibleDashboardWidgets();
   board.innerHTML = visible.length
     ? visible.map((widget) => withDashboardToolbar(widget, renderers[widget.id]())).join("")
-    : '<div class="empty">No dashboard graphs selected</div>';
+    : '<div class="empty">No dashboard cards in this area</div>';
 }
 
 function renderPortfolio(items) {
@@ -3420,6 +3695,13 @@ function valueOf(id) {
   return $(id)?.value?.trim() || "";
 }
 
+function setStatusMessage(id, message, { prominentSuccess = false } = {}) {
+  const status = $(id);
+  if (!status) return;
+  status.textContent = message;
+  status.classList.toggle("status-prominent-success", prominentSuccess);
+}
+
 function accountLabel(account) {
   const parts = [account.management_company, account.username, account.account_id]
     .map(cleanSourceLabel)
@@ -3433,7 +3715,8 @@ function accountOptionHtml(account) {
 }
 
 function brokerLabel(broker) {
-  return `${broker.name} · ${broker.country} · ${broker.currency}`;
+  const name = state.language === "he" ? bidiIsolate(broker.name, "ltr") : broker.name;
+  return `${name} · ${countryDisplayLabel(broker.country)} · ${currencyDisplayLabel(broker.currency)}`;
 }
 
 function brokerByName(name) {
@@ -3473,12 +3756,16 @@ async function loadBrokers() {
   const data = await api("/api/local/brokers");
   state.brokers = data.items || [];
   refreshBrokerSelects();
+  renderBrokersList();
+}
+
+function renderBrokersList() {
   const list = $("brokersList");
   if (list) {
     list.innerHTML = state.brokers.length ? state.brokers.map((broker) => `
       <div class="stack-item management-item">
         <b>${esc(broker.name)}</b>
-        <span>${esc(broker.country)} · ${esc(broker.currency)}${broker.attached_accounts ? ` · ${broker.attached_accounts} account${broker.attached_accounts === 1 ? "" : "s"}` : ""}</span>
+        <span>${esc(countryDisplayLabel(broker.country))} · ${esc(currencyDisplayLabel(broker.currency))}${broker.attached_accounts ? ` · ${broker.attached_accounts} account${broker.attached_accounts === 1 ? "" : "s"}` : ""}</span>
         <button class="secondary compact-button" type="button" data-edit-broker="${esc(broker.id)}">Edit</button>
         <button class="secondary compact-button" type="button" data-delete-broker="${esc(broker.id)}"${broker.attached_accounts ? " disabled" : ""} title="${broker.attached_accounts ? "Cannot delete while attached to an account" : "Remove broker"}">Remove</button>
         <div class="sub">${esc(broker.comments || "No comments")}</div>
@@ -3657,18 +3944,18 @@ function editFamilyMember(memberId) {
 function attachFamilyMember(listKey, selectId, statusId, { single = false } = {}) {
   const member = familyMemberById(valueOf(selectId));
   if (!member) {
-    $(statusId).textContent = "Choose a family member first";
+    setStatusMessage(statusId, "Choose a family member first");
     return;
   }
   const person = personFromFamilyMember(member);
   const current = state[listKey] || [];
   if (current.some((item) => item.member_id === person.member_id)) {
-    $(statusId).textContent = "Family member already attached";
+    setStatusMessage(statusId, "Family member already attached");
     return;
   }
   state[listKey] = single ? [person] : current.concat(person);
   $(selectId).value = "";
-  $(statusId).textContent = single ? "Family member attached" : `${state[listKey].length} family members attached`;
+  setStatusMessage(statusId, single ? "Family member attached" : `${state[listKey].length} family members attached`);
   renderPersonLists();
 }
 
@@ -3770,16 +4057,22 @@ async function loadLocalAccounts() {
     ["Attached securities", data.sync?.attached_positions ?? data.status?.transactions ?? 0, "Imported securities linked to local account records"],
     ["Local DB records", data.status?.transactions ?? 0, "Stored security transactions and imported position links"],
   ].map(([label, value, tooltip]) => `<div class="stat" title="${esc(tooltip)}"><b>${esc(value)}</b><span>${esc(label)}</span></div>`).join("");
-  $("accountsList").innerHTML = state.localAccounts.length ? state.localAccounts.map((account) => `
+  renderLocalAccountsList();
+  renderPersonLists();
+}
+
+function renderLocalAccountsList() {
+  const list = $("accountsList");
+  if (!list) return;
+  list.innerHTML = state.localAccounts.length ? state.localAccounts.map((account) => `
     <div class="stack-item management-item">
       <b>${esc(accountLabel(account))}</b>
-      <span>${esc(optionLabel(account.type))} · ${esc(optionLabel(account.location))} · ${esc(account.currency)} · ${esc(optionLabel(isImportedAccount(account) ? "Imported" : "Manual"))}</span>
+      <span>${esc(optionLabel(account.type))} · ${esc(countryDisplayLabel(account.location))} · ${esc(currencyDisplayLabel(account.currency))} · ${esc(optionLabel(isImportedAccount(account) ? "Imported" : "Manual"))}</span>
       <button class="secondary compact-button" type="button" data-edit-account="${esc(account.id)}">Edit</button>
       ${isImportedAccount(account) ? '<span class="badge ok" title="Synced from the configured import source. Refresh with Sync import.">Synced</span>' : '<span class="badge" title="Manual account">Manual</span>'}
       <div class="sub">${esc(optionLabel("Initial cash"))} ${fmt(account.initial_cash)}${(account.persons || []).length ? ` · ${(account.persons || []).map(personLabel).map(esc).join(" · ")}` : ""} · ${esc(cleanSourceLabel(account.comments) || optionLabel("No comments"))}</div>
     </div>
   `).join("") : '<div class="empty">No local accounts yet</div>';
-  renderPersonLists();
 }
 
 function setAccountsTab(tab) {
@@ -3805,7 +4098,7 @@ async function saveLocalAccount() {
     comments: valueOf("localAccountComments"),
   };
   await api("/api/local/accounts", { method: "POST", body: JSON.stringify(payload) });
-  $("accountsStatus").textContent = "Account created";
+  setStatusMessage("accountsStatus", "Account created", { prominentSuccess: true });
   resetNewAccountForm();
   await loadLocalAccounts();
   await loadPortfolio();
@@ -3869,7 +4162,7 @@ async function saveEditAccount() {
     comments: valueOf("editAccountComments"),
   };
   await api("/api/local/accounts", { method: "POST", body: JSON.stringify(payload) });
-  $("accountsStatus").textContent = "Account updated";
+  setStatusMessage("accountsStatus", "Account updated");
   $("editAccountStatus").textContent = "Account updated";
   closeModal($("accountEditModal"));
   state.editingAccountId = "";
@@ -3879,7 +4172,7 @@ async function saveEditAccount() {
 }
 
 async function importSourceToLocal() {
-  $("accountsStatus").textContent = "Importing holdings";
+  setStatusMessage("accountsStatus", "Importing holdings");
   appLog("source_import.start");
   const result = await api("/api/local/import/source", { method: "POST", body: "{}" });
   appLog("source_import.done", {
@@ -3889,7 +4182,7 @@ async function importSourceToLocal() {
     price_history: result.price_history,
     source: result.source,
   });
-  $("accountsStatus").textContent = `Imported ${result.positions} positions and ${result.accounts} accounts`;
+  setStatusMessage("accountsStatus", `Imported ${result.positions} positions and ${result.accounts} accounts`);
   await loadLocalAccounts();
   await loadLocalSecurities();
   await loadLocalPrices();
@@ -4183,7 +4476,7 @@ function renderPriceFocusBar() {
     return;
   }
   bar.innerHTML = `
-    <span>Editing history for <b>${esc(focus.symbol)}</b> · ${esc(focus.stock_market || "MANUAL")} · ${esc(focus.asset_class || "")} · ${esc(focus.currency || "")}</span>
+    <span>Editing history for <b>${esc(focus.symbol)}</b> · ${esc(focus.stock_market || "MANUAL")} · ${esc(focus.asset_class || "")} · ${esc(currencyDisplayLabel(focus.currency || ""))}</span>
     <button class="secondary compact-button" type="button" data-clear-price-focus>Show all prices</button>
   `;
 }
@@ -4485,7 +4778,7 @@ function renderSecurityDetail() {
     ["Stock market", detail.stock_market, "The exchange/market where the security trades. This is not the API provider."],
     ["Data provider", detail.data_provider, "Where the market data was read from."],
     ["Type", h.asset_class || detail.asset_class],
-    ["Currency", h.currency || detail.currency],
+    ["Currency", currencyDisplayLabel(h.currency || detail.currency)],
     ["Quantity", fmt(h.quantity || 0, 4)],
     ["Market value", money(h.market_value || 0, h.currency || detail.currency)],
     ["Cost basis", money(h.cost_basis || 0, h.currency || detail.currency)],
@@ -4498,7 +4791,7 @@ function renderSecurityDetail() {
   $("securityDetailTransactions").innerHTML = txs.length ? txs.map((tx) => `
     <div class="stack-item management-item">
       <b>${esc(tx.action)} ${fmt(tx.quantity, 4)}</b>
-    <span>${esc(formatDate(tx.trade_date))} · input ${fmt(tx.price_input, 4)} · ${esc(tx.currency)} ${fmt(tx.price, 4)}</span>
+    <span>${esc(formatDate(tx.trade_date))} · input ${fmt(tx.price_input, 4)} · ${esc(currencyDisplayLabel(tx.currency))} ${fmt(tx.price, 4)}</span>
       <button class="secondary compact-button" type="button" data-edit-security="${esc(tx.id)}">Edit</button>
       <button class="secondary compact-button" type="button" data-delete-security="${esc(tx.id)}">Delete</button>
       <div class="sub">${transactionCashImpact(tx) ? `Cash ${signedMoney(transactionCashImpact(tx), tx.currency)}` : "No cash movement"} · ${esc(cleanSourceLabel(tx.management_company || ""))} ${esc(cleanSourceLabel(tx.account_id || ""))}${tx.comments ? ` · ${esc(cleanSourceLabel(tx.comments))}` : ""}</div>
@@ -4508,9 +4801,9 @@ function renderSecurityDetail() {
   $("securityDetailPrices").innerHTML = prices.length ? prices.map((price) => `
     <div class="stack-item management-item">
       <b>${esc(formatDate(price.price_date))}</b>
-      <span>${fmt(price.price_input, 4)} · ${esc(price.currency)} ${fmt(price.price, 4)}</span>
+      <span>${fmt(price.price_input, 4)} · ${esc(currencyDisplayLabel(price.currency))} ${fmt(price.price, 4)}</span>
       <button class="secondary compact-button" type="button" data-delete-price="${esc(price.id)}">Remove</button>
-      <div class="sub">${esc(price.asset_class)} · ${esc(price.location)}${price.comments ? ` · ${esc(price.comments)}` : ""}</div>
+      <div class="sub">${esc(price.asset_class)} · ${esc(countryDisplayLabel(price.location))}${price.comments ? ` · ${esc(price.comments)}` : ""}</div>
     </div>
   `).join("") : '<div class="empty">No saved price history for this security</div>';
   renderSecurityChart();
@@ -4825,8 +5118,8 @@ function syncEmployeeWizardIssuerFromCompany() {
   if (!match) return;
   $("employeeWizardCompanyStatus").value = match.listing_status || "PRIVATE";
   setCompanyLocationOptions(match.location || "USA", "employeeWizardLocation");
-  setCurrencyOptions("employeeWizardCurrency", EMPLOYEE_OPTION_CURRENCIES);
-  $("employeeWizardCurrency").value = EMPLOYEE_OPTION_CURRENCIES.includes(match.currency) ? match.currency : "USD";
+  setCurrencyOptions("employeeWizardCurrency", SUPPORTED_MANAGEMENT_CURRENCIES);
+  $("employeeWizardCurrency").value = SUPPORTED_MANAGEMENT_CURRENCIES.includes(match.currency) ? match.currency : "USD";
   $("employeeWizardPublicSymbol").value = match.public_symbol || "";
   $("employeeWizardPublicMarket").value = match.public_market || "";
   $("employeeWizardShareValue").value = Number(match.manual_share_value || 0) > 0 ? match.manual_share_value : "";
@@ -4873,7 +5166,7 @@ function clearEmployeeOptionWizard() {
   ].forEach((id) => { $(id).value = ""; });
   $("employeeWizardCompanyStatus").value = "PRIVATE";
   setCompanyLocationOptions("USA", "employeeWizardLocation");
-  setCurrencyOptions("employeeWizardCurrency", EMPLOYEE_OPTION_CURRENCIES);
+  setCurrencyOptions("employeeWizardCurrency", SUPPORTED_MANAGEMENT_CURRENCIES);
   $("employeeWizardCurrency").value = "USD";
   $("employeeWizardEarlyExercise").checked = false;
   $("employeeWizardVestingStyle").value = "SCHEDULE";
@@ -4926,7 +5219,7 @@ function validateEmployeeWizardGrant() {
   if (!expirationDate) return employeeWizardValidationError("employeeWizardGrantStatus", "Enter a valid Expiration Date in dd/mm/yyyy format.", "employeeWizardExpiration");
   if (expirationDate <= grantDate) return employeeWizardValidationError("employeeWizardGrantStatus", "Expiration Date must be after the Grant Date.", "employeeWizardExpiration");
   if (!(Number(valueOf("employeeWizardStrikePrice")) > 0)) return employeeWizardValidationError("employeeWizardGrantStatus", "Strike Price must be greater than zero.", "employeeWizardStrikePrice");
-  if (!EMPLOYEE_OPTION_CURRENCIES.includes(valueOf("employeeWizardCurrency"))) {
+  if (!SUPPORTED_MANAGEMENT_CURRENCIES.includes(valueOf("employeeWizardCurrency"))) {
     return employeeWizardValidationError("employeeWizardGrantStatus", "Currency must be ILS, USD, or EUR.", "employeeWizardCurrency");
   }
   if (valueOf("employeeWizardCompanyStatus") === "PUBLIC") {
@@ -5225,7 +5518,7 @@ function editEmployeeOptionGrant(securityId) {
   setDateField("employeeWizardGrantDate", security.grant_date || "");
   $("employeeWizardCompanyStatus").value = security.listing_status || "PRIVATE";
   setCompanyLocationOptions(security.location || "USA", "employeeWizardLocation");
-  setCurrencyOptions("employeeWizardCurrency", EMPLOYEE_OPTION_CURRENCIES);
+  setCurrencyOptions("employeeWizardCurrency", SUPPORTED_MANAGEMENT_CURRENCIES);
   $("employeeWizardCurrency").value = security.currency || "USD";
   setDateField("employeeWizardExpiration", security.expiration_date || "");
   $("employeeWizardStrikePrice").value = security.strike_price || "";
@@ -5352,7 +5645,7 @@ function setSecuritiesWorkflow(workflow = "general") {
 function toggleManualInstrumentFields() {
   const type = valueOf("manualInstrumentType") || "STOCK";
   const isEmployeeOption = type === "EMPLOYEE_STOCK_OPTION";
-  setCurrencyOptions("manualSecurityCurrency", isEmployeeOption ? EMPLOYEE_OPTION_CURRENCIES : null);
+  setCurrencyOptions("manualSecurityCurrency", isEmployeeOption ? SUPPORTED_MANAGEMENT_CURRENCIES : null);
   const isOption = type === "OPTION" || type === "STOCK_OPTION" || isEmployeeOption;
   const isDerivative = isOption || type === "FUTURE";
   document.querySelectorAll("[data-derivative-field]").forEach((node) => { node.hidden = !isDerivative; });
@@ -5404,7 +5697,7 @@ async function loadManualSecurities() {
   list.innerHTML = visibleSecurities.length ? visibleSecurities.map((item) => `
     <div class="stack-item management-item">
       <b>${esc(item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (item.company_name || item.name) : item.symbol)}</b>
-      <div>${esc(item.name || item.symbol)} · ${esc(optionLabel(item.instrument_type))} · ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? `<span class="badge ${item.listing_status === "PUBLIC" ? "ok" : "warn"}">${esc(item.listing_status === "PUBLIC" ? `${item.public_symbol} · ${item.public_market}` : "Private Company")}</span>` : `${esc(item.stock_market)} · ${esc(item.currency)}`}</div>
+      <div>${esc(item.name || item.symbol)} · ${esc(optionLabel(item.instrument_type))} · ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? `<span class="badge ${item.listing_status === "PUBLIC" ? "ok" : "warn"}">${esc(item.listing_status === "PUBLIC" ? `${item.public_symbol} · ${item.public_market}` : "Private Company")}</span>` : `${esc(item.stock_market)} · ${esc(currencyDisplayLabel(item.currency))}`}</div>
       <button class="secondary compact-button" type="button" data-use-manual-security="${esc(item.id)}">${employeeOptionsWorkflowActive() ? "Add to account" : "Use"}</button>
       ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" && item.listing_status !== "PUBLIC" ? `<button class="secondary compact-button" type="button" data-link-employee-listing="${esc(item.id)}">Link public listing</button>` : ""}
       ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? `<button class="secondary compact-button" type="button" data-exercise-employee-option="${esc(item.id)}">Exercise</button>` : ""}
@@ -5427,7 +5720,7 @@ function syncEmployeeIssuerFromCompany() {
   $("manualSecurityMarket").value = match.public_market || "";
   setCompanyLocationOptions(match.location || valueOf("manualSecurityLocation") || "USA");
   const matchCurrency = String(match.currency || "").toUpperCase();
-  $("manualSecurityCurrency").value = EMPLOYEE_OPTION_CURRENCIES.includes(matchCurrency)
+  $("manualSecurityCurrency").value = SUPPORTED_MANAGEMENT_CURRENCIES.includes(matchCurrency)
     ? matchCurrency
     : preferredCurrencyForLocation(valueOf("manualSecurityLocation")) || "USD";
   $("manualShareValue").value = Number(match.manual_share_value || 0) > 0 ? match.manual_share_value : "";
@@ -5441,7 +5734,7 @@ async function saveManualSecurity() {
   const isEmployeeOption = valueOf("manualInstrumentType") === "EMPLOYEE_STOCK_OPTION";
   const listingStatus = valueOf("manualIssuerStatus") || "PRIVATE";
   const currency = valueOf("manualSecurityCurrency") || "USD";
-  if (isEmployeeOption && !EMPLOYEE_OPTION_CURRENCIES.includes(currency)) {
+  if (isEmployeeOption && !SUPPORTED_MANAGEMENT_CURRENCIES.includes(currency)) {
     $("manualSecurityStatus").textContent = "Employee stock-option currency must be ILS, USD, or EUR.";
     $("manualSecurityCurrency").focus();
     return;
@@ -5588,7 +5881,7 @@ async function loadLocalSecurities() {
   $("securitiesList").innerHTML = visibleTransactions.length ? visibleTransactions.map((tx) => `
     <div class="stack-item management-item">
       <b>${esc(tx.action)} ${esc(tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (tx.company_name || tx.security_name || "Employee option") : tx.symbol)}</b>
-      <span>${fmt(tx.quantity, 4)} @ ${fmt(tx.price_input, 4)} (${esc(tx.currency)} ${fmt(tx.price, 4)})${tx.instrument_type ? ` · ${esc(tx.instrument_type)}` : ""}</span>
+      <span>${fmt(tx.quantity, 4)} @ ${fmt(tx.price_input, 4)} (${esc(currencyDisplayLabel(tx.currency))} ${fmt(tx.price, 4)})${tx.instrument_type ? ` · ${esc(tx.instrument_type)}` : ""}</span>
       ${tx.transition_id
         ? '<span class="badge ok" title="Created by an audited employee-option lifecycle action">Lifecycle transaction · read-only</span>'
         : `<button class="secondary compact-button" type="button" data-edit-security="${esc(tx.id)}">Edit</button>
@@ -5845,9 +6138,9 @@ async function loadLocalPrices() {
   $("pricesList").innerHTML = visiblePrices.length ? visiblePrices.map((price) => `
     <div class="stack-item management-item">
       <b>${esc(price.symbol)}</b>
-      <span>${esc(formatDate(price.price_date))} · ${fmt(price.price_input, 4)} (${esc(price.currency)} ${fmt(price.price, 4)})</span>
+      <span>${esc(formatDate(price.price_date))} · ${fmt(price.price_input, 4)} (${esc(currencyDisplayLabel(price.currency))} ${fmt(price.price, 4)})</span>
       <button class="secondary compact-button" type="button" data-delete-price="${esc(price.id)}">Remove</button>
-      <div class="sub">${esc(price.stock_market)} · ${esc(price.asset_class)} · ${esc(price.location)} · ${esc(price.comments || "")}</div>
+      <div class="sub">${esc(price.stock_market)} · ${esc(price.asset_class)} · ${esc(countryDisplayLabel(price.location))} · ${esc(price.comments || "")}</div>
     </div>
   `).join("") : `<div class="empty">${state.priceFocus ? "No saved history for this security yet" : "No manual prices yet"}</div>`;
 }
@@ -5884,22 +6177,22 @@ function renderReportSummary(report) {
     <div class="stack-item management-item">
       <b>${esc(cleanSourceLabel(account))}</b>
       <span>Value ${fmt(data.value, 0)} · Cash ${fmt(data.cash, 0)} · Profit ${fmt(data.profit, 0)}</span>
-      <div class="sub">${esc(data.currency || "")}</div>
+      <div class="sub">${esc(currencyDisplayLabel(data.currency || ""))}</div>
     </div>
   `).join("") || '<div class="empty">No local report data</div>';
-  const breakdown = (items) => Object.entries(items || {})
+  const breakdown = (items, formatLabel = (value) => value) => Object.entries(items || {})
     .sort((left, right) => Number(right[1] || 0) - Number(left[1] || 0))
-    .map(([label, value]) => `<div class="report-breakdown-row"><span>${esc(label)}</span><b>${fmt(value, 0)}</b></div>`)
+    .map(([label, value]) => `<div class="report-breakdown-row"><span>${esc(formatLabel(label))}</span><b>${fmt(value, 0)}</b></div>`)
     .join("") || '<div class="empty">No report data</div>';
   $("reportsByType").innerHTML = breakdown(report.by_type);
-  $("reportsByLocation").innerHTML = breakdown(report.by_location);
+  $("reportsByLocation").innerHTML = breakdown(report.by_location, countryDisplayLabel);
   updatePdfReportMeta();
 }
 
 function updatePdfReportMeta() {
   const account = $("reportAccount")?.selectedOptions?.[0]?.textContent?.trim() || "All accounts";
   const accountType = $("reportAccountType")?.selectedOptions?.[0]?.textContent?.trim() || "Any account type";
-  const location = valueOf("reportLocation") || "All locations";
+  const location = valueOf("reportLocation") ? countryDisplayLabel(valueOf("reportLocation")) : "All locations";
   const from = valueOf("reportFrom") || formatDate(HISTORY_START_DATE);
   const to = valueOf("reportTo") || formatDate(todayString());
   $("pdfReportMeta").textContent = `${account} · ${accountType} · ${location} · ${from}–${to} · Generated ${formatDate(todayString())}`;
@@ -6302,7 +6595,7 @@ function renderHistorySnapshots() {
         data-history-profit="${esc(snapshot.profit)}"
         data-history-profit-percent="${esc(snapshot.profit_percent)}">Edit</button>
       <button class="secondary compact-button" type="button" data-delete-history-snapshot data-history-account="${esc(snapshot.account_db_id)}" data-history-date="${esc(snapshot.snapshot_date)}">Delete</button>
-      <div class="sub">${esc(snapshot.account?.currency || "")} · ${esc(snapshot.source || "manual")}</div>
+      <div class="sub">${esc(currencyDisplayLabel(snapshot.account?.currency || ""))} · ${esc(snapshot.source || "manual")}</div>
     </div>
   `).join("") : '<div class="empty">No saved history points in this range</div>';
 }
@@ -8069,7 +8362,7 @@ async function runMarketScreener() {
   $("marketRows").innerHTML = data.items.length ? data.items.map((item) => `
     <tr>
       <td><div class="symbol">${esc(item.symbol)}</div><div class="sub">${esc(item.exchange || "Unknown exchange")}</div></td>
-      <td>${esc(item.name || "Unknown company")}<div class="sub">${esc([item.sector, item.industry, item.country].filter(Boolean).join(" · ") || "Classification unavailable")}</div></td>
+      <td>${esc(item.name || "Unknown company")}<div class="sub">${esc([item.sector, item.industry, item.country ? countryDisplayLabel(item.country) : ""].filter(Boolean).join(" · ") || "Classification unavailable")}</div></td>
       <td>${item.price === null || item.price === undefined ? "∅" : money(item.price, item.currency || "USD", 2)}</td>
       <td>${marketMetricAmount(item.market_cap, item.currency)}</td>
       <td>${marketMetricPercent(item.dividend_yield_percent, 2)}<div class="sub">${item.annual_dividend === null || item.annual_dividend === undefined ? "" : `${money(item.annual_dividend, item.currency || "USD", 3)} / share`}</div></td>
@@ -8105,12 +8398,15 @@ async function loadCacheStatus() {
     ["Cache file", data.path],
     ["API response entries", data.entries],
     ["Cached daily prices", data.price_entries ?? 0],
+    ["Saved security snapshots", data.security_snapshots ?? 0],
+    ["Securities with saved history", data.security_symbols ?? 0],
     ["Current size", `${data.size_mb} MB`],
     ["Max size", `${data.max_mb} MB`],
     ["TTL", `${data.ttl_hours} hours`],
   ].map(([label, value]) => `<div class="setting-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
   const backupRows = [
     ["Backup directory", backup.directory || ""],
+    ["Backup contents", backup.backup_type === "full" ? "Full application state · sensitive" : "Portfolio data only"],
     ["Schedule", backup.enabled === false ? "Disabled" : backup.schedule_summary || backupScheduleSummary(backup.schedule_config)],
     ["Next run", backup.next_run || "Disabled"],
     ["Latest backup", backup.latest?.filename || "None"],
@@ -8118,7 +8414,7 @@ async function loadCacheStatus() {
   ].map(([label, value]) => `<div class="setting-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
   const backupFiles = (backup.backups || []).map((file) => `
     <div class="setting-row backup-file-row">
-      <span>${esc(file.filename)}<small>${esc(file.modified_at || "")} · ${esc(file.size_kb || 0)} KB</small></span>
+      <span>${esc(file.filename)}<small>${esc(file.type === "full" ? "Full backup · sensitive" : "Data-only backup")} · ${esc(file.modified_at || "")} · ${esc(file.size_kb || 0)} KB</small></span>
       <button class="secondary compact-button" type="button" data-download-backup="${esc(file.filename)}">Download</button>
     </div>
   `).join("");
@@ -8167,7 +8463,7 @@ async function importLocalData(file) {
 }
 
 async function runBackupNow() {
-  $("settingsStatus").textContent = "Creating backup";
+  $("settingsStatus").textContent = "Creating full backup";
   await syncClientStateToServer();
   const result = await api("/api/local/backups", { method: "POST", body: "{}" });
   $("settingsStatus").textContent = `Backup saved: ${result.filename}`;
@@ -8341,6 +8637,15 @@ async function loadAbout() {
   ].map(([label, value]) => `<div class="setting-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
 }
 
+async function loadBrandVersion() {
+  const badge = $("brandVersion");
+  if (!badge) return;
+  const about = await api("/api/about");
+  const version = String(about.version || "").trim();
+  badge.textContent = version ? `v${version.replace(/^v/i, "")}` : "";
+  badge.hidden = !version;
+}
+
 function setResearchSection(section = "finance") {
   const selected = ["finance", "outlook", "signals"].includes(section) ? section : "finance";
   state.researchSection = selected;
@@ -8512,7 +8817,7 @@ document.addEventListener("click", (event) => {
     openModal("accountsModal", event.target);
     setAccountsTab("new");
     $("localAccountType").value = "ESOP";
-    $("accountsStatus").textContent = "Create an ESOP account for your employee stock option grants.";
+    setStatusMessage("accountsStatus", "Create an ESOP account for your employee stock option grants.");
     requestAnimationFrame(() => $("localUsername")?.focus());
   }
 
@@ -8861,6 +9166,11 @@ document.addEventListener("click", (event) => {
     setDashboardWidgetView(placementButton.dataset.dashboardSetView, placementButton.dataset.view);
   }
 
+  const areaButton = event.target.closest("[data-dashboard-area]");
+  if (areaButton) {
+    setDashboardArea(areaButton.dataset.dashboardArea);
+  }
+
   const modeButton = event.target.closest("[data-dashboard-mode]");
   if (modeButton) {
     setDashboardMode(modeButton.dataset.dashboardMode);
@@ -8937,6 +9247,13 @@ document.addEventListener("change", (event) => {
   if (accountTrendSelect) {
     state.dashboard.accountTrendAccountId = accountTrendSelect.value;
     localStorage.setItem(DASHBOARD_ACCOUNT_STORAGE_KEY, accountTrendSelect.value);
+    saveDashboardSettings();
+    renderAnalytics(state.items || []);
+  }
+
+  const longTermPensionToggle = event.target.closest("[data-long-term-include-pension]");
+  if (longTermPensionToggle) {
+    state.longTermIncludePension = longTermPensionToggle.checked;
     saveDashboardSettings();
     renderAnalytics(state.items || []);
   }
@@ -9136,7 +9453,7 @@ $("cancelAlertEdit").addEventListener("click", () => {
 $("addBannerItem").addEventListener("click", addBannerItem);
 $("runMarketScreener").addEventListener("click", () => runMarketScreener().catch((error) => { $("marketStatus").textContent = `Error: ${error.message}`; }));
 $("resetMarketScreener").addEventListener("click", resetMarketScreener);
-$("saveLocalAccount").addEventListener("click", () => saveLocalAccount().catch((error) => { $("accountsStatus").textContent = `Error: ${error.message}`; }));
+$("saveLocalAccount").addEventListener("click", () => saveLocalAccount().catch((error) => { setStatusMessage("accountsStatus", `Error: ${error.message}`); }));
 $("saveEditAccount").addEventListener("click", () => saveEditAccount().catch((error) => { $("editAccountStatus").textContent = `Error: ${error.message}`; }));
 $("saveBroker").addEventListener("click", () => saveBroker().catch((error) => { $("brokerStatus").textContent = `Error: ${error.message}`; }));
 $("clearBrokerForm").addEventListener("click", clearBrokerForm);
@@ -9145,7 +9462,7 @@ $("clearFamilyMemberForm").addEventListener("click", clearFamilyMemberForm);
 $("attachAccountToMember").addEventListener("click", () => attachAccountToMember().catch((error) => { $("accountOwnershipStatus").textContent = `Error: ${error.message}`; }));
 $("attachLocalAccountPerson").addEventListener("click", () => attachFamilyMember("localAccountPersons", "localAccountFamilyMember", "accountsStatus", { single: !accountAllowsMultipleMembers({ type: valueOf("localAccountType") }) }));
 $("attachEditAccountPerson").addEventListener("click", () => attachFamilyMember("editAccountPersons", "editAccountFamilyMember", "editAccountStatus", { single: !accountAllowsMultipleMembers({ type: valueOf("editAccountType") }) }));
-$("importSource").addEventListener("click", () => importSourceToLocal().catch((error) => { $("accountsStatus").textContent = `Error: ${error.message}`; }));
+$("importSource").addEventListener("click", () => importSourceToLocal().catch((error) => { setStatusMessage("accountsStatus", `Error: ${error.message}`); }));
 $("exportData").addEventListener("click", () => exportLocalData().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }));
 $("chooseImportData").addEventListener("click", () => $("importDataFile").click());
 $("importDataFile").addEventListener("change", (event) => importLocalData(event.target.files?.[0]).catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }).finally(() => { event.target.value = ""; }));
@@ -9236,6 +9553,8 @@ $("priceLocation").addEventListener("change", () => syncCurrencyFromLocation("pr
 async function initializeApp() {
   await loadClientStateFromServer().catch((error) => appWarn("client_state.load_failed", { message: error.message }));
   loadClientStateFromStorage();
+  revealInitializedApp();
+  loadBrandVersion().catch(() => {});
   loadPortfolio().catch(reportBackgroundError);
   loadBanner().catch(() => {});
   loadAlerts().catch(() => {});
@@ -9249,4 +9568,4 @@ async function initializeApp() {
   loadFunds().catch(reportBackgroundError);
 }
 
-initializeApp().catch(reportBackgroundError);
+initializeApp().catch(reportBackgroundError).finally(revealInitializedApp);

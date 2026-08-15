@@ -1,11 +1,15 @@
 import io
+import json
+import sqlite3
 import zipfile
 from datetime import date, timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from app import main
 from app.models import Ohlcv
+from app.providers import SqliteCache
 from fastapi import HTTPException
 
 
@@ -26,7 +30,7 @@ class _LocalStore:
         self.snapshots_captured = True
 
 
-def test_portfolio_reads_local_store_without_ghostfolio_sync(monkeypatch):
+def test_portfolio_reads_local_store_without_ghostfolio_sync(monkeypatch, tmp_path):
     class GhostfolioShouldNotLoad:
         def __init__(self, db_config):
             pass
@@ -36,6 +40,7 @@ def test_portfolio_reads_local_store_without_ghostfolio_sync(monkeypatch):
 
     monkeypatch.setattr(main, "GhostfolioClient", GhostfolioShouldNotLoad)
     monkeypatch.setattr(main, "local_store", _LocalStore())
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
 
     result = main.portfolio()
 
@@ -532,3 +537,76 @@ def test_backup_archive_contains_all_backup_files(tmp_path, monkeypatch):
 
     assert response.media_type == "application/zip"
     assert archive.namelist() == [second.name, first.name]
+
+
+def test_full_backup_contains_all_persistent_application_state(tmp_path, monkeypatch):
+    data_root = tmp_path / "data"
+    data_root.mkdir()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("dashboard:\n  base_currency: ILS\nprovider_secret: test-only\n")
+    cert_root = tmp_path / "certs"
+    cert_root.mkdir()
+    (cert_root / "server.crt").write_text("certificate")
+    (cert_root / "server.key").write_text("private-key")
+    (data_root / "settings.json").write_text('{"backup": {"enabled": true}}')
+    (data_root / "alerts.json").write_text('[{"name": "Saved rule"}]')
+    (data_root / "market-cache.json").write_text('{"cached": true}')
+    market_cache = SqliteCache(data_root / "market-cache.sqlite3", ttl_hours=24)
+    market_cache.set_security_snapshot("provider", "FDUS", "profile", {"sector": "Financial Services"})
+    legacy_dir = data_root / "backups"
+    legacy_dir.mkdir()
+    (legacy_dir / "portfolio-data-old.json").write_text('{"old": true}')
+
+    monkeypatch.setenv("DATA_DIR", str(data_root))
+    store = main.LocalPortfolioStore(data_root / "local-portfolio.sqlite3")
+    store.set_preference(
+        "client_state",
+        {
+            "dashboard": {"mode": "expanded"},
+            "pensionSimulation": {"scenarios": [{"name": "Full retirement plan"}]},
+        },
+    )
+    monkeypatch.setattr(main, "local_store", store)
+    monkeypatch.setattr(main, "config", SimpleNamespace(path=config_path))
+
+    result = main.write_full_backup(keep=5)
+    archive_path = data_root / "backups" / result["filename"]
+    with zipfile.ZipFile(archive_path) as archive:
+        names = set(archive.namelist())
+        manifest = json.loads(archive.read("manifest.json"))
+        portable_data = json.loads(archive.read("portfolio-data.json"))
+        sqlite_snapshot = archive.read("data/local-portfolio.sqlite3")
+        market_cache_snapshot = archive.read("data/market-cache.sqlite3")
+
+    assert result["type"] == "full"
+    assert result["sensitive"] is True
+    assert result["filename"].startswith("portfolio-full-")
+    assert result["filename"].endswith(".zip")
+    assert {
+        "manifest.json",
+        "RESTORE.md",
+        "portfolio-data.json",
+        "config.yaml",
+        "data/local-portfolio.sqlite3",
+        "data/settings.json",
+        "data/alerts.json",
+        "data/market-cache.json",
+        "data/market-cache.sqlite3",
+        "certs/server.crt",
+        "certs/server.key",
+    }.issubset(names)
+    assert not any(name.startswith("data/backups/") for name in names)
+    assert manifest["kind"] == main.FULL_BACKUP_KIND
+    assert manifest["sensitive"] is True
+    assert all(item["sha256"] for item in manifest["files"])
+    assert portable_data["data"]["app_preferences"]
+    saved_state = json.loads(portable_data["data"]["app_preferences"][0]["value"])
+    assert saved_state["pensionSimulation"]["scenarios"][0]["name"] == "Full retirement plan"
+    assert sqlite_snapshot.startswith(b"SQLite format 3")
+    restored_market_cache = sqlite3.connect(":memory:")
+    restored_market_cache.deserialize(market_cache_snapshot)
+    assert restored_market_cache.execute(
+        "select value from security_snapshot where symbol = 'FDUS' and data_type = 'profile'"
+    ).fetchone()
+    restored_market_cache.close()
+    assert store.list_backups()[0]["type"] == "full"

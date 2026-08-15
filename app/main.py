@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import zipfile
@@ -54,6 +55,8 @@ DIVIDEND_JOB_ID = "local-dividend-scan"
 DIVIDEND_DEFAULT_START_DATE = date(2026, 8, 1)
 WEEKDAY_CRON = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 PORTFOLIO_CACHE_FILE = "portfolio-analysis-cache.json"
+FULL_BACKUP_KIND = "portfolio-analyzer-full-backup"
+FULL_BACKUP_VERSION = 1
 HISTORY_START_DATE = date(2026, 4, 14)
 US_STOCK_MARKETS = {"NASDAQ", "NYSE", "AMEX", "NYSEARCA", "OTC"}
 SUPPORTED_STOCK_MARKETS = {*US_STOCK_MARKETS, "TASE"}
@@ -1111,9 +1114,137 @@ def save_runtime_settings(settings: dict[str, Any]) -> None:
     path.write_text(json.dumps(settings, indent=2, default=str))
 
 
+def _full_backup_restore_instructions() -> str:
+    return """# Portfolio Analyzer full-backup restore
+
+This archive contains sensitive portfolio data, configuration credentials, and TLS private keys.
+Keep it encrypted at rest and restrict access to trusted administrators.
+
+To restore the complete Docker installation:
+
+1. Stop the application with `docker compose down`.
+2. Preserve the current `config.yaml`, `data/`, and `certs/` as a rollback copy.
+3. Extract this archive into the project directory. Copy `config.yaml`, `data/`, and `certs/`
+   from the archive over the corresponding project paths.
+4. Start the application with `docker compose up --build -d`.
+5. Verify `https://localhost:6443` and the account, pension-simulation, alert, and backup settings.
+
+`portfolio-data.json` is also included as a portable fallback for the dashboard's data-only import.
+"""
+
+
+def _full_backup_payloads() -> dict[str, tuple[bytes, bool]]:
+    exported = local_store.export_data()
+    payloads: dict[str, tuple[bytes, bool]] = {
+        "portfolio-data.json": (json.dumps(exported, indent=2, default=str).encode("utf-8"), True),
+        "data/local-portfolio.sqlite3": (local_store.sqlite_snapshot_bytes(), True),
+        "RESTORE.md": (_full_backup_restore_instructions().encode("utf-8"), False),
+    }
+
+    config_path = Path(config.path)
+    if config_path.exists() and config_path.is_file() and not config_path.is_symlink():
+        payloads["config.yaml"] = (config_path.read_bytes(), True)
+
+    persistent_root = data_dir()
+    excluded_data_files = {
+        "local-portfolio.sqlite3",
+        "local-portfolio.sqlite3-shm",
+        "local-portfolio.sqlite3-wal",
+    }
+    if persistent_root.exists():
+        for source in sorted(persistent_root.rglob("*")):
+            if not source.is_file() or source.is_symlink():
+                continue
+            relative = source.relative_to(persistent_root)
+            if relative.parts[0] == "backups" or relative.name in excluded_data_files:
+                continue
+            if relative.name.endswith(("-shm", "-wal")):
+                continue
+            payloads[f"data/{relative.as_posix()}"] = (source.read_bytes(), True)
+
+    cert_root = config_path.parent / "certs"
+    if cert_root.exists():
+        for source in sorted(cert_root.rglob("*")):
+            if not source.is_file() or source.is_symlink():
+                continue
+            relative = source.relative_to(cert_root)
+            payloads[f"certs/{relative.as_posix()}"] = (source.read_bytes(), True)
+    return payloads
+
+
+def _write_backup_member(archive: zipfile.ZipFile, name: str, payload: bytes, sensitive: bool) -> None:
+    timestamp = datetime.now().timetuple()[:6]
+    info = zipfile.ZipInfo(name, date_time=timestamp)
+    info.compress_type = zipfile.ZIP_DEFLATED
+    info.external_attr = (0o600 if sensitive else 0o644) << 16
+    archive.writestr(info, payload)
+
+
+def write_full_backup(keep: int = 100) -> dict[str, Any]:
+    payloads = _full_backup_payloads()
+    created_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    manifest = {
+        "kind": FULL_BACKUP_KIND,
+        "version": FULL_BACKUP_VERSION,
+        "app_version": __version__,
+        "created_at": created_at,
+        "sensitive": True,
+        "contains": {
+            "portfolio_database": "data/local-portfolio.sqlite3" in payloads,
+            "portable_data_export": "portfolio-data.json" in payloads,
+            "client_preferences_and_pension_simulations": True,
+            "application_config": "config.yaml" in payloads,
+            "runtime_data_and_caches": any(name.startswith("data/") for name in payloads),
+            "tls_certificates": any(name.startswith("certs/") for name in payloads),
+        },
+        "files": [
+            {
+                "path": name,
+                "size_bytes": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+            for name, (payload, _sensitive) in sorted(payloads.items())
+        ],
+    }
+    manifest_payload = json.dumps(manifest, indent=2).encode("utf-8")
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    path = local_store.backup_dir() / f"portfolio-full-{timestamp}.zip"
+    temporary_path = path.with_suffix(".zip.tmp")
+    try:
+        with zipfile.ZipFile(temporary_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            _write_backup_member(archive, "manifest.json", manifest_payload, False)
+            for name, (payload, sensitive) in sorted(payloads.items()):
+                _write_backup_member(archive, name, payload, sensitive)
+        temporary_path.replace(path)
+    finally:
+        try:
+            temporary_path.unlink()
+        except OSError:
+            pass
+
+    backups = local_store.list_backups()
+    keep_count = max(int(keep or 0), 1)
+    for backup in backups[keep_count:]:
+        try:
+            Path(str(backup.get("path") or "")).unlink()
+        except OSError:
+            pass
+    return {
+        "path": str(path),
+        "filename": path.name,
+        "type": "full",
+        "sensitive": True,
+        "created_at": created_at,
+        "files": len(payloads) + 1,
+        "counts": local_store.export_data()["counts"],
+        "contains": manifest["contains"],
+    }
+
+
 def backup_download_path(filename: str) -> Path:
     clean = Path(str(filename or "")).name
-    if clean != filename or not clean.startswith("portfolio-data-") or not clean.endswith(".json"):
+    allowed = {str(item.get("filename") or "") for item in local_store.list_backups()}
+    if clean != filename or clean not in allowed:
         raise HTTPException(status_code=400, detail="Invalid backup filename")
     path = local_store.backup_dir() / clean
     if not path.exists() or not path.is_file():
@@ -1149,7 +1280,7 @@ def restore_backup_settings_from_preferences() -> None:
 def write_runtime_backup(keep: int | None = None) -> dict[str, Any]:
     backup = load_runtime_settings()["backup"]
     local_store.set_preference(BACKUP_SETTINGS_PREF_KEY, backup)
-    return local_store.write_backup(int(keep or backup.get("keep") or 100))
+    return write_full_backup(int(keep or backup.get("keep") or 100))
 
 
 def configure_backup_job() -> None:
@@ -1232,6 +1363,8 @@ def backup_status() -> dict[str, Any]:
         "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
         "latest": backups[0] if backups else None,
         "backup_count": len(backups),
+        "backup_type": "full",
+        "contains_sensitive_configuration": True,
         "backups": backups[:10],
     }
 
@@ -2208,7 +2341,8 @@ def download_local_backups_zip():
 @app.get("/api/local/backups/{filename}")
 def download_local_backup(filename: str):
     path = backup_download_path(filename)
-    return FileResponse(path, media_type="application/json", filename=path.name)
+    media_type = "application/zip" if path.suffix.lower() == ".zip" else "application/json"
+    return FileResponse(path, media_type=media_type, filename=path.name)
 
 
 @app.post("/api/local/backups")

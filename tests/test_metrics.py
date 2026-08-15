@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from app.metrics import moving_averages, percent, price_range_metrics, screen, support_resistance
+from app.metrics import analyze_holding, moving_averages, percent, price_range_metrics, screen, support_resistance
 from app.models import Holding, Ohlcv, SymbolAnalysis, Trend
 
 
@@ -44,6 +44,29 @@ def test_moving_average_windows():
     metrics = moving_averages(rows())
     assert metrics["7"]["state"] == "ok"
     assert metrics["30"]["state"] == "ok"
+
+
+def test_provider_sector_is_applied_before_industry_missing_check():
+    class Hub:
+        def prices(self, symbol, from_date, to_date):
+            return rows(), {"prices": "ok"}
+
+        def fundamentals(self, symbol):
+            return {"income_statement": {"annualReports": [
+                {"fiscalDateEnding": "2024-12-31", "totalRevenue": 100, "netIncome": 10},
+                {"fiscalDateEnding": "2025-12-31", "totalRevenue": 110, "netIncome": 12},
+            ]}}, {"fundamentals": "ok"}
+
+        def dividends(self, symbol):
+            return [{"date": "2025-06-01", "amount": 0.5}], {"dividends": "ok"}
+
+        def profile(self, symbol):
+            return {"sector": "Financial Services"}, {"profile": "ok"}
+
+    result = analyze_holding(Holding(symbol="FDUS"), Hub())
+
+    assert result.industry == "Financial Services"
+    assert "industry" not in result.missing
 
 
 def test_screen_filters_account_currency_and_dividend_growth():

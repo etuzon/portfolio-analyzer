@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
   <title id="title">Portfolio Analyzer</title>
-  <desc id="desc">A dark app icon with a clear portfolio mark, rising trend line, and gold coin.</desc>
+  <desc id="desc">A dark portfolio icon with a small green T-rex, a small panda, a rising trend line, and a gold coin.</desc>
   <defs>
     <linearGradient id="bg" x1="8" y1="5" x2="58" y2="59" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#202538"/>
@@ -13,12 +13,30 @@
   </defs>
   <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#bg)"/>
   <rect x="3.5" y="3.5" width="57" height="57" rx="12.5" fill="none" stroke="#3A4256" stroke-width="3"/>
-  <path d="M15 50V14h21c9.7 0 16 5.4 16 14s-6.3 14-16 14H27v8H15Zm12-19h8.7c3 0 4.9-1.2 4.9-3s-1.9-3-4.9-3H27v6Z" fill="#F7F9FF"/>
-  <rect x="28" y="25" width="12" height="6" rx="3" fill="#111726"/>
-  <circle cx="49" cy="47" r="11" fill="#FFB629"/>
-  <circle cx="49" cy="47" r="7.2" fill="#FFD66B"/>
-  <path d="M45.5 47h7M49 43.5v7" stroke="#7A4B00" stroke-width="2.2" stroke-linecap="round"/>
-  <path d="M33 48l6.5-7.4 5.3 4L54 33" fill="none" stroke="#071016" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M33 48l6.5-7.4 5.3 4L54 33" fill="none" stroke="url(#trend)" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M54 33v8h-8" fill="none" stroke="url(#trend)" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M10 50l14-13 10 8 18-17" fill="none" stroke="#071016" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M10 50l14-13 10 8 18-17" fill="none" stroke="url(#trend)" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M52 28v8h-8" fill="none" stroke="url(#trend)" stroke-width="4.4" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <g aria-label="Small T-rex">
+    <path d="M7 42c1-10 7-18 17-20h11v5h-7l6 5-3 4-8-1-3 6 5 5-2 6-6-6-4 7H7l5-10c-3 2-6 2-9 0Z" fill="#55D66B" stroke="#102A19" stroke-width="1.7" stroke-linejoin="round"/>
+    <path d="M20 38l7 2-5 3" fill="none" stroke="#102A19" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="27.5" cy="25.5" r="1.6" fill="#071016"/>
+    <path d="M30 30h4" stroke="#F7F9FF" stroke-width="1.4" stroke-linecap="round"/>
+  </g>
+
+  <g aria-label="Small panda">
+    <circle cx="43" cy="16" r="5.2" fill="#07090D"/>
+    <circle cx="56" cy="16" r="5.2" fill="#07090D"/>
+    <ellipse cx="49.5" cy="24" rx="12" ry="11" fill="#F7F9FF" stroke="#07090D" stroke-width="1.5"/>
+    <ellipse cx="44.8" cy="23.2" rx="3.7" ry="5" fill="#121722" transform="rotate(25 44.8 23.2)"/>
+    <ellipse cx="54.2" cy="23.2" rx="3.7" ry="5" fill="#121722" transform="rotate(-25 54.2 23.2)"/>
+    <circle cx="45.4" cy="22.8" r="1.1" fill="#F7F9FF"/>
+    <circle cx="53.6" cy="22.8" r="1.1" fill="#F7F9FF"/>
+    <path d="M47.5 28h4l-2 2Z" fill="#07090D"/>
+    <path d="M46.5 31c2 1.6 4 1.6 6 0" fill="none" stroke="#07090D" stroke-width="1.3" stroke-linecap="round"/>
+  </g>
+
+  <circle cx="50" cy="49" r="8.5" fill="#FFB629" stroke="#7A4B00" stroke-width="1.4"/>
+  <circle cx="50" cy="49" r="5.4" fill="#FFD66B"/>
+  <path d="M47.5 49h5M50 46.5v5" stroke="#7A4B00" stroke-width="1.7" stroke-linecap="round"/>
 </svg>

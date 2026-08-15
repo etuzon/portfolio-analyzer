@@ -47,11 +47,24 @@ def test_hebrew_is_the_default_document_language_and_direction():
     html = (ROOT / "web/index.html").read_text()
     script = (ROOT / "web/app.js").read_text()
 
-    assert '<html lang="he" dir="rtl">' in html
-    assert html.index('/i18n.js?v=1.0.4') < html.index('/app.js?v=0.4.86')
+    assert '<html lang="he" dir="rtl" class="i18n-pending">' in html
+    assert html.index('/i18n.js?v=1.0.13') < html.index('/app.js?v=0.5.5')
     assert 'language: "he"' in script
     assert 'state.language = saved === "en" ? "en" : "he"' in script
     assert 'window.PortfolioI18n?.applyToDocument(state.language)' in script
+
+
+def test_initial_page_stays_blank_and_white_until_localization_is_ready():
+    html = (ROOT / "web/index.html").read_text()
+    script = (ROOT / "web/app.js").read_text()
+
+    assert 'id="localization-boot-style"' in html
+    assert "html.i18n-pending body" in html
+    assert "background: #fff" in html
+    assert "visibility: hidden" in html
+    assert 'function revealInitializedApp()' in script
+    assert 'loadClientStateFromStorage();\n  revealInitializedApp();' in script
+    assert 'initializeApp().catch(reportBackgroundError).finally(revealInitializedApp);' in script
 
 
 def test_localization_runtime_handles_dynamic_text_and_attributes():
@@ -94,12 +107,23 @@ def test_populated_dashboard_values_are_localized_at_composition_time():
     i18n = (ROOT / "web/i18n.js").read_text()
 
     assert 'return { ...band, label: optionLabel(band.label) }' in script
+    assert 'const drivers = (risk.drivers || []).slice(0, 4).map(simpleDriver).map(optionLabel)' in script
+    assert '? `${optionLabel("Risk")} ${band.label} · ${risk.score}/100`' in script
+    assert 'optionLabel("Main reasons:")' in script
+    assert 'optionLabel("No single factor stands out")' in script
+    assert 'const missingField = text.slice(8).trim()' in script
+    assert '`היעדר נתוני ${optionLabel(missingField)} מקטין את ודאות האומדן`' in script
     assert '.map((group) => ({ ...group, label: optionLabel(group.label)' in script
     assert 'optionLabel("Holding Profit")' in script
     assert 'optionLabel("Total P/L")' in script
     assert 'optionLabel("units")' in script
     assert 'optionLabel(isImportedAccount(account) ? "Imported" : "Manual")' in script
     assert '"Elevated": "מוגבר"' in i18n
+    assert '"Price swings could cause meaningful losses.": "תנודות מחירים עלולות לגרום להפסדים משמעותיים."' in i18n
+    assert '"Main reasons:": "הסיבות העיקריות:"' in i18n
+    assert 'אופק ההשקעה הוא ${value} שנים' in i18n
+    assert 'ההחזקה הבודדת הגדולה ביותר מהווה ${value} מהשווי הכולל, כולל מזומן' in i18n
+    assert 'לאחר איחוד כל ההחזקות באותו נייר ערך, הוא מהווה ${value} משווי ניירות הערך בלבד, ללא מזומן' in i18n
     assert '"Financial Services": "שירותים פיננסיים"' in i18n
 
 

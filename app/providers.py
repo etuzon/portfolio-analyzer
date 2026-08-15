@@ -71,102 +71,190 @@ class MarketDataHub:
         status = {}
         best_prices: list[Ohlcv] = []
         for provider in self.providers:
+            saved_prices = self.cache.get_prices(provider.name, symbol, from_date, to_date)
             try:
                 prices = provider.prices(symbol, from_date, to_date)
                 if prices:
                     status[provider.name] = "ok"
+                    self.cache.set_prices(provider.name, symbol, prices)
                     if _price_score(prices, from_date, to_date) > _price_score(best_prices, from_date, to_date):
                         best_prices = prices
                     continue
-                status[provider.name] = "missing"
+                if saved_prices:
+                    status[provider.name] = "stale (saved local history)"
+                    if _price_score(saved_prices, from_date, to_date) > _price_score(best_prices, from_date, to_date):
+                        best_prices = saved_prices
+                else:
+                    status[provider.name] = "missing"
             except Exception as exc:
-                status[provider.name] = f"error: {exc.__class__.__name__}"
+                if saved_prices:
+                    status[provider.name] = f"stale (saved local history; {exc.__class__.__name__})"
+                    if _price_score(saved_prices, from_date, to_date) > _price_score(best_prices, from_date, to_date):
+                        best_prices = saved_prices
+                else:
+                    status[provider.name] = f"error: {exc.__class__.__name__}"
         return best_prices, status or {"providers": "none configured"}
 
     def fundamentals(self, symbol: str) -> tuple[dict[str, Any], dict[str, str]]:
         status = {}
+        saved_fallback: dict[str, Any] | None = None
         for provider in self.providers:
+            saved = self.cache.get_security_snapshot(provider.name, symbol, "fundamentals")
             try:
                 data = provider.fundamentals(symbol)
                 if data:
                     status[provider.name] = "ok"
+                    self.cache.set_security_snapshot(provider.name, symbol, "fundamentals", data)
                     return data, status
-                status[provider.name] = "missing"
+                if saved is not None:
+                    status[provider.name] = "stale (saved local history)"
+                    saved_fallback = saved_fallback or saved
+                else:
+                    status[provider.name] = "missing"
             except Exception as exc:
-                status[provider.name] = f"error: {exc.__class__.__name__}"
+                if saved is not None:
+                    status[provider.name] = f"stale (saved local history; {exc.__class__.__name__})"
+                    saved_fallback = saved_fallback or saved
+                else:
+                    status[provider.name] = f"error: {exc.__class__.__name__}"
+        if saved_fallback is not None:
+            return saved_fallback, status
         if not self._has_fundamental_provider():
             status["fundamentals_api"] = "missing Alpha Vantage or FMP API key"
         return {}, status or {"providers": "none configured"}
 
     def fundamentals_as_of(self, symbol: str, as_of: date) -> tuple[dict[str, Any], dict[str, str]]:
         status = {}
+        data_type = f"fundamentals_as_of:{as_of.isoformat()}"
+        saved_fallback: dict[str, Any] | None = None
         for provider in self.providers:
+            saved = self.cache.get_security_snapshot(provider.name, symbol, data_type)
             try:
                 data = provider.fundamentals_as_of(symbol, as_of)
                 if data:
                     status[provider.name] = "ok"
+                    self.cache.set_security_snapshot(provider.name, symbol, data_type, data)
                     return data, status
-                status[provider.name] = "missing"
+                if saved is not None:
+                    status[provider.name] = "stale (saved local history)"
+                    saved_fallback = saved_fallback or saved
+                else:
+                    status[provider.name] = "missing"
             except Exception as exc:
-                status[provider.name] = f"error: {exc.__class__.__name__}"
+                if saved is not None:
+                    status[provider.name] = f"stale (saved local history; {exc.__class__.__name__})"
+                    saved_fallback = saved_fallback or saved
+                else:
+                    status[provider.name] = f"error: {exc.__class__.__name__}"
+        if saved_fallback is not None:
+            return saved_fallback, status
         if not self._has_fundamental_provider():
             status["fundamentals_api"] = "missing Alpha Vantage or FMP API key"
         return {}, status or {"providers": "none configured"}
 
     def dividends(self, symbol: str, force_refresh: bool = False, to_date: date | None = None) -> tuple[list[dict[str, Any]], dict[str, str]]:
         status = {}
+        data_type = f"dividends_as_of:{to_date.isoformat()}" if to_date else "dividends"
+        saved_fallback: list[dict[str, Any]] | None = None
         for provider in self.providers:
+            saved = self.cache.get_security_snapshot(provider.name, symbol, data_type)
             try:
                 data = provider.dividends(symbol, force_refresh=force_refresh, to_date=to_date)
                 if data:
                     status[provider.name] = "ok"
+                    self.cache.set_security_snapshot(provider.name, symbol, data_type, data)
                     return data, status
-                status[provider.name] = "missing"
+                if saved is not None:
+                    status[provider.name] = "stale (saved local history)"
+                    saved_fallback = saved_fallback or saved
+                else:
+                    status[provider.name] = "missing"
             except Exception as exc:
-                status[provider.name] = f"error: {exc.__class__.__name__}"
+                if saved is not None:
+                    status[provider.name] = f"stale (saved local history; {exc.__class__.__name__})"
+                    saved_fallback = saved_fallback or saved
+                else:
+                    status[provider.name] = f"error: {exc.__class__.__name__}"
+        if saved_fallback is not None:
+            return saved_fallback, status
         if not self._has_fundamental_provider():
             status["dividend_api"] = "missing Alpha Vantage or FMP API key"
         return [], status or {"providers": "none configured"}
 
     def profile(self, symbol: str) -> tuple[dict[str, Any], dict[str, str]]:
         status = {}
-        merged: dict[str, Any] = {}
+        live_merged: dict[str, Any] = {}
+        saved_merged: dict[str, Any] = {}
         for provider in self.providers:
+            saved = self.cache.get_security_snapshot(provider.name, symbol, "profile")
             try:
                 data = provider.profile(symbol)
                 if data:
                     status[provider.name] = "ok"
-                    merged.update({key: value for key, value in data.items() if value not in (None, "")})
+                    self.cache.set_security_snapshot(provider.name, symbol, "profile", data)
+                    live_merged.update({key: value for key, value in data.items() if value not in (None, "")})
                     continue
-                status[provider.name] = "missing"
+                if saved is not None:
+                    status[provider.name] = "stale (saved local history)"
+                    saved_merged.update({key: value for key, value in saved.items() if value not in (None, "")})
+                else:
+                    status[provider.name] = "missing"
             except Exception as exc:
-                status[provider.name] = f"error: {exc.__class__.__name__}"
-        return merged, status or {"providers": "none configured"}
+                if saved is not None:
+                    status[provider.name] = f"stale (saved local history; {exc.__class__.__name__})"
+                    saved_merged.update({key: value for key, value in saved.items() if value not in (None, "")})
+                else:
+                    status[provider.name] = f"error: {exc.__class__.__name__}"
+        return {**saved_merged, **live_merged}, status or {"providers": "none configured"}
 
     def fx(self, pair: str) -> tuple[dict[str, Any], dict[str, str]]:
         status = {}
+        saved_fallback: dict[str, Any] | None = None
         for provider in self.providers:
+            saved = self.cache.get_security_snapshot(provider.name, pair, "fx")
             try:
                 data = provider.fx(pair)
                 if data:
                     status[provider.name] = "ok"
+                    self.cache.set_security_snapshot(provider.name, pair, "fx", data)
                     return data, status
-                status[provider.name] = "missing"
+                if saved is not None:
+                    status[provider.name] = "stale (saved local history)"
+                    saved_fallback = saved_fallback or saved
+                else:
+                    status[provider.name] = "missing"
             except Exception as exc:
-                status[provider.name] = f"error: {exc.__class__.__name__}"
-        return {}, status or {"providers": "none configured"}
+                if saved is not None:
+                    status[provider.name] = f"stale (saved local history; {exc.__class__.__name__})"
+                    saved_fallback = saved_fallback or saved
+                else:
+                    status[provider.name] = f"error: {exc.__class__.__name__}"
+        return saved_fallback or {}, status or {"providers": "none configured"}
 
     def quote(self, symbol: str) -> tuple[dict[str, Any], dict[str, str]]:
         status = {}
+        saved_fallback: dict[str, Any] | None = None
         for provider in self.providers:
+            saved = self.cache.get_security_snapshot(provider.name, symbol, "quote")
             try:
                 data = provider.quote(symbol)
                 if data:
                     status[provider.name] = "ok"
+                    self.cache.set_security_snapshot(provider.name, symbol, "quote", data)
                     return data, status
-                status[provider.name] = "missing"
+                if saved is not None:
+                    status[provider.name] = "stale (saved local history)"
+                    saved_fallback = saved_fallback or saved
+                else:
+                    status[provider.name] = "missing"
             except Exception as exc:
-                status[provider.name] = f"error: {exc.__class__.__name__}"
+                if saved is not None:
+                    status[provider.name] = f"stale (saved local history; {exc.__class__.__name__})"
+                    saved_fallback = saved_fallback or saved
+                else:
+                    status[provider.name] = f"error: {exc.__class__.__name__}"
+        if saved_fallback is not None:
+            return saved_fallback, status
         if not self.config.get("financial_modeling_prep", {}).get("api_key"):
             status["financial_modeling_prep"] = "missing API key"
         return {}, status or {"providers": "none configured"}
@@ -281,6 +369,19 @@ class SqliteCache:
                 )
                 """
             )
+            conn.execute(
+                """
+                create table if not exists security_snapshot (
+                    provider text not null,
+                    symbol text not null,
+                    data_type text not null,
+                    updated_at real not null,
+                    value text not null,
+                    primary key (provider, symbol, data_type)
+                )
+                """
+            )
+            conn.execute("create index if not exists idx_security_snapshot_symbol on security_snapshot(symbol, data_type)")
 
     def get(self, key: str) -> Any | None:
         with self._connect() as conn:
@@ -384,15 +485,50 @@ class SqliteCache:
                 (provider, normalized_symbol, checked_date.isoformat()),
             )
 
+    def get_security_snapshot(self, provider: str, symbol: str, data_type: str) -> Any | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select value
+                from security_snapshot
+                where provider = ? and symbol = ? and data_type = ?
+                """,
+                (provider, str(symbol or "").upper(), data_type),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            return json.loads(row[0])
+        except json.JSONDecodeError:
+            return None
+
+    def set_security_snapshot(self, provider: str, symbol: str, data_type: str, value: Any) -> None:
+        if value in (None, {}, []):
+            return
+        payload = json.dumps(value, default=str, separators=(",", ":"))
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert or replace into security_snapshot
+                  (provider, symbol, data_type, updated_at, value)
+                values (?, ?, ?, ?, ?)
+                """,
+                (provider, str(symbol or "").upper(), data_type, time.time(), payload),
+            )
+
     def status(self) -> dict[str, Any]:
         size = self.path.stat().st_size if self.path.exists() else 0
         with self._connect() as conn:
             rows = conn.execute("select count(*) from cache").fetchone()[0]
             price_rows = conn.execute("select count(*) from price_cache").fetchone()[0]
+            security_snapshots = conn.execute("select count(*) from security_snapshot").fetchone()[0]
+            security_symbols = conn.execute("select count(distinct symbol) from security_snapshot").fetchone()[0]
         return {
             "path": str(self.path),
             "entries": rows,
             "price_entries": price_rows,
+            "security_snapshots": security_snapshots,
+            "security_symbols": security_symbols,
             "size_mb": round(size / 1024 / 1024, 3),
             "max_mb": round(self.max_bytes / 1024 / 1024, 3),
             "ttl_hours": round(self.ttl_seconds / 3600, 2),
@@ -891,7 +1027,17 @@ class SecCompanyFactsProvider(MarketDataProvider):
             return {}
         facts = self._company_facts(cik)
         us_gaap = facts.get("facts", {}).get("us-gaap", {})
-        revenue = _sec_annual_facts(us_gaap, ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet"], as_of)
+        revenue = _sec_annual_facts(
+            us_gaap,
+            [
+                "Revenues",
+                "RevenueFromContractWithCustomerExcludingAssessedTax",
+                "SalesRevenueNet",
+                "GrossInvestmentIncomeOperating",
+                "InvestmentIncomeNet",
+            ],
+            as_of,
+        )
         net_income = _sec_annual_facts(us_gaap, ["NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"], as_of)
         gross_profit = _sec_annual_facts(us_gaap, ["GrossProfit"], as_of)
         operating_income = _sec_annual_facts(us_gaap, ["OperatingIncomeLoss"], as_of)
