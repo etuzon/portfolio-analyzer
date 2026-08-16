@@ -214,6 +214,36 @@ def test_security_history_returns_ohlcv_and_chart_metrics(monkeypatch):
     assert result["moving_averages"]["30"]["state"] == "ok"
     assert result["support_resistance"]["1m"]["state"] == "ok"
     assert result["volume"]["average_20d"] is not None
+    assert result["technical_signals"]["confirmed_breakout"]["state"] == "ok"
+    assert result["technical_signals"]["confirmed_breakout"]["score_total"] == 4
+
+
+def test_security_signal_uses_analysis_history_when_visible_chart_is_short():
+    start = date.today() - timedelta(days=39)
+    analysis_prices = [
+        Ohlcv(
+            date=start + timedelta(days=index),
+            open=100 + index,
+            high=102 + index,
+            low=99 + index,
+            close=101 + index,
+            adjusted_close=101 + index,
+            volume=1000 + index * 10,
+        )
+        for index in range(40)
+    ]
+
+    result = main._security_history_response(
+        "CSCO",
+        "NASDAQ",
+        "1m",
+        "test",
+        analysis_prices[-10:],
+        analysis_prices,
+    )
+
+    assert result["moving_averages"]["30"]["state"] == "missing"
+    assert result["technical_signals"]["confirmed_breakout"]["state"] == "ok"
 
 
 def test_security_history_passes_primary_secondary_and_tase_market_to_provider(monkeypatch):
@@ -763,7 +793,10 @@ def test_full_restore_replaces_complete_state_and_creates_safety_backup(tmp_path
     monkeypatch.setattr(main, "config", main.load_config())
     store = main.LocalPortfolioStore(data_root / "local-portfolio.sqlite3")
     store.set_preference("client_state", {"marker": "from-backup"})
+    auth = main.AuthStore(store.path)
+    auth.initialize()
     monkeypatch.setattr(main, "local_store", store)
+    monkeypatch.setattr(main, "auth_store", auth)
     result = main.write_full_backup(keep=10)
     archive_path = data_root / "backups" / result["filename"]
     restore_payload = archive_path.read_bytes()
@@ -841,7 +874,10 @@ def test_full_restore_rolls_back_to_safety_backup_on_write_failure(tmp_path, mon
     monkeypatch.setenv("CONFIG_PATH", str(config_path))
     monkeypatch.setattr(main, "config", main.load_config())
     store = main.LocalPortfolioStore(data_root / "local-portfolio.sqlite3")
+    auth = main.AuthStore(store.path)
+    auth.initialize()
     monkeypatch.setattr(main, "local_store", store)
+    monkeypatch.setattr(main, "auth_store", auth)
     store.set_preference("client_state", {"marker": "incoming-backup"})
     incoming_result = main.write_full_backup(keep=10)
     incoming_payload = (data_root / "backups" / incoming_result["filename"]).read_bytes()
@@ -869,12 +905,36 @@ def test_full_restore_rolls_back_to_safety_backup_on_write_failure(tmp_path, mon
     assert len(store.list_backups()) >= 2
 
 
-def test_full_restore_api_requires_confirmation_and_rejects_invalid_zip():
+def test_full_restore_api_requires_confirmation_and_rejects_invalid_zip(tmp_path, monkeypatch):
+    store = main.LocalPortfolioStore(tmp_path / "local.sqlite3")
+    auth = main.AuthStore(store.path)
+    auth.initialize()
+    monkeypatch.setattr(main, "local_store", store)
+    monkeypatch.setattr(main, "auth_store", auth)
+    main._login_failures.clear()
     client = TestClient(main.app, base_url="https://localhost:6443")
+    signed_in = client.post(
+        "/api/auth/login",
+        json={"username": "admin", "password": "admin"},
+    ).json()
+    changed = client.post(
+        "/api/auth/change-password",
+        headers={"X-CSRF-Token": signed_in["csrf_token"]},
+        json={
+            "current_password": "admin",
+            "new_password": "test-admin-password",
+            "confirm_password": "test-admin-password",
+        },
+    ).json()
+    csrf_token = changed["csrf_token"]
     response = client.post(
         "/api/local/backups/restore",
         content=b"not-a-zip",
-        headers={"Origin": "https://localhost:6443", "Content-Type": "application/zip"},
+        headers={
+            "Origin": "https://localhost:6443",
+            "Content-Type": "application/zip",
+            "X-CSRF-Token": csrf_token,
+        },
     )
     assert response.status_code == 400
     assert response.json()["detail"] == "Explicit full-restore confirmation is required"
@@ -882,7 +942,7 @@ def test_full_restore_api_requires_confirmation_and_rejects_invalid_zip():
     response = client.post(
         "/api/local/backups/inspect",
         content=b"not-a-zip",
-        headers={"Content-Type": "application/zip"},
+        headers={"Content-Type": "application/zip", "X-CSRF-Token": csrf_token},
     )
     assert response.status_code == 400
     assert response.json()["detail"] == "The selected file is not a valid ZIP archive."

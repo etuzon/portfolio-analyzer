@@ -18,6 +18,8 @@ PERIODS = {
     "5y": 366 * 5,
 }
 
+CONFIRMED_BREAKOUT_RELATIVE_VOLUME = 1.5
+
 
 def analyze_holding(holding: Holding, hub: MarketDataHub) -> SymbolAnalysis:
     today = date.today()
@@ -65,6 +67,9 @@ def analyze_holding(holding: Holding, hub: MarketDataHub) -> SymbolAnalysis:
     if not industry:
         missing.append("industry")
 
+    ma_metrics = moving_averages(prices)
+    level_metrics = support_resistance(prices)
+    volume = volume_metrics(prices)
     return SymbolAnalysis(
         holding=holding,
         provider_status={
@@ -74,9 +79,9 @@ def analyze_holding(holding: Holding, hub: MarketDataHub) -> SymbolAnalysis:
             **_status_group("profile", profile_status),
         },
         price_ranges=price_ranges,
-        moving_averages=moving_averages(prices),
-        support_resistance=support_resistance(prices),
-        volume=volume_metrics(prices),
+        moving_averages=ma_metrics,
+        support_resistance=level_metrics,
+        volume=volume,
         income_trend=income,
         profit_trend=profit,
         dividend_trend=dividend,
@@ -84,6 +89,7 @@ def analyze_holding(holding: Holding, hub: MarketDataHub) -> SymbolAnalysis:
         industry=industry,
         missing=missing,
         market_cap=market_cap,
+        technical_signals=technical_signals(ma_metrics, level_metrics, volume),
     )
 
 
@@ -131,6 +137,7 @@ def moving_averages(prices: list[Ohlcv]) -> dict[str, dict]:
             "value": value,
             "price_vs_ma_percent": percent(current, value),
             "direction": direction(value, previous),
+            "slope_percent": percent(value, previous),
         }
     return out
 
@@ -170,6 +177,96 @@ def support_resistance(prices: list[Ohlcv]) -> dict[str, dict]:
             "method": "clustered local extrema with volume weighting",
         }
     return out
+
+
+def confirmed_breakout_signal(one_year: dict, ma30: dict, volume: dict) -> dict:
+    """Return a deterministic resistance-breakout confirmation signal.
+
+    The signal is confirmed only when the latest close crosses above the
+    estimated one-year resistance, volume is at least 1.5 times its 20-day
+    average, and price is above a rising 30-day moving average.
+    """
+    resistance = _number((one_year.get("resistance") or {}).get("price"))
+    current = _number(one_year.get("current_price"))
+    previous = _number(one_year.get("previous_price"))
+    relative_volume = _number(volume.get("relative_20d"))
+    ma_value = _number(ma30.get("value"))
+    ma_slope = _number(ma30.get("slope_percent"))
+    required = {
+        "resistance": resistance,
+        "current price": current,
+        "previous price": previous,
+        "20-day relative volume": relative_volume,
+        "MA30": ma_value,
+        "MA30 slope": ma_slope,
+    }
+    missing = [label for label, value in required.items() if value is None]
+    if one_year.get("state") != "ok" and "one-year support/resistance" not in missing:
+        missing.append("one-year support/resistance")
+    if ma30.get("state") != "ok" and "MA30" not in missing:
+        missing.append("MA30")
+    if volume.get("state") not in {"ok", "partial"} and "volume" not in missing:
+        missing.append("volume")
+
+    condition_specs = {
+        "resistance_breakout": {
+            "label": "Price crossed above 1Y resistance",
+            "met": None if resistance is None or current is None or previous is None else previous <= resistance < current,
+            "resistance": resistance,
+            "previous_price": previous,
+            "current_price": current,
+        },
+        "relative_volume": {
+            "label": "Volume is at least 1.5× its 20D average",
+            "met": None if relative_volume is None else relative_volume >= CONFIRMED_BREAKOUT_RELATIVE_VOLUME,
+            "value": relative_volume,
+            "minimum": CONFIRMED_BREAKOUT_RELATIVE_VOLUME,
+        },
+        "above_ma30": {
+            "label": "Price is above MA30",
+            "met": None if current is None or ma_value is None else current > ma_value,
+            "current_price": current,
+            "ma30": ma_value,
+        },
+        "rising_ma30": {
+            "label": "MA30 is rising",
+            "met": None if ma_slope is None else ma_slope > 0,
+            "slope_percent": ma_slope,
+        },
+    }
+    met_count = sum(condition["met"] is True for condition in condition_specs.values())
+    if missing:
+        return {
+            "state": "missing",
+            "signal": "missing",
+            "triggered": False,
+            "conditions": condition_specs,
+            "score_met": met_count,
+            "score_total": len(condition_specs),
+            "missing": missing,
+            "message": f"Missing {', '.join(missing)}",
+        }
+    triggered = met_count == len(condition_specs)
+    return {
+        "state": "ok",
+        "signal": "confirmed_breakout" if triggered else "watch",
+        "triggered": triggered,
+        "conditions": condition_specs,
+        "score_met": met_count,
+        "score_total": len(condition_specs),
+        "missing": [],
+        "message": "All four confirmation conditions are met" if triggered else f"{met_count} of {len(condition_specs)} confirmation conditions are met",
+    }
+
+
+def technical_signals(moving_average_metrics: dict, level_metrics: dict, volume: dict) -> dict[str, dict]:
+    return {
+        "confirmed_breakout": confirmed_breakout_signal(
+            level_metrics.get("1y") or {},
+            moving_average_metrics.get("30") or {},
+            volume,
+        )
+    }
 
 
 def trend_from_reports(reports: list[dict[str, Any]], keys: list[str], label: str) -> Trend:

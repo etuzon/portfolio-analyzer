@@ -1,5 +1,6 @@
 const HISTORY_START_DATE = "2026-04-14";
 const DATE_PLACEHOLDER = "dd/mm/yyyy";
+const SECURITY_CHART_MIN_VISIBLE_POINTS = 5;
 
 const state = {
   items: [],
@@ -32,6 +33,7 @@ const state = {
   securityChartStartDate: HISTORY_START_DATE,
   securityHistory: [],
   securityHistoryMeta: {},
+  securityChartZoom: null,
   localFunds: [],
   fundAmountHistory: [],
   fundHistoryFundId: "",
@@ -92,6 +94,9 @@ const state = {
   pendingFullRestoreFile: null,
   pendingFullRestoreInspection: null,
   riskSnapshot: null,
+  auth: { user: null, csrfToken: "", forcedPasswordChange: false },
+  users: [],
+  authenticatedAppStarted: false,
   language: "he",
 };
 
@@ -193,8 +198,10 @@ const TRANSLATIONS = {
     alerts: "Alerts",
     marketBanner: "Market Banner",
     system: "System",
+    users: "Users",
     settings: "Settings",
     about: "About",
+    help: "Help",
     markets: "Markets",
     currencyIndexesCommodities: "Currency, indexes, and commodities",
     manage: "Manage",
@@ -249,8 +256,10 @@ const TRANSLATIONS = {
     alerts: "התראות",
     marketBanner: "סרגל שוק",
     system: "מערכת",
+    users: "משתמשים",
     settings: "הגדרות",
     about: "אודות",
+    help: "עזרה",
     markets: "שווקים",
     currencyIndexesCommodities: "מטבעות, מדדים וסחורות",
     manage: "ניהול",
@@ -532,20 +541,33 @@ async function api(path, options = {}) {
   const started = performance.now();
   const method = options.method || "GET";
   const endpoint = String(path).split("?")[0];
+  const { headers: requestedHeaders = {}, ...fetchOptions } = options;
+  const headers = {
+    "Content-Type": "application/json",
+    ...requestedHeaders,
+  };
+  if (!["GET", "HEAD", "OPTIONS"].includes(String(method).toUpperCase()) && state.auth.csrfToken) {
+    headers["X-CSRF-Token"] = state.auth.csrfToken;
+  }
   try {
     const response = await fetch(path, {
-      headers: { "Content-Type": "application/json" },
-      ...options,
+      ...fetchOptions,
+      method,
+      headers,
     });
     appLog("api.response", { method, endpoint, status: response.status, ms: Math.round(performance.now() - started) });
     if (!response.ok) {
       let message = `${response.status} ${response.statusText}`;
+      let code = "";
       try {
         const data = await response.json();
         message = data.detail?.message || data.detail || message;
+        code = data.detail?.code || "";
       } catch {
         // Keep the HTTP status text when the API returns no JSON body.
       }
+      if (response.status === 401 || code === "authentication_required") showLogin();
+      if (code === "password_change_required") showPasswordChange({ forced: true });
       throw new Error(message);
     }
     return response.json();
@@ -553,6 +575,226 @@ async function api(path, options = {}) {
     appWarn("api.error", { method, endpoint, message: error.message });
     throw error;
   }
+}
+
+const WRITE_CONTROL_IDS = new Set([
+  "addAlertCondition", "addBannerItem", "addPensionPeriod", "addPensionRate", "addPensionScenario",
+  "applyBackupSchedule", "attachAccountToMember", "attachEditAccountPerson", "attachLocalAccountPerson",
+  "captureHistorySnapshot", "chooseFullRestore", "chooseImportData", "clearAlarms", "dashboardEdit",
+  "dashboardReset", "importSource", "newEmployeeOptionGrant", "newPensionScenario", "runAlerts",
+  "runBackupNow", "runCompanyOutlook", "runCompanyOutlookBacktest", "runDividendEvents", "saveAlarmSettings",
+  "saveAlert", "saveBackupSettings", "saveBroker", "saveDetailPrice", "saveDisplaySettings", "saveEditAccount",
+  "saveEditFund", "saveEmployeeExercise", "saveEmployeeListing", "saveEmployeeOptionGrant", "saveFamilyMember",
+  "saveFund", "saveFundHistory", "saveHistorySnapshot", "saveLocalAccount", "saveManualSecurity",
+  "savePositionTransaction", "savePrice", "saveSecurity", "saveTableSettings", "saveUser", "showFundCreate",
+]);
+const WRITE_DATA_ACTIONS = new Set([
+  "data-add-skipped-account", "data-dashboard-move", "data-dashboard-set-view", "data-delete-account",
+  "data-delete-alert", "data-delete-broker", "data-delete-company-outlook", "data-delete-employee-option-grant",
+  "data-delete-family-member", "data-delete-fund", "data-delete-fund-history", "data-delete-manual-security",
+  "data-delete-pension-period", "data-delete-pension-rate", "data-delete-pension-scenario", "data-delete-price",
+  "data-delete-security", "data-edit-account", "data-edit-alert", "data-edit-broker", "data-edit-employee-option-grant",
+  "data-edit-family-member", "data-edit-fund", "data-edit-fund-history", "data-edit-manual-security",
+  "data-edit-pension-scenario", "data-edit-position-transaction", "data-edit-security", "data-evaluate-company-outlook",
+  "data-exercise-employee-option", "data-fix-skipped-account", "data-link-employee-listing", "data-remove-alert-condition",
+  "data-remove-banner", "data-schedule-pension-scenario", "data-toggle-alert", "data-use-manual-security",
+  "data-user-enabled", "data-delete-user",
+]);
+
+function currentUser() {
+  return state.auth.user;
+}
+
+function canAdmin() {
+  return currentUser()?.role === "Admin";
+}
+
+function canWrite() {
+  return ["Admin", "Operator"].includes(currentUser()?.role);
+}
+
+function authRequestHeaders(headers = {}) {
+  return state.auth.csrfToken ? { ...headers, "X-CSRF-Token": state.auth.csrfToken } : { ...headers };
+}
+
+function isWriteControl(button) {
+  if (!(button instanceof HTMLButtonElement)) return false;
+  if (WRITE_CONTROL_IDS.has(button.id)) return true;
+  return [...button.attributes].some((attribute) => WRITE_DATA_ACTIONS.has(attribute.name));
+}
+
+function applyRolePermissions(root = document) {
+  const readOnly = currentUser()?.role === "Viewer";
+  document.body.dataset.accessRole = currentUser()?.role || "anonymous";
+  const notice = $("readOnlyNotice");
+  if (notice) notice.hidden = !readOnly;
+  const buttons = [];
+  if (root instanceof HTMLButtonElement) buttons.push(root);
+  if (root.querySelectorAll) buttons.push(...root.querySelectorAll("button"));
+  buttons.filter(isWriteControl).forEach((button) => {
+    if (readOnly && !button.disabled) {
+      button.disabled = true;
+      button.dataset.roleDisabled = "true";
+      button.classList.add("role-write-disabled");
+      button.setAttribute("aria-disabled", "true");
+      button.title = optionLabel("Viewer access is read-only");
+    } else if (!readOnly && button.dataset.roleDisabled === "true") {
+      button.disabled = false;
+      delete button.dataset.roleDisabled;
+      button.classList.remove("role-write-disabled");
+      button.removeAttribute("aria-disabled");
+      button.removeAttribute("title");
+    }
+  });
+}
+
+const rolePermissionObserver = new MutationObserver((mutations) => {
+  mutations.forEach((mutation) => mutation.addedNodes.forEach((node) => {
+    if (node instanceof HTMLElement) applyRolePermissions(node);
+  }));
+});
+rolePermissionObserver.observe(document.body, { childList: true, subtree: true });
+
+function setAppAuthenticationLock(locked) {
+  const shell = $("appShell");
+  if (!shell) return;
+  shell.inert = Boolean(locked);
+  shell.setAttribute("aria-hidden", String(Boolean(locked)));
+}
+
+function renderCurrentUser() {
+  const user = currentUser();
+  const name = [user?.first_name, user?.last_name].filter(Boolean).join(" ") || user?.username || "";
+  if ($("currentUserName")) $("currentUserName").textContent = name;
+  if ($("currentUserRole")) $("currentUserRole").textContent = user ? optionLabel(user.role) : "";
+  applyRolePermissions();
+}
+
+function setAuthenticatedSession(payload) {
+  state.auth.user = payload?.user || null;
+  state.auth.csrfToken = String(payload?.csrf_token || "");
+  state.auth.forcedPasswordChange = Boolean(payload?.user?.must_change_password);
+  renderCurrentUser();
+  ensureHierarchicalNav();
+  bindNavAccordion();
+}
+
+function showLogin(message = "") {
+  state.auth = { user: null, csrfToken: "", forcedPasswordChange: false };
+  state.authenticatedAppStarted = false;
+  document.querySelectorAll(".modal").forEach((modal) => { modal.hidden = true; });
+  setAppAuthenticationLock(true);
+  $("authOverlay").hidden = false;
+  $("loginForm").hidden = false;
+  $("passwordChangeForm").hidden = true;
+  $("loginPassword").value = "";
+  $("loginStatus").textContent = message;
+  renderCurrentUser();
+  ensureHierarchicalNav();
+  bindNavAccordion();
+  requestAnimationFrame(() => $("loginUsername")?.focus());
+}
+
+function showPasswordChange({ forced = false } = {}) {
+  state.auth.forcedPasswordChange = forced || Boolean(currentUser()?.must_change_password);
+  setAppAuthenticationLock(true);
+  $("authOverlay").hidden = false;
+  $("loginForm").hidden = true;
+  $("passwordChangeForm").hidden = false;
+  $("cancelPasswordChange").hidden = state.auth.forcedPasswordChange;
+  $("passwordChangeDescription").textContent = state.auth.forcedPasswordChange
+    ? optionLabel("You must replace the temporary password before continuing.")
+    : optionLabel("Enter the current password, then choose a new one.");
+  $("currentPassword").value = "";
+  $("newPassword").value = "";
+  $("confirmPassword").value = "";
+  $("passwordChangeStatus").textContent = "";
+  requestAnimationFrame(() => $("currentPassword")?.focus());
+}
+
+function hideAuthOverlay() {
+  $("authOverlay").hidden = true;
+  setAppAuthenticationLock(false);
+}
+
+async function authResponse(response) {
+  if (response.ok) return response.json();
+  let message = `${response.status} ${response.statusText}`;
+  try {
+    const data = await response.json();
+    message = data.detail?.message || data.detail || message;
+  } catch {
+    // Keep status text for non-JSON failures.
+  }
+  throw new Error(message);
+}
+
+async function restoreAuthSession() {
+  const response = await fetch("/api/auth/session", { headers: { Accept: "application/json" } });
+  if (response.status === 401) {
+    showLogin();
+    return false;
+  }
+  const payload = await authResponse(response);
+  setAuthenticatedSession(payload);
+  if (payload.user?.must_change_password) {
+    showPasswordChange({ forced: true });
+    return false;
+  }
+  hideAuthOverlay();
+  return true;
+}
+
+async function signIn() {
+  const button = $("loginButton");
+  button.disabled = true;
+  $("loginStatus").textContent = optionLabel("Signing in");
+  try {
+    const response = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: $("loginUsername").value, password: $("loginPassword").value }),
+    });
+    const payload = await authResponse(response);
+    setAuthenticatedSession(payload);
+    $("loginPassword").value = "";
+    if (payload.user?.must_change_password) {
+      showPasswordChange({ forced: true });
+      return;
+    }
+    hideAuthOverlay();
+    await startAuthenticatedApp();
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function submitPasswordChange() {
+  const newPassword = $("newPassword").value;
+  if (newPassword !== $("confirmPassword").value) throw new Error(optionLabel("New password and confirmation do not match"));
+  const button = $("changePasswordSubmit");
+  button.disabled = true;
+  $("passwordChangeStatus").textContent = optionLabel("Saving new password");
+  try {
+    const payload = await api("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({
+        current_password: $("currentPassword").value,
+        new_password: newPassword,
+        confirm_password: $("confirmPassword").value,
+      }),
+    });
+    setAuthenticatedSession(payload);
+    hideAuthOverlay();
+    await startAuthenticatedApp();
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function signOut() {
+  await api("/api/auth/logout", { method: "POST", body: "{}" });
+  window.location.reload();
 }
 
 let loadingRequests = 0;
@@ -722,15 +964,16 @@ function openDatePickerFor(input) {
 function ensureHierarchicalNav() {
   const nav = document.querySelector(".nav");
   if (!nav) return;
+  const defaultOpen = window.matchMedia("(min-width: 761px)").matches ? " open" : "";
   nav.innerHTML = `
-    <details class="nav-menu" open>
+    <details class="nav-menu"${defaultOpen}>
       <summary>${esc(t("dashboard"))}</summary>
       <div class="nav-children">
         <button class="nav-item active" type="button">${esc(t("overview"))}</button>
         <button class="nav-item" type="button" data-modal="reportsModal">${esc(t("reports"))}</button>
       </div>
     </details>
-    <details class="nav-menu" open>
+    <details class="nav-menu"${defaultOpen}>
       <summary>${esc(t("portfolioData"))}</summary>
       <div class="nav-children">
         <button class="nav-item" type="button" data-modal="accountsModal">${esc(t("accounts"))}</button>
@@ -773,8 +1016,15 @@ function ensureHierarchicalNav() {
     <details class="nav-menu">
       <summary>${esc(t("system"))}</summary>
       <div class="nav-children">
+        ${canAdmin() ? `<button class="nav-item" type="button" data-modal="usersModal">${esc(t("users"))}</button>` : ""}
         <button class="nav-item" type="button" data-modal="settingsModal">${esc(t("settings"))}</button>
+      </div>
+    </details>
+    <details class="nav-menu">
+      <summary>${esc(t("help"))}</summary>
+      <div class="nav-children">
         <button class="nav-item" type="button" data-modal="aboutModal">${esc(t("about"))}</button>
+        <button class="nav-item" type="button" data-modal="helpModal">${esc(t("help"))}</button>
       </div>
     </details>`;
 }
@@ -1085,6 +1335,7 @@ async function syncClientStateToServer() {
 }
 
 function scheduleClientStateSync() {
+  if (!canWrite()) return;
   clearTimeout(clientStateSyncTimer);
   clientStateSyncTimer = setTimeout(() => {
     syncClientStateToServer().catch((error) => appWarn("client_state.sync_failed", { message: error.message }));
@@ -1126,6 +1377,8 @@ function applyLanguage() {
   if (loadingDetail && !loadingDetail.textContent.trim()) loadingDetail.textContent = t("readingCachedAnalytics");
   const languageSelect = $("appLanguage");
   if (languageSelect) languageSelect.value = state.language;
+  const authLanguageSelect = $("authLanguage");
+  if (authLanguageSelect) authLanguageSelect.value = state.language;
   refreshLocalizedFormOptions();
   refreshBrokerSelects();
   renderBrokersList();
@@ -1137,6 +1390,7 @@ function applyLanguage() {
   });
   ensureHierarchicalNav();
   bindNavAccordion();
+  renderCurrentUser();
   applyAutoDirection();
   window.PortfolioI18n?.applyToDocument(state.language);
   window.PortfolioI18n?.observe();
@@ -5004,6 +5258,7 @@ async function openSecurityDetail(dataset) {
     location: dataset.securityDetailLocation || h.country || h.location || "USA",
   };
   state.securityChartStartDate = clampedHistoryDate(state.securityChartStartDate);
+  resetSecurityChartZoom({ render: false });
   setDateField("securityChartStartDate", state.securityChartStartDate);
   setDateField("detailPriceDate", todayString());
   $("detailPriceInput").value = "";
@@ -5073,7 +5328,183 @@ function renderSecurityDetail() {
       <div class="sub">${esc(price.asset_class)} · ${esc(countryDisplayLabel(price.location))}${price.comments ? ` · ${esc(price.comments)}` : ""}</div>
     </div>
   `).join("") : '<div class="empty">No saved price history for this security</div>';
+  renderSecurityTechnicalSignal();
   renderSecurityChart();
+}
+
+function renderSecurityTechnicalSignal() {
+  const frame = $("securityTechnicalSignal");
+  if (!frame) return;
+  const signal = state.securityHistoryMeta?.technical_signals?.confirmed_breakout || {};
+  const missing = signal.state !== "ok";
+  const triggered = signal.state === "ok" && signal.triggered === true;
+  const title = missing ? "Signal unavailable" : triggered ? "Confirmed breakout" : "Breakout watch";
+  const summary = missing
+    ? "More price or volume history is required."
+    : triggered
+      ? "The resistance breakout has both volume and MA30 confirmation."
+      : "Confirmation is incomplete; review the conditions below.";
+  const fallbackLabels = {
+    resistance_breakout: "Price crossed above 1Y resistance",
+    relative_volume: "Volume is at least 1.5× its 20D average",
+    above_ma30: "Price is above MA30",
+    rising_ma30: "MA30 is rising",
+  };
+  const conditionDetail = (key, condition) => {
+    if (key === "resistance_breakout") {
+      return condition.resistance == null ? "Not available" : `Previous ${fmt(condition.previous_price, 4)} · resistance ${fmt(condition.resistance, 4)} · latest ${fmt(condition.current_price, 4)}`;
+    }
+    if (key === "relative_volume") {
+      return condition.value == null ? "Not available" : `${fmt(condition.value, 2)}× · required ${fmt(condition.minimum, 2)}×`;
+    }
+    if (key === "above_ma30") {
+      return condition.ma30 == null ? "Not available" : `Price ${fmt(condition.current_price, 4)} · MA30 ${fmt(condition.ma30, 4)}`;
+    }
+    return condition.slope_percent == null ? "Not available" : `Slope ${condition.slope_percent >= 0 ? "+" : ""}${fmt(condition.slope_percent, 3)}%`;
+  };
+  const conditions = Object.entries(signal.conditions || {}).map(([key, condition]) => {
+    const status = condition.met === true ? "met" : condition.met === false ? "unmet" : "unavailable";
+    const icon = condition.met === true ? "✓" : condition.met === false ? "×" : "–";
+    return `
+      <div class="technical-signal-condition ${status}">
+        <span class="technical-condition-icon" aria-hidden="true">${icon}</span>
+        <span><b>${esc(condition.label || fallbackLabels[key] || key)}</b><small>${esc(conditionDetail(key, condition))}</small></span>
+      </div>
+    `;
+  }).join("");
+  const score = Number.isFinite(Number(signal.score_total))
+    ? `${Number(signal.score_met || 0)} / ${Number(signal.score_total)} conditions`
+    : "Waiting for data";
+  frame.className = `technical-signal ${missing ? "missing" : triggered ? "confirmed" : "watch"}`;
+  frame.innerHTML = `
+    <div class="technical-signal-head">
+      <div><span class="technical-signal-kicker">Technical signal</span><h3>${esc(title)}</h3><p>${esc(summary)}</p></div>
+      <span class="technical-signal-score">${esc(score)}</span>
+    </div>
+    <div class="technical-signal-conditions">${conditions}</div>
+    <p class="technical-signal-disclaimer">Research indicator · not investment advice</p>
+  `;
+}
+
+function securityChartPoints() {
+  return (state.securityHistory || [])
+    .map((point) => {
+      const close = Number(point.adjusted_close || point.close || point.price || 0);
+      return {
+        date: point.date,
+        price: close,
+        open: Number(point.open || close),
+        high: Number(point.high || close),
+        low: Number(point.low || close),
+        close: Number(point.close || close),
+        adjustedClose: close,
+        volume: Number(point.volume || 0),
+      };
+    })
+    .filter((point) => point.date && Number.isFinite(point.price) && point.price > 0);
+}
+
+function securityChartZoomWindow(pointCount) {
+  const full = { start: 0, end: Math.max(0, pointCount - 1), isFull: true };
+  if (pointCount <= 1 || !state.securityChartZoom) return full;
+  let start = Math.max(0, Math.min(pointCount - 1, Math.floor(Number(state.securityChartZoom.start) || 0)));
+  let end = Math.max(start, Math.min(pointCount - 1, Math.floor(Number(state.securityChartZoom.end) || pointCount - 1)));
+  const minVisible = Math.min(SECURITY_CHART_MIN_VISIBLE_POINTS, pointCount);
+  if (end - start + 1 < minVisible) {
+    end = Math.min(pointCount - 1, start + minVisible - 1);
+    start = Math.max(0, end - minVisible + 1);
+  }
+  if (start === 0 && end === pointCount - 1) {
+    state.securityChartZoom = null;
+    return full;
+  }
+  state.securityChartZoom = { start, end };
+  return { start, end, isFull: false };
+}
+
+function focusSecurityChart() {
+  $("securityDetailChart")?.querySelector("svg")?.focus({ preventScroll: true });
+}
+
+function setSecurityChartZoom(start, end, pointCount = securityChartPoints().length, { focusChart = false } = {}) {
+  if (!pointCount) return;
+  const minVisible = Math.min(SECURITY_CHART_MIN_VISIBLE_POINTS, pointCount);
+  let nextStart = Math.max(0, Math.min(pointCount - 1, Math.round(start)));
+  let nextEnd = Math.max(nextStart, Math.min(pointCount - 1, Math.round(end)));
+  if (nextEnd - nextStart + 1 < minVisible) {
+    const center = (nextStart + nextEnd) / 2;
+    nextStart = Math.round(center - (minVisible - 1) / 2);
+    nextEnd = nextStart + minVisible - 1;
+  }
+  if (nextStart < 0) {
+    nextEnd -= nextStart;
+    nextStart = 0;
+  }
+  if (nextEnd >= pointCount) {
+    nextStart -= nextEnd - pointCount + 1;
+    nextEnd = pointCount - 1;
+  }
+  nextStart = Math.max(0, nextStart);
+  state.securityChartZoom = nextStart === 0 && nextEnd === pointCount - 1 ? null : { start: nextStart, end: nextEnd };
+  renderSecurityChart();
+  if (focusChart) focusSecurityChart();
+}
+
+function zoomSecurityChart(factor, anchor = 0.5, { focusChart = false } = {}) {
+  const pointCount = securityChartPoints().length;
+  if (!pointCount) return;
+  const window = securityChartZoomWindow(pointCount);
+  const currentSpan = window.end - window.start + 1;
+  const minVisible = Math.min(SECURITY_CHART_MIN_VISIBLE_POINTS, pointCount);
+  const nextSpan = Math.max(minVisible, Math.min(pointCount, Math.round(currentSpan * factor)));
+  const safeAnchor = Math.max(0, Math.min(1, anchor));
+  const anchorIndex = window.start + safeAnchor * Math.max(currentSpan - 1, 0);
+  const nextStart = Math.round(anchorIndex - safeAnchor * Math.max(nextSpan - 1, 0));
+  setSecurityChartZoom(nextStart, nextStart + nextSpan - 1, pointCount, { focusChart });
+}
+
+function panSecurityChart(direction, { focusChart = false } = {}) {
+  const pointCount = securityChartPoints().length;
+  const window = securityChartZoomWindow(pointCount);
+  if (!pointCount || window.isFull) return;
+  const span = window.end - window.start + 1;
+  const shift = Math.max(1, Math.round(span * 0.2)) * direction;
+  let start = window.start + shift;
+  let end = window.end + shift;
+  if (start < 0) {
+    end -= start;
+    start = 0;
+  }
+  if (end >= pointCount) {
+    start -= end - pointCount + 1;
+    end = pointCount - 1;
+  }
+  setSecurityChartZoom(start, end, pointCount, { focusChart });
+}
+
+function resetSecurityChartZoom({ render = true, focusChart = false } = {}) {
+  state.securityChartZoom = null;
+  if (render) renderSecurityChart();
+  if (render && focusChart) focusSecurityChart();
+}
+
+function renderSecurityChartZoomControls(allPoints, window) {
+  const count = allPoints.length;
+  const span = count ? window.end - window.start + 1 : 0;
+  const status = $("securityChartZoomStatus");
+  if (status) {
+    if (!count) status.textContent = state.language === "he" ? "אין נתונים להצגה" : "No data to display";
+    else if (window.isFull) status.textContent = state.language === "he" ? `כל הטווח · ${count} נקודות` : `Full range · ${count} points`;
+    else status.textContent = `${formatDate(allPoints[window.start].date)} – ${formatDate(allPoints[window.end].date)} · ${span} / ${count} ${state.language === "he" ? "נקודות" : "points"}`;
+  }
+  document.querySelectorAll("[data-security-chart-zoom]").forEach((button) => {
+    const action = button.dataset.securityChartZoom;
+    button.disabled = !count
+      || (action === "in" && span <= Math.min(SECURITY_CHART_MIN_VISIBLE_POINTS, count))
+      || (["out", "reset"].includes(action) && window.isFull)
+      || (action === "earlier" && (window.isFull || window.start === 0))
+      || (action === "later" && (window.isFull || window.end === count - 1));
+  });
 }
 
 function renderSecurityChart() {
@@ -5091,22 +5522,11 @@ function renderSecurityChart() {
   });
   setDateField("securityChartStartDate", clampedHistoryDate(state.securityChartStartDate));
   const frame = $("securityDetailChart");
-  const points = (state.securityHistory || [])
-    .map((point) => {
-      const close = Number(point.adjusted_close || point.close || point.price || 0);
-      return {
-        date: point.date,
-        price: close,
-        open: Number(point.open || close),
-        high: Number(point.high || close),
-        low: Number(point.low || close),
-        close: Number(point.close || close),
-        adjustedClose: close,
-        volume: Number(point.volume || 0),
-      };
-    })
-    .filter((point) => point.date && Number.isFinite(point.price) && point.price > 0);
-  if (!points.length) {
+  const allPoints = securityChartPoints();
+  const zoomWindow = securityChartZoomWindow(allPoints.length);
+  renderSecurityChartZoomControls(allPoints, zoomWindow);
+  const points = allPoints.slice(zoomWindow.start, zoomWindow.end + 1);
+  if (!allPoints.length) {
     frame.innerHTML = '<div class="empty">No price history for this period</div>';
     return;
   }
@@ -5124,7 +5544,9 @@ function renderSecurityChart() {
   const plotWidth = width - padLeft - padRight;
   const plotHeight = height - padTop - padBottom - volumeGap - volumeHeight;
   const selectedMaWindows = state.securityChartMaWindows || [];
-  const maSeries = Object.fromEntries(selectedMaWindows.map((window) => [window, movingAverageSeries(points, Number(window))]));
+  const maSeries = Object.fromEntries(selectedMaWindows.map((window) => [window, movingAverageSeries(allPoints, Number(window))
+    .filter((point) => point.index >= zoomWindow.start && point.index <= zoomWindow.end)
+    .map((point) => ({ ...point, index: point.index - zoomWindow.start }))]));
   const selectedLevelPeriods = state.securityChartLevelPeriods || [];
   const chartLevels = selectedLevelPeriods.flatMap((period) => supportResistanceChartLevels(meta.support_resistance || {}, period, points));
   const levelPrices = chartLevels.map((level) => level.price).filter(Number.isFinite);
@@ -5213,7 +5635,7 @@ function renderSecurityChart() {
   const chartNotice = state.securityChartMode === "candles" && !meta.has_candles ? '<div class="chart-notice">Candles need OHLC data. Showing line chart for this source.</div>' : "";
   frame.innerHTML = `
     ${chartNotice}
-    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Security price history">
+    <svg viewBox="0 0 ${width} ${height}" role="img" tabindex="0" aria-label="Interactive security price history. Drag horizontally to zoom.">
       ${[max, mid, min].map((value) => `<line x1="${padLeft}" y1="${y(value).toFixed(1)}" x2="${width - padRight}" y2="${y(value).toFixed(1)}" stroke="#1e2835" stroke-dasharray="5 7" />`).join("")}
       <line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}" stroke="#344052" />
       <line x1="${padLeft}" y1="${(padTop + plotHeight).toFixed(1)}" x2="${width - padRight}" y2="${(padTop + plotHeight).toFixed(1)}" stroke="#344052" />
@@ -5227,6 +5649,7 @@ function renderSecurityChart() {
         <line data-security-hover-line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}" stroke="#8fb7e8" stroke-width="1" stroke-dasharray="4 5" opacity="0.75" />
         <circle data-security-hover-point cx="${padLeft}" cy="${height - padBottom}" r="4.5" fill="#f7f9ff" stroke="#21a7ff" stroke-width="2" />
       </g>
+      <rect data-security-zoom-selection x="${padLeft}" y="${padTop}" width="0" height="${height - padTop - padBottom}" rx="3" fill="rgba(33,167,255,0.18)" stroke="#58a6ff" stroke-width="1.5" stroke-dasharray="5 4" pointer-events="none" hidden />
       <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="4" fill="#ffb21a" />
       <rect x="${calloutX.toFixed(1)}" y="${calloutY.toFixed(1)}" width="${calloutWidth}" height="${calloutHeight}" rx="7" fill="#0b1018" stroke="#2d3543" opacity="0.96" />
       <text x="${(calloutX + calloutWidth - 9).toFixed(1)}" y="${(calloutY + 15).toFixed(1)}" fill="#dce7ff" font-size="13" font-weight="800" text-anchor="end">${esc(fmt(last.price, 4))}</text>
@@ -5239,10 +5662,11 @@ function renderSecurityChart() {
     <div class="chart-hover-tip" hidden></div>
     <div class="security-chart-footer">
       <div class="chart-legend">${legend}</div>
-      <div class="sub ${cls}">${points.length} price points · ${esc(volumeText)}</div>
+      <div class="sub ${cls}">${points.length}${zoomWindow.isFull ? "" : ` of ${allPoints.length}`} price points · ${esc(volumeText)}</div>
     </div>
   `;
   attachSecurityChartHover(frame, points, { width, height, padLeft, padRight, padTop, padBottom, plotWidth, plotHeight, min, max });
+  attachSecurityChartZoom(frame, allPoints, zoomWindow, { width, height, padLeft, padRight, padTop, padBottom, plotWidth });
 }
 
 function levelPeriodLabel(period) {
@@ -5320,6 +5744,128 @@ function attachSecurityChartHover(frame, points, dims) {
     const tipTop = Math.max(8, Math.min(rect.height - tip.offsetHeight - 8, (py / dims.height) * rect.height - tip.offsetHeight - 12));
     tip.style.left = `${tipLeft}px`;
     tip.style.top = `${tipTop}px`;
+  });
+}
+
+function attachSecurityChartZoom(frame, allPoints, zoomWindow, dims) {
+  const svg = frame.querySelector("svg");
+  const hitbox = frame.querySelector("[data-security-chart-hitbox]");
+  const selection = frame.querySelector("[data-security-zoom-selection]");
+  if (!svg || !hitbox || !selection || allPoints.length < 2) return;
+  const pointers = new Map();
+  let drag = null;
+  let pinch = null;
+  const svgPoint = (event) => {
+    const rect = svg.getBoundingClientRect();
+    return {
+      x: ((event.clientX - rect.left) / Math.max(rect.width, 1)) * dims.width,
+      y: ((event.clientY - rect.top) / Math.max(rect.height, 1)) * dims.height,
+    };
+  };
+  const clampedX = (value) => Math.max(dims.padLeft, Math.min(dims.padLeft + dims.plotWidth, value));
+  const ratioForX = (value) => Math.max(0, Math.min(1, (clampedX(value) - dims.padLeft) / dims.plotWidth));
+  const distance = (first, second) => Math.hypot(second.x - first.x, second.y - first.y);
+  const hideSelection = () => {
+    selection.setAttribute("hidden", "");
+    selection.setAttribute("width", "0");
+  };
+  const updateSelection = (fromX, toX) => {
+    const start = clampedX(Math.min(fromX, toX));
+    const end = clampedX(Math.max(fromX, toX));
+    selection.setAttribute("x", start.toFixed(1));
+    selection.setAttribute("width", Math.max(0, end - start).toFixed(1));
+    selection.removeAttribute("hidden");
+  };
+  hitbox.addEventListener("pointerdown", (event) => {
+    const point = svgPoint(event);
+    pointers.set(event.pointerId, point);
+    hitbox.setPointerCapture?.(event.pointerId);
+    svg.focus({ preventScroll: true });
+    if (pointers.size === 1) {
+      drag = { pointerId: event.pointerId, start: point, current: point };
+      pinch = null;
+    } else if (pointers.size === 2) {
+      const [first, second] = [...pointers.values()];
+      pinch = {
+        startDistance: Math.max(distance(first, second), 1),
+        currentDistance: Math.max(distance(first, second), 1),
+        anchor: ratioForX((first.x + second.x) / 2),
+      };
+      drag = null;
+      hideSelection();
+      event.preventDefault();
+    }
+  });
+  hitbox.addEventListener("pointermove", (event) => {
+    if (!pointers.has(event.pointerId)) return;
+    const point = svgPoint(event);
+    pointers.set(event.pointerId, point);
+    if (pinch && pointers.size >= 2) {
+      const [first, second] = [...pointers.values()];
+      pinch.currentDistance = Math.max(distance(first, second), 1);
+      event.preventDefault();
+      return;
+    }
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    drag.current = point;
+    const dx = point.x - drag.start.x;
+    const dy = point.y - drag.start.y;
+    if (Math.abs(dx) >= 5 && Math.abs(dx) >= Math.abs(dy)) {
+      updateSelection(drag.start.x, point.x);
+      event.preventDefault();
+    }
+  });
+  const finishPointer = (event, cancelled = false) => {
+    if (!pointers.has(event.pointerId)) return;
+    const point = svgPoint(event);
+    pointers.set(event.pointerId, point);
+    if (!cancelled && pinch && pointers.size >= 2) {
+      const factor = Math.max(0.25, Math.min(4, pinch.startDistance / Math.max(pinch.currentDistance, 1)));
+      const anchor = pinch.anchor;
+      pointers.clear();
+      pinch = null;
+      drag = null;
+      hideSelection();
+      if (Math.abs(factor - 1) >= 0.04) zoomSecurityChart(factor, anchor, { focusChart: true });
+      return;
+    }
+    if (!cancelled && drag?.pointerId === event.pointerId) {
+      const dx = point.x - drag.start.x;
+      const dy = point.y - drag.start.y;
+      if (Math.abs(dx) >= 18 && Math.abs(dx) >= Math.abs(dy)) {
+        const visibleSpan = zoomWindow.end - zoomWindow.start;
+        const startRatio = ratioForX(Math.min(drag.start.x, point.x));
+        const endRatio = ratioForX(Math.max(drag.start.x, point.x));
+        const start = zoomWindow.start + Math.round(startRatio * visibleSpan);
+        const end = zoomWindow.start + Math.round(endRatio * visibleSpan);
+        pointers.clear();
+        drag = null;
+        hideSelection();
+        setSecurityChartZoom(start, end, allPoints.length, { focusChart: true });
+        return;
+      }
+    }
+    pointers.delete(event.pointerId);
+    drag = null;
+    pinch = null;
+    hideSelection();
+  };
+  hitbox.addEventListener("pointerup", (event) => finishPointer(event));
+  hitbox.addEventListener("pointercancel", (event) => finishPointer(event, true));
+  svg.addEventListener("wheel", (event) => {
+    if (!event.ctrlKey && !event.metaKey) return;
+    event.preventDefault();
+    const anchor = ratioForX(svgPoint(event).x);
+    zoomSecurityChart(event.deltaY > 0 ? 1.35 : 0.72, anchor, { focusChart: true });
+  }, { passive: false });
+  svg.addEventListener("keydown", (event) => {
+    if (["+", "="].includes(event.key)) zoomSecurityChart(0.72, 0.5, { focusChart: true });
+    else if (["-", "_"].includes(event.key)) zoomSecurityChart(1.35, 0.5, { focusChart: true });
+    else if (event.key === "ArrowLeft") panSecurityChart(-1, { focusChart: true });
+    else if (event.key === "ArrowRight") panSecurityChart(1, { focusChart: true });
+    else if (["Escape", "0", "Home"].includes(event.key)) resetSecurityChartZoom({ focusChart: true });
+    else return;
+    event.preventDefault();
   });
 }
 
@@ -8855,7 +9401,7 @@ async function inspectFullRestore(file) {
   $("settingsStatus").textContent = "Validating full backup";
   const response = await fetch("/api/local/backups/inspect", {
     method: "POST",
-    headers: { "Content-Type": "application/zip", "X-Backup-Filename": encodeURIComponent(file.name) },
+    headers: authRequestHeaders({ "Content-Type": "application/zip", "X-Backup-Filename": encodeURIComponent(file.name) }),
     body: file,
   });
   if (!response.ok) {
@@ -8880,11 +9426,11 @@ async function restoreFullBackup() {
   $("settingsStatus").textContent = "Creating a safety backup and restoring the full application";
   const response = await fetch("/api/local/backups/restore", {
     method: "POST",
-    headers: {
+    headers: authRequestHeaders({
       "Content-Type": "application/zip",
       "X-Backup-Filename": encodeURIComponent(file.name),
       "X-Restore-Confirm": "replace-current-application-state",
-    },
+    }),
     body: file,
   });
   if (!response.ok) {
@@ -8917,7 +9463,7 @@ async function downloadResponse(response, defaultFilename) {
 
 async function exportLocalData() {
   $("settingsStatus").textContent = "Exporting data";
-  await syncClientStateToServer();
+  if (canWrite()) await syncClientStateToServer();
   const response = await fetch("/api/local/export");
   await downloadResponse(response, "portfolio-data.json");
   $("settingsStatus").textContent = "Data exported";
@@ -9116,6 +9662,82 @@ async function loadAbout() {
   ].map(([label, value]) => `<div class="setting-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
 }
 
+function renderUsers() {
+  const container = $("usersList");
+  if (!container) return;
+  if ($("userCount")) $("userCount").textContent = String(state.users.length);
+  if (!state.users.length) {
+    container.innerHTML = `<div class="empty">${esc(optionLabel("No users found"))}</div>`;
+    return;
+  }
+  container.innerHTML = state.users.map((user) => {
+    const isCurrent = user.id === currentUser()?.id;
+    const status = user.enabled ? "Enabled" : "Disabled";
+    const passwordState = user.must_change_password ? optionLabel("Password change required") : optionLabel("Password active");
+    return `
+      <article class="user-management-item${user.enabled ? "" : " is-disabled"}">
+        <div class="user-summary">
+          <strong>${esc(`${user.first_name} ${user.last_name}`.trim() || user.username)}</strong>
+          <span><bdi dir="ltr">@${esc(user.username)}</bdi> · ${esc(optionLabel(user.role))} · ${esc(optionLabel(status))}</span>
+          <span>${esc(passwordState)}${isCurrent ? ` · ${esc(optionLabel("Current user"))}` : ""}</span>
+        </div>
+        <div class="user-actions">
+          <button class="secondary" type="button" data-user-enabled="${esc(user.id)}" data-enabled="${String(!user.enabled)}"${isCurrent ? " disabled" : ""}>${esc(optionLabel(user.enabled ? "Disable" : "Enable"))}</button>
+          <button class="secondary danger-outline" type="button" data-delete-user="${esc(user.id)}"${isCurrent ? " disabled" : ""}>${esc(optionLabel("Delete"))}</button>
+        </div>
+      </article>`;
+  }).join("");
+}
+
+async function loadUsers() {
+  const data = await api("/api/auth/users");
+  state.users = data.items || [];
+  renderUsers();
+  applyRolePermissions($("usersList"));
+}
+
+async function createUser() {
+  const button = $("saveUser");
+  button.disabled = true;
+  $("userFormStatus").textContent = optionLabel("Adding user");
+  try {
+    await api("/api/auth/users", {
+      method: "POST",
+      body: JSON.stringify({
+        first_name: $("userFirstName").value,
+        last_name: $("userLastName").value,
+        username: $("userUsername").value,
+        password: $("userPassword").value,
+        role: $("userRole").value,
+      }),
+    });
+    $("userCreateForm").reset();
+    $("userPassword").value = "";
+    $("userFormStatus").textContent = optionLabel("User added. A password change is required at first sign-in.");
+    await loadUsers();
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function setUserEnabled(userId, enabled) {
+  $("usersStatus").textContent = optionLabel(enabled ? "Enabling user" : "Disabling user");
+  await api(`/api/auth/users/${encodeURIComponent(userId)}/status`, {
+    method: "PUT",
+    body: JSON.stringify({ enabled }),
+  });
+  $("usersStatus").textContent = optionLabel(enabled ? "User enabled" : "User disabled");
+  await loadUsers();
+}
+
+async function removeUser(userId) {
+  if (!confirm(optionLabel("Delete this user? This cannot be undone."))) return;
+  $("usersStatus").textContent = optionLabel("Deleting user");
+  await api(`/api/auth/users/${encodeURIComponent(userId)}`, { method: "DELETE" });
+  $("usersStatus").textContent = optionLabel("User deleted");
+  await loadUsers();
+}
+
 async function loadBrandVersion() {
   const badge = $("brandVersion");
   if (!badge) return;
@@ -9198,6 +9820,11 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
     Promise.all([loadLocalAccounts(), loadFamilyMembers(), loadFunds()]);
   }
   if (id === "bannerModal") renderBannerSettings();
+  if (id === "usersModal") {
+    $("userFormStatus").textContent = "";
+    $("usersStatus").textContent = "";
+    loadUsers().catch((error) => { $("usersStatus").textContent = `Error: ${error.message}`; });
+  }
   if (id === "settingsModal") {
     setSettingsSection("display", { focus: true });
     clearFullRestorePreview();
@@ -9205,6 +9832,7 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
   }
   if (id === "backupScheduleModal") populateBackupScheduleForm();
   if (id === "aboutModal") loadAbout().catch((error) => { $("aboutContent").innerHTML = `<div class="empty">Error: ${esc(error.message)}</div>`; });
+  if (id === "helpModal") requestAnimationFrame(() => modal.querySelector("[data-modal-initial-focus]")?.focus());
   focusModalDestination(modal, destination);
 }
 
@@ -9301,6 +9929,18 @@ document.addEventListener("click", (event) => {
       targetId: modalTrigger.dataset.modalTarget || "",
       focusId: modalTrigger.dataset.modalFocus || "",
     });
+  }
+
+  const userEnabledButton = event.target.closest("[data-user-enabled]");
+  if (userEnabledButton) {
+    setUserEnabled(userEnabledButton.dataset.userEnabled, userEnabledButton.dataset.enabled === "true")
+      .catch((error) => { $("usersStatus").textContent = `Error: ${error.message}`; });
+  }
+
+  const deleteUserButton = event.target.closest("[data-delete-user]");
+  if (deleteUserButton) {
+    removeUser(deleteUserButton.dataset.deleteUser)
+      .catch((error) => { $("usersStatus").textContent = `Error: ${error.message}`; });
   }
 
   const settingsSection = event.target.closest("[data-settings-section]")?.dataset.settingsSection;
@@ -9443,6 +10083,7 @@ document.addEventListener("click", (event) => {
   if (securityChartPeriod) {
     state.securityChartPeriod = securityChartPeriod;
     state.securityChartStartDate = startDateForPeriod(securityChartPeriod);
+    resetSecurityChartZoom({ render: false });
     if ($("securityChartStartDate")) $("securityChartStartDate").value = state.securityChartStartDate;
     loadSecurityDetail().catch((error) => { $("securityDetailStatus").textContent = `Error: ${error.message}`; });
   }
@@ -9452,6 +10093,13 @@ document.addEventListener("click", (event) => {
     state.securityChartMode = securityChartMode === "candles" ? "candles" : "line";
     renderSecurityChart();
   }
+
+  const securityChartZoom = event.target.closest("[data-security-chart-zoom]")?.dataset.securityChartZoom;
+  if (securityChartZoom === "in") zoomSecurityChart(0.72, 0.5);
+  if (securityChartZoom === "out") zoomSecurityChart(1.35, 0.5);
+  if (securityChartZoom === "earlier") panSecurityChart(-1);
+  if (securityChartZoom === "later") panSecurityChart(1);
+  if (securityChartZoom === "reset") resetSecurityChartZoom();
 
   if (event.target.id === "openFocusedPrices" && state.securityDetail) {
     openPriceHistoryForSecurity({
@@ -9830,6 +10478,7 @@ document.addEventListener("change", (event) => {
 
   if (event.target.id === "securityChartStartDate") {
     state.securityChartStartDate = clampedHistoryDate(event.target.value);
+    resetSecurityChartZoom({ render: false });
     event.target.value = formatDate(state.securityChartStartDate);
     loadSecurityDetail().catch((error) => { $("securityDetailStatus").textContent = `Error: ${error.message}`; });
   }
@@ -9962,6 +10611,27 @@ document.addEventListener("drop", (event) => {
   moveDashboardWidgetToPosition(sourceId, section.dataset.dashboardSection, dashboardDropIndex(grid, event));
 });
 
+$("loginForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  signIn().catch((error) => { $("loginStatus").textContent = error.message; });
+});
+$("passwordChangeForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitPasswordChange().catch((error) => { $("passwordChangeStatus").textContent = error.message; });
+});
+$("cancelPasswordChange").addEventListener("click", hideAuthOverlay);
+$("changePasswordButton").addEventListener("click", () => showPasswordChange({ forced: false }));
+$("logoutButton").addEventListener("click", () => signOut().catch((error) => { $("status").textContent = `Error: ${error.message}`; }));
+$("authLanguage").addEventListener("change", () => {
+  state.language = $("authLanguage").value === "en" ? "en" : "he";
+  localStorage.setItem(LANGUAGE_STORAGE_KEY, state.language);
+  applyLanguage();
+});
+$("userCreateForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  createUser().catch((error) => { $("userFormStatus").textContent = `Error: ${error.message}`; });
+});
+
 $("refresh").addEventListener("click", () => {
   loadPortfolio({ refresh: true }).catch((error) => { $("status").textContent = `Error: ${error.message}`; });
   loadBanner().catch(() => {});
@@ -10085,10 +10755,12 @@ $("priceLocation").addEventListener("change", () => syncCurrencyFromLocation("pr
   $(id).addEventListener("blur", () => { $(id).value = cleanSecuritySymbol($(id).value); });
 });
 
-async function initializeApp() {
+async function startAuthenticatedApp() {
+  if (state.authenticatedAppStarted || !currentUser() || currentUser().must_change_password) return;
+  state.authenticatedAppStarted = true;
   await loadClientStateFromServer().catch((error) => appWarn("client_state.load_failed", { message: error.message }));
   loadClientStateFromStorage();
-  revealInitializedApp();
+  renderCurrentUser();
   loadBrandVersion().catch(() => {});
   loadPortfolio().catch(reportBackgroundError);
   loadBanner().catch(() => {});
@@ -10101,6 +10773,17 @@ async function initializeApp() {
   loadLocalPrices().catch(reportBackgroundError);
   loadEvents().catch(reportBackgroundError);
   loadFunds().catch(reportBackgroundError);
+}
+
+async function initializeApp() {
+  loadClientStateFromStorage();
+  revealInitializedApp();
+  try {
+    if (await restoreAuthSession()) await startAuthenticatedApp();
+  } catch (error) {
+    appWarn("auth.session_failed", { message: error.message });
+    showLogin(optionLabel("Unable to verify the session. Sign in again."));
+  }
 }
 
 initializeApp().catch(reportBackgroundError).finally(revealInitializedApp);

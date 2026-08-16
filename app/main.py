@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import io
 import json
 import os
@@ -19,16 +20,17 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 import yaml
 
 from . import __version__
 from .alerts import ALERT_JOB_ID, AlertStore, alert_rule_options, start_scheduler
+from .auth import AUTH_ROLES, PASSWORD_MIN_LENGTH, SESSION_COOKIE_NAME, AuthStore
 from .config import data_dir, load_config
 from .external_import import ExternalImportClient
 from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, SUPPORTED_MANAGEMENT_CURRENCIES, LocalPortfolioStore, validate_portfolio_ownership
-from .metrics import analyze_holding, moving_averages, screen, support_resistance, to_dict, volume_metrics
+from .metrics import analyze_holding, moving_averages, screen, support_resistance, technical_signals, to_dict, volume_metrics
 from .models import Ohlcv
 from .providers import MarketDataHub
 
@@ -46,7 +48,7 @@ app.add_middleware(
 async def add_web_cache_headers(request, call_next):
     response = await call_next(request)
     path = request.url.path
-    if path == "/" or path.endswith((".html", ".js", ".css")):
+    if path.startswith("/api/") or path == "/" or path.endswith((".html", ".js", ".css")):
         response.headers["Cache-Control"] = "no-store, max-age=0"
         response.headers["Pragma"] = "no-cache"
     return response
@@ -54,6 +56,7 @@ async def add_web_cache_headers(request, call_next):
 config = load_config()
 alert_store = AlertStore()
 local_store = LocalPortfolioStore()
+auth_store = AuthStore(local_store.path)
 scheduler = None
 BACKUP_JOB_ID = "local-data-backup"
 DIVIDEND_JOB_ID = "local-dividend-scan"
@@ -74,6 +77,63 @@ BACKUP_SETTINGS_PREF_KEY = "backup_settings"
 _portfolio_cache_lock = RLock()
 _portfolio_cache: dict[str, Any] | None = None
 _full_restore_lock = RLock()
+_login_attempt_lock = RLock()
+_login_failures: dict[str, list[float]] = {}
+AUTH_LOGIN_MAX_FAILURES = 5
+AUTH_LOGIN_WINDOW_SECONDS = 300
+VIEWER_READ_ONLY_POST_PATHS = {
+    "/api/screener",
+    "/api/banner/resolve",
+    "/api/local/backups/inspect",
+    "/api/local/pension-simulate",
+    "/api/market/screener",
+}
+ADMIN_ONLY_API_PREFIXES = ("/api/auth/users", "/api/local/backups")
+ADMIN_ONLY_API_PATHS = {"/api/settings/backup"}
+
+
+def _auth_error(status_code: int, code: str, message: str, headers: dict[str, str] | None = None) -> JSONResponse:
+    response = JSONResponse(status_code=status_code, content={"detail": {"code": code, "message": message}}, headers=headers)
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    return response
+
+
+def _viewer_request_is_read_only(request: Request) -> bool:
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return True
+    return request.method == "POST" and request.url.path in VIEWER_READ_ONLY_POST_PATHS
+
+
+@app.middleware("http")
+async def enforce_authentication_and_roles(request: Request, call_next):
+    path = request.url.path
+    if not path.startswith("/api/") or path in {"/api/auth/login", "/api/health"} or request.method == "OPTIONS":
+        return await call_next(request)
+
+    session = auth_store.session(request.cookies.get(SESSION_COOKIE_NAME))
+    if not session:
+        return _auth_error(401, "authentication_required", "Sign in to continue")
+    request.state.auth_session = session
+    request.state.auth_user = session["user"]
+    user = session["user"]
+
+    password_change_paths = {"/api/auth/session", "/api/auth/change-password", "/api/auth/logout"}
+    if user["must_change_password"] and path not in password_change_paths:
+        return _auth_error(403, "password_change_required", "Change the temporary password to continue")
+
+    admin_only = path in ADMIN_ONLY_API_PATHS or any(path.startswith(prefix) for prefix in ADMIN_ONLY_API_PREFIXES)
+    if admin_only and user["role"] != "Admin":
+        return _auth_error(403, "admin_required", "Admin access is required")
+    viewer_self_service_paths = {"/api/auth/change-password", "/api/auth/logout"}
+    if user["role"] == "Viewer" and path not in viewer_self_service_paths and not _viewer_request_is_read_only(request):
+        return _auth_error(403, "read_only", "Viewer access is read-only")
+
+    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+        csrf_token = request.headers.get("X-CSRF-Token", "")
+        if not csrf_token or not hmac.compare_digest(csrf_token, session["csrf_token"]):
+            return _auth_error(403, "csrf_failed", "The request security token is missing or expired")
+    return await call_next(request)
 
 
 def _parse_query_date(value: str) -> date | None:
@@ -135,6 +195,11 @@ def _security_history_response(
     status: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     level_source = level_prices if level_prices is not None else prices
+    ma_metrics = moving_averages(prices)
+    level_metrics = support_resistance(level_source)
+    volume = volume_metrics(prices)
+    signal_ma_metrics = moving_averages(level_source)
+    signal_volume = volume_metrics(level_source)
     return {
         "symbol": symbol,
         "stock_market": stock_market,
@@ -142,9 +207,10 @@ def _security_history_response(
         "source": source,
         "status": status or {},
         "points": [_security_history_point(row) for row in prices],
-        "moving_averages": moving_averages(prices),
-        "support_resistance": support_resistance(level_source),
-        "volume": volume_metrics(prices),
+        "moving_averages": ma_metrics,
+        "support_resistance": level_metrics,
+        "volume": volume,
+        "technical_signals": technical_signals(signal_ma_metrics, level_metrics, signal_volume),
         "has_candles": any(
             row.open != row.close or row.high != row.low or row.high != row.close or row.low != row.close
             for row in prices
@@ -1530,6 +1596,8 @@ def restore_full_backup(payload: bytes) -> dict[str, Any]:
         with _portfolio_cache_lock:
             _portfolio_cache = None
         local_store._init_db()
+        auth_store.initialize()
+        auth_store.clear_sessions()
         restore_backup_settings_from_preferences()
         configure_dividend_job()
         return {
@@ -1946,6 +2014,7 @@ def clear_portfolio_cache() -> None:
 @app.on_event("startup")
 def startup():
     global scheduler
+    auth_store.initialize()
     local_store.delete_history_before(HISTORY_START_DATE)
     local_store.capture_daily_snapshots()
     if scheduler is None:
@@ -1960,16 +2029,157 @@ def shutdown():
         scheduler.shutdown(wait=False)
 
 
+def _login_attempt_key(request: Request, username: Any) -> str:
+    client_host = request.client.host if request.client else "unknown"
+    return f"{client_host}|{str(username or '').strip().casefold()[:64]}"
+
+
+def _login_retry_after(key: str) -> int:
+    now = time.monotonic()
+    with _login_attempt_lock:
+        recent = [attempt for attempt in _login_failures.get(key, []) if now - attempt < AUTH_LOGIN_WINDOW_SECONDS]
+        if recent:
+            _login_failures[key] = recent
+        else:
+            _login_failures.pop(key, None)
+        if len(recent) < AUTH_LOGIN_MAX_FAILURES:
+            return 0
+        return max(1, int(AUTH_LOGIN_WINDOW_SECONDS - (now - recent[0])))
+
+
+def _record_login_failure(key: str) -> None:
+    now = time.monotonic()
+    with _login_attempt_lock:
+        recent = [attempt for attempt in _login_failures.get(key, []) if now - attempt < AUTH_LOGIN_WINDOW_SECONDS]
+        _login_failures[key] = [*recent, now]
+
+
+def _clear_login_failures(key: str) -> None:
+    with _login_attempt_lock:
+        _login_failures.pop(key, None)
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        secure=True,
+        httponly=True,
+        samesite="strict",
+        path="/",
+    )
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+
+
+def _clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        secure=True,
+        httponly=True,
+        samesite="strict",
+        path="/",
+    )
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+
+
+@app.post("/api/auth/login")
+def login(request: Request, response: Response, payload: dict[str, Any]):
+    payload = payload or {}
+    key = _login_attempt_key(request, payload.get("username"))
+    retry_after = _login_retry_after(key)
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail={"code": "login_rate_limited", "message": "Too many sign-in attempts. Try again later."},
+            headers={"Retry-After": str(retry_after)},
+        )
+    try:
+        user, token, csrf_token = auth_store.authenticate(payload.get("username"), payload.get("password"))
+    except ValueError as exc:
+        _record_login_failure(key)
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "invalid_credentials", "message": "Invalid username or password"},
+        ) from exc
+    _clear_login_failures(key)
+    _set_session_cookie(response, token)
+    return {"user": user, "csrf_token": csrf_token}
+
+
+@app.get("/api/auth/session")
+def auth_session(request: Request):
+    session = request.state.auth_session
+    return {"user": session["user"], "csrf_token": session["csrf_token"]}
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response):
+    auth_store.logout(request.cookies.get(SESSION_COOKIE_NAME))
+    _clear_session_cookie(response)
+    return {"logged_out": True}
+
+
+@app.post("/api/auth/change-password")
+def change_password(request: Request, response: Response, payload: dict[str, Any]):
+    payload = payload or {}
+    new_password = payload.get("new_password")
+    if new_password != payload.get("confirm_password"):
+        raise HTTPException(status_code=400, detail="New password and confirmation do not match")
+    try:
+        user, token, csrf_token = auth_store.change_password(
+            request.state.auth_user["id"],
+            payload.get("current_password"),
+            new_password,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _set_session_cookie(response, token)
+    return {"user": user, "csrf_token": csrf_token}
+
+
+@app.get("/api/auth/users")
+def list_users():
+    return {"items": auth_store.list_users(), "roles": list(AUTH_ROLES), "password_min_length": PASSWORD_MIN_LENGTH}
+
+
+@app.post("/api/auth/users")
+def create_user(payload: dict[str, Any]):
+    try:
+        return auth_store.create_user(payload or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/auth/users/{user_id}/status")
+def set_user_status(user_id: str, request: Request, payload: dict[str, Any]):
+    if not isinstance((payload or {}).get("enabled"), bool):
+        raise HTTPException(status_code=400, detail="Enabled status must be true or false")
+    try:
+        return auth_store.set_user_enabled(user_id, bool(payload["enabled"]), request.state.auth_user["id"])
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.delete("/api/auth/users/{user_id}")
+def delete_user(user_id: str, request: Request):
+    try:
+        auth_store.delete_user(user_id, request.state.auth_user["id"])
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"deleted": True}
+
+
 @app.get("/api/health")
 def health():
     return {
         "status": "ok",
         "version": __version__,
-        "config_path": str(config.path),
-        "https_port": config.dashboard.get("https_port", 6443),
-        "display_currencies": config.dashboard.get("display_currencies", []),
-        "cache": hub().cache_status(),
-        "local_db": local_store.status(),
     }
 
 
@@ -1985,6 +2195,7 @@ def about():
             "Manual historical prices",
             "Daily history and backups",
             "Market-data cache",
+            "Multi-user role-based access",
         ],
     }
 
@@ -2341,7 +2552,7 @@ def security_history(symbol: str, stock_market: str = "", period: str = "1y", da
     days = days_by_period.get(period, days_by_period["1y"])
     requested_level_periods = [item.strip().lower() for item in level_periods.split(",") if item.strip()]
     level_days = [days_by_period[item] for item in requested_level_periods if item in days_by_period]
-    analysis_days = max([days, *level_days])
+    analysis_days = max([days_by_period["1y"], days, *level_days])
     to_date = date.today()
     period_start = to_date - timedelta(days=days)
     from_date = _clamped_history_start(date_from, HISTORY_START_DATE if not date_from else period_start)
@@ -2960,6 +3171,7 @@ def _portfolio_alert_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
             provider_errors.append({"symbol": symbol, "error": type(exc).__name__})
         one_year = analysis.price_ranges.get("1y") or {}
         ma30 = analysis.moving_averages.get("30") or {}
+        breakout = analysis.technical_signals.get("confirmed_breakout") or {}
         market_cap = _number_or_none(row.get("market_cap"))
         annual_profit = _number_or_none(row.get("annual_net_income"))
         free_cash_flow = _number_or_none(row.get("free_cash_flow"))
@@ -2978,6 +3190,9 @@ def _portfolio_alert_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "free_cash_flow_millions": free_cash_flow / 1_000_000 if free_cash_flow is not None else None,
                 "dividend_growth_percent": analysis.dividend_trend.percent_change,
                 "price_vs_ma30_percent": _number_or_none(ma30.get("price_vs_ma_percent")),
+                "ma30_slope_percent": _number_or_none(ma30.get("slope_percent")),
+                "relative_volume_20d": _number_or_none(analysis.volume.get("relative_20d")),
+                "confirmed_breakout": 1.0 if breakout.get("state") == "ok" and breakout.get("triggered") else (0.0 if breakout.get("state") == "ok" else None),
                 "price_from_high_1y_percent": _number_or_none(one_year.get("percent_from_high")),
                 "missing": sorted(set(group["missing"]) | set(row.get("missing") or [])),
             }

@@ -230,6 +230,68 @@ def test_sidebar_starts_with_navigation_groups_without_a_redundant_main_menu_lab
     assert ".nav-title" not in styles
 
 
+def test_help_menu_groups_about_and_help_with_accessible_mobile_layout():
+    html = (ROOT / "web/index.html").read_text()
+    script = (ROOT / "web/app.js").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+    i18n = (ROOT / "web/i18n.js").read_text()
+
+    sidebar = html.split('<aside class="sidebar"', 1)[1].split("</aside>", 1)[0]
+    system_menu = sidebar.split("<summary>System</summary>", 1)[1].split("</details>", 1)[0]
+    help_menu = sidebar.split("<summary>Help</summary>", 1)[1].split("</details>", 1)[0]
+    assert 'data-modal="settingsModal">Settings</button>' in system_menu
+    assert 'data-modal="aboutModal"' not in system_menu
+    assert 'data-modal="aboutModal">About</button>' in help_menu
+    assert 'data-modal="helpModal">Help</button>' in help_menu
+    assert help_menu.index('data-modal="aboutModal"') < help_menu.index('data-modal="helpModal"')
+
+    help_dialog = html.split('id="helpModal"', 1)[1].split('id="securityDetailModal"', 1)[0]
+    assert 'role="dialog" aria-modal="true" aria-labelledby="helpTitle" aria-describedby="helpIntro"' in help_dialog
+    assert 'data-modal-initial-focus aria-label="Close"' in help_dialog
+    assert help_dialog.count('<section class="help-topic') == 5
+    assert 'id="helpMobile">Using a phone or tablet</h3>' in help_dialog
+
+    assert 'help: "Help"' in script
+    assert 'help: "עזרה"' in script
+    assert 'const defaultOpen = window.matchMedia("(min-width: 761px)").matches ? " open" : "";' in script
+    assert 'data-modal="helpModal">${esc(t("help"))}</button>' in script
+    assert 'if (id === "helpModal") requestAnimationFrame' in script
+
+    assert '.help-topic-grid {' in styles
+    responsive = styles.split('@media (max-width: 760px) {', 1)[1]
+    assert '.help-card {' in responsive
+    assert 'max-height: calc(100dvh - 24px);' in responsive
+    assert '.help-topic-grid {' in responsive
+    assert 'grid-template-columns: 1fr;' in responsive
+    assert '.nav-menu summary {' in responsive
+    assert 'min-height: 44px;' in responsive
+    assert '"Help": "עזרה"' in i18n
+    assert '"Using a phone or tablet": "שימוש בטלפון או בטאבלט"' in i18n
+
+
+def test_security_chart_exposes_explainable_signal_and_accessible_zoom_controls():
+    html = (ROOT / "web/index.html").read_text()
+    script = (ROOT / "web/app.js").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+
+    assert 'id="securityTechnicalSignal" class="technical-signal" role="status" aria-live="polite"' in html
+    assert html.count('data-security-chart-zoom=') == 5
+    assert 'id="securityChartZoomStatus"' in html
+    assert 'id="securityChartZoomHelp" class="sr-only"' in html
+    assert "function renderSecurityTechnicalSignal()" in script
+    assert "technical_signals?.confirmed_breakout" in script
+    assert "function securityChartZoomWindow(pointCount)" in script
+    assert "function attachSecurityChartZoom(frame, allPoints, zoomWindow, dims)" in script
+    assert 'hitbox.addEventListener("pointerdown"' in script
+    assert 'svg.addEventListener("wheel"' in script
+    assert 'svg.addEventListener("keydown"' in script
+    assert 'event.key === "ArrowLeft"' in script
+    assert '["Escape", "0", "Home"].includes(event.key)' in script
+    assert "touch-action: pan-y" in styles
+    assert '.chart-zoom-toolbar [data-security-chart-zoom="reset"]' in styles
+    assert ".technical-signal-conditions" in styles
+
+
 def test_backup_files_use_one_compact_localized_line():
     script = (ROOT / "web/app.js").read_text()
     styles = (ROOT / "web/styles.css").read_text()
@@ -593,6 +655,51 @@ def test_account_owner_rules_and_partial_import_recovery_are_visible():
     assert "function prepareSkippedImportAccount" in script
     assert 'data-add-skipped-account' in script
     assert "Import completed with errors" in script
+
+
+def test_authentication_blocks_the_dashboard_until_a_session_is_verified():
+    html = (ROOT / "web/index.html").read_text()
+    script = (ROOT / "web/app.js").read_text()
+    parser = _LabelParser()
+    parser.feed(html)
+
+    assert '<div id="authOverlay" class="auth-overlay">' in html
+    assert '<div id="appShell" class="app-shell" inert aria-hidden="true">' in html
+    assert {"loginUsername", "loginPassword", "currentPassword", "newPassword", "confirmPassword"} <= parser.labeled_controls
+    assert 'autocomplete="username"' in html
+    assert 'autocomplete="current-password"' in html
+    assert html.count('autocomplete="new-password"') >= 3
+    assert html.count('minlength="8" maxlength="256"') == 3
+    assert 'Passwords are salted and hashed, never stored in readable form.' in html
+    assert 'Sign in to open the shared portfolio dashboard.' not in html
+    assert 'First sign-in: use admin / admin, then choose a new password.' not in html
+    assert 'async function restoreAuthSession()' in script
+    assert 'if (await restoreAuthSession()) await startAuthenticatedApp();' in script
+    assert 'headers["X-CSRF-Token"] = state.auth.csrfToken' in script
+    assert 'shell.inert = Boolean(locked)' in script
+
+
+def test_role_aware_user_management_is_accessible_and_responsive():
+    html = (ROOT / "web/index.html").read_text()
+    script = (ROOT / "web/app.js").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+    i18n = (ROOT / "web/i18n.js").read_text()
+
+    assert 'id="currentUserName" class="current-user-name" dir="auto"' in html
+    assert 'id="readOnlyNotice" class="info-strip read-only-notice" role="status" hidden' in html
+    assert 'id="usersModal" class="modal" hidden' in html
+    assert 'role="dialog" aria-modal="true" aria-labelledby="usersTitle"' in html
+    assert all(role in html for role in ('value="Admin"', 'value="Operator"', 'value="Viewer"'))
+    assert '${canAdmin() ? `<button class="nav-item" type="button" data-modal="usersModal">' in script
+    assert 'return ["Admin", "Operator"].includes(currentUser()?.role)' in script
+    assert 'const readOnly = currentUser()?.role === "Viewer"' in script
+    assert 'button.setAttribute("aria-disabled", "true")' in script
+    assert '.users-layout {' in styles
+    mobile = styles.split('@media (max-width: 760px) {', 1)[1]
+    assert '.auth-actions,\n  .users-layout,\n  .user-form,\n  .user-management-item {' in mobile
+    assert '.auth-panel input,\n  .auth-panel select,\n  .auth-panel button,' in mobile
+    assert 'min-height: 44px;' in mobile
+    assert '"Viewer access is read-only": "לצופה יש גישה לקריאה בלבד"' in i18n
 
 
 def test_portfolio_loading_keeps_the_shell_and_forms_non_blocking():

@@ -1,6 +1,6 @@
 from datetime import date, timedelta
 
-from app.metrics import analyze_holding, moving_averages, percent, price_range_metrics, screen, support_resistance
+from app.metrics import analyze_holding, confirmed_breakout_signal, moving_averages, percent, price_range_metrics, screen, support_resistance
 from app.models import Holding, Ohlcv, SymbolAnalysis, Trend
 
 
@@ -44,6 +44,59 @@ def test_moving_average_windows():
     metrics = moving_averages(rows())
     assert metrics["7"]["state"] == "ok"
     assert metrics["30"]["state"] == "ok"
+    assert metrics["30"]["slope_percent"] > 0
+
+
+def test_confirmed_breakout_requires_cross_volume_and_rising_ma30():
+    signal = confirmed_breakout_signal(
+        {
+            "state": "ok",
+            "resistance": {"price": 120},
+            "previous_price": 119,
+            "current_price": 122,
+        },
+        {"state": "ok", "value": 115, "slope_percent": 0.4},
+        {"state": "ok", "relative_20d": 1.6},
+    )
+
+    assert signal["state"] == "ok"
+    assert signal["signal"] == "confirmed_breakout"
+    assert signal["triggered"] is True
+    assert signal["score_met"] == signal["score_total"] == 4
+    assert all(condition["met"] is True for condition in signal["conditions"].values())
+
+
+def test_confirmed_breakout_stays_on_watch_when_any_confirmation_fails():
+    signal = confirmed_breakout_signal(
+        {
+            "state": "ok",
+            "resistance": {"price": 120},
+            "previous_price": 119,
+            "current_price": 122,
+        },
+        {"state": "ok", "value": 115, "slope_percent": 0.4},
+        {"state": "ok", "relative_20d": 1.49},
+    )
+
+    assert signal["signal"] == "watch"
+    assert signal["triggered"] is False
+    assert signal["score_met"] == 3
+    assert signal["conditions"]["relative_volume"]["met"] is False
+
+
+def test_confirmed_breakout_reports_missing_inputs_instead_of_guessing():
+    signal = confirmed_breakout_signal(
+        {"state": "missing"},
+        {"state": "missing"},
+        {"state": "partial", "relative_20d": None},
+    )
+
+    assert signal["state"] == "missing"
+    assert signal["signal"] == "missing"
+    assert signal["triggered"] is False
+    assert "resistance" in signal["missing"]
+    assert "MA30" in signal["missing"]
+    assert "20-day relative volume" in signal["missing"]
 
 
 def test_provider_sector_is_applied_before_industry_missing_check():

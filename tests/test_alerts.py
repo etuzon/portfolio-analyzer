@@ -136,6 +136,7 @@ def test_alert_options_expose_financial_portfolio_and_market_metrics():
 
     assert {"dividend_yield_percent", "profit_market_cap_percent", "free_cash_flow_yield_percent"} <= metrics
     assert {"holding_allocation_percent", "price_vs_ma30_percent"} <= metrics
+    assert {"confirmed_breakout", "relative_volume_20d", "ma30_slope_percent"} <= metrics
     assert {item["key"] for item in options["operators"]} == {">", ">=", "<", "<=", "="}
     assert {item["key"] for item in options["signals"]} == {"buy", "sell", "watch"}
 
@@ -173,9 +174,9 @@ def test_portfolio_alert_rows_derive_portfolio_and_enriched_metrics(monkeypatch)
         ),
         provider_status={},
         price_ranges={"1m": {"current": 100}, "1y": {"percent_from_high": -12}},
-        moving_averages={"30": {"price_vs_ma_percent": 4.5}},
+        moving_averages={"30": {"price_vs_ma_percent": 4.5, "slope_percent": 0.35}},
         support_resistance={},
-        volume={},
+        volume={"relative_20d": 1.7},
         income_trend=Trend(),
         profit_trend=Trend(),
         dividend_trend=Trend(state="ok", percent_change=7.5),
@@ -183,6 +184,7 @@ def test_portfolio_alert_rows_derive_portfolio_and_enriched_metrics(monkeypatch)
         industry="Network equipment",
         missing=["one source"],
         market_cap=1_000_000_000,
+        technical_signals={"confirmed_breakout": {"state": "ok", "triggered": True}},
     )
 
     def enrich(item, provider_hub, need_dividend_history):
@@ -225,5 +227,8 @@ def test_portfolio_alert_rows_derive_portfolio_and_enriched_metrics(monkeypatch)
     assert rows[0]["holding_allocation_percent"] == 100
     assert rows[0]["dividend_growth_percent"] == 7.5
     assert rows[0]["price_vs_ma30_percent"] == 4.5
+    assert rows[0]["ma30_slope_percent"] == 0.35
+    assert rows[0]["relative_volume_20d"] == 1.7
+    assert rows[0]["confirmed_breakout"] == 1.0
     assert rows[0]["price_from_high_1y_percent"] == -12
     assert rows[0]["missing"] == ["one source", "statement field"]

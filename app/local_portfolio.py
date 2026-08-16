@@ -17,7 +17,7 @@ from uuid import uuid4
 import yaml
 
 from .config import data_dir
-from .metrics import moving_averages, price_range_metrics, support_resistance, volume_metrics
+from .metrics import moving_averages, price_range_metrics, support_resistance, technical_signals, volume_metrics
 from .models import Holding, Ohlcv, SymbolAnalysis, Trend
 
 
@@ -3614,19 +3614,23 @@ class LocalPortfolioStore:
             sector="",
             industry="",
         )
+        ma_metrics = moving_averages(prices)
+        level_metrics = support_resistance(prices)
+        volume = volume_metrics(prices)
         analysis = SymbolAnalysis(
             holding=holding,
             provider_status={"local_portfolio": "ok", **({"manual_security": "manual prices only"} if position.get("is_manual_security") else {})},
             price_ranges=price_range_metrics(prices),
-            moving_averages=moving_averages(prices),
-            support_resistance=support_resistance(prices),
-            volume=volume_metrics(prices),
+            moving_averages=ma_metrics,
+            support_resistance=level_metrics,
+            volume=volume,
             income_trend=Trend(message="No local income statements"),
             profit_trend=Trend(message="No local company profit statements"),
             dividend_trend=Trend(message="No local dividend history"),
             profit_market_cap_trend=Trend(message="No local market cap data"),
             industry="",
             missing=[] if prices else ["price history"],
+            technical_signals=technical_signals(ma_metrics, level_metrics, volume),
         )
         analysis.missing.extend(["income", "profit", "dividend", "profit/market cap", "industry"])
         return analysis

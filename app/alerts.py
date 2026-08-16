@@ -44,6 +44,9 @@ ALERT_METRICS = {
     "unrealized_profit_percent": {"label": "Holding unrealized P/L", "unit": "%", "group": "Portfolio", "digits": 1},
     "holding_allocation_percent": {"label": "Portfolio allocation", "unit": "%", "group": "Portfolio", "digits": 1},
     "price_vs_ma30_percent": {"label": "Price vs MA 30", "unit": "%", "group": "Market", "digits": 1},
+    "ma30_slope_percent": {"label": "MA 30 slope", "unit": "%", "group": "Market", "digits": 2},
+    "relative_volume_20d": {"label": "Relative volume vs 20D", "unit": "×", "group": "Market", "digits": 2},
+    "confirmed_breakout": {"label": "Confirmed resistance breakout", "unit": "1=yes", "group": "Market", "digits": 0},
     "price_from_high_1y_percent": {"label": "Price from 1Y high", "unit": "%", "group": "Market", "digits": 1},
 }
 
