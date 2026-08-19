@@ -3092,8 +3092,12 @@ class LocalPortfolioStore:
             default_annual_return = _number(scenario.get("annual_return"), _number(scenario.get("annual_return_percent"), 0))
             amount = _number(scenario.get("amount"), _number(scenario.get("current_amount"), 0))
             sex = _insurance_sex(scenario.get("gender") or scenario.get("sex"))
-            periods = _income_periods(scenario, current_age, retire_age)
-            return_periods = _return_periods(scenario, current_age, retire_age)
+            scenario_name = str(scenario.get("name") or f"Scenario {index}").strip()
+            try:
+                periods = _income_periods(scenario, current_age, retire_age)
+                return_periods = _return_periods(scenario, current_age, retire_age)
+            except ValueError as exc:
+                raise ValueError(f"{scenario_name}: {exc}") from None
             timeline = []
             total_deposits = 0.0
             total_gross_deposits = 0.0
@@ -3134,7 +3138,7 @@ class LocalPortfolioStore:
             monthly_payout = monthly_pension(amount, factor or 200) if kind == "Pension" else None
             results.append(
                 {
-                    "name": str(scenario.get("name") or f"Scenario {index}").strip(),
+                    "name": scenario_name,
                     "kind": kind,
                     "birth_date": birth_date,
                     "current_age": current_age,
@@ -3980,7 +3984,10 @@ def _full_person_name(first_name: Any, last_name: Any) -> str:
 
 def _income_periods(scenario: dict[str, Any], current_age: float, retire_age: float) -> list[dict[str, Any]]:
     raw = scenario.get("income_periods")
+    explicit_schedule = "income_periods" in scenario
     if not isinstance(raw, list) or not raw:
+        if explicit_schedule:
+            _validate_period_coverage([], current_age, retire_age, "Salary")
         raw = [
             {
                 "from_age": current_age,
@@ -4015,7 +4022,9 @@ def _income_periods(scenario: dict[str, Any], current_age: float, retire_age: fl
                 "survivors_capitalization_factor": item.get("survivors_capitalization_factor"),
             }
         )
-    return sorted(periods, key=lambda item: item["from_age"])
+    periods = sorted(periods, key=lambda item: item["from_age"])
+    _validate_period_coverage(periods, current_age, retire_age, "Salary")
+    return periods
 
 
 def _load_pension_insurance_rates() -> dict[int, dict[str, Any]]:
@@ -4067,7 +4076,7 @@ def _pension_insurance_cost(period: dict[str, Any], age: float, sex: str | None,
 def _return_periods(scenario: dict[str, Any], current_age: float, retire_age: float) -> list[dict[str, Any]]:
     raw = scenario.get("return_periods")
     if not isinstance(raw, list) or not raw:
-        raise ValueError("Profit rate schedule is required")
+        _validate_period_coverage([], current_age, retire_age, "Return")
     periods = []
     for item in raw:
         if not isinstance(item, dict):
@@ -4090,9 +4099,54 @@ def _return_periods(scenario: dict[str, Any], current_age: float, retire_age: fl
                 "annual_return": annual_return,
             }
         )
-    if not periods:
-        raise ValueError("Profit rate schedule is required")
-    return sorted(periods, key=lambda item: item["from_age"])
+    periods = sorted(periods, key=lambda item: item["from_age"])
+    _validate_period_coverage(periods, current_age, retire_age, "Return")
+    return periods
+
+
+def _schedule_age_label(value: float) -> str:
+    return f"{round(float(value), 2):g}"
+
+
+def _validate_period_coverage(
+    periods: list[dict[str, Any]],
+    current_age: float,
+    retire_age: float,
+    schedule_name: str,
+) -> None:
+    tolerance = 1e-6
+    cursor = current_age
+    relevant_periods = [
+        period
+        for period in periods
+        if _number(period.get("to_age"), 0) > current_age + tolerance
+        and _number(period.get("from_age"), retire_age) < retire_age - tolerance
+    ]
+    if not relevant_periods:
+        raise ValueError(
+            f"{schedule_name} schedule is missing ages "
+            f"{_schedule_age_label(current_age)}–{_schedule_age_label(retire_age)}"
+        )
+    for period in relevant_periods:
+        from_age = max(_number(period.get("from_age"), current_age), current_age)
+        to_age = min(_number(period.get("to_age"), retire_age), retire_age)
+        if from_age > cursor + tolerance:
+            raise ValueError(
+                f"{schedule_name} schedule is missing ages "
+                f"{_schedule_age_label(cursor)}–{_schedule_age_label(from_age)}"
+            )
+        if from_age < cursor - tolerance:
+            overlap_to = min(cursor, to_age)
+            raise ValueError(
+                f"{schedule_name} schedule has overlapping periods at ages "
+                f"{_schedule_age_label(from_age)}–{_schedule_age_label(overlap_to)}"
+            )
+        cursor = max(cursor, to_age)
+    if cursor < retire_age - tolerance:
+        raise ValueError(
+            f"{schedule_name} schedule is missing ages "
+            f"{_schedule_age_label(cursor)}–{_schedule_age_label(retire_age)}"
+        )
 
 
 def _period_for_age(periods: list[dict[str, Any]], age: float) -> dict[str, Any] | None:

@@ -16,7 +16,7 @@
       }
     </style>
     <link rel="icon" type="image/svg+xml" href="/assets/app-icon.svg?v=0.5.1" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.0" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.3" />
   </head>
   <body>
     <div id="authOverlay" class="auth-overlay">
@@ -1396,26 +1396,30 @@
             <div>
               <p class="eyebrow">Simulation</p>
               <h3>Pension scenarios</h3>
-            </div>
-            <div class="settings-actions">
-              <button id="runPensionSimulation" class="secondary" type="button">Run scenarios</button>
+              <p class="sub retirement-intro">Each saved scenario is one retirement alternative. Add as many as you want, then run them together.</p>
             </div>
           </div>
-          <div class="management-form simulator-form">
-            <select id="simPersonSource"></select>
-            <input id="simName" placeholder="Scenario name" />
-            <input id="simBirthDate" class="date-field scenario-internal-field" inputmode="numeric" placeholder="dd/mm/yyyy" title="User birthday for automatic current age" hidden />
-            <input id="simCurrentAge" class="scenario-internal-field" type="number" min="0" step="0.1" placeholder="Current age" title="Calculated from the selected person's birth date" readonly hidden />
-            <input id="simRetireAge" type="number" min="0" step="0.1" placeholder="Retire age" />
-            <input id="simAmount" class="scenario-internal-field" type="number" min="0" step="0.01" placeholder="Pension total" title="Current pension total. For a selected person this is derived from attached pension records." hidden />
-            <input id="simFactor" type="number" min="1" step="0.01" value="200" placeholder="Payout factor" />
-            <button id="addPensionScenario" type="button" disabled>Add scenario</button>
-            <button id="newPensionScenario" class="secondary" type="button">Clear</button>
-          </div>
-          <p id="pensionProjectionStatus" class="status-line"></p>
-          <div id="pensionScenarios" class="simulator-list"></div>
-          <div id="pensionProjectionSummary" class="projection-summary"></div>
-          <p id="pensionSimulationStatus" class="status-line"></p>
+          <section class="retirement-saved-section" aria-labelledby="savedPensionScenariosTitle">
+            <div class="retirement-card-head">
+              <div>
+                <p class="eyebrow">Comparison set</p>
+                <h4 id="savedPensionScenariosTitle">Saved scenarios</h4>
+                <p id="pensionScenarioCount" class="retirement-scenario-count" role="status" aria-live="polite">0 saved scenarios</p>
+              </div>
+              <div class="retirement-list-header-actions">
+                <span class="ux-tooltip" tabindex="0" role="note" aria-label="How scenarios work" data-tooltip="Create a retirement alternative, then add its salary and return assumptions from the saved scenario card.">?</span>
+                <button id="newPensionScenario" type="button" title="Open a blank form. Existing saved scenarios will not change.">+ New scenario</button>
+              </div>
+            </div>
+            <div id="pensionScenarios" class="simulator-list retirement-scenario-list"></div>
+            <div class="retirement-scenario-list-actions">
+              <p id="pensionRunHint" class="retirement-action-hint">Save a scenario and add its return periods before running the comparison.</p>
+              <div class="settings-actions">
+                <button id="runPensionSimulation" type="button" title="Calculate and compare every saved scenario.">Run all scenarios</button>
+              </div>
+            </div>
+          </section>
+          <p id="pensionSimulationStatus" class="status-line" role="status" aria-live="polite"></p>
           <div class="section-head compact-head projection-subhead">
             <div>
               <p class="eyebrow">Scenario output</p>
@@ -1427,69 +1431,134 @@
       </section>
     </div>
 
-    <div id="pensionPeriodModal" class="modal" hidden>
+    <div id="pensionScenarioModal" class="modal" hidden>
       <div class="modal-backdrop" data-close></div>
-      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="pensionPeriodTitle">
+      <section class="modal-card retirement-scenario-modal" role="dialog" aria-modal="true" aria-labelledby="pensionScenarioFormTitle" aria-describedby="pensionScenarioModalIntro">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Scenario salary schedule</p>
-            <h2 id="pensionPeriodTitle">Salary schedule</h2>
-            <p id="pensionPeriodProjectionName" class="sub">No scenario selected</p>
+            <p class="eyebrow">Scenario details</p>
+            <h2 id="pensionScenarioFormTitle" tabindex="-1">Create scenario</h2>
+            <p id="pensionScenarioModalIntro" class="sub">Choose the person and assumptions for this retirement alternative.</p>
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
-        <div class="section-head compact-head projection-subhead">
+        <div class="management-form retirement-scenario-form">
+          <label class="management-field">
+            <span class="field-label">Person <span class="ux-tooltip" tabindex="0" role="note" aria-label="About the scenario person" data-tooltip="Choose the person whose age and attached pension balances should start this scenario.">?</span></span>
+            <select id="simPersonSource"></select>
+          </label>
+          <label class="management-field">
+            <span class="field-label">Scenario name <span class="ux-tooltip" tabindex="0" role="note" aria-label="About scenario names" data-tooltip="Use a comparison-friendly name, such as Retire at 67 or Stop work now.">?</span></span>
+            <input id="simName" placeholder="Scenario name" />
+          </label>
+          <input id="simBirthDate" class="date-field scenario-internal-field" inputmode="numeric" placeholder="dd/mm/yyyy" title="User birthday for automatic current age" hidden />
+          <input id="simCurrentAge" class="scenario-internal-field" type="number" min="0" step="0.1" placeholder="Current age" title="Calculated from the selected person's birth date" readonly hidden />
+          <label class="management-field">
+            <span class="field-label">Retire age <span class="ux-tooltip" tabindex="0" role="note" aria-label="About retirement age" data-tooltip="The age when future salary deposits stop and the monthly pension estimate begins.">?</span></span>
+            <input id="simRetireAge" type="number" min="0" step="0.1" placeholder="Retire age" />
+          </label>
+          <input id="simAmount" class="scenario-internal-field" type="number" min="0" step="0.01" placeholder="Pension total" title="Current pension total. For a selected person this is derived from attached pension records." hidden />
+          <label class="management-field">
+            <span class="field-label">Payout factor <span class="ux-tooltip" tabindex="0" role="note" aria-label="About the payout factor" data-tooltip="The estimated monthly pension equals the final balance divided by this factor. The default is 200.">?</span></span>
+            <input id="simFactor" type="number" min="1" step="0.01" value="200" placeholder="Payout factor" />
+          </label>
+        </div>
+        <p id="pensionProjectionStatus" class="status-line" role="status" aria-live="polite"></p>
+        <div class="modal-toolbar retirement-scenario-modal-actions">
+          <button id="addPensionScenario" type="button" title="Save this retirement scenario." disabled>Save scenario</button>
+          <button class="secondary" type="button" data-close>Cancel</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="pensionPeriodModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide retirement-schedule-modal" role="dialog" aria-modal="true" aria-labelledby="pensionPeriodTitle" aria-describedby="pensionScheduleIntro">
+        <div class="section-head">
           <div>
-            <p class="eyebrow">Salary by age</p>
-            <h3>Salary schedule</h3>
+            <p class="eyebrow">Scenario setup</p>
+            <h2 id="pensionPeriodTitle" tabindex="-1">Salary and return schedules</h2>
+            <p id="pensionScheduleIntro" class="sub"><span>Editing scenario:</span> <strong id="pensionPeriodProjectionName">No scenario selected</strong>. <span>Add another row whenever an amount or rate changes by age.</span></p>
           </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
-        <div id="pensionPeriodRows" class="projection-table-wrap"></div>
-        <div class="history-form simulator-period-form popup-period-form">
-          <select id="simPeriodFromMode">
-            <option value="now">From current age</option>
-            <option value="custom">Custom age</option>
-          </select>
-          <input id="simPeriodFrom" type="number" min="0" step="0.1" placeholder="From age" hidden />
-          <input id="simPeriodTo" type="number" min="0" step="0.1" placeholder="To age" />
-          <input id="simPeriodIncome" type="number" min="0" step="0.01" placeholder="Monthly salary" />
-          <input id="simPeriodContribution" type="number" min="0" step="0.01" placeholder="Pension deposit %" />
-          <input id="simPeriodDeposit" type="number" min="0" step="0.01" placeholder="Extra monthly deposit" />
-          <select id="simInsuranceTrack" title="Pension insurance track">
-            <option value="comprehensive">Comprehensive</option>
-            <option value="savings_30">Savings 30/20</option>
-            <option value="savings_40">Savings 40/30</option>
-            <option value="survivors_oriented">Survivors-oriented</option>
-            <option value="single">Single status</option>
-            <option value="custom">Custom</option>
-          </select>
-          <select id="simDisabilityCoverage" title="Disability coverage"></select>
-          <select id="simSpouseSurvivorsCoverage" title="Spouse survivors coverage"></select>
-          <select id="simChildrenSurvivorsCoverage" title="Children survivors coverage"></select>
-          <input id="simSurvivorsFactor" type="number" min="1" step="0.01" value="200" placeholder="Survivors factor" />
-        </div>
-        <div class="section-head compact-head projection-subhead">
-          <div>
-            <p class="eyebrow">Profit by age</p>
-            <h3>Profit rate schedule</h3>
+        <ol class="retirement-flow-steps retirement-modal-steps" aria-label="Scenario schedule flow">
+          <li class="is-complete"><span>1</span><b>Scenario saved</b><small>Basic details are ready</small></li>
+          <li class="is-current"><span>2</span><b>Salary periods</b><small>Add one or more age ranges</small></li>
+          <li><span>3</span><b>Return periods</b><small>Add at least one age range</small></li>
+        </ol>
+        <section class="retirement-schedule-section" aria-labelledby="salaryScheduleTitle">
+          <div class="retirement-card-head">
+            <div class="retirement-step-heading">
+              <span class="retirement-step-number" aria-hidden="true">2</span>
+              <div>
+                <p class="eyebrow">Salary by age</p>
+                <h3 id="salaryScheduleTitle">Salary schedule</h3>
+              </div>
+            </div>
+            <span class="ux-tooltip" tabindex="0" role="note" aria-label="How salary periods work" data-tooltip="Add a row for each age range where salary, deposits, and insurance settings stay the same.">?</span>
           </div>
-        </div>
-        <div id="pensionRateRows" class="projection-table-wrap"></div>
-        <div class="history-form simulator-period-form popup-period-form">
-          <select id="simRateFromMode">
-            <option value="now">From current age</option>
-            <option value="custom">Custom age</option>
-          </select>
-          <input id="simRateFrom" type="number" min="0" step="0.1" placeholder="From age" hidden />
-          <input id="simRateTo" type="number" min="0" step="0.1" placeholder="To age" />
-          <input id="simRateAnnual" type="number" step="0.01" placeholder="Annual profit %" />
-        </div>
-        <p id="pensionPeriodStatus" class="status-line"></p>
-        <div class="form-actions">
-          <button id="addPensionPeriod" type="button" disabled>Add salary row</button>
-          <button id="addPensionRate" type="button" disabled>Add profit rate</button>
-          <button id="pensionStopWorkNow" class="secondary" type="button">Stop working now</button>
-          <button class="secondary" type="button" data-close>Done</button>
+          <p class="schedule-guidance">Example: add one row for your current salary, then another if salary or deposits change later.</p>
+          <div id="pensionPeriodRows" class="retirement-period-list"></div>
+          <div class="retirement-section-actions">
+            <button id="showPensionPeriodEntry" type="button" aria-expanded="false" aria-controls="pensionPeriodEntry" title="Open a blank form for another salary period.">+ Add salary period</button>
+            <button id="pensionStopWorkNow" class="secondary" type="button" title="Replace future salary periods with zero salary and zero deposits from the current age to retirement.">Stop working now</button>
+          </div>
+          <div id="pensionPeriodEntry" class="retirement-entry-card" hidden>
+            <h4>Add a salary period</h4>
+            <div class="history-form simulator-period-form popup-period-form salary-period-form">
+              <label class="management-field"><span>Starts</span><select id="simPeriodFromMode"><option value="now">From current age</option><option value="custom">Custom age</option></select></label>
+              <label class="management-field" id="simPeriodFromField" hidden><span>From age</span><input id="simPeriodFrom" type="number" min="0" step="0.1" placeholder="From age" /></label>
+              <label class="management-field"><span>To age</span><input id="simPeriodTo" type="number" min="0" step="0.1" placeholder="To age" /></label>
+              <label class="management-field"><span>Monthly salary</span><input id="simPeriodIncome" type="number" min="0" step="0.01" placeholder="Monthly salary" /></label>
+              <label class="management-field"><span>Pension deposit %</span><input id="simPeriodContribution" type="number" min="0" step="0.01" placeholder="Pension deposit %" /></label>
+              <label class="management-field"><span>Extra monthly deposit</span><input id="simPeriodDeposit" type="number" min="0" step="0.01" placeholder="Extra monthly deposit" /></label>
+              <label class="management-field"><span>Insurance track</span><select id="simInsuranceTrack" title="Pension insurance track"><option value="comprehensive">Comprehensive</option><option value="savings_30">Savings 30/20</option><option value="savings_40">Savings 40/30</option><option value="survivors_oriented">Survivors-oriented</option><option value="single">Single status</option><option value="custom">Custom</option></select></label>
+              <label class="management-field"><span>Disability coverage</span><select id="simDisabilityCoverage" title="Disability coverage"></select></label>
+              <label class="management-field"><span>Spouse survivors coverage</span><select id="simSpouseSurvivorsCoverage" title="Spouse survivors coverage"></select></label>
+              <label class="management-field"><span>Children survivors coverage</span><select id="simChildrenSurvivorsCoverage" title="Children survivors coverage"></select></label>
+              <label class="management-field"><span class="field-label">Survivors factor <span class="ux-tooltip" tabindex="0" role="note" aria-label="About the survivors factor" data-tooltip="Used to estimate the survivors pension when spouse or children coverage is selected.">?</span></span><input id="simSurvivorsFactor" type="number" min="1" step="0.01" value="200" placeholder="Survivors factor" /></label>
+            </div>
+            <div class="retirement-section-actions">
+              <button id="addPensionPeriod" type="button" title="Save these salary and deposit values to the selected scenario." disabled>Save salary period</button>
+              <button id="cancelPensionPeriodEntry" class="secondary" type="button">Cancel</button>
+            </div>
+          </div>
+        </section>
+        <section class="retirement-schedule-section" aria-labelledby="returnScheduleTitle">
+          <div class="retirement-card-head">
+            <div class="retirement-step-heading">
+              <span class="retirement-step-number" aria-hidden="true">3</span>
+              <div>
+                <p class="eyebrow">Profit by age</p>
+                <h3 id="returnScheduleTitle">Return rate schedule</h3>
+              </div>
+            </div>
+            <span class="ux-tooltip" tabindex="0" role="note" aria-label="How return periods work" data-tooltip="Add at least one annual return assumption. Use more rows when the expected rate changes at a later age.">?</span>
+          </div>
+          <p class="schedule-guidance">Add at least one return period before running the scenario comparison.</p>
+          <div id="pensionRateRows" class="retirement-period-list"></div>
+          <div class="retirement-section-actions">
+            <button id="showPensionRateEntry" type="button" aria-expanded="false" aria-controls="pensionRateEntry" title="Open a blank form for another return period.">+ Add return period</button>
+          </div>
+          <div id="pensionRateEntry" class="retirement-entry-card" hidden>
+            <h4>Add a return period</h4>
+            <div class="history-form simulator-period-form popup-period-form return-period-form">
+              <label class="management-field"><span>Starts</span><select id="simRateFromMode"><option value="now">From current age</option><option value="custom">Custom age</option></select></label>
+              <label class="management-field" id="simRateFromField" hidden><span>From age</span><input id="simRateFrom" type="number" min="0" step="0.1" placeholder="From age" /></label>
+              <label class="management-field"><span>To age</span><input id="simRateTo" type="number" min="0" step="0.1" placeholder="To age" /></label>
+              <label class="management-field"><span class="field-label">Annual profit % <span class="ux-tooltip" tabindex="0" role="note" aria-label="About annual profit" data-tooltip="Enter the expected average annual return for this age range. You can use a negative value.">?</span></span><input id="simRateAnnual" type="number" step="0.01" placeholder="Annual profit %" /></label>
+            </div>
+            <div class="retirement-section-actions">
+              <button id="addPensionRate" type="button" title="Save this return assumption to the selected scenario." disabled>Save return period</button>
+              <button id="cancelPensionRateEntry" class="secondary" type="button">Cancel</button>
+            </div>
+          </div>
+        </section>
+        <p id="pensionPeriodStatus" class="status-line retirement-schedule-status" role="status" aria-live="polite"></p>
+        <div class="retirement-modal-footer">
+          <span>When both schedules are ready, finish here and add another scenario or run the comparison.</span>
+          <button type="button" data-close title="Return to the saved scenario list.">Done with this scenario</button>
         </div>
       </section>
     </div>
@@ -1843,7 +1912,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="/i18n.js?v=1.2.0"></script>
-  <script src="/app.js?v=0.9.0"></script>
+  <script src="/i18n.js?v=1.2.3"></script>
+  <script src="/app.js?v=0.9.3"></script>
   </body>
 </html>

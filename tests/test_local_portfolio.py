@@ -1191,6 +1191,30 @@ def test_pension_simulation_adds_extra_deposit_to_salary_contribution(tmp_path):
     assert result["monthly_pension"] == 75
 
 
+def test_pension_simulation_uses_each_contiguous_salary_period(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+
+    result = store.simulate_pension(
+        {
+            "name": "Two salary periods",
+            "kind": "Pension",
+            "current_age": 40,
+            "retire_age": 42,
+            "amount": 1000,
+            "income_periods": [
+                {"from_age": 40, "to_age": 41, "monthly_income": 10000, "contribution_percent": 10},
+                {"from_age": 41, "to_age": 42, "monthly_income": 20000, "contribution_percent": 10},
+            ],
+            "return_periods": [{"from_age": 40, "to_age": 42, "annual_return": 0}],
+            "factor": 200,
+        }
+    )["results"][0]
+
+    assert result["total_deposits"] == 36000
+    assert result["final_amount"] == 37000
+    assert result["monthly_pension"] == 185
+
+
 def test_pension_simulation_deducts_insurance_from_pension_deposit(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
 
@@ -1339,7 +1363,7 @@ def test_pension_simulation_rejects_missing_profit_rate_schedule(tmp_path):
             }
         )
     except ValueError as exc:
-        assert "Profit rate schedule is required" in str(exc)
+        assert "Missing rate: Return schedule is missing ages 40–41" in str(exc)
     else:
         raise AssertionError("Missing profit rate schedule should be rejected")
 
@@ -1378,6 +1402,81 @@ def test_pension_simulation_rejects_invalid_profit_rate_rows(tmp_path):
             assert message in str(exc)
         else:
             raise AssertionError("Invalid profit rate row should be rejected")
+
+
+@pytest.mark.parametrize(
+    ("income_periods", "return_periods", "message"),
+    [
+        (
+            [{"from_age": 40, "to_age": 60, "monthly_income": 10000, "contribution_percent": 10}],
+            [{"from_age": 40, "to_age": 67, "annual_return": 5}],
+            "Incomplete scenario: Salary schedule is missing ages 60–67",
+        ),
+        (
+            [{"from_age": 40, "to_age": 56, "monthly_income": 10000, "contribution_percent": 10}],
+            [{"from_age": 40, "to_age": 67, "annual_return": 5}],
+            "Incomplete scenario: Salary schedule is missing ages 56–67",
+        ),
+        (
+            [{"from_age": 40, "to_age": 67, "monthly_income": 10000, "contribution_percent": 10}],
+            [{"from_age": 40, "to_age": 60, "annual_return": 5}],
+            "Incomplete scenario: Return schedule is missing ages 60–67",
+        ),
+        (
+            [
+                {"from_age": 40, "to_age": 50, "monthly_income": 10000, "contribution_percent": 10},
+                {"from_age": 49, "to_age": 67, "monthly_income": 8000, "contribution_percent": 10},
+            ],
+            [{"from_age": 40, "to_age": 67, "annual_return": 5}],
+            "Incomplete scenario: Salary schedule has overlapping periods at ages 49–50",
+        ),
+        (
+            [{"from_age": 40, "to_age": 67, "monthly_income": 10000, "contribution_percent": 10}],
+            [
+                {"from_age": 40, "to_age": 50, "annual_return": 5},
+                {"from_age": 49, "to_age": 67, "annual_return": 4},
+            ],
+            "Incomplete scenario: Return schedule has overlapping periods at ages 49–50",
+        ),
+    ],
+)
+def test_pension_simulation_rejects_schedule_gaps_and_overlaps(
+    tmp_path, income_periods, return_periods, message
+):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+
+    with pytest.raises(ValueError, match=message):
+        store.simulate_pension(
+            {
+                "name": "Incomplete scenario",
+                "kind": "Pension",
+                "gender": "Male",
+                "current_age": 40,
+                "retire_age": 67,
+                "amount": 1000,
+                "income_periods": income_periods,
+                "return_periods": return_periods,
+                "factor": 200,
+            }
+        )
+
+
+def test_pension_simulation_rejects_explicit_empty_salary_schedule(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+
+    with pytest.raises(ValueError, match="No salary: Salary schedule is missing ages 40–41"):
+        store.simulate_pension(
+            {
+                "name": "No salary",
+                "kind": "Pension",
+                "current_age": 40,
+                "retire_age": 41,
+                "amount": 1000,
+                "income_periods": [],
+                "return_periods": [{"from_age": 40, "to_age": 41, "annual_return": 5}],
+                "factor": 200,
+            }
+        )
 
 
 def test_pension_simulation_infers_current_age_from_birth_date(tmp_path):

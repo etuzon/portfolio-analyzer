@@ -880,6 +880,498 @@ textarea.muted-control {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.retirement-intro {
+  max-width: 720px;
+  margin-top: 5px;
+  line-height: 1.55;
+}
+
+.retirement-flow-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.retirement-flow-steps li {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-content: center;
+  min-width: 0;
+  min-height: 60px;
+  padding: 9px 10px;
+  border: 1px solid #2d333d;
+  border-radius: 8px;
+  background: #17191d;
+}
+
+.retirement-flow-steps li > span {
+  grid-row: 1 / 3;
+  display: inline-grid;
+  align-self: center;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border: 1px solid #43516a;
+  border-radius: 50%;
+  color: #dbe8fb;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.retirement-flow-steps b,
+.retirement-flow-steps small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.retirement-flow-steps b {
+  color: #eaf0fa;
+  font-size: 12px;
+}
+
+.retirement-flow-steps small {
+  margin-top: 2px;
+  color: #8e99ab;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.retirement-flow-steps .is-complete {
+  border-color: rgba(46, 229, 157, 0.35);
+}
+
+.retirement-flow-steps .is-complete > span {
+  border-color: rgba(46, 229, 157, 0.6);
+  background: rgba(46, 229, 157, 0.12);
+  color: #8af2c5;
+}
+
+.retirement-flow-steps .is-current {
+  border-color: rgba(33, 167, 255, 0.55);
+  background: rgba(33, 167, 255, 0.07);
+}
+
+.retirement-editor-card,
+.retirement-saved-section,
+.retirement-schedule-section {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #2d333d;
+  border-radius: 9px;
+  background: #12151a;
+}
+
+.retirement-card-head,
+.retirement-step-heading,
+.retirement-period-card-head,
+.retirement-scenario-card-head {
+  display: flex;
+  align-items: center;
+}
+
+.retirement-card-head,
+.retirement-period-card-head,
+.retirement-scenario-card-head {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.retirement-step-heading {
+  gap: 10px;
+}
+
+.retirement-card-head h3,
+.retirement-card-head h4,
+.retirement-period-card h4,
+.retirement-scenario-card h4,
+.retirement-entry-card h4 {
+  margin: 0;
+}
+
+.retirement-step-number {
+  display: inline-grid;
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid rgba(33, 167, 255, 0.55);
+  border-radius: 50%;
+  background: rgba(33, 167, 255, 0.1);
+  color: #a9dbff;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.retirement-scenario-form {
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  align-items: end;
+  margin-top: 12px;
+}
+
+.retirement-scenario-modal {
+  width: min(760px, 100%);
+  overflow-x: hidden;
+}
+
+.retirement-scenario-modal #pensionScenarioModalIntro {
+  max-width: 620px;
+  margin-top: 5px;
+  line-height: 1.5;
+}
+
+.retirement-scenario-modal-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 12px;
+}
+
+.retirement-scenario-modal-actions button {
+  width: auto;
+  min-width: 130px;
+}
+
+.retirement-scenario-form > .management-field,
+.salary-period-form > .management-field,
+.return-period-form > .management-field,
+.retirement-period-fields > .management-field {
+  min-width: 0;
+}
+
+.retirement-scenario-form input,
+.retirement-scenario-form select,
+.salary-period-form input,
+.salary-period-form select,
+.return-period-form input,
+.return-period-form select,
+.retirement-period-fields input,
+.retirement-period-fields select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.retirement-primary-action {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.retirement-primary-action button {
+  min-width: 250px;
+}
+
+.ux-tooltip {
+  position: relative;
+  z-index: 4;
+  display: inline-grid;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 1px solid #465266;
+  border-radius: 50%;
+  background: #1b2028;
+  color: #d4e4fa;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 850;
+  line-height: 1;
+  cursor: help;
+}
+
+.ux-tooltip::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 30;
+  inset-block-end: calc(100% + 8px);
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+  width: min(280px, calc(100vw - 64px));
+  padding: 8px 10px;
+  border: 1px solid #465266;
+  border-radius: 7px;
+  background: #232a34;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
+  color: #eef5ff;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
+  opacity: 0;
+  pointer-events: none;
+  text-align: start;
+  transform: translateY(4px);
+  transition: opacity 120ms ease, transform 120ms ease;
+  white-space: normal;
+}
+
+.ux-tooltip:hover::after,
+.ux-tooltip:focus::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.ux-tooltip:focus-visible {
+  outline: 2px solid #72c4ff;
+  outline-offset: 2px;
+}
+
+.retirement-card-head > .ux-tooltip::after {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+  transform: translateY(4px);
+}
+
+.retirement-card-head > .ux-tooltip:hover::after,
+.retirement-card-head > .ux-tooltip:focus-visible::after {
+  transform: translateY(0);
+}
+
+.retirement-list-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.retirement-scenario-count {
+  margin: 4px 0 0;
+  color: #9da8b9;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.retirement-scenario-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 12px;
+}
+
+.retirement-scenario-card {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #303743;
+  border-radius: 8px;
+  background: #171a20;
+}
+
+.retirement-scenario-kicker {
+  display: block;
+  margin-bottom: 3px;
+  color: #8492a7;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.retirement-scenario-card h4 {
+  color: #f2f6fc;
+  font-size: 15px;
+}
+
+.retirement-scenario-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.retirement-scenario-facts > div {
+  min-width: 0;
+  padding: 8px;
+  border-radius: 7px;
+  background: #202329;
+}
+
+.retirement-scenario-facts dt,
+.retirement-scenario-facts dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.retirement-scenario-facts dt {
+  color: #8f9aab;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.retirement-scenario-facts dd {
+  margin-top: 3px;
+  color: #e5ebf4;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.retirement-scenario-facts .needs-attention {
+  border: 1px solid rgba(255, 174, 24, 0.35);
+  background: rgba(255, 174, 24, 0.07);
+}
+
+.retirement-scenario-facts .needs-attention dd {
+  color: #ffd27d;
+}
+
+.retirement-scenario-actions,
+.retirement-scenario-list-actions,
+.retirement-section-actions,
+.retirement-modal-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.retirement-scenario-actions {
+  justify-content: flex-start;
+}
+
+.retirement-scenario-list-actions {
+  justify-content: space-between;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #2d333d;
+}
+
+.retirement-action-hint {
+  flex: 1 1 280px;
+  color: #9da8b9;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.retirement-scenario-list-actions button,
+.retirement-scenario-actions button,
+.retirement-section-actions button {
+  width: auto;
+}
+
+.retirement-schedule-modal {
+  overflow-x: hidden;
+}
+
+.retirement-schedule-modal #pensionScheduleIntro {
+  max-width: 760px;
+  margin-top: 5px;
+  line-height: 1.55;
+}
+
+.retirement-schedule-modal #pensionPeriodProjectionName {
+  color: #f3f7fd;
+}
+
+.retirement-schedule-modal #pensionPeriodTitle:focus {
+  outline: none;
+}
+
+.retirement-modal-steps {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 14px;
+}
+
+.retirement-schedule-section {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.schedule-guidance {
+  color: #9da8b9;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.retirement-period-list {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.retirement-period-card,
+.retirement-entry-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #303743;
+  border-radius: 8px;
+  background: #181b20;
+}
+
+.retirement-entry-card {
+  border-style: dashed;
+  border-color: #3a4658;
+  background: #151a21;
+}
+
+.retirement-entry-card > h4 {
+  margin-bottom: 10px;
+  color: #e8eff8;
+  font-size: 12px;
+}
+
+.retirement-period-card h4 {
+  color: #dfe8f5;
+  font-size: 12px;
+}
+
+.retirement-period-fields {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.return-period-fields {
+  grid-template-columns: repeat(3, minmax(140px, 1fr));
+}
+
+.popup-period-form {
+  grid-template-columns: repeat(5, minmax(120px, 1fr));
+  align-items: end;
+}
+
+.return-period-form {
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+}
+
+.retirement-section-actions {
+  justify-content: flex-start;
+  margin-top: 10px;
+}
+
+.retirement-schedule-status {
+  min-height: 20px;
+  margin: 10px 2px 0;
+}
+
+.retirement-modal-footer {
+  position: sticky;
+  z-index: 5;
+  bottom: -16px;
+  justify-content: space-between;
+  margin: 12px -16px -16px;
+  padding: 12px 16px;
+  border-top: 1px solid #343b47;
+  background: rgba(21, 21, 22, 0.97);
+  backdrop-filter: blur(10px);
+}
+
+.retirement-modal-footer span {
+  max-width: 720px;
+  color: #a5afbe;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .fund-create-section {
   margin-top: 14px;
 }
@@ -1096,31 +1588,6 @@ textarea.muted-control {
   gap: 6px;
 }
 
-.projection-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.projection-summary span {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 30px;
-  border-radius: 15px;
-  padding: 0 10px;
-  background: #202124;
-  color: #aeb8cc;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.projection-summary b {
-  color: #f7f9ff;
-  font-size: 11px;
-  text-transform: uppercase;
-}
-
 .projection-editor {
   display: grid;
   gap: 12px;
@@ -1216,68 +1683,6 @@ textarea.muted-control {
 
 .projection-table .selected-row td {
   background: #172130;
-}
-
-.pension-period-table {
-  min-width: 1500px;
-  table-layout: fixed;
-}
-
-.pension-period-table th:nth-child(1),
-.pension-period-table td:nth-child(1),
-.pension-period-table th:nth-child(2),
-.pension-period-table td:nth-child(2) {
-  width: 78px;
-}
-
-.pension-period-table th:nth-child(3),
-.pension-period-table td:nth-child(3) {
-  width: 132px;
-}
-
-.pension-period-table th:nth-child(4),
-.pension-period-table td:nth-child(4) {
-  width: 150px;
-}
-
-.pension-period-table th:nth-child(5),
-.pension-period-table td:nth-child(5),
-.pension-period-table th:nth-child(10),
-.pension-period-table td:nth-child(10) {
-  width: 122px;
-}
-
-.pension-period-table th:nth-child(6),
-.pension-period-table td:nth-child(6) {
-  width: 180px;
-}
-
-.pension-period-table th:nth-child(7),
-.pension-period-table td:nth-child(7) {
-  width: 140px;
-}
-
-.pension-period-table th:nth-child(8),
-.pension-period-table td:nth-child(8),
-.pension-period-table th:nth-child(9),
-.pension-period-table td:nth-child(9) {
-  width: 165px;
-}
-
-.pension-period-table th:nth-child(11),
-.pension-period-table td:nth-child(11) {
-  width: 88px;
-}
-
-.pension-scenario-table .row-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 6px;
-  min-width: 150px;
-}
-
-.popup-period-form {
-  grid-template-columns: repeat(5, minmax(120px, 1fr));
 }
 
 .projection-result-table td {
@@ -6751,6 +7156,74 @@ html[dir="rtl"] .settings-menu-button.active {
     padding: 18px;
   }
 
+  .retirement-flow-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .retirement-flow-steps li {
+    min-height: 64px;
+  }
+
+  .retirement-flow-steps b,
+  .retirement-flow-steps small {
+    white-space: normal;
+  }
+
+  .retirement-scenario-list,
+  .retirement-period-fields,
+  .return-period-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .retirement-scenario-facts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .retirement-list-header-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .retirement-list-header-actions button,
+  .retirement-scenario-modal-actions button {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .retirement-scenario-modal-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .retirement-primary-action button,
+  .retirement-scenario-list-actions button,
+  .retirement-section-actions button,
+  .retirement-modal-footer button {
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+  }
+
+  .retirement-scenario-list-actions,
+  .retirement-modal-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .retirement-modal-footer {
+    bottom: -16px;
+  }
+
+  .retirement-schedule-modal .section-head {
+    padding-inline-end: 48px;
+  }
+
+  .retirement-schedule-modal .section-head .icon-button {
+    position: absolute;
+    inset-block-start: 14px;
+    inset-inline-end: 14px;
+  }
+
   .auth-actions,
   .users-layout,
   .user-form,
@@ -7172,6 +7645,12 @@ html[dir="rtl"] .settings-menu-button.active {
   .metric-head {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ux-tooltip::after {
+    transition: none;
   }
 }
 

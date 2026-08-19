@@ -587,6 +587,7 @@ const WRITE_CONTROL_IDS = new Set([
   "saveEditFund", "saveEmployeeExercise", "saveEmployeeListing", "saveEmployeeOptionGrant", "saveFamilyMember",
   "saveFund", "saveFundHistory", "saveHistorySnapshot", "saveLocalAccount", "saveManualSecurity",
   "savePositionTransaction", "savePrice", "saveSecurity", "saveTableSettings", "saveUser", "showFundCreate",
+  "showPensionPeriodEntry", "showPensionRateEntry",
 ]);
 const WRITE_DATA_ACTIONS = new Set([
   "data-add-skipped-account", "data-dashboard-move", "data-dashboard-set-view", "data-delete-account",
@@ -2660,7 +2661,11 @@ function renderPensionDashboardTable(monthlyEstimate) {
   const currentKey = pensionScenarioKey();
   const simulationError = state.pensionSimulationErrorKey === currentKey ? state.pensionSimulationError : "";
   const canAutoRun = state.pensionScenarios.length && state.pensionScenarios.every((scenario) => (
-    scenario.current_age && scenario.retire_age && scenario.retire_age > scenario.current_age && scenarioHasProfitRates(scenario) && !scenarioNeedsGenderForInsurance(scenario)
+    scenario.current_age
+    && scenario.retire_age
+    && scenario.retire_age > scenario.current_age
+    && !pensionScenarioScheduleIssue(scenario)
+    && !scenarioNeedsGenderForInsurance(scenario)
   ));
   const scenarios = hasResults ? (grid.baseScenarios || []) : state.pensionScenarios;
   const resultFor = (rowIndex) => hasResults ? (state.pensionSimulationResults[rowIndex] || null) : null;
@@ -2683,7 +2688,7 @@ function renderPensionDashboardTable(monthlyEstimate) {
             ${scenarios.map((scenario, rowIndex) => {
               const result = resultFor(rowIndex);
               const rowNeedsGender = scenarioNeedsGenderForInsurance(scenario);
-              const statusText = simulationError || (rowNeedsGender ? "Set gender" : (canAutoRun ? "Calculating" : "Add profit rate"));
+              const statusText = simulationError || (rowNeedsGender ? "Set gender" : (canAutoRun ? "Calculating" : "Add return period"));
               const statusTitle = simulationError || (rowNeedsGender ? "Set Male/Female gender to calculate pension insurance cost" : "");
               return `
                 <tr>
@@ -7808,7 +7813,6 @@ function renderPensionSimulatorControls() {
   renderPensionRates();
   renderPensionScenarios();
   renderPensionSimulationResults();
-  renderPensionProjectionSummary();
   syncSimulationFactorState();
   syncPensionPeriodFromMode();
   syncPensionRateFromMode();
@@ -7984,16 +7988,20 @@ function applySimulationPerson() {
 function syncPensionPeriodFromMode() {
   const custom = valueOf("simPeriodFromMode") === "custom";
   const input = $("simPeriodFrom");
+  const field = $("simPeriodFromField");
   if (!input) return;
   input.hidden = !custom;
+  if (field) field.hidden = !custom;
   if (!custom) input.value = "";
 }
 
 function syncPensionRateFromMode() {
   const custom = valueOf("simRateFromMode") === "custom";
   const input = $("simRateFrom");
+  const field = $("simRateFromField");
   if (!input) return;
   input.hidden = !custom;
+  if (field) field.hidden = !custom;
   if (!custom) input.value = "";
 }
 
@@ -8001,19 +8009,8 @@ function pensionPeriodSummary() {
   const scenario = activePensionScenario();
   const rows = scenario?.income_periods || [];
   if (!scenario) return "No scenario selected";
-  if (!rows.length) return "No salary rows";
-  return `${rows.length} salary row${rows.length === 1 ? "" : "s"}`;
-}
-
-function renderPensionProjectionSummary() {
-  const frame = $("pensionProjectionSummary");
-  if (!frame) return;
-  const scenario = activePensionScenario();
-  frame.innerHTML = `
-    <span><b>Selected scenario</b>${esc(scenario?.name || "None")}</span>
-    <span><b>Saved scenarios</b>${esc(state.pensionScenarios.length)}</span>
-    <span><b>Profit rates</b>${esc(scenario?.return_periods?.length || 0)}</span>
-  `;
+  if (!rows.length) return "No salary periods";
+  return `${rows.length} salary period${rows.length === 1 ? "" : "s"}`;
 }
 
 function activePensionScenario() {
@@ -8078,15 +8075,60 @@ function pensionRateFormValid() {
     && Number.isFinite(Number(annualReturn));
 }
 
+function scheduleAgeLabel(value) {
+  return String(Math.round(Number(value) * 100) / 100);
+}
+
+function pensionScheduleCoverageIssue(scenario, field, label) {
+  const currentAge = Number(scenario?.current_age);
+  const retireAge = Number(scenario?.retire_age);
+  if (!Number.isFinite(currentAge) || !Number.isFinite(retireAge) || retireAge <= currentAge) return "";
+  const tolerance = 1e-6;
+  const sourceRows = Array.isArray(scenario?.[field]) ? scenario[field] : [];
+  const periods = sourceRows.map((period) => ({
+    fromAge: Math.max(Number(period?.from_age), currentAge),
+    toAge: Math.min(Number(period?.to_age), retireAge),
+    annualReturn: period?.annual_return,
+  })).filter((period) => (
+    Number.isFinite(period.fromAge)
+    && Number.isFinite(period.toAge)
+    && period.toAge > currentAge + tolerance
+    && period.fromAge < retireAge - tolerance
+  )).sort((left, right) => left.fromAge - right.fromAge);
+  let cursor = currentAge;
+  if (!periods.length) {
+    return `${label} schedule is missing ages ${scheduleAgeLabel(currentAge)}–${scheduleAgeLabel(retireAge)}.`;
+  }
+  for (const period of periods) {
+    if (field === "return_periods" && (
+      period.annualReturn === ""
+      || period.annualReturn === null
+      || period.annualReturn === undefined
+      || !Number.isFinite(Number(period.annualReturn))
+    )) {
+      return "Return schedule has an invalid annual return.";
+    }
+    if (period.fromAge > cursor + tolerance) {
+      return `${label} schedule is missing ages ${scheduleAgeLabel(cursor)}–${scheduleAgeLabel(period.fromAge)}.`;
+    }
+    if (period.fromAge < cursor - tolerance) {
+      return `${label} schedule has overlapping periods at ages ${scheduleAgeLabel(period.fromAge)}–${scheduleAgeLabel(Math.min(cursor, period.toAge))}.`;
+    }
+    cursor = Math.max(cursor, period.toAge);
+  }
+  if (cursor < retireAge - tolerance) {
+    return `${label} schedule is missing ages ${scheduleAgeLabel(cursor)}–${scheduleAgeLabel(retireAge)}.`;
+  }
+  return "";
+}
+
+function pensionScenarioScheduleIssue(scenario) {
+  return pensionScheduleCoverageIssue(scenario, "income_periods", "Salary")
+    || pensionScheduleCoverageIssue(scenario, "return_periods", "Return");
+}
+
 function scenarioHasProfitRates(scenario) {
-  return Array.isArray(scenario?.return_periods)
-    && scenario.return_periods.some((period) => (
-      Number(period?.to_age) > Number(period?.from_age)
-      && period?.annual_return !== ""
-      && period?.annual_return !== null
-      && period?.annual_return !== undefined
-      && Number.isFinite(Number(period.annual_return))
-    ));
+  return !pensionScheduleCoverageIssue(scenario, "return_periods", "Return");
 }
 
 function pensionScenarioKey() {
@@ -8167,16 +8209,63 @@ function updatePensionActionStates() {
   const projectionButton = $("addPensionScenario");
   if (projectionButton) {
     projectionButton.disabled = !projectionFormValid();
-    projectionButton.textContent = hasActiveScenario ? "Update scenario" : "Add scenario";
+    projectionButton.textContent = hasActiveScenario ? "Save changes" : "Save scenario";
+    projectionButton.title = hasActiveScenario
+      ? "Save the changes to this retirement scenario."
+      : "Save this retirement scenario.";
   }
+  const editorTitle = $("pensionScenarioFormTitle");
+  if (editorTitle) editorTitle.textContent = hasActiveScenario ? "Edit scenario" : "Create scenario";
   const periodButton = $("addPensionPeriod");
   if (periodButton) periodButton.disabled = !pensionPeriodFormValid();
   const rateButton = $("addPensionRate");
   if (rateButton) rateButton.disabled = !pensionRateFormValid();
   const stopButton = $("pensionStopWorkNow");
   if (stopButton) stopButton.disabled = !hasActiveScenario;
+  const showPeriodButton = $("showPensionPeriodEntry");
+  const salaryIssue = hasActiveScenario
+    ? pensionScheduleCoverageIssue(activePensionScenario(), "income_periods", "Salary")
+    : "";
+  if (showPeriodButton) {
+    showPeriodButton.disabled = !hasActiveScenario || !salaryIssue.includes("is missing ages");
+    showPeriodButton.title = !hasActiveScenario
+      ? "Choose a scenario before adding salary periods."
+      : salaryIssue || "The salary schedule already covers the full age range.";
+  }
+  const showRateButton = $("showPensionRateEntry");
+  const returnIssue = hasActiveScenario
+    ? pensionScheduleCoverageIssue(activePensionScenario(), "return_periods", "Return")
+    : "";
+  if (showRateButton) {
+    showRateButton.disabled = !hasActiveScenario || !returnIssue.includes("is missing ages");
+    showRateButton.title = !hasActiveScenario
+      ? "Choose a scenario before adding return periods."
+      : returnIssue || "The return schedule already covers the full age range.";
+  }
   const runButton = $("runPensionSimulation");
-  if (runButton) runButton.disabled = !state.pensionScenarios.length || state.pensionScenarios.some((scenario) => !scenarioHasProfitRates(scenario));
+  const scheduleProblem = state.pensionScenarios.map((scenario) => ({
+    scenario,
+    issue: pensionScenarioScheduleIssue(scenario),
+  })).find((item) => item.issue);
+  const scheduleProblemText = scheduleProblem
+    ? `${scheduleProblem.scenario.name}: ${scheduleProblem.issue}`
+    : "";
+  if (runButton) {
+    runButton.disabled = !state.pensionScenarios.length || Boolean(scheduleProblem);
+    runButton.title = !state.pensionScenarios.length
+      ? "Save at least one scenario before running the comparison."
+      : scheduleProblem
+        ? scheduleProblemText
+        : "Calculate and compare every saved scenario.";
+  }
+  const runHint = $("pensionRunHint");
+  if (runHint) {
+    runHint.textContent = !state.pensionScenarios.length
+      ? "Save a scenario and add its return periods before running the comparison."
+      : scheduleProblem
+        ? scheduleProblemText
+        : "All scenarios are ready to compare.";
+  }
 }
 
 function resetPensionPeriodForm() {
@@ -8206,24 +8295,92 @@ function resetPensionRateForm() {
   updatePensionActionStates();
 }
 
+function setPensionEntryVisibility(entryId, triggerId, visible, focusId, { focus = true } = {}) {
+  const entry = $(entryId);
+  const trigger = $(triggerId);
+  if (!entry || !trigger) return;
+  entry.hidden = !visible;
+  trigger.hidden = visible;
+  trigger.setAttribute("aria-expanded", String(visible));
+  if (!focus) return;
+  requestAnimationFrame(() => {
+    const target = visible ? $(focusId) : trigger;
+    target?.focus();
+  });
+}
+
+function nextPensionScheduleStart(scenario, field) {
+  const currentAge = Number(scenario?.current_age);
+  const retireAge = Number(scenario?.retire_age);
+  if (!Number.isFinite(currentAge) || !Number.isFinite(retireAge)) return currentAge;
+  const periods = (Array.isArray(scenario?.[field]) ? scenario[field] : []).map((period) => ({
+    fromAge: Math.max(Number(period?.from_age), currentAge),
+    toAge: Math.min(Number(period?.to_age), retireAge),
+  })).filter((period) => Number.isFinite(period.fromAge) && Number.isFinite(period.toAge) && period.toAge > period.fromAge)
+    .sort((left, right) => left.fromAge - right.fromAge);
+  let cursor = currentAge;
+  for (const period of periods) {
+    if (period.fromAge > cursor + 1e-6) return cursor;
+    if (period.fromAge <= cursor + 1e-6 && period.toAge > cursor) cursor = period.toAge;
+  }
+  return Math.min(cursor, retireAge);
+}
+
+function openPensionPeriodEntry() {
+  resetPensionPeriodForm();
+  const scenario = activePensionScenario();
+  const nextAge = nextPensionScheduleStart(scenario, "income_periods");
+  if (Number.isFinite(nextAge) && nextAge > Number(scenario?.current_age) + 1e-6) {
+    $("simPeriodFromMode").value = "custom";
+    $("simPeriodFrom").value = scheduleAgeLabel(nextAge);
+    syncPensionPeriodFromMode();
+  }
+  setPensionEntryVisibility("pensionPeriodEntry", "showPensionPeriodEntry", true, "simPeriodFromMode");
+}
+
+function closePensionPeriodEntry({ focus = true } = {}) {
+  resetPensionPeriodForm();
+  setPensionEntryVisibility("pensionPeriodEntry", "showPensionPeriodEntry", false, "simPeriodFromMode", { focus });
+}
+
+function openPensionRateEntry() {
+  resetPensionRateForm();
+  const scenario = activePensionScenario();
+  const nextAge = nextPensionScheduleStart(scenario, "return_periods");
+  if (Number.isFinite(nextAge) && nextAge > Number(scenario?.current_age) + 1e-6) {
+    $("simRateFromMode").value = "custom";
+    $("simRateFrom").value = scheduleAgeLabel(nextAge);
+    syncPensionRateFromMode();
+  }
+  setPensionEntryVisibility("pensionRateEntry", "showPensionRateEntry", true, "simRateFromMode");
+}
+
+function closePensionRateEntry({ focus = true } = {}) {
+  resetPensionRateForm();
+  setPensionEntryVisibility("pensionRateEntry", "showPensionRateEntry", false, "simRateFromMode", { focus });
+}
+
 function openPensionPeriodModal(index = state.activePensionScenarioIndex) {
   if (Number.isInteger(index) && state.pensionScenarios[index]) {
     state.activePensionScenarioIndex = index;
   }
   const scenario = activePensionScenario();
   if (!scenario) {
-    $("pensionProjectionStatus").textContent = "Add or edit a scenario before adding salary rows";
+    $("pensionProjectionStatus").textContent = "Add or edit a scenario before adding salary periods";
     return;
   }
   resetPensionPeriodForm();
+  resetPensionRateForm();
+  setPensionEntryVisibility("pensionPeriodEntry", "showPensionPeriodEntry", false, "simPeriodFromMode", { focus: false });
+  setPensionEntryVisibility("pensionRateEntry", "showPensionRateEntry", false, "simRateFromMode", { focus: false });
   const name = $("pensionPeriodProjectionName");
   if (name) name.textContent = scenario.name;
   const status = $("pensionPeriodStatus");
-  if (status) status.textContent = "";
+  if (status) status.textContent = pensionScenarioScheduleIssue(scenario);
   renderPensionScenarios();
   renderPensionPeriods();
   renderPensionRates();
-  openModal("pensionPeriodModal");
+  openModal("pensionPeriodModal", document.activeElement, { focusId: "pensionPeriodTitle" });
 }
 
 function currentPensionScenario() {
@@ -8273,48 +8430,30 @@ function renderPensionPeriods() {
   const scenario = activePensionScenario();
   const rows = selectedPensionScenarioRows();
   if (!scenario) {
-    frame.innerHTML = '<div class="empty compact-empty">Choose a scenario before adding salary rows</div>';
-    renderPensionProjectionSummary();
+    frame.innerHTML = '<div class="empty compact-empty">Choose a scenario before adding salary periods</div>';
     updatePensionActionStates();
     return;
   }
-  frame.innerHTML = rows.length ? `
-    <table class="projection-table pension-period-table">
-      <thead>
-        <tr>
-          <th>From Age</th>
-          <th>To Age</th>
-          <th>Monthly Salary</th>
-          <th>Pension Deposit %</th>
-          <th>Extra Deposit</th>
-          <th>Insurance Track</th>
-          <th>Disability</th>
-          <th>Spouse Survivors</th>
-          <th>Children Survivors</th>
-          <th>Survivors Factor</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows.map((period, index) => `
-          <tr>
-            <td><input data-pension-period-index="${index}" data-pension-period-field="from_age" type="number" min="0" step="0.1" value="${esc(period.from_age ?? "")}" /></td>
-            <td><input data-pension-period-index="${index}" data-pension-period-field="to_age" type="number" min="0" step="0.1" value="${esc(period.to_age ?? "")}" /></td>
-            <td><input data-pension-period-index="${index}" data-pension-period-field="monthly_income" type="number" min="0" step="0.01" value="${esc(period.monthly_income ?? 0)}" /></td>
-            <td><input data-pension-period-index="${index}" data-pension-period-field="contribution_percent" type="number" min="0" step="0.01" value="${esc(period.contribution_percent ?? 0)}" /></td>
-            <td><input data-pension-period-index="${index}" data-pension-period-field="monthly_deposit" type="number" min="0" step="0.01" value="${esc(period.monthly_deposit ?? 0)}" /></td>
-            <td>${pensionPeriodTrackSelect(index, period)}</td>
-            <td>${pensionPeriodCoverageSelect(index, "disability_coverage_percent", DISABILITY_COVERAGE_OPTIONS, period.disability_coverage_percent)}</td>
-            <td>${pensionPeriodCoverageSelect(index, "spouse_survivors_coverage_percent", SPOUSE_SURVIVORS_OPTIONS, period.spouse_survivors_coverage_percent)}</td>
-            <td>${pensionPeriodCoverageSelect(index, "children_survivors_coverage_percent", CHILDREN_SURVIVORS_OPTIONS, period.children_survivors_coverage_percent)}</td>
-            <td><input data-pension-period-index="${index}" data-pension-period-field="survivors_capitalization_factor" type="number" min="1" step="0.01" value="${esc(period.survivors_capitalization_factor ?? 200)}" /></td>
-            <td><button class="secondary compact-button" type="button" data-delete-pension-period="${index}">Remove</button></td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
-  ` : '<div class="empty compact-empty">No salary rows for the selected scenario</div>';
-  renderPensionProjectionSummary();
+  frame.innerHTML = rows.length ? rows.map((period, index) => `
+    <article class="retirement-period-card" aria-label="Salary period ${index + 1}">
+      <div class="retirement-period-card-head">
+        <h4>Salary period ${index + 1}</h4>
+        <button class="secondary compact-button" type="button" data-delete-pension-period="${index}" title="Remove this salary period from the selected scenario.">Remove</button>
+      </div>
+      <div class="retirement-period-fields salary-period-fields">
+        <label class="management-field"><span>From age</span><input data-pension-period-index="${index}" data-pension-period-field="from_age" type="number" min="0" step="0.1" value="${esc(period.from_age ?? "")}" /></label>
+        <label class="management-field"><span>To age</span><input data-pension-period-index="${index}" data-pension-period-field="to_age" type="number" min="0" step="0.1" value="${esc(period.to_age ?? "")}" /></label>
+        <label class="management-field"><span>Monthly salary</span><input data-pension-period-index="${index}" data-pension-period-field="monthly_income" type="number" min="0" step="0.01" value="${esc(period.monthly_income ?? 0)}" /></label>
+        <label class="management-field"><span>Pension deposit %</span><input data-pension-period-index="${index}" data-pension-period-field="contribution_percent" type="number" min="0" step="0.01" value="${esc(period.contribution_percent ?? 0)}" /></label>
+        <label class="management-field"><span>Extra monthly deposit</span><input data-pension-period-index="${index}" data-pension-period-field="monthly_deposit" type="number" min="0" step="0.01" value="${esc(period.monthly_deposit ?? 0)}" /></label>
+        <label class="management-field"><span>Insurance track</span>${pensionPeriodTrackSelect(index, period)}</label>
+        <label class="management-field"><span>Disability coverage</span>${pensionPeriodCoverageSelect(index, "disability_coverage_percent", DISABILITY_COVERAGE_OPTIONS, period.disability_coverage_percent)}</label>
+        <label class="management-field"><span>Spouse survivors coverage</span>${pensionPeriodCoverageSelect(index, "spouse_survivors_coverage_percent", SPOUSE_SURVIVORS_OPTIONS, period.spouse_survivors_coverage_percent)}</label>
+        <label class="management-field"><span>Children survivors coverage</span>${pensionPeriodCoverageSelect(index, "children_survivors_coverage_percent", CHILDREN_SURVIVORS_OPTIONS, period.children_survivors_coverage_percent)}</label>
+        <label class="management-field"><span>Survivors factor</span><input data-pension-period-index="${index}" data-pension-period-field="survivors_capitalization_factor" type="number" min="1" step="0.01" value="${esc(period.survivors_capitalization_factor ?? 200)}" /></label>
+      </div>
+    </article>
+  `).join("") : '<div class="empty compact-empty">No salary periods yet. Add the first period directly below.</div>';
   updatePensionActionStates();
 }
 
@@ -8324,73 +8463,62 @@ function renderPensionRates() {
   const scenario = activePensionScenario();
   const rows = selectedPensionReturnRows();
   if (!scenario) {
-    frame.innerHTML = '<div class="empty compact-empty">Choose a scenario before adding profit rates</div>';
+    frame.innerHTML = '<div class="empty compact-empty">Choose a scenario before adding return periods</div>';
     updatePensionActionStates();
     return;
   }
-  frame.innerHTML = rows.length ? `
-    <table class="projection-table">
-      <thead>
-        <tr>
-          <th>From Age</th>
-          <th>To Age</th>
-          <th>Annual Profit %</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows.map((period, index) => `
-          <tr>
-            <td><input data-pension-rate-index="${index}" data-pension-rate-field="from_age" type="number" min="0" step="0.1" value="${esc(period.from_age ?? "")}" /></td>
-            <td><input data-pension-rate-index="${index}" data-pension-rate-field="to_age" type="number" min="0" step="0.1" value="${esc(period.to_age ?? "")}" /></td>
-            <td><input data-pension-rate-index="${index}" data-pension-rate-field="annual_return" type="number" step="0.01" value="${esc(period.annual_return ?? 0)}" /></td>
-            <td><button class="secondary compact-button" type="button" data-delete-pension-rate="${index}">Remove</button></td>
-          </tr>
-        `).join("")}
-      </tbody>
-    </table>
-  ` : '<div class="empty compact-empty">No profit rate rows. Scenario uses 0% annual profit unless rates are added.</div>';
+  frame.innerHTML = rows.length ? rows.map((period, index) => `
+    <article class="retirement-period-card" aria-label="Return period ${index + 1}">
+      <div class="retirement-period-card-head">
+        <h4>Return period ${index + 1}</h4>
+        <button class="secondary compact-button" type="button" data-delete-pension-rate="${index}" title="Remove this return period from the selected scenario.">Remove</button>
+      </div>
+      <div class="retirement-period-fields return-period-fields">
+        <label class="management-field"><span>From age</span><input data-pension-rate-index="${index}" data-pension-rate-field="from_age" type="number" min="0" step="0.1" value="${esc(period.from_age ?? "")}" /></label>
+        <label class="management-field"><span>To age</span><input data-pension-rate-index="${index}" data-pension-rate-field="to_age" type="number" min="0" step="0.1" value="${esc(period.to_age ?? "")}" /></label>
+        <label class="management-field"><span>Annual profit %</span><input data-pension-rate-index="${index}" data-pension-rate-field="annual_return" type="number" step="0.01" value="${esc(period.annual_return ?? 0)}" /></label>
+      </div>
+    </article>
+  `).join("") : '<div class="empty compact-empty">No return periods yet. Add at least one period directly below.</div>';
   updatePensionActionStates();
 }
 
 function renderPensionScenarios() {
   const frame = $("pensionScenarios");
   if (!frame) return;
-  frame.innerHTML = state.pensionScenarios.length ? `
-    <div class="projection-table-wrap">
-      <table class="projection-table pension-scenario-table">
-        <thead>
-          <tr>
-            <th>Scenario</th>
-            <th>Person</th>
-            <th>Age Range</th>
-            <th>Pension Total</th>
-            <th>Salary Rows</th>
-            <th>Profit Rates</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          ${state.pensionScenarios.map((scenario, index) => `
-            <tr class="${state.activePensionScenarioIndex === index ? "selected-row" : ""}">
-              <td><b>${esc(scenario.name)}</b></td>
-              <td>${esc(scenario.person_name || "Manual")}</td>
-              <td>${fmt(scenario.current_age, 1)} to ${fmt(scenario.retire_age, 1)}</td>
-              <td>${money(scenario.amount, state.baseCurrency, 0)}</td>
-              <td>${esc(scenario.income_periods?.length || 0)}</td>
-              <td>${esc(scenario.return_periods?.length || 0)}</td>
-              <td class="row-actions">
-                <button class="secondary compact-button" type="button" data-edit-pension-scenario="${index}">Edit</button>
-                <button class="secondary compact-button" type="button" data-schedule-pension-scenario="${index}">Salary schedule</button>
-                <button class="secondary compact-button" type="button" data-delete-pension-scenario="${index}">Remove</button>
-              </td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    </div>
-  ` : '<div class="empty compact-empty">No pension scenarios saved yet</div>';
-  renderPensionProjectionSummary();
+  const count = $("pensionScenarioCount");
+  if (count) {
+    const scenarioCount = state.pensionScenarios.length;
+    count.textContent = optionLabel(`${scenarioCount} saved scenario${scenarioCount === 1 ? "" : "s"}`);
+  }
+  frame.innerHTML = state.pensionScenarios.length ? state.pensionScenarios.map((scenario, index) => {
+    const salaryCount = scenario.income_periods?.length || 0;
+    const returnCount = scenario.return_periods?.length || 0;
+    const salaryIssue = pensionScheduleCoverageIssue(scenario, "income_periods", "Salary");
+    const returnIssue = pensionScheduleCoverageIssue(scenario, "return_periods", "Return");
+    return `
+      <article class="retirement-scenario-card" aria-label="Scenario ${esc(scenario.name)}">
+        <div class="retirement-scenario-card-head">
+          <div>
+            <span class="retirement-scenario-kicker">Saved scenario</span>
+            <h4>${esc(scenario.name)}</h4>
+          </div>
+        </div>
+        <dl class="retirement-scenario-facts">
+          <div><dt>Person</dt><dd>${esc(scenario.person_name || "Manual")}</dd></div>
+          <div><dt>Age range</dt><dd>${fmt(scenario.current_age, 1)}–${fmt(scenario.retire_age, 1)}</dd></div>
+          <div><dt>Pension total</dt><dd>${money(scenario.amount, state.baseCurrency, 0)}</dd></div>
+          <div class="${salaryIssue ? "needs-attention" : ""}"${salaryIssue ? ` title="${esc(salaryIssue)}"` : ""}><dt>Salary periods</dt><dd>${esc(salaryCount)}${salaryIssue ? " · Incomplete" : ""}</dd></div>
+          <div class="${returnIssue ? "needs-attention" : ""}"${returnIssue ? ` title="${esc(returnIssue)}"` : ""}><dt>Return periods</dt><dd>${esc(returnCount)}${returnIssue ? " · Incomplete" : ""}</dd></div>
+        </dl>
+        <div class="retirement-scenario-actions">
+          <button class="secondary compact-button" type="button" data-edit-pension-scenario="${index}" title="Open this saved scenario in the edit dialog.">Edit scenario</button>
+          <button class="secondary compact-button" type="button" data-schedule-pension-scenario="${index}" title="Edit salary, deposits, insurance, and return assumptions for this scenario.">Salary &amp; returns</button>
+          <button class="secondary compact-button danger-outline" type="button" data-delete-pension-scenario="${index}" title="Remove this scenario and all of its saved periods.">Remove scenario</button>
+        </div>
+      </article>
+    `;
+  }).join("") : '<div class="empty compact-empty">No scenarios yet. Select New scenario to create your first retirement alternative.</div>';
   updatePensionActionStates();
 }
 
@@ -8409,7 +8537,7 @@ function renderPensionSimulationResults() {
         <thead>
           <tr>
             <th>Scenario</th>
-            <th>Profit Rates</th>
+            <th>Return Periods</th>
             <th>Monthly Pension</th>
             <th>Final Amount</th>
             <th>Deposits</th>
@@ -8424,7 +8552,7 @@ function renderPensionSimulationResults() {
               <tr>
                 <td>
                   <b>${esc(scenario.name)}</b>
-                  <small>${esc(optionLabel(scenario.kind))} · ${esc(optionLabel("Age"))} ${fmt(scenario.current_age, 1)}-${fmt(scenario.retire_age, 1)} · ${scenario.income_periods?.length || 0} ${esc(optionLabel("salary rows"))}</small>
+                  <small>${esc(optionLabel(scenario.kind))} · ${esc(optionLabel("Age"))} ${fmt(scenario.current_age, 1)}-${fmt(scenario.retire_age, 1)} · ${scenario.income_periods?.length || 0} ${esc(optionLabel("salary periods"))}</small>
                 </td>
                 <td>${esc(scenario.return_periods?.length || 0)}</td>
                 <td><b>${money(result.monthly_pension || 0, state.baseCurrency, 0)}</b></td>
@@ -8455,6 +8583,7 @@ function invalidatePensionSimulation() {
 function editPensionScenario(index) {
   const scenario = state.pensionScenarios[index];
   if (!scenario) return;
+  const returnFocus = document.activeElement;
   state.activePensionScenarioIndex = index;
   $("simPersonSource").value = scenario.person_index ?? "";
   $("simName").value = scenario.name || "";
@@ -8463,15 +8592,17 @@ function editPensionScenario(index) {
   $("simRetireAge").value = scenario.retire_age || "";
   $("simAmount").value = scenario.amount || "";
   $("simFactor").value = scenario.factor || 200;
-  $("pensionProjectionStatus").textContent = `Editing ${scenario.name}`;
+  $("pensionProjectionStatus").textContent = "";
   syncScenarioDerivedFields();
   savePensionSimulationState();
-  renderPensionScenarios();
   renderPensionPeriods();
   renderPensionRates();
+  updatePensionActionStates();
+  openModal("pensionScenarioModal", returnFocus, { focusId: "pensionScenarioFormTitle" });
 }
 
 function newPensionScenario() {
+  const returnFocus = document.activeElement;
   state.activePensionScenarioIndex = null;
   ["simName", "simBirthDate", "simCurrentAge", "simRetireAge", "simAmount"].forEach((id) => { $(id).value = ""; });
   $("simFactor").value = "200";
@@ -8479,12 +8610,12 @@ function newPensionScenario() {
   $("simPersonSource").value = people.length === 1 ? "0" : "";
   if ($("simPersonSource").value) applySimulationPerson();
   syncScenarioDerivedFields();
-  $("pensionProjectionStatus").textContent = "New pension scenario";
+  $("pensionProjectionStatus").textContent = "";
   savePensionSimulationState();
-  renderPensionScenarios();
   renderPensionPeriods();
   renderPensionRates();
   updatePensionActionStates();
+  openModal("pensionScenarioModal", returnFocus, { focusId: "simPersonSource" });
 }
 
 function addPensionPeriod() {
@@ -8513,11 +8644,12 @@ function addPensionPeriod() {
   }
   scenario.income_periods = [...(scenario.income_periods || []), period];
   invalidatePensionSimulation();
-  $("pensionPeriodStatus").textContent = "Salary row added";
-  resetPensionPeriodForm();
   renderPensionScenarios();
   renderPensionPeriods();
   renderFundsOverview();
+  const remainingIssue = pensionScenarioScheduleIssue(scenario);
+  $("pensionPeriodStatus").textContent = remainingIssue || "Salary period added";
+  closePensionPeriodEntry();
 }
 
 function addPensionRate() {
@@ -8539,17 +8671,18 @@ function addPensionRate() {
   }
   scenario.return_periods = [...(scenario.return_periods || []), period];
   invalidatePensionSimulation();
-  $("pensionPeriodStatus").textContent = "Profit rate row added";
-  resetPensionRateForm();
   renderPensionScenarios();
   renderPensionRates();
   renderFundsOverview();
+  const remainingIssue = pensionScenarioScheduleIssue(scenario);
+  $("pensionPeriodStatus").textContent = remainingIssue || "Return period added";
+  closePensionRateEntry();
 }
 
 function stopPensionWorkNow() {
   const scenario = activePensionScenario();
   if (!scenario) {
-    $("pensionProjectionStatus").textContent = "Add or edit a pension scenario first";
+    $("pensionPeriodStatus").textContent = "Add or edit a pension scenario first";
     return;
   }
   const currentAge = scenario.current_age || 0;
@@ -8562,16 +8695,18 @@ function stopPensionWorkNow() {
   renderPensionScenarios();
   renderPensionPeriods();
   renderPensionRates();
+  closePensionPeriodEntry({ focus: false });
 }
 
 function addPensionScenario() {
   if (!projectionFormValid()) {
-    $("pensionSimulationStatus").textContent = "Fill scenario name, age range, and payout factor";
+    $("pensionProjectionStatus").textContent = "Fill scenario name, age range, and payout factor";
     updatePensionActionStates();
     return;
   }
+  const editing = Boolean(activePensionScenario());
   const scenario = currentPensionScenario();
-  if (activePensionScenario()) {
+  if (editing) {
     state.pensionScenarios[state.activePensionScenarioIndex] = scenario;
     $("pensionSimulationStatus").textContent = "Scenario updated";
   } else {
@@ -8579,12 +8714,16 @@ function addPensionScenario() {
     state.activePensionScenarioIndex = state.pensionScenarios.length - 1;
     $("pensionSimulationStatus").textContent = "Scenario added";
   }
+  const savedIndex = state.activePensionScenarioIndex;
   invalidatePensionSimulation();
+  closeModal($("pensionScenarioModal"));
   renderPensionScenarios();
   renderPensionPeriods();
   renderPensionRates();
   renderFundsOverview();
-  if (state.activePensionScenarioIndex !== null) openPensionPeriodModal(state.activePensionScenarioIndex);
+  requestAnimationFrame(() => {
+    document.querySelector(`[data-edit-pension-scenario="${savedIndex}"]`)?.focus();
+  });
 }
 
 async function runPensionSimulation({ silent = false } = {}) {
@@ -8594,8 +8733,12 @@ async function runPensionSimulation({ silent = false } = {}) {
     renderPensionSimulationResults();
     return;
   }
-  if (baseScenarios.some((scenario) => !scenarioHasProfitRates(scenario))) {
-    if (!silent) $("pensionSimulationStatus").textContent = "Add at least one profit rate row for every scenario before running";
+  const scheduleProblem = baseScenarios.map((scenario) => ({
+    scenario,
+    issue: pensionScenarioScheduleIssue(scenario),
+  })).find((item) => item.issue);
+  if (scheduleProblem) {
+    if (!silent) $("pensionSimulationStatus").textContent = `${scheduleProblem.scenario.name}: ${scheduleProblem.issue}`;
     renderPensionSimulationResults();
     return;
   }
@@ -10283,6 +10426,8 @@ document.addEventListener("click", (event) => {
     invalidatePensionSimulation();
     renderPensionScenarios();
     renderPensionPeriods();
+    renderFundsOverview();
+    if (scenario) $("pensionPeriodStatus").textContent = pensionScenarioScheduleIssue(scenario);
   }
 
   const rateIndex = event.target.closest("[data-delete-pension-rate]")?.dataset.deletePensionRate;
@@ -10293,6 +10438,7 @@ document.addEventListener("click", (event) => {
     renderPensionScenarios();
     renderPensionRates();
     renderFundsOverview();
+    if (scenario) $("pensionPeriodStatus").textContent = pensionScenarioScheduleIssue(scenario);
   }
 
   if (event.target.id === "pensionStopWorkNow") {
@@ -10312,6 +10458,8 @@ document.addEventListener("click", (event) => {
   const scenarioIndex = event.target.closest("[data-delete-pension-scenario]")?.dataset.deletePensionScenario;
   if (scenarioIndex !== undefined) {
     const removed = Number(scenarioIndex);
+    const scenario = state.pensionScenarios[removed];
+    if (!scenario || !confirm(optionLabel("Remove this scenario? Its salary and return periods will also be deleted."))) return;
     state.pensionScenarios.splice(removed, 1);
     if (state.activePensionScenarioIndex === removed) {
       state.activePensionScenarioIndex = null;
@@ -10322,6 +10470,7 @@ document.addEventListener("click", (event) => {
     renderPensionScenarios();
     renderPensionPeriods();
     renderFundsOverview();
+    $("pensionSimulationStatus").textContent = "Scenario removed";
   }
 
   const moveButton = event.target.closest("[data-dashboard-move]");
@@ -10387,7 +10536,6 @@ document.addEventListener("change", (event) => {
       invalidatePensionSimulation();
       renderPensionScenarios();
       renderPensionPeriods();
-      renderPensionProjectionSummary();
       renderFundsOverview();
     } else if (period && numericFields.includes(field)) {
       period[field] = pensionPeriodInput.value === "" ? 0 : Number(pensionPeriodInput.value);
@@ -10395,7 +10543,6 @@ document.addEventListener("change", (event) => {
       invalidatePensionSimulation();
       renderPensionScenarios();
       renderPensionPeriods();
-      renderPensionProjectionSummary();
       renderFundsOverview();
     }
   }
@@ -10410,7 +10557,6 @@ document.addEventListener("change", (event) => {
       invalidatePensionSimulation();
       renderPensionScenarios();
       renderPensionRates();
-      renderPensionProjectionSummary();
       renderFundsOverview();
     }
   }
@@ -10743,6 +10889,10 @@ $("fundAccount").addEventListener("change", () => { renderFundAccountOwners(); u
 $("editFundAccount").addEventListener("change", renderFundAccountOwners);
 $("addPensionPeriod").addEventListener("click", addPensionPeriod);
 $("addPensionRate").addEventListener("click", addPensionRate);
+$("showPensionPeriodEntry").addEventListener("click", openPensionPeriodEntry);
+$("cancelPensionPeriodEntry").addEventListener("click", closePensionPeriodEntry);
+$("showPensionRateEntry").addEventListener("click", openPensionRateEntry);
+$("cancelPensionRateEntry").addEventListener("click", closePensionRateEntry);
 $("addPensionScenario").addEventListener("click", addPensionScenario);
 $("newPensionScenario").addEventListener("click", newPensionScenario);
 $("runPensionSimulation").addEventListener("click", () => runPensionSimulation().catch((error) => { $("pensionSimulationStatus").textContent = `Error: ${error.message}`; }));

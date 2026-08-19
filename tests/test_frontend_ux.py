@@ -597,6 +597,92 @@ def test_pension_owner_is_inherited_from_required_long_term_account():
     assert 'account_id: valueOf("fundAccount")' in script
 
 
+def test_retirement_scenario_flow_uses_one_saved_list_and_create_edit_modal():
+    html = (ROOT / "web/index.html").read_text()
+    script = (ROOT / "web/app.js").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+
+    assert 'aria-label="Retirement simulation flow"' not in html
+    assert 'id="pensionScenarioEditor"' not in html
+    assert 'id="pensionScenarioModal" class="modal" hidden' in html
+    assert 'aria-labelledby="pensionScenarioFormTitle" aria-describedby="pensionScenarioModalIntro"' in html
+    assert html.count('id="newPensionScenario"') == 1
+    assert html.index('id="newPensionScenario"') < html.index('id="pensionScenarios"')
+    assert 'id="newPensionScenario" type="button" title="Open a blank form.' in html
+    assert "+ New scenario" in html
+    assert 'id="pensionScenarioCount" class="retirement-scenario-count" role="status" aria-live="polite"' in html
+    assert "Each saved scenario is one retirement alternative." in html
+    assert 'class="retirement-scenario-card"' in script
+    assert 'class="retirement-editing-badge"' not in script
+    assert 'data-edit-pension-scenario="${index}"' in script
+    assert 'data-schedule-pension-scenario="${index}"' in script
+    assert 'data-delete-pension-scenario="${index}"' in script
+    assert 'openModal("pensionScenarioModal", returnFocus' in script
+    assert 'confirm(optionLabel("Remove this scenario?' in script
+    assert "newPensionScenarioInline" not in html
+    assert "newPensionScenarioInline" not in script
+    assert "pensionProjectionSummary" not in html
+    assert ".retirement-scenario-modal {" in styles
+    assert ".retirement-scenario-list {\n  grid-template-columns: repeat(2, minmax(0, 1fr));" in styles
+    mobile = styles.split('@media (max-width: 760px) {', 1)[1]
+    assert ".retirement-scenario-list,\n  .retirement-period-fields," in mobile
+
+
+def test_retirement_schedule_actions_follow_their_relevant_sections_and_explain_the_flow():
+    html = (ROOT / "web/index.html").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+    i18n = (ROOT / "web/i18n.js").read_text()
+    parser = _LabelParser()
+    parser.feed(html)
+
+    salary_section = html.split('aria-labelledby="salaryScheduleTitle"', 1)[1].split('</section>', 1)[0]
+    return_section = html.split('aria-labelledby="returnScheduleTitle"', 1)[1].split('</section>', 1)[0]
+    assert salary_section.index('id="pensionPeriodRows"') < salary_section.index('id="addPensionPeriod"')
+    assert return_section.index('id="pensionRateRows"') < return_section.index('id="addPensionRate"')
+    assert 'id="pensionStopWorkNow"' in salary_section
+    assert 'id="showPensionPeriodEntry" type="button" aria-expanded="false" aria-controls="pensionPeriodEntry"' in salary_section
+    assert 'id="pensionPeriodEntry" class="retirement-entry-card" hidden' in salary_section
+    assert 'id="cancelPensionPeriodEntry"' in salary_section
+    assert '>Save salary period</button>' in salary_section
+    assert 'id="showPensionRateEntry" type="button" aria-expanded="false" aria-controls="pensionRateEntry"' in return_section
+    assert 'id="pensionRateEntry" class="retirement-entry-card" hidden' in return_section
+    assert 'id="cancelPensionRateEntry"' in return_section
+    assert '>Save return period</button>' in return_section
+    assert 'id="addPensionRate"' not in salary_section
+    assert 'id="addPensionPeriod"' not in return_section
+    assert html.count('class="ux-tooltip"') >= 8
+    assert 'data-tooltip="Add a row for each age range' in html
+    assert 'data-tooltip="Add at least one annual return assumption.' in html
+    assert '"data-tooltip"' in i18n
+    assert ".ux-tooltip:focus::after" in styles
+    assert ".retirement-modal-footer" in styles
+    schedule_controls = {
+        "simPeriodFromMode", "simPeriodFrom", "simPeriodTo", "simPeriodIncome",
+        "simPeriodContribution", "simPeriodDeposit", "simInsuranceTrack",
+        "simDisabilityCoverage", "simSpouseSurvivorsCoverage",
+        "simChildrenSurvivorsCoverage", "simSurvivorsFactor", "simRateFromMode",
+        "simRateFrom", "simRateTo", "simRateAnnual",
+    }
+    assert schedule_controls <= parser.labeled_controls
+
+
+def test_retirement_schedules_require_contiguous_salary_and_return_coverage():
+    script = (ROOT / "web/app.js").read_text()
+    i18n = (ROOT / "web/i18n.js").read_text()
+
+    assert "function pensionScheduleCoverageIssue(scenario, field, label)" in script
+    assert 'pensionScheduleCoverageIssue(scenario, "income_periods", "Salary")' in script
+    assert 'pensionScheduleCoverageIssue(scenario, "return_periods", "Return")' in script
+    assert "schedule has overlapping periods at ages" in script
+    assert "schedule is missing ages" in script
+    assert "pensionScenarioScheduleIssue(scenario)" in script
+    assert "runButton.disabled = !state.pensionScenarios.length || Boolean(scheduleProblem);" in script
+    assert 'setPensionEntryVisibility("pensionPeriodEntry", "showPensionPeriodEntry", false' in script
+    assert 'setPensionEntryVisibility("pensionRateEntry", "showPensionRateEntry", false' in script
+    assert "schedule is missing ages" in i18n
+    assert "schedule has overlapping periods" in i18n
+
+
 def test_fund_row_actions_stay_grouped_instead_of_wrapping_remove_into_the_middle():
     script = (ROOT / "web/app.js").read_text()
     styles = (ROOT / "web/styles.css").read_text()
