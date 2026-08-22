@@ -83,6 +83,122 @@ def test_local_portfolio_aggregates_transactions_and_trends(tmp_path):
     assert report["value"] == 1050
 
 
+def test_reports_scope_complete_accounts_by_person_and_category(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    dana = store.save_family_member(
+        {"first_name": "Dana", "last_name": "Levi", "birth_date": "31/07/1990"}
+    )
+    ron = store.save_family_member(
+        {"first_name": "Ron", "last_name": "Cohen", "birth_date": "15/02/1988"}
+    )
+
+    def person(member):
+        return {
+            "member_id": member["id"],
+            "name": member["name"],
+            "first_name": member["first_name"],
+            "last_name": member["last_name"],
+            "birth_date": member["birth_date"],
+        }
+
+    investment = store.save_account(
+        {
+            "type": "Investment",
+            "location": "USA",
+            "currency": "USD",
+            "initial_cash": 1000,
+            "username": "Dana Investments",
+            "persons": [person(dana)],
+        }
+    )
+    long_term = store.save_account(
+        {
+            "type": "Long-Term Savings",
+            "location": "Israel",
+            "currency": "ILS",
+            "username": "Dana Pension",
+            "persons": [person(dana)],
+        }
+    )
+    bank = store.save_account(
+        {
+            "type": "Bank",
+            "location": "Israel",
+            "currency": "ILS",
+            "initial_cash": 500,
+            "username": "Ron Bank",
+            "persons": [person(ron)],
+        }
+    )
+    store.add_transaction(
+        {
+            "account_db_id": investment["id"],
+            "action": "BUY",
+            "symbol": "ABC",
+            "stock_market": "NYSE",
+            "asset_class": "EQUITY",
+            "quantity": 2,
+            "price_input": 100,
+            "trade_date": "2026-05-01",
+            "allow_manual": True,
+        }
+    )
+    store.save_price(
+        {
+            "symbol": "ABC",
+            "stock_market": "NYSE",
+            "asset_class": "EQUITY",
+            "location": "USA",
+            "currency": "USD",
+            "price_input": 120,
+            "price_date": "2026-05-02",
+        }
+    )
+    store.save_fund(
+        {
+            "kind": "Pension",
+            "fund_name": "Dana Pension Fund",
+            "pension_id": "P-DANA",
+            "amount": 200000,
+            "account_id": long_term["id"],
+        }
+    )
+    for account in (investment, long_term, bank):
+        store.save_account_snapshot(
+            {"account_id": account["id"], "snapshot_date": "20/08/2026", "value": 1000}
+        )
+
+    dana_report = store.reports({"person_id": dana["id"], "person_name": dana["name"]})
+    assert dana_report["accounts"] == 2
+    assert dana_report["holdings"] == 1
+    assert dana_report["funds"]["count"] == 1
+    assert {item["type"] for item in dana_report["account_details"]} == {"Investment", "Long-Term Savings"}
+    investment_detail = next(item for item in dana_report["account_details"] if item["id"] == investment["id"])
+    assert investment_detail["holdings"][0]["symbol"] == "ABC"
+    assert investment_detail["securities_value"] == 240
+    assert investment_detail["value"] == 1040
+
+    investment_report = store.reports(
+        {"person_id": dana["id"], "person_name": dana["name"], "account_type": "Investment"}
+    )
+    assert investment_report["accounts"] == 1
+    assert investment_report["account_details"][0]["id"] == investment["id"]
+    assert investment_report["funds"]["count"] == 0
+
+    no_match = store.reports(
+        {"person_id": ron["id"], "person_name": ron["name"], "account_type": "Long-Term Savings"}
+    )
+    assert no_match["accounts"] == 0
+    assert no_match["holdings"] == 0
+    assert no_match["funds"]["count"] == 0
+    assert no_match["account_details"] == []
+
+    snapshots = store.list_account_snapshots(
+        {"person_id": dana["id"], "person_name": dana["name"], "from": "2026-08-01", "to": "2026-08-22"}
+    )
+    assert {item["account_db_id"] for item in snapshots} == {investment["id"], long_term["id"]}
+
+
 def test_trade_quantity_validation_and_long_position_close(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
     account = _save_owned_account(store, {"type": "Investment", "location": "USA", "currency": "USD", "initial_cash": 1000, "username": "Eyal"})
@@ -1551,6 +1667,66 @@ def test_pension_simulation_supports_income_periods(tmp_path):
     assert result["total_deposits"] == 15000
     assert result["final_amount"] == 15000
     assert result["monthly_pension"] is None
+
+
+def test_pension_scenario_comparison_reconciles_and_models_stopping_work(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    common = {
+        "kind": "Pension",
+        "current_age": 40,
+        "retire_age": 42,
+        "amount": 100000,
+        "factor": 200,
+        "return_periods": [{"from_age": 40, "to_age": 42, "annual_return": 12}],
+    }
+
+    results = store.simulate_pension(
+        {
+            "scenarios": [
+                {
+                    **common,
+                    "name": "Work through payout age",
+                    "income_periods": [
+                        {"from_age": 40, "to_age": 42, "monthly_deposit": 1000},
+                    ],
+                },
+                {
+                    **common,
+                    "name": "Stop after one year",
+                    "income_periods": [
+                        {"from_age": 40, "to_age": 41, "monthly_deposit": 1000},
+                        {
+                            "from_age": 41,
+                            "to_age": 42,
+                            "monthly_income": 0,
+                            "contribution_percent": 0,
+                            "monthly_deposit": 0,
+                        },
+                    ],
+                },
+            ]
+        }
+    )["results"]
+
+    monthly_return = (1.12 ** (1 / 12)) - 1
+    expected_balances = []
+    for deposits_until_month in (24, 12):
+        balance = 100000.0
+        for month in range(24):
+            balance = balance * (1 + monthly_return) + (1000 if month < deposits_until_month else 0)
+        expected_balances.append(balance)
+
+    assert results[0]["final_amount"] == pytest.approx(expected_balances[0])
+    assert results[1]["final_amount"] == pytest.approx(expected_balances[1])
+    assert results[0]["final_amount"] > results[1]["final_amount"]
+    for result in results:
+        assert result["total_deposits"] == pytest.approx(
+            result["total_gross_deposits"] - result["total_insurance_cost"]
+        )
+        assert result["final_amount"] == pytest.approx(
+            result["starting_amount"] + result["total_deposits"] + result["investment_gain"]
+        )
+        assert result["monthly_pension"] == pytest.approx(result["final_amount"] / result["factor"])
 
 
 def test_dates_accept_display_format(tmp_path):

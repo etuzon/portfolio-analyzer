@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi.testclient import TestClient
 
-from app import main
+from app import admin_cli, main
 from app.auth import PASSWORD_MIN_LENGTH, SESSION_COOKIE_NAME, AuthStore, verify_password
 from app.local_portfolio import LocalPortfolioStore
 
@@ -99,7 +99,9 @@ def test_default_admin_must_change_password_before_using_portfolio(tmp_path, mon
 
     changed = _change_password(client, signed_in, "admin", "new-admin-password")
     assert changed["user"]["must_change_password"] is False
-    assert client.get("/api/about").status_code == 200
+    about = client.get("/api/about")
+    assert about.status_code == 200
+    assert about.json() == {"name": "Portfolio Analyzer", "version": main.__version__}
 
     logout = client.post("/api/auth/logout", headers={"X-CSRF-Token": changed["csrf_token"]})
     assert logout.status_code == 200
@@ -248,6 +250,62 @@ def test_expired_session_is_rejected_and_removed(tmp_path):
         assert connection.execute("select count(*) from auth_sessions").fetchone()[0] == 0
 
 
+def test_admin_password_reset_sets_temporary_password_and_revokes_sessions(tmp_path):
+    auth = AuthStore(tmp_path / "auth.sqlite3")
+    auth.initialize()
+    _user, token, _csrf = auth.authenticate("admin", "admin")
+
+    reset_user = auth.reset_admin_password("ADMIN", "temporary-admin-password")
+
+    assert reset_user["username"] == "admin"
+    assert reset_user["must_change_password"] is True
+    assert auth.session(token) is None
+    try:
+        auth.authenticate("admin", "admin")
+        assert False, "old password should be rejected after reset"
+    except ValueError as exc:
+        assert "Invalid username or password" in str(exc)
+    authenticated, _new_token, _new_csrf = auth.authenticate("admin", "temporary-admin-password")
+    assert authenticated["must_change_password"] is True
+
+
+def test_password_reset_rejects_non_admin_user(tmp_path):
+    auth = AuthStore(tmp_path / "auth.sqlite3")
+    auth.initialize()
+    auth.create_user(
+        {
+            "first_name": "Vera",
+            "last_name": "Viewer",
+            "username": "viewer",
+            "password": "viewer-password",
+            "role": "Viewer",
+        }
+    )
+
+    try:
+        auth.reset_admin_password("viewer", "temporary-viewer-password")
+        assert False, "non-Admin password reset should be rejected"
+    except LookupError as exc:
+        assert "Admin user not found" in str(exc)
+
+
+def test_admin_cli_resets_password_without_accepting_it_as_an_argument(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    entered_passwords = iter(["temporary-admin-password", "temporary-admin-password"])
+    monkeypatch.setattr(admin_cli.getpass, "getpass", lambda _prompt: next(entered_passwords))
+
+    assert admin_cli.main(["reset-password", "--username", "admin"]) == 0
+
+    output = capsys.readouterr()
+    assert "Password reset for Admin 'admin'" in output.out
+    assert "temporary-admin-password" not in output.out
+    assert "temporary-admin-password" not in output.err
+    user, _token, _csrf = AuthStore(tmp_path / "local-portfolio.sqlite3").authenticate(
+        "admin", "temporary-admin-password"
+    )
+    assert user["must_change_password"] is True
+
+
 def test_session_secret_is_hashed_and_portable_export_excludes_credentials(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
     auth = AuthStore(store.path)
@@ -262,12 +320,210 @@ def test_session_secret_is_hashed_and_portable_export_excludes_credentials(tmp_p
     portable = store.export_data()
     assert "app_users" not in portable["data"]
     assert "auth_sessions" not in portable["data"]
+    assert "api_tokens" not in portable["data"]
+    assert "api_access_settings" not in portable["data"]
 
     snapshot_path = tmp_path / "snapshot.sqlite3"
     snapshot_path.write_bytes(store.sqlite_snapshot_bytes())
     with sqlite3.connect(snapshot_path) as snapshot:
         tables = {row[0] for row in snapshot.execute("select name from sqlite_master where type = 'table'")}
-    assert {"app_users", "auth_sessions"} <= tables
+    assert {"app_users", "auth_sessions", "api_tokens", "api_access_settings"} <= tables
+
+
+def test_admin_controls_api_access_and_read_only_tokens_can_self_revoke(tmp_path, monkeypatch):
+    auth = _auth_environment(tmp_path, monkeypatch)
+    client = _client()
+
+    disabled = client.post("/api/auth/token", json={"username": "admin", "password": "admin"})
+    assert disabled.status_code == 403
+    assert disabled.json()["detail"]["code"] == "api_disabled"
+
+    admin_session = _change_password(client, _login(client), "admin", "new-admin-password")
+    enabled = client.put(
+        "/api/settings/api-access",
+        headers={"X-CSRF-Token": admin_session["csrf_token"]},
+        json={"mode": "read_only"},
+    )
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["mode"] == "read_only"
+    assert enabled.json()["write_enabled"] is False
+
+    issued = client.post(
+        "/api/auth/token",
+        json={"username": "admin", "password": "new-admin-password"},
+    )
+    assert issued.status_code == 200, issued.text
+    token_payload = issued.json()
+    token = token_payload["access_token"]
+    assert token_payload["token_type"] == "bearer"
+    assert token_payload["scope"] == "read"
+    assert token_payload["expires_in"] == 8 * 60 * 60
+
+    with sqlite3.connect(auth.path) as connection:
+        stored_hash = connection.execute("select token_hash from api_tokens").fetchone()[0]
+    assert stored_hash == hashlib.sha256(token.encode("utf-8")).hexdigest()
+    assert token not in stored_hash
+
+    bearer = {"Authorization": f"Bearer {token}"}
+    assert client.get("/api/about", headers=bearer).status_code == 200
+    write = client.put("/api/settings/client-state", headers=bearer, json={"language": "he"})
+    assert write.status_code == 403
+    assert write.json()["detail"]["code"] == "api_read_only"
+
+    revoked = client.delete("/api/auth/token", headers=bearer)
+    assert revoked.status_code == 200
+    assert revoked.json() == {"revoked": True}
+    rejected = client.get("/api/about", headers=bearer)
+    assert rejected.status_code == 401
+    assert rejected.json()["detail"]["code"] == "invalid_token"
+
+
+def test_admin_controls_mcp_independently_and_mcp_tokens_can_self_revoke(tmp_path, monkeypatch):
+    _auth_environment(tmp_path, monkeypatch)
+    client = _client()
+    admin_session = _change_password(client, _login(client), "admin", "new-admin-password")
+
+    initial = client.get("/api/settings/integration-access")
+    assert initial.status_code == 200
+    assert initial.json()["rest"]["mode"] == "disabled"
+    assert initial.json()["mcp"]["mode"] == "disabled"
+    assert initial.json()["mcp"]["endpoint"] == "/mcp/"
+
+    invalid = client.post(
+        "/api/auth/token",
+        json={"username": "admin", "password": "new-admin-password", "service": "unknown"},
+    )
+    assert invalid.status_code == 400
+    assert invalid.json()["detail"]["code"] == "invalid_service"
+
+    enabled = client.put(
+        "/api/settings/integration-access",
+        headers={"X-CSRF-Token": admin_session["csrf_token"]},
+        json={"rest_mode": "disabled", "mcp_mode": "read_only"},
+    )
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["rest"]["enabled"] is False
+    assert enabled.json()["mcp"]["mode"] == "read_only"
+
+    rest_blocked = client.post(
+        "/api/auth/token",
+        json={"username": "admin", "password": "new-admin-password"},
+    )
+    assert rest_blocked.status_code == 403
+    assert rest_blocked.json()["detail"]["code"] == "api_disabled"
+    issued = client.post(
+        "/api/auth/token",
+        json={"username": "admin", "password": "new-admin-password", "service": "mcp"},
+    )
+    assert issued.status_code == 200, issued.text
+    token_payload = issued.json()
+    assert token_payload["service"] == "mcp"
+    assert token_payload["scope"] == "read"
+    assert token_payload["endpoint"] == "/mcp/"
+
+    bearer = {"Authorization": f"Bearer {token_payload['access_token']}"}
+    revoked = client.delete("/api/auth/token", headers=bearer)
+    assert revoked.status_code == 200
+    assert revoked.json() == {"revoked": True}
+    assert client.post("/mcp/", headers=bearer, json={}).status_code == 401
+
+
+def test_read_write_api_honors_roles_and_disabling_revokes_all_tokens(tmp_path, monkeypatch):
+    auth = _auth_environment(tmp_path, monkeypatch)
+    admin_client = _client()
+    admin_session = _change_password(admin_client, _login(admin_client), "admin", "new-admin-password")
+    viewer = auth.create_user(
+        {
+            "first_name": "Vera",
+            "last_name": "Viewer",
+            "username": "api-viewer",
+            "password": "viewer-temporary-password",
+            "role": "Viewer",
+        }
+    )
+    viewer_client = _client()
+    viewer_session = _change_password(
+        viewer_client,
+        _login(viewer_client, "api-viewer", "viewer-temporary-password"),
+        "viewer-temporary-password",
+        "viewer-api-password",
+    )
+
+    forbidden = viewer_client.put(
+        "/api/settings/api-access",
+        headers={"X-CSRF-Token": viewer_session["csrf_token"]},
+        json={"mode": "read_write"},
+    )
+    assert forbidden.status_code == 403
+    assert forbidden.json()["detail"]["code"] == "admin_required"
+
+    enabled = admin_client.put(
+        "/api/settings/api-access",
+        headers={"X-CSRF-Token": admin_session["csrf_token"]},
+        json={"mode": "read_write"},
+    )
+    assert enabled.status_code == 200
+    assert enabled.json()["write_enabled"] is True
+
+    admin_token = admin_client.post(
+        "/api/auth/token",
+        json={"username": "admin", "password": "new-admin-password"},
+    ).json()
+    viewer_token = viewer_client.post(
+        "/api/auth/token",
+        json={"username": "api-viewer", "password": "viewer-api-password"},
+    ).json()
+    assert admin_token["scope"] == "read write"
+    assert viewer_token["scope"] == "read"
+
+    admin_bearer = {"Authorization": f"Bearer {admin_token['access_token']}"}
+    viewer_bearer = {"Authorization": f"Bearer {viewer_token['access_token']}"}
+    write = admin_client.put("/api/settings/client-state", headers=admin_bearer, json={"language": "en"})
+    assert write.status_code == 200, write.text
+    viewer_write = viewer_client.put("/api/settings/client-state", headers=viewer_bearer, json={"language": "he"})
+    assert viewer_write.status_code == 403
+    assert viewer_write.json()["detail"]["code"] == "read_only"
+
+    disabled = admin_client.put(
+        "/api/settings/api-access",
+        headers={"X-CSRF-Token": admin_session["csrf_token"]},
+        json={"mode": "disabled"},
+    )
+    assert disabled.status_code == 200
+    assert disabled.json()["active_tokens"] == 0
+    with sqlite3.connect(auth.path) as connection:
+        assert connection.execute("select count(*) from api_tokens").fetchone()[0] == 0
+    blocked = admin_client.get("/api/about", headers=admin_bearer)
+    assert blocked.status_code == 403
+    assert blocked.json()["detail"]["code"] == "api_disabled"
+    assert viewer["role"] == "Viewer"
+
+
+def test_api_tokens_require_a_completed_password_change_and_expire(tmp_path, monkeypatch):
+    auth = _auth_environment(tmp_path, monkeypatch)
+    auth.set_api_access_mode("read_only")
+    client = _client()
+
+    forced_change = client.post("/api/auth/token", json={"username": "admin", "password": "admin"})
+    assert forced_change.status_code == 403
+    assert forced_change.json()["detail"]["code"] == "password_change_required"
+
+    session = _change_password(client, _login(client), "admin", "new-admin-password")
+    issued = client.post(
+        "/api/auth/token",
+        json={"username": "admin", "password": "new-admin-password"},
+    )
+    token = issued.json()["access_token"]
+    expired = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
+    with sqlite3.connect(auth.path) as connection:
+        connection.execute("update api_tokens set expires_at = ?", (expired,))
+
+    rejected = client.get("/api/about", headers={"Authorization": f"Bearer {token}"})
+    assert rejected.status_code == 401
+    assert rejected.json()["detail"]["code"] == "invalid_token"
+    with sqlite3.connect(auth.path) as connection:
+        assert connection.execute("select count(*) from api_tokens").fetchone()[0] == 0
+    assert session["user"]["must_change_password"] is False
 
 
 def test_login_failures_are_rate_limited(tmp_path, monkeypatch):

@@ -230,7 +230,7 @@ def test_sidebar_starts_with_navigation_groups_without_a_redundant_main_menu_lab
     assert ".nav-title" not in styles
 
 
-def test_help_menu_groups_about_and_help_with_accessible_mobile_layout():
+def test_help_menu_covers_every_navigation_group_with_accessible_submenus():
     html = (ROOT / "web/index.html").read_text()
     script = (ROOT / "web/app.js").read_text()
     styles = (ROOT / "web/styles.css").read_text()
@@ -248,8 +248,19 @@ def test_help_menu_groups_about_and_help_with_accessible_mobile_layout():
     help_dialog = html.split('id="helpModal"', 1)[1].split('id="securityDetailModal"', 1)[0]
     assert 'role="dialog" aria-modal="true" aria-labelledby="helpTitle" aria-describedby="helpIntro"' in help_dialog
     assert 'data-modal-initial-focus aria-label="Close"' in help_dialog
-    assert help_dialog.count('<section class="help-topic') == 5
-    assert 'id="helpMobile">Using a phone or tablet</h3>' in help_dialog
+    assert help_dialog.count('<details class="help-group"') == 8
+    assert '<details class="help-group" open>' in help_dialog
+    for group in ["Dashboard", "Portfolio Data", "People", "Retirement", "Research", "Markets", "System", "Help"]:
+        assert f"<summary><span>{group}</span>" in help_dialog
+    for feature in [
+        "Home", "Reports", "Accounts", "Brokers", "Employee Stock Options", "Securities", "Prices", "Events",
+        "Family Members", "Account Ownership", "Pensions &amp; Funds", "Retirement Projections", "Company Reports",
+        "Company Outlook", "Portfolio Signals", "Market Screener", "Market Banner", "Users", "Settings", "About",
+    ]:
+        assert f"<h3>{feature}</h3>" in help_dialog
+    assert 'class="help-command" dir="ltr" data-i18n-skip' in help_dialog
+    assert "app.admin_cli reset-password --username admin" in help_dialog
+    assert '<h3>Using a phone or tablet</h3>' in help_dialog
 
     assert 'help: "Help"' in script
     assert 'help: "עזרה"' in script
@@ -257,16 +268,46 @@ def test_help_menu_groups_about_and_help_with_accessible_mobile_layout():
     assert 'data-modal="helpModal">${esc(t("help"))}</button>' in script
     assert 'if (id === "helpModal") requestAnimationFrame' in script
 
-    assert '.help-topic-grid {' in styles
+    assert '.help-directory {' in styles
+    assert '.help-group > summary {' in styles
+    assert '.help-group-content {' in styles
+    assert '.help-group > summary:focus-visible {' in styles
     responsive = styles.split('@media (max-width: 760px) {', 1)[1]
     assert '.help-card {' in responsive
     assert 'max-height: calc(100dvh - 24px);' in responsive
-    assert '.help-topic-grid {' in responsive
+    assert '.help-group-content,' in responsive
     assert 'grid-template-columns: 1fr;' in responsive
     assert '.nav-menu summary {' in responsive
     assert 'min-height: 44px;' in responsive
     assert '"Help": "עזרה"' in i18n
+    assert '"Recommended setup order": "סדר הגדרה מומלץ"' in i18n
     assert '"Using a phone or tablet": "שימוש בטלפון או בטאבלט"' in i18n
+
+
+def test_about_focuses_on_product_purpose_instead_of_runtime_details():
+    html = (ROOT / "web/index.html").read_text()
+    script = (ROOT / "web/app.js").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+    api = (ROOT / "app/main.py").read_text()
+
+    about_dialog = html.split('id="aboutModal"', 1)[1].split('id="helpModal"', 1)[0]
+    load_about = script.split("async function loadAbout() {", 1)[1].split("function renderUsers()", 1)[0]
+    about_endpoint = api.split('@app.get("/api/about")', 1)[1].split('@app.get("/api/portfolio")', 1)[0]
+
+    assert 'class="modal-card about-card"' in about_dialog
+    assert 'id="aboutContent" class="about-content" aria-live="polite"' in about_dialog
+    assert 'class="about-product"' in load_about
+    assert 'class="about-principles"' in load_about
+    assert 'class="about-disclaimer" role="note"' in load_about
+    assert "One financial picture" in load_about
+    assert "Local control" in load_about
+    assert '["Python"' not in load_about
+    assert '["Local data"' not in load_about
+    assert '["Backup"' not in load_about
+    assert '"python"' not in about_endpoint
+    assert '"features"' not in about_endpoint
+    assert '.about-product {' in styles
+    assert '.about-principles {' in styles
 
 
 def test_security_chart_exposes_explainable_signal_and_accessible_zoom_controls():
@@ -320,6 +361,7 @@ def test_settings_use_a_section_menu_with_explanations_and_safe_full_restore():
     menu_labels = [
         "Display and language",
         "Table settings",
+        "REST API &amp; MCP",
         "Portfolio data import and export",
         "Full backup and restore",
         "Cache and system status",
@@ -352,9 +394,9 @@ def test_settings_menu_is_keyboard_named_and_responsive():
 
     settings = html.split('id="settingsModal"', 1)[1].split('id="backupScheduleModal"', 1)[0]
     assert '<nav class="settings-menu" aria-label="Settings sections">' in settings
-    assert settings.count('data-settings-section=') == 5
-    assert settings.count('aria-controls="settingsPanel') == 5
-    assert settings.count('aria-labelledby="settingsNav') == 5
+    assert settings.count('data-settings-section=') == 6
+    assert settings.count('aria-controls="settingsPanel') == 6
+    assert settings.count('aria-labelledby="settingsNav') == 6
     assert 'summary aria-label="About portfolio data import and export"' in settings
     assert 'summary aria-label="About full backup and restore"' in settings
     assert 'id="settingsStatus" class="status-line" role="status" aria-live="polite"' in settings
@@ -365,6 +407,50 @@ def test_settings_menu_is_keyboard_named_and_responsive():
     assert 'grid-template-columns: 1fr;' in responsive
     assert '.settings-menu {' in responsive
     assert 'grid-template-columns: repeat(2, minmax(0, 1fr));' in responsive
+
+
+def test_rest_and_mcp_access_settings_are_admin_only_clear_and_responsive():
+    html = (ROOT / "web/index.html").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+    script = (ROOT / "web/app.js").read_text()
+    i18n = (ROOT / "web/i18n.js").read_text()
+
+    settings = html.split('id="settingsModal"', 1)[1].split('id="backupScheduleModal"', 1)[0]
+    assert 'id="settingsNavApi"' in settings
+    assert 'data-settings-section="api"' in settings
+    assert 'data-admin-only hidden' in settings
+    assert 'id="settingsPanelApi"' in settings
+    assert settings.count('name="apiAccessMode"') == 3
+    assert 'name="apiAccessMode" value="disabled"' in settings
+    assert 'name="apiAccessMode" value="read_only"' in settings
+    assert 'name="apiAccessMode" value="read_write"' in settings
+    assert settings.count('name="mcpAccessMode"') == 3
+    assert 'name="mcpAccessMode" value="disabled"' in settings
+    assert 'name="mcpAccessMode" value="read_only"' in settings
+    assert 'name="mcpAccessMode" value="read_write"' in settings
+    assert '<code dir="ltr">/api</code>' in settings
+    assert '<code dir="ltr">/mcp/</code>' in settings
+    assert 'POST /api/auth/token' in settings
+    assert '&quot;service&quot;: &quot;rest&quot;' not in settings
+    assert '"service": "rest"' in settings
+    assert '"service": "mcp"' in settings
+    assert 'Authorization: Bearer &lt;token&gt;' in settings
+    assert 'id="apiAccessSummary"' in settings and 'aria-live="polite"' in settings
+    assert 'id="mcpAccessSummary"' in settings and 'aria-live="polite"' in settings
+    assert 'document.querySelectorAll("button[data-admin-only]")' in script
+    assert 'api("/api/settings/integration-access"' in script
+    assert 'JSON.stringify({ rest_mode: restMode, mcp_mode: mcpMode })' in script
+    assert 'Turning a service off immediately revokes its active tokens. Continue?' in script
+    assert 'state.mcpAccess = access.mcp' in script
+    assert '.api-access-options {' in styles
+    assert '.integration-access-services {' in styles
+    assert '.api-access-option:has(input:checked)' in styles
+    responsive = styles.split('@media (max-width: 760px) {', 1)[1]
+    assert '.api-access-options {' in responsive
+    assert '"REST API & MCP": "REST API ו־MCP"' in i18n
+    assert '"MCP access mode": "מצב גישה ל־MCP"' in i18n
+    assert '"Read only": "קריאה בלבד"' in i18n
+    assert '"Read and write": "קריאה וכתיבה"' in i18n
 
 
 def test_missing_stock_market_is_explicitly_not_available():
@@ -566,6 +652,39 @@ def test_dashboard_can_filter_cards_by_financial_area_and_detail_level():
     assert '"Employee shares and options": "מניות ואופציות לעובדים"' in i18n
 
 
+def test_dashboard_pension_comparison_is_bounded_scrollable_and_reconciles_results():
+    html = (ROOT / "web/index.html").read_text()
+    script = (ROOT / "web/app.js").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+    i18n = (ROOT / "web/i18n.js").read_text()
+
+    bounded_table = styles.split(".long-term-savings-card .dashboard-projection-table {", 1)[1].split("}", 1)[0]
+    assert "width: 100%" in bounded_table
+    assert "min-width: 0" in bounded_table
+    assert "max-height: 220px" in bounded_table
+    assert "overflow: auto" in bounded_table
+    assert "scrollbar-gutter: stable" in bounded_table
+    assert "<th>Starting Balance</th>" in script
+    assert "<th>Net Deposits</th>" in script
+    assert "<th>Investment Gain</th>" in script
+    assert "result.starting_amount" in script
+    assert "Projection only. Enter annual return after management fees" in html
+    assert '"Starting Balance": "יתרה התחלתית"' in i18n
+    assert '"Net Deposits": "הפקדות נטו"' in i18n
+    assert '"Investment Gain": "רווח מהשקעות"' in i18n
+
+
+def test_retirement_salary_schedule_allows_a_zero_income_period():
+    script = (ROOT / "web/app.js").read_text()
+    validation = script.split("function pensionPeriodFormValid() {", 1)[1].split("function pensionRateFormValid()", 1)[0]
+
+    assert "hasContribution" not in validation
+    assert "Number(toAge) > Number(fromAge)" in validation
+    assert "survivorsFactor" in validation
+    assert "Fill To Age and survivors factor when survivors coverage is selected" in script
+    assert "Enter 0 for salary and deposits to model a period with no work or pension contributions." in (ROOT / "web/index.html").read_text()
+
+
 def test_sidebar_brand_shows_the_runtime_application_version():
     html = (ROOT / "web/index.html").read_text()
     script = (ROOT / "web/app.js").read_text()
@@ -727,6 +846,41 @@ def test_external_account_id_is_explicitly_optional_and_never_filled_from_intern
     assert html.count("Account ID (optional)") >= 4
     assert 'return parts.join(" · ") || optionLabel("Unnamed account");' in script
     assert 'record["account_id"] = account_id[:8]' not in backend
+
+
+def test_portfolio_reports_filter_complete_accounts_by_person_and_download_pdf():
+    html = (ROOT / "web/index.html").read_text()
+    script = (ROOT / "web/app.js").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+    i18n = (ROOT / "web/i18n.js").read_text()
+
+    reports_dialog = html.split('id="reportsModal"', 1)[1].split('id="researchModal"', 1)[0]
+    assert '<h2 id="reportsTitle">Portfolio reports</h2>' in reports_dialog
+    assert 'id="reportPerson"' in reports_dialog
+    assert 'All people' in reports_dialog
+    assert 'id="reportAccountType"' in reports_dialog
+    assert 'id="reportAccount"' in reports_dialog
+    assert '<summary>More filters <small>Location and reporting period</small></summary>' in reports_dialog
+    assert 'id="exportReportsPdf"' in reports_dialog
+    assert '>Download PDF</button>' in reports_dialog
+
+    assert "function reportAccountMatchesPrimaryFilters(account)" in script
+    assert 'person_id: valueOf("reportPerson")' in script
+    assert 'person_name: selectedReportPersonName()' in script
+    assert 'api(`/api/local/reports?${params}`)' in script
+    assert 'fetch(`/api/local/reports.pdf?${params}`)' in script
+    assert 'await downloadResponse(response, `portfolio-report-${todayString()}.pdf`)' in script
+    assert "window.print()" not in script
+    assert 'class="report-account-card"' in script
+    assert "No accounts match these filters" in script
+
+    assert ".report-filter-panel {" in styles
+    assert ".report-controls {" in styles
+    assert ".report-account-card > summary:focus-visible" in styles
+    assert ".report-holdings-table {" in styles
+    assert '"All people": "כל האנשים"' in i18n
+    assert '"Account category": "קטגוריית חשבון"' in i18n
+    assert '"Download PDF": "הורדת PDF"' in i18n
 
 
 def test_account_owner_rules_and_partial_import_recovery_are_visible():

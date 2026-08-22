@@ -2793,11 +2793,23 @@ class LocalPortfolioStore:
         args: list[Any] = []
         where = []
         account_id = str(filters.get("account_id") or "")
+        scoped_account_filter = any(
+            str(filters.get(key) or "").strip()
+            for key in ("account_type", "location", "person_id", "person_name")
+        )
         from_date = _parse_date(filters.get("from") or filters.get("date_from"))
         to_date = _parse_date(filters.get("to") or filters.get("date_to"))
         if account_id:
             where.append("s.account_db_id = ?")
             args.append(account_id)
+        elif scoped_account_filter:
+            account_ids = [item["id"] for item in self._filtered_accounts(filters)]
+            if account_ids:
+                placeholders = ", ".join("?" for _ in account_ids)
+                where.append(f"s.account_db_id in ({placeholders})")
+                args.extend(account_ids)
+            else:
+                where.append("0 = 1")
         if from_date:
             where.append("s.snapshot_date >= ?")
             args.append(from_date.isoformat())
@@ -3237,7 +3249,7 @@ class LocalPortfolioStore:
         holdings = self.holdings()
         account_rows = self._filtered_accounts(filters)
         account_ids = {row["id"] for row in account_rows}
-        filtered = [item for item in holdings if item.holding.account_id in account_ids or not account_ids]
+        filtered = [item for item in holdings if item.holding.account_id in account_ids]
         cash_by_account = {row["id"]: float(row["initial_cash"] or 0) for row in account_rows}
         for tx in self.list_transactions():
             if tx["account_db_id"] in cash_by_account:
@@ -3246,12 +3258,30 @@ class LocalPortfolioStore:
         by_location: dict[str, float] = {}
         by_account: dict[str, dict[str, Any]] = {}
         accounts_by_id = {row["id"]: row for row in account_rows}
+        account_details: dict[str, dict[str, Any]] = {}
         for account in account_rows:
             cash = cash_by_account.get(account["id"], 0)
             by_type[account["type"] or "Unknown"] = by_type.get(account["type"] or "Unknown", 0) + cash
             by_location[account["location"] or "Unknown"] = by_location.get(account["location"] or "Unknown", 0) + cash
             account_name = _account_label(account)
             by_account[account_name or account["id"]] = {"value": cash, "profit": 0, "cash": cash, "currency": account["currency"]}
+            account_details[account["id"]] = {
+                "id": account["id"],
+                "label": account_name or account["id"],
+                "type": account["type"],
+                "location": account["location"],
+                "currency": account["currency"],
+                "management_company": account.get("management_company") or "",
+                "username": account.get("username") or "",
+                "account_id": account.get("account_id") or "",
+                "persons": list(account.get("persons") or []),
+                "cash": cash,
+                "securities_value": 0.0,
+                "value": cash,
+                "profit": 0.0,
+                "holdings": [],
+                "funds": [],
+            }
         for item in filtered:
             holding = item.holding
             by_type[holding.account_type or "Unknown"] = by_type.get(holding.account_type or "Unknown", 0) + holding.market_value
@@ -3263,9 +3293,38 @@ class LocalPortfolioStore:
             )
             bucket["value"] += holding.market_value
             bucket["profit"] += holding.unrealized_profit + holding.realized_profit
-        funds = self.list_funds()
+            account_detail = account_details.get(holding.account_id)
+            if account_detail is not None:
+                holding_profit = holding.unrealized_profit + holding.realized_profit
+                account_detail["securities_value"] += holding.market_value
+                account_detail["value"] += holding.market_value
+                account_detail["profit"] += holding_profit
+                account_detail["holdings"].append(
+                    {
+                        "symbol": holding.symbol,
+                        "name": holding.name or holding.symbol,
+                        "asset_class": holding.asset_class,
+                        "quantity": holding.quantity,
+                        "market_value": holding.market_value,
+                        "profit": holding_profit,
+                        "currency": holding.currency or account_detail["currency"],
+                    }
+                )
+        funds = [item for item in self.list_funds() if item.get("account_id") in account_ids]
+        for fund in funds:
+            if fund.get("account_id") in account_details:
+                account_details[fund["account_id"]]["funds"].append(fund)
+        for detail in account_details.values():
+            detail["holdings"].sort(key=lambda item: (-abs(float(item["market_value"] or 0)), item["symbol"]))
         cash = sum(cash_by_account.values())
         securities_value = sum(item.holding.market_value for item in filtered)
+        person_id = str(filters.get("person_id") or "").strip()
+        person_name = str(filters.get("person_name") or "").strip()
+        if person_id and not person_name:
+            person_name = next(
+                (item["name"] for item in self.list_family_members() if item.get("id") == person_id),
+                "",
+            )
         return {
             "local_db": self.status(),
             "accounts": len(account_rows),
@@ -3277,6 +3336,18 @@ class LocalPortfolioStore:
             "by_type": by_type,
             "by_location": by_location,
             "by_account": by_account,
+            "account_details": list(account_details.values()),
+            "scope": {
+                "account_id": str(filters.get("account_id") or ""),
+                "account_type": str(filters.get("account_type") or ""),
+                "location": str(filters.get("location") or ""),
+                "person_id": person_id,
+                "person_name": person_name,
+                "entire_portfolio": not any(
+                    str(filters.get(key) or "").strip()
+                    for key in ("account_id", "account_type", "location", "person_id", "person_name")
+                ),
+            },
             "funds": {
                 "count": len(funds),
                 "amount": sum(item["amount"] for item in funds),
@@ -3523,6 +3594,8 @@ class LocalPortfolioStore:
         account_id = str(filters.get("account_id") or "")
         account_type = str(filters.get("account_type") or "")
         location = str(filters.get("location") or "")
+        person_id = str(filters.get("person_id") or "").strip()
+        person_name = " ".join(str(filters.get("person_name") or "").split()).casefold()
         if account_id:
             accounts = [item for item in accounts if item["id"] == account_id]
         if account_type:
@@ -3530,6 +3603,19 @@ class LocalPortfolioStore:
         if location:
             location_key = _location_key(location)
             accounts = [item for item in accounts if _location_key(item["location"]) == location_key]
+        if person_id or person_name:
+            accounts = [
+                account
+                for account in accounts
+                if any(
+                    (person_id and str(person.get("member_id") or "") == person_id)
+                    or (
+                        person_name
+                        and " ".join(str(person.get("name") or "").split()).casefold() == person_name
+                    )
+                    for person in account.get("persons") or []
+                )
+            ]
         return accounts
 
     def _apply_tx(self, position: dict[str, Any], tx: dict[str, Any]) -> None:

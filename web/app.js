@@ -35,6 +35,8 @@ const state = {
   securityHistoryMeta: {},
   securityChartZoom: null,
   localFunds: [],
+  activeReportFilters: null,
+  activeReport: null,
   fundAmountHistory: [],
   fundHistoryFundId: "",
   editingFundHistoryId: "",
@@ -91,6 +93,8 @@ const state = {
   portfolioReady: false,
   tableMaPeriod: "30",
   backupSettings: null,
+  apiAccess: null,
+  mcpAccess: null,
   pendingFullRestoreFile: null,
   pendingFullRestoreInspection: null,
   riskSnapshot: null,
@@ -583,7 +587,7 @@ const WRITE_CONTROL_IDS = new Set([
   "captureHistorySnapshot", "chooseFullRestore", "chooseImportData", "clearAlarms", "dashboardEdit",
   "dashboardReset", "importSource", "newEmployeeOptionGrant", "newPensionScenario", "runAlerts",
   "runBackupNow", "runCompanyOutlook", "runCompanyOutlookBacktest", "runDividendEvents", "saveAlarmSettings",
-  "saveAlert", "saveBackupSettings", "saveBroker", "saveDetailPrice", "saveDisplaySettings", "saveEditAccount",
+  "saveAlert", "saveApiAccessSettings", "saveBackupSettings", "saveBroker", "saveDetailPrice", "saveDisplaySettings", "saveEditAccount",
   "saveEditFund", "saveEmployeeExercise", "saveEmployeeListing", "saveEmployeeOptionGrant", "saveFamilyMember",
   "saveFund", "saveFundHistory", "saveHistorySnapshot", "saveLocalAccount", "saveManualSecurity",
   "savePositionTransaction", "savePrice", "saveSecurity", "saveTableSettings", "saveUser", "showFundCreate",
@@ -627,6 +631,7 @@ function isWriteControl(button) {
 function applyRolePermissions(root = document) {
   const readOnly = currentUser()?.role === "Viewer";
   document.body.dataset.accessRole = currentUser()?.role || "anonymous";
+  document.querySelectorAll("button[data-admin-only]").forEach((control) => { control.hidden = !canAdmin(); });
   const notice = $("readOnlyNotice");
   if (notice) notice.hidden = !readOnly;
   const buttons = [];
@@ -1392,6 +1397,7 @@ function applyLanguage() {
   ensureHierarchicalNav();
   bindNavAccordion();
   renderCurrentUser();
+  refreshReportFilterOptions();
   applyAutoDirection();
   window.PortfolioI18n?.applyToDocument(state.language);
   window.PortfolioI18n?.observe();
@@ -2519,7 +2525,7 @@ function populateStaticOptions() {
   const assetClasses = state.localOptions.asset_classes || ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"];
   setOptions("localAccountType", state.localOptions.account_types);
   setOptions("editAccountType", state.localOptions.account_types);
-  setOptions("reportAccountType", state.localOptions.account_types, "Any account type");
+  setOptions("reportAccountType", state.localOptions.account_types, optionLabel("All account categories"));
   setOptions("fundKind", state.localOptions.fund_kinds);
   setOptions("editFundKind", state.localOptions.fund_kinds);
   setOptions("securityAssetClass", assetClasses);
@@ -2678,10 +2684,11 @@ function renderPensionDashboardTable(monthlyEstimate) {
             <tr>
               <th>Pension Scenario</th>
               <th>Age Range</th>
+              <th>Starting Balance</th>
               <th>Monthly Pension</th>
               <th>Final Amount</th>
-              <th>Deposits</th>
-              <th>Profit</th>
+              <th>Net Deposits</th>
+              <th>Investment Gain</th>
             </tr>
           </thead>
           <tbody>
@@ -2694,6 +2701,7 @@ function renderPensionDashboardTable(monthlyEstimate) {
                 <tr>
                   <td><b>${esc(scenario.name)}</b><small>${esc(scenario.person_name || "Manual")}</small></td>
                   <td>${fmt(scenario.current_age, 1)}-${fmt(scenario.retire_age, 1)}</td>
+                  <td>${result ? money(result.starting_amount || 0, state.baseCurrency, 0) : ""}</td>
                   <td>${result ? `<b>${money(result.monthly_pension || 0, state.baseCurrency, 0)}</b>` : `<span class="muted-inline" title="${esc(statusTitle)}">${esc(statusText)}</span>`}</td>
                   <td>${result ? money(result.final_amount || 0, state.baseCurrency, 0) : ""}</td>
                   <td>${result ? money(result.total_deposits || 0, state.baseCurrency, 0) : ""}</td>
@@ -2708,7 +2716,7 @@ function renderPensionDashboardTable(monthlyEstimate) {
   }
   return `
     <div class="dashboard-projection-table">
-      <table class="projection-result-table compact-projection-table">
+      <table class="projection-result-table compact-projection-table compact-projection-table-empty">
         <thead>
           <tr>
             <th>Pension Scenario</th>
@@ -4229,6 +4237,49 @@ function refreshFamilyMemberSelects() {
   });
 }
 
+function selectedReportPersonName() {
+  const member = familyMemberById(valueOf("reportPerson"));
+  return member ? memberLabel(member) : "";
+}
+
+function reportAccountMatchesPrimaryFilters(account) {
+  const accountType = valueOf("reportAccountType");
+  const personId = valueOf("reportPerson");
+  const personName = selectedReportPersonName().toLocaleLowerCase();
+  if (accountType && account.type !== accountType) return false;
+  if (!personId) return true;
+  return (account.persons || []).some((person) => (
+    String(person.member_id || "") === personId
+    || (!person.member_id && String(person.name || "").toLocaleLowerCase() === personName)
+  ));
+}
+
+function refreshReportPersonSelect() {
+  const select = $("reportPerson");
+  if (!select) return;
+  const current = select.value;
+  select.innerHTML = `<option value="">${esc(optionLabel("All people"))}</option>` + state.familyMembers
+    .map((member) => `<option value="${esc(member.id)}">${esc(memberLabel(member))}</option>`)
+    .join("");
+  if ([...select.options].some((option) => option.value === current)) select.value = current;
+}
+
+function refreshReportAccountSelect() {
+  const select = $("reportAccount");
+  if (!select) return;
+  const current = select.value;
+  const accounts = state.localAccounts.filter(reportAccountMatchesPrimaryFilters);
+  select.innerHTML = `<option value="">${esc(optionLabel("All matching accounts"))}</option>`
+    + accounts.map(accountOptionHtml).join("");
+  if ([...select.options].some((option) => option.value === current)) select.value = current;
+}
+
+function refreshReportFilterOptions() {
+  refreshReportPersonSelect();
+  setOptions("reportAccountType", state.localOptions.account_types, optionLabel("All account categories"));
+  refreshReportAccountSelect();
+}
+
 function refreshFamilyAccountSelects() {
   const options = '<option value="">Choose account</option>' + state.localAccounts
     .map((account) => `<option value="${esc(account.id)}">${esc(accountLabel(account))} · ${esc(account.type)}</option>`)
@@ -4246,6 +4297,8 @@ async function loadFamilyMembers() {
   const data = await api("/api/local/family-members");
   state.familyMembers = data.items || [];
   refreshFamilyMemberSelects();
+  refreshReportPersonSelect();
+  refreshReportAccountSelect();
   refreshFamilyAccountSelects();
   renderSimulationPersonOptions();
   const list = $("familyMembersList");
@@ -4395,7 +4448,7 @@ function isImportedAccount(account) {
 
 function refreshLocalAccountSelects() {
   const accountOptions = '<option value="">All local accounts</option>' + state.localAccounts.map(accountOptionHtml).join("");
-  ["securityAccount", "employeeWizardAccount", "reportAccount", "employeeExerciseAccount"].forEach((id) => {
+  ["securityAccount", "employeeWizardAccount", "employeeExerciseAccount"].forEach((id) => {
     const select = $(id);
     if (!select) return;
     const current = select.value;
@@ -4407,6 +4460,7 @@ function refreshLocalAccountSelects() {
       : accountOptions;
     if ([...select.options].some((option) => option.value === current)) select.value = current;
   });
+  refreshReportAccountSelect();
   updateEmployeeOptionsAccountNotice();
   const historySelect = $("historyAccount");
   if (historySelect) {
@@ -7071,64 +7125,155 @@ async function savePrice() {
 }
 
 function renderReportSummary(report) {
+  const accountDetails = report.account_details || [];
+  const reportCash = accountDetails.length
+    ? sum(accountDetails.map((account) => normalizedAmount(account.cash, account.currency)))
+    : Number(report.cash || 0);
+  const reportSecurities = accountDetails.length
+    ? sum(accountDetails.flatMap((account) => account.holdings || [])
+      .map((holding) => normalizedAmount(holding.market_value, holding.currency)))
+    : Number(report.securities_value || 0);
+  const reportProfit = accountDetails.length
+    ? sum(accountDetails.flatMap((account) => account.holdings || [])
+      .map((holding) => normalizedAmount(holding.profit, holding.currency)))
+    : Number(report.profit || 0);
+  const monthlyPension = accountDetails.length
+    ? sum(accountDetails.flatMap((account) => (account.funds || []).map((fund) => (
+      normalizedAmount(fund.monthly_estimate || 0, account.currency)
+    ))))
+    : Number(report.funds?.monthly_estimate || 0);
   $("reportsSummary").innerHTML = [
     ["Accounts", report.accounts],
     ["Holdings", report.holdings],
-    ["Total value", fmt(report.value, 0)],
-    ["Cash", fmt(report.cash, 0)],
-    ["Securities", fmt(report.securities_value, 0)],
-    ["Profit", fmt(report.profit, 0)],
-    ["Monthly pension estimate", fmt(report.funds.monthly_estimate, 0)],
+    ["Total value", money(reportCash + reportSecurities, state.baseCurrency, 0)],
+    ["Cash", money(reportCash, state.baseCurrency, 0)],
+    ["Securities", money(reportSecurities, state.baseCurrency, 0)],
+    ["Profit", money(reportProfit, state.baseCurrency, 0)],
+    ["Monthly pension estimate", money(monthlyPension, state.baseCurrency, 0)],
   ].map(([label, value]) => `<div class="stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`).join("");
-  $("reportsDetails").innerHTML = Object.entries(report.by_account || {}).map(([account, data]) => `
-    <div class="stack-item management-item">
-      <b>${esc(cleanSourceLabel(account))}</b>
-      <span>Value ${fmt(data.value, 0)} · Cash ${fmt(data.cash, 0)} · Profit ${fmt(data.profit, 0)}</span>
-      <div class="sub">${esc(currencyDisplayLabel(data.currency || ""))}</div>
-    </div>
-  `).join("") || '<div class="empty">No local report data</div>';
+  $("reportsDetails").innerHTML = accountDetails.length ? accountDetails.map((account, index) => {
+    const owners = (account.persons || []).map(personLabel).join(", ") || optionLabel("No assigned people");
+    const holdings = account.holdings || [];
+    const funds = account.funds || [];
+    return `
+      <details class="report-account-card"${index === 0 ? " open" : ""}>
+        <summary>
+          <span><b>${esc(cleanSourceLabel(account.label) || account.id)}</b><small>${esc(optionLabel(account.type))} · ${esc(countryDisplayLabel(account.location))} · ${esc(owners)}</small></span>
+          <strong>${money(account.value, account.currency, 0)}</strong>
+        </summary>
+        <div class="report-account-content">
+          <dl class="report-account-facts">
+            <div><dt>Cash</dt><dd>${money(account.cash, account.currency, 0)}</dd></div>
+            <div><dt>Securities</dt><dd>${money(account.securities_value, account.currency, 0)}</dd></div>
+            <div><dt>Profit</dt><dd>${money(account.profit, account.currency, 0)}</dd></div>
+            <div><dt>Holdings</dt><dd>${esc(holdings.length)}</dd></div>
+          </dl>
+          <div class="table-wrap report-holdings-table">
+            ${holdings.length ? `<table class="holdings-table compact-report-table">
+              <thead><tr><th>Symbol</th><th>Name</th><th>Asset class</th><th>Quantity</th><th>Value</th><th>Profit</th></tr></thead>
+              <tbody>${holdings.map((holding) => `<tr>
+                <td data-label="Symbol"><b>${esc(holding.symbol)}</b></td>
+                <td data-label="Name">${esc(holding.name || holding.symbol)}</td>
+                <td data-label="Asset class">${esc(optionLabel(holding.asset_class || ""))}</td>
+                <td data-label="Quantity">${fmt(holding.quantity, 3)}</td>
+                <td data-label="Value">${money(holding.market_value, holding.currency || account.currency, 0)}</td>
+                <td data-label="Profit">${money(holding.profit, holding.currency || account.currency, 0)}</td>
+              </tr>`).join("")}</tbody>
+            </table>` : '<div class="empty">No holdings in this account</div>'}
+          </div>
+          ${funds.length ? `<div class="report-account-funds"><h4>Linked long-term funds</h4>${funds.map((fund) => `
+            <span><b>${esc(fund.fund_name || fund.pension_id || fund.kind)}</b><small>${esc(optionLabel(fund.kind))} · ${money(fund.amount, account.currency, 0)}</small></span>`).join("")}</div>` : ""}
+        </div>
+      </details>`;
+  }).join("") : '<div class="empty report-empty-state"><b>No accounts match these filters</b><span>Try All people or All account categories.</span></div>';
+  const totalsBy = (field) => accountDetails.reduce((items, account) => {
+    const label = account[field] || "Unknown";
+    items[label] = (items[label] || 0) + normalizedAmount(account.value, account.currency);
+    return items;
+  }, {});
   const breakdown = (items, formatLabel = (value) => value) => Object.entries(items || {})
     .sort((left, right) => Number(right[1] || 0) - Number(left[1] || 0))
-    .map(([label, value]) => `<div class="report-breakdown-row"><span>${esc(formatLabel(label))}</span><b>${fmt(value, 0)}</b></div>`)
+    .map(([label, value]) => `<div class="report-breakdown-row"><span>${esc(formatLabel(label))}</span><b>${money(value, state.baseCurrency, 0)}</b></div>`)
     .join("") || '<div class="empty">No report data</div>';
-  $("reportsByType").innerHTML = breakdown(report.by_type);
-  $("reportsByLocation").innerHTML = breakdown(report.by_location, countryDisplayLabel);
-  updatePdfReportMeta();
+  $("reportsByType").innerHTML = breakdown(totalsBy("type"), optionLabel);
+  $("reportsByLocation").innerHTML = breakdown(totalsBy("location"), countryDisplayLabel);
+  renderReportScopeSummary(report);
 }
 
-function updatePdfReportMeta() {
-  const account = $("reportAccount")?.selectedOptions?.[0]?.textContent?.trim() || "All accounts";
-  const accountType = $("reportAccountType")?.selectedOptions?.[0]?.textContent?.trim() || "Any account type";
-  const location = valueOf("reportLocation") ? countryDisplayLabel(valueOf("reportLocation")) : "All locations";
-  const from = valueOf("reportFrom") || formatDate(HISTORY_START_DATE);
-  const to = valueOf("reportTo") || formatDate(todayString());
-  $("pdfReportMeta").textContent = `${account} · ${accountType} · ${location} · ${from}–${to} · Generated ${formatDate(todayString())}`;
+function currentReportFilters() {
+  return {
+    account_id: valueOf("reportAccount"),
+    account_type: valueOf("reportAccountType"),
+    location: valueOf("reportLocation"),
+    person_id: valueOf("reportPerson"),
+    person_name: selectedReportPersonName(),
+    date_from: clampedHistoryDate(dateValue("reportFrom") || HISTORY_START_DATE),
+    date_to: dateValue("reportTo") || todayString(),
+  };
+}
+
+function reportQueryParams(filters, { includeDates = false } = {}) {
+  const keys = ["account_id", "account_type", "location", "person_id", "person_name"];
+  if (includeDates) keys.push("date_from", "date_to");
+  const params = new URLSearchParams();
+  keys.forEach((key) => {
+    if (filters[key]) params.set(key, filters[key]);
+  });
+  return params;
+}
+
+function renderReportScopeSummary(report) {
+  const filters = state.activeReportFilters || currentReportFilters();
+  const accountLabelText = filters.account_id
+    ? state.localAccounts.find((account) => account.id === filters.account_id)?.label || $("reportAccount")?.selectedOptions?.[0]?.textContent
+    : "";
+  const scope = [
+    filters.person_name ? `${optionLabel("Person")}: ${filters.person_name}` : "",
+    filters.account_type ? optionLabel(filters.account_type) : "",
+    accountLabelText || "",
+    filters.location ? countryDisplayLabel(filters.location) : "",
+  ].filter(Boolean);
+  const title = scope.length ? scope.join(" · ") : optionLabel("Entire portfolio");
+  $("reportScopeSummary").innerHTML = `<b>${esc(title)}</b><span>${esc(report.accounts)} accounts · ${esc(report.holdings)} holdings · ${esc(report.funds?.count || 0)} linked funds</span>`;
+}
+
+function markReportFiltersChanged() {
+  refreshReportAccountSelect();
+  if (!state.activeReportFilters) return;
+  const changed = JSON.stringify(currentReportFilters()) !== JSON.stringify(state.activeReportFilters);
+  $("reportsExportStatus").textContent = changed
+    ? "Filters changed. Generate the report to update the preview; PDF download still uses the displayed report."
+    : "";
 }
 
 async function exportReportsPdf() {
+  if (!state.activeReportFilters) await loadReports();
+  const button = $("exportReportsPdf");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
   $("reportsExportStatus").textContent = "Preparing PDF report";
-  await loadReports();
-  updatePdfReportMeta();
-  const previousTitle = document.title;
-  let cleaned = false;
-  const cleanup = () => {
-    if (cleaned) return;
-    cleaned = true;
-    document.body.classList.remove("report-print-mode");
-    document.title = previousTitle;
-    $("reportsExportStatus").textContent = "PDF export opened. Choose Save as PDF in the print dialog.";
-  };
-  window.addEventListener("afterprint", cleanup, { once: true });
-  document.body.classList.add("report-print-mode");
-  document.title = `portfolio-report-${todayString()}`;
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    window.print();
-    setTimeout(cleanup, 1000);
-  }));
+  try {
+    const params = reportQueryParams(state.activeReportFilters, { includeDates: true });
+    params.set("language", state.language);
+    const response = await fetch(`/api/local/reports.pdf?${params}`);
+    await downloadResponse(response, `portfolio-report-${todayString()}.pdf`);
+    $("reportsExportStatus").textContent = "PDF report downloaded";
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
 }
 
 function renderAccountTrend(trend) {
-  const accounts = (trend.accounts || []).filter((account) => account.points?.length);
+  const accounts = (trend.accounts || []).filter((account) => account.points?.length).map((account) => ({
+    ...account,
+    points: account.points.map((point) => ({
+      ...point,
+      value: normalizedAmount(point.value, account.account?.currency),
+      cash: normalizedAmount(point.cash, account.account?.currency),
+      profit: normalizedAmount(point.profit, account.account?.currency),
+    })),
+  }));
   const series = accounts.flatMap((account) => account.points.map((point) => ({ ...point, account: account.account })));
   if (!series.length) {
     $("accountTrendChart").innerHTML = '<div class="empty">No trend data for this date range</div>';
@@ -7156,7 +7301,7 @@ function renderAccountTrend(trend) {
     const last = points.at(-1) || {};
     const label = accountLabel(account.account);
     return `<g>
-      <title>${esc(`${label}\nValue ${fmt(last.value, 0)}\nProfit ${pct(last.profit_percent)}\nDate ${formatDate(last.date || "")}`)}</title>
+      <title>${esc(`${label}\nValue ${money(last.value, state.baseCurrency, 0)}\nProfit ${pct(last.profit_percent)}\nDate ${formatDate(last.date || "")}`)}</title>
       <path d="${valuePath}" fill="none" stroke="${colorAt(index)}" stroke-width="3"></path>
       <path d="${profitPath}" fill="none" stroke="${colorAt(index + 3)}" stroke-width="2" stroke-dasharray="5 5"></path>
     </g>`;
@@ -7166,7 +7311,7 @@ function renderAccountTrend(trend) {
     return `
       <div class="report-trend-account" title="${esc(accountLabel(account.account))}">
         <b><i style="--line-color:${colorAt(index)}"></i>${esc(accountLabel(account.account))}</b>
-        <span>Value ${fmt(last.value, 0)} · Profit ${pct(last.profit_percent)}</span>
+        <span>Value ${money(last.value, state.baseCurrency, 0)} · Profit ${pct(last.profit_percent)}</span>
       </div>`;
   }).join("");
   $("accountTrendChart").innerHTML = `
@@ -7183,8 +7328,8 @@ function renderAccountTrend(trend) {
       <line x1="${padLeft}" y1="124" x2="${padLeft + plotWidth}" y2="124"></line>
       <line x1="${padLeft}" y1="170" x2="${padLeft + plotWidth}" y2="170"></line>
       <line x1="${padLeft}" y1="244" x2="${padLeft + plotWidth}" y2="244"></line>
-      <text x="${padLeft + plotWidth + 10}" y="46">${fmt(maxValue, 0)}</text>
-      <text x="${padLeft + plotWidth + 10}" y="128">${fmt(minValue, 0)}</text>
+      <text x="${padLeft + plotWidth + 10}" y="46">${compactMoney(maxValue, state.baseCurrency)}</text>
+      <text x="${padLeft + plotWidth + 10}" y="128">${compactMoney(minValue, state.baseCurrency)}</text>
       <text x="${padLeft + plotWidth + 10}" y="174">${pct(maxProfit)}</text>
       <text x="${padLeft + plotWidth + 10}" y="248">${pct(minProfit)}</text>
       ${accountLines}
@@ -7507,12 +7652,8 @@ function renderHistorySnapshots() {
   `).join("") : '<div class="empty">No saved history points in this range</div>';
 }
 
-async function loadHistorySnapshots() {
-  const params = new URLSearchParams({
-    account_id: valueOf("reportAccount"),
-    date_from: clampedHistoryDate(dateValue("reportFrom")),
-    date_to: dateValue("reportTo"),
-  });
+async function loadHistorySnapshots(filters = currentReportFilters()) {
+  const params = reportQueryParams(filters, { includeDates: true });
   const data = await api(`/api/local/account-snapshots?${params}`);
   state.historySnapshots = data.items || [];
   renderHistorySnapshots();
@@ -7550,25 +7691,32 @@ async function captureHistorySnapshot() {
 }
 
 async function loadReports() {
-  const params = new URLSearchParams({
-    account_id: valueOf("reportAccount"),
-    account_type: valueOf("reportAccountType"),
-    location: valueOf("reportLocation"),
-  });
-  const trendParams = new URLSearchParams({
-    account_id: valueOf("reportAccount"),
-    account_type: valueOf("reportAccountType"),
-    location: valueOf("reportLocation"),
-    date_from: clampedHistoryDate(dateValue("reportFrom")),
-    date_to: dateValue("reportTo"),
-  });
-  const [report, trend] = await Promise.all([
-    api(`/api/local/reports?${params}`),
-    api(`/api/local/account-trends?${trendParams}`),
-  ]);
-  renderReportSummary(report);
-  renderAccountTrend(trend);
-  await loadHistorySnapshots();
+  const filters = currentReportFilters();
+  const params = reportQueryParams(filters);
+  const trendParams = reportQueryParams(filters, { includeDates: true });
+  const button = $("loadReports");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  $("reportsExportStatus").textContent = "Generating report";
+  try {
+    const [report, trend, snapshots] = await Promise.all([
+      api(`/api/local/reports?${params}`),
+      api(`/api/local/account-trends?${trendParams}`),
+      api(`/api/local/account-snapshots?${trendParams}`),
+    ]);
+    state.activeReportFilters = filters;
+    state.activeReport = report;
+    state.historySnapshots = snapshots.items || [];
+    renderReportSummary(report);
+    renderAccountTrend(trend);
+    renderHistorySnapshots();
+    $("reportsExportStatus").textContent = report.accounts
+      ? `Report ready · ${report.accounts} accounts included`
+      : "No accounts match these filters";
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
 }
 
 async function loadFunds() {
@@ -8048,17 +8196,12 @@ function pensionPeriodFormValid() {
   if (!scenario) return false;
   const fromAge = valueOf("simPeriodFromMode") === "now" ? scenario.current_age : numberValue("simPeriodFrom");
   const toAge = numberValue("simPeriodTo");
-  const income = numberValue("simPeriodIncome") || 0;
-  const contribution = numberValue("simPeriodContribution") || 0;
-  const deposit = numberValue("simPeriodDeposit") || 0;
   const spouse = numberValue("simSpouseSurvivorsCoverage") || 0;
   const children = numberValue("simChildrenSurvivorsCoverage") || 0;
   const survivorsFactor = numberValue("simSurvivorsFactor");
-  const hasContribution = (income > 0 && contribution > 0) || deposit > 0;
   return Number.isFinite(Number(fromAge))
     && Number.isFinite(Number(toAge))
     && Number(toAge) > Number(fromAge)
-    && hasContribution
     && (!(spouse > 0 || children > 0) || (Number.isFinite(Number(survivorsFactor)) && Number(survivorsFactor) > 0));
 }
 
@@ -8538,11 +8681,12 @@ function renderPensionSimulationResults() {
           <tr>
             <th>Scenario</th>
             <th>Return Periods</th>
+            <th>Starting Balance</th>
             <th>Monthly Pension</th>
             <th>Final Amount</th>
-            <th>Deposits</th>
+            <th>Net Deposits</th>
             <th>Insurance Cost</th>
-            <th>Profit</th>
+            <th>Investment Gain</th>
           </tr>
         </thead>
         <tbody>
@@ -8555,6 +8699,7 @@ function renderPensionSimulationResults() {
                   <small>${esc(optionLabel(scenario.kind))} · ${esc(optionLabel("Age"))} ${fmt(scenario.current_age, 1)}-${fmt(scenario.retire_age, 1)} · ${scenario.income_periods?.length || 0} ${esc(optionLabel("salary periods"))}</small>
                 </td>
                 <td>${esc(scenario.return_periods?.length || 0)}</td>
+                <td>${money(result.starting_amount || 0, state.baseCurrency, 0)}</td>
                 <td><b>${money(result.monthly_pension || 0, state.baseCurrency, 0)}</b></td>
                 <td>${money(result.final_amount || 0, state.baseCurrency, 0)}</td>
                 <td>${money(result.total_deposits || 0, state.baseCurrency, 0)}</td>
@@ -8639,7 +8784,7 @@ function addPensionPeriod() {
     survivors_capitalization_factor: numberValue("simSurvivorsFactor") || 200,
   };
   if (!pensionPeriodFormValid()) {
-    $("pensionPeriodStatus").textContent = "Fill To Age, deposit fields, and survivors factor when survivors coverage is selected";
+    $("pensionPeriodStatus").textContent = "Fill To Age and survivors factor when survivors coverage is selected";
     return;
   }
   scenario.income_periods = [...(scenario.income_periods || []), period];
@@ -9432,6 +9577,8 @@ async function loadCacheStatus() {
   const settings = await api("/api/settings");
   const data = settings.cache || {};
   const backup = settings.backup || {};
+  state.apiAccess = settings.integration_access?.rest || settings.api_access || { mode: "disabled", active_tokens: 0, token_ttl_seconds: 28800 };
+  state.mcpAccess = settings.integration_access?.mcp || settings.mcp_access || { mode: "disabled", active_tokens: 0, token_ttl_seconds: 28800 };
   state.backupSettings = {
     ...backup,
     schedule_config: normalizeBackupScheduleConfig(backup.schedule_config),
@@ -9476,12 +9623,14 @@ async function loadCacheStatus() {
     </div>
   `).join("");
   $("backupStatus").innerHTML = backupRows + backupFiles;
+  renderApiAccessSettings();
 }
 
-const SETTINGS_SECTIONS = new Set(["display", "table", "data", "backup", "system"]);
+const SETTINGS_SECTIONS = new Set(["display", "table", "api", "data", "backup", "system"]);
 
 function setSettingsSection(requestedSection = "display", { focus = false } = {}) {
-  const section = SETTINGS_SECTIONS.has(requestedSection) ? requestedSection : "display";
+  const allowedSection = requestedSection !== "api" || canAdmin();
+  const section = SETTINGS_SECTIONS.has(requestedSection) && allowedSection ? requestedSection : "display";
   document.querySelectorAll("[data-settings-section]").forEach((button) => {
     const active = button.dataset.settingsSection === section;
     button.classList.toggle("active", active);
@@ -9492,10 +9641,63 @@ function setSettingsSection(requestedSection = "display", { focus = false } = {}
     panel.hidden = panel.dataset.settingsPanel !== section;
   });
   document.querySelectorAll(".settings-menu-help[open]").forEach((details) => details.removeAttribute("open"));
-  if (section === "backup" || section === "system") {
+  if (section === "api" || section === "backup" || section === "system") {
     loadCacheStatus().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; });
   }
   if (focus) requestAnimationFrame(() => document.querySelector(`[data-settings-section="${section}"]`)?.focus());
+}
+
+function apiAccessModeLabel(mode) {
+  return {
+    disabled: optionLabel("Off"),
+    read_only: optionLabel("Read only"),
+    read_write: optionLabel("Read and write"),
+  }[mode] || optionLabel("Off");
+}
+
+function renderApiAccessSettings() {
+  [
+    ["apiAccessMode", "apiAccessSummary", state.apiAccess],
+    ["mcpAccessMode", "mcpAccessSummary", state.mcpAccess],
+  ].forEach(([radioName, summaryId, rawAccess]) => {
+    const access = rawAccess || { mode: "disabled", active_tokens: 0, token_ttl_seconds: 28800 };
+    const selected = document.querySelector(`input[name="${radioName}"][value="${access.mode}"]`)
+      || document.querySelector(`input[name="${radioName}"][value="disabled"]`);
+    if (selected) selected.checked = true;
+    const summary = $(summaryId);
+    if (!summary) return;
+    const hours = Math.max(1, Math.round(Number(access.token_ttl_seconds || 28800) / 3600));
+    summary.innerHTML = `<b>${esc(apiAccessModeLabel(access.mode))}</b><span>${esc(access.active_tokens || 0)} ${esc(optionLabel("active tokens"))} · ${esc(optionLabel("Tokens expire after"))} ${esc(hours)} ${esc(optionLabel("hours"))}</span>`;
+  });
+}
+
+async function saveApiAccessSettings() {
+  const restMode = document.querySelector('input[name="apiAccessMode"]:checked')?.value || "disabled";
+  const mcpMode = document.querySelector('input[name="mcpAccessMode"]:checked')?.value || "disabled";
+  const turnsOffService = (state.apiAccess?.mode !== "disabled" && restMode === "disabled")
+    || (state.mcpAccess?.mode !== "disabled" && mcpMode === "disabled");
+  if (turnsOffService
+      && !confirm(optionLabel("Turning a service off immediately revokes its active tokens. Continue?"))) {
+    renderApiAccessSettings();
+    return;
+  }
+  const button = $("saveApiAccessSettings");
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  $("settingsStatus").textContent = optionLabel("Saving integration access");
+  try {
+    const access = await api("/api/settings/integration-access", {
+      method: "PUT",
+      body: JSON.stringify({ rest_mode: restMode, mcp_mode: mcpMode }),
+    });
+    state.apiAccess = access.rest;
+    state.mcpAccess = access.mcp;
+    renderApiAccessSettings();
+    $("settingsStatus").textContent = optionLabel("Integration access saved");
+  } finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+  }
 }
 
 function clearFullRestorePreview() {
@@ -9796,13 +9998,30 @@ async function saveBackupSettings() {
 
 async function loadAbout() {
   const about = await api("/api/about");
-  $("aboutContent").innerHTML = [
-    ["Name", about.name || "Portfolio Analyzer"],
-    ["Version", about.version || ""],
-    ["Python", about.python || ""],
-    ["Local data", "Accounts, instruments, transactions, prices, history"],
-    ["Backup", "Export, import, scheduled backup"],
-  ].map(([label, value]) => `<div class="setting-row"><span>${esc(label)}</span><b>${esc(value)}</b></div>`).join("");
+  const name = about.name || "Portfolio Analyzer";
+  const version = about.version || "";
+  $("aboutContent").innerHTML = `
+    <section class="about-product" aria-labelledby="aboutProductName">
+      <span class="about-product-mark" aria-hidden="true"></span>
+      <div>
+        <div class="about-product-heading">
+          <h3 id="aboutProductName">${esc(name)}</h3>
+          ${version ? `<span class="about-version">Version <bdi dir="ltr">${esc(version)}</bdi></span>` : ""}
+        </div>
+        <p>A private, self-hosted workspace for understanding investments, long-term savings, retirement scenarios, company research, and portfolio alerts.</p>
+      </div>
+    </section>
+    <div class="about-principles">
+      <article>
+        <h4>One financial picture</h4>
+        <p>Bring household accounts, holdings, pensions, reports, and research together without turning the dashboard into a public service.</p>
+      </article>
+      <article>
+        <h4>Local control</h4>
+        <p>Portfolio changes stay in this installation. Role-based access separates administration, editing, and read-only viewing.</p>
+      </article>
+    </div>
+    <p class="about-disclaimer" role="note">Analytics, market signals, and retirement projections are decision-support estimates. They are not financial, tax, or pension advice.</p>`;
 }
 
 function renderUsers() {
@@ -9951,7 +10170,11 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
     renderAlarms();
     loadEvents().catch((error) => { $("alarmsStatus").textContent = `Error: ${error.message}`; });
   }
-  if (id === "reportsModal") Promise.all([loadLocalAccounts(), loadReports()]);
+  if (id === "reportsModal") {
+    Promise.all([loadLocalAccounts(), loadFamilyMembers()])
+      .then(loadReports)
+      .catch((error) => { $("reportsExportStatus").textContent = `Error: ${error.message}`; });
+  }
   if (id === "researchModal") {
     setResearchSection(state.researchSection);
     loadCompanyOutlookHistory().catch((error) => { $("companyOutlookStatus").textContent = `Error: ${error.message}`; });
@@ -10819,6 +11042,7 @@ $("fullRestoreFile").addEventListener("change", (event) => {
 $("runBackupNow").addEventListener("click", () => runBackupNow().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }));
 $("downloadBackupsZip").addEventListener("click", () => downloadBackupsZip().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }));
 $("saveBackupSettings").addEventListener("click", () => saveBackupSettings().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }));
+$("saveApiAccessSettings").addEventListener("click", () => saveApiAccessSettings().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; }));
 $("saveTableSettings").addEventListener("click", () => {
   state.tableMaPeriod = $("tableMaPeriod").value;
   saveTableSettings();
@@ -10874,6 +11098,9 @@ $("savePrice").addEventListener("click", () => savePrice().catch((error) => { $(
 $("saveDetailPrice").addEventListener("click", () => saveSecurityDetailPrice().catch((error) => { $("securityDetailStatus").textContent = `Error: ${error.message}`; }));
 $("loadReports").addEventListener("click", () => loadReports().catch((error) => { $("reportsDetails").innerHTML = `<div class="empty">Error: ${esc(error.message)}</div>`; }));
 $("exportReportsPdf").addEventListener("click", () => exportReportsPdf().catch((error) => { $("reportsExportStatus").textContent = `Error: ${error.message}`; }));
+["reportPerson", "reportAccountType", "reportAccount", "reportLocation", "reportFrom", "reportTo"].forEach((id) => {
+  $(id).addEventListener("change", markReportFiltersChanged);
+});
 $("loadFinanceReport").addEventListener("click", () => loadFinanceReport().catch((error) => { $("financeReportStatus").textContent = `Error: ${error.message}`; }));
 $("runCompanyOutlook").addEventListener("click", () => loadCompanyOutlook().catch((error) => { $("companyOutlookStatus").textContent = `Error: ${error.message}`; }));
 $("runCompanyOutlookBacktest").addEventListener("click", () => loadCompanyOutlookBacktest().catch((error) => { $("companyOutlookStatus").textContent = `Error: ${error.message}`; }));

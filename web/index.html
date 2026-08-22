@@ -849,7 +849,7 @@
 
     <div id="aboutModal" class="modal" hidden>
       <div class="modal-backdrop" data-close></div>
-      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+      <section class="modal-card about-card" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
         <div class="section-head">
           <div>
             <p class="eyebrow">Application</p>
@@ -857,7 +857,7 @@
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
-        <div id="aboutContent" class="settings-grid"></div>
+        <div id="aboutContent" class="about-content" aria-live="polite"></div>
       </section>
     </div>
 
@@ -871,32 +871,149 @@
           </div>
           <button class="icon-button" type="button" data-close data-modal-initial-focus aria-label="Close">×</button>
         </div>
-        <p id="helpIntro" class="help-intro">Quick guidance for using the portfolio dashboard and its management tools.</p>
-        <div class="help-topic-grid">
-          <section class="help-topic" aria-labelledby="helpGettingStarted">
-            <h3 id="helpGettingStarted">Getting started</h3>
-            <ol>
-              <li>Use the navigation groups to open reports, portfolio data, retirement tools, research, markets, and settings.</li>
-              <li>Start on Home to review portfolio value, holdings, long-term savings, and data-quality indicators.</li>
-              <li>Use the dashboard Area and View controls to focus the cards shown on screen.</li>
-            </ol>
-          </section>
-          <section class="help-topic" aria-labelledby="helpManagingData">
-            <h3 id="helpManagingData">Managing portfolio data</h3>
-            <p>Add people and brokers before creating accounts, then add securities, transactions, events, and historical prices from Portfolio Data.</p>
-          </section>
-          <section class="help-topic" aria-labelledby="helpAnalytics">
-            <h3 id="helpAnalytics">Understanding analytics</h3>
-            <p>Open Reports for account trends, Research for company analysis and portfolio signals, and Markets for screening and market-banner settings.</p>
-          </section>
-          <section class="help-topic" aria-labelledby="helpPrivacy">
-            <h3 id="helpPrivacy">Data and privacy</h3>
-            <p>Manual portfolio changes stay in the local portfolio database. Imported sources are read-only, and local edits are never written back to them.</p>
-          </section>
-          <section class="help-topic help-topic-wide" aria-labelledby="helpMobile">
-            <h3 id="helpMobile">Using a phone or tablet</h3>
-            <p>Swipe the top navigation horizontally to reach more groups. Tap a group to show its sections; opening another group closes the previous one.</p>
-          </section>
+        <p id="helpIntro" class="help-intro">Choose a navigation group below to learn what each feature does, what to prepare, and how to use its results.</p>
+        <aside class="help-quick-start" aria-labelledby="helpQuickStartTitle">
+          <strong id="helpQuickStartTitle">Recommended setup order</strong>
+          <span>Add family members and brokers, create accounts and assign ownership, then add securities, transactions, prices, and events.</span>
+        </aside>
+        <div class="help-directory">
+          <details class="help-group" open>
+            <summary><span>Dashboard</span><small>Monitor the portfolio and review account history.</small></summary>
+            <div class="help-group-content">
+              <article class="help-feature">
+                <h3>Home</h3>
+                <p>Use Area to choose the part of the portfolio and View to switch between compact, full, and editing modes. Cards show value, holdings, long-term savings, and data-quality warnings.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Reports</h3>
+                <p>Review account value, profit, allocation, and saved history. Filter by account, account type, location, and date range before comparing trends or exporting a PDF.</p>
+              </article>
+            </div>
+          </details>
+
+          <details class="help-group">
+            <summary><span>Portfolio Data</span><small>Build and maintain the source data used by analytics.</small></summary>
+            <div class="help-group-content">
+              <article class="help-feature">
+                <h3>Accounts</h3>
+                <p>Create investment, cash, and long-term savings accounts. Select the managing institution here, then assign the account owner under People.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Brokers</h3>
+                <p>Add banks, brokers, pension providers, and other managing institutions before linking them to accounts.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Employee Stock Options</h3>
+                <p>Record grants, vesting dates, quantities, and exercise terms. Add public-share details when the underlying stock can be valued in the market.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Securities</h3>
+                <p>Create instruments and maintain positions through their transaction history. Check the account, symbol, market, asset class, quantity, and price before saving.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Prices</h3>
+                <p>Add a dated historical price when provider data is unavailable or needs a local correction. Use the actual price date so charts and valuations stay aligned.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Events</h3>
+                <p>Scan held securities for dividend events and review the resulting portfolio notices.</p>
+              </article>
+            </div>
+          </details>
+
+          <details class="help-group">
+            <summary><span>People</span><small>Describe the household and who owns each account.</small></summary>
+            <div class="help-group-content">
+              <article class="help-feature">
+                <h3>Family Members</h3>
+                <p>Add each person before linking financial accounts or creating an individual retirement projection.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Account Ownership</h3>
+                <p>Attach accounts to the correct people and set ownership percentages. Accurate ownership prevents household and personal totals from being misrepresented.</p>
+              </article>
+            </div>
+          </details>
+
+          <details class="help-group">
+            <summary><span>Retirement</span><small>Maintain long-term savings and compare retirement scenarios.</small></summary>
+            <div class="help-group-content">
+              <article class="help-feature">
+                <h3>Pensions &amp; Funds</h3>
+                <p>Link each pension or fund to its long-term account, then maintain balances, deposits, contributions, and fees. The owner is inherited from the linked account.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Retirement Projections</h3>
+                <p>Compare retirement ages using salary and deposit periods, return and inflation assumptions, fees, and the pension factor. Enter a zero-income period for a career break; all results are estimates.</p>
+              </article>
+            </div>
+          </details>
+
+          <details class="help-group">
+            <summary><span>Research</span><small>Investigate companies, outlooks, and portfolio signals.</small></summary>
+            <div class="help-group-content">
+              <article class="help-feature">
+                <h3>Company Reports</h3>
+                <p>Review company financial statements, fundamentals, dividends, and valuation history. Data availability depends on the selected company and provider.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Company Outlook</h3>
+                <p>Compare a company with peers and related industries, then review the score, supporting evidence, risks, and prior prediction accuracy.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Portfolio Signals</h3>
+                <p>Define rules and evaluate them across holdings to find items that need attention. A signal is an investigation prompt, not an investment recommendation.</p>
+              </article>
+            </div>
+          </details>
+
+          <details class="help-group">
+            <summary><span>Markets</span><small>Find candidates and control the dashboard market strip.</small></summary>
+            <div class="help-group-content">
+              <article class="help-feature">
+                <h3>Market Screener</h3>
+                <p>Search and filter market instruments, then open a result for deeper price and signal analysis before deciding whether it belongs in the portfolio.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Market Banner</h3>
+                <p>Choose only the market indicators that are useful to you, arrange their order, and remove items you do not follow from the dashboard strip.</p>
+              </article>
+            </div>
+          </details>
+
+          <details class="help-group">
+            <summary><span>System</span><small>Manage access, display preferences, data transfer, and recovery.</small></summary>
+            <div class="help-group-content">
+              <article class="help-feature">
+                <h3>Users</h3>
+                <p>Admins can create users and assign Admin, Operator, or read-only Viewer access. New users replace their temporary password at first sign-in.</p>
+                <p>If an Admin forgets the password, run this recovery command from the Docker host:</p>
+                <code class="help-command" dir="ltr" data-i18n-skip>docker compose exec portfolio-analyzer python -m app.admin_cli reset-password --username admin</code>
+              </article>
+              <article class="help-feature">
+                <h3>Settings</h3>
+                <p>Manage language and table display, portable portfolio import and export, full backup and restore, schedules, and cache status. Full backups contain sensitive application state and must be stored securely.</p>
+              </article>
+            </div>
+          </details>
+
+          <details class="help-group">
+            <summary><span>Help</span><small>Understand the product and use it safely on any screen.</small></summary>
+            <div class="help-group-content">
+              <article class="help-feature">
+                <h3>About</h3>
+                <p>Shows the installed product version, its purpose, and the important privacy and decision-support boundaries.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Using a phone or tablet</h3>
+                <p>Swipe the top navigation horizontally to reach more groups. Tap a group to show its sections; opening another group closes the previous one.</p>
+              </article>
+              <article class="help-feature help-feature-wide">
+                <h3>Data and privacy</h3>
+                <p>Manual portfolio changes stay in the local portfolio database. Imported sources are read-only, and local edits are never written back to them.</p>
+              </article>
+            </div>
+          </details>
         </div>
       </section>
     </div>
@@ -1103,37 +1220,42 @@
       <section class="modal-card wide account-reports-card" role="dialog" aria-modal="true" aria-labelledby="reportsTitle">
         <div class="section-head report-screen-only">
           <div>
-            <p class="eyebrow">Portfolio and account reporting</p>
-            <h2 id="reportsTitle">Reports</h2>
-            <p class="section-note">Account values, profit, allocation, and saved history. Stock research is available under Research.</p>
+            <p class="eyebrow">Household reporting</p>
+            <h2 id="reportsTitle">Portfolio reports</h2>
+            <p class="section-note">Review the entire portfolio or narrow it by person, account category, or account.</p>
           </div>
           <div class="settings-actions">
-            <button id="exportReportsPdf" class="secondary" type="button" title="Open the print dialog and choose Save as PDF">Export PDF</button>
+            <button id="exportReportsPdf" class="secondary" type="button" title="Download the currently displayed report as a PDF">Download PDF</button>
             <button class="icon-button" type="button" data-close aria-label="Close">×</button>
           </div>
         </div>
-        <div id="pdfReportHeading" class="pdf-report-heading">
-          <h1>Portfolio and account report</h1>
-          <p id="pdfReportMeta"></p>
+        <div class="report-filter-panel report-screen-only">
+          <div class="report-controls">
+            <label class="field"><span>People</span><select id="reportPerson"><option value="">All people</option></select></label>
+            <label class="field"><span>Account category</span><select id="reportAccountType"></select></label>
+            <label class="field"><span>Account</span><select id="reportAccount"></select></label>
+            <button id="loadReports" type="button">Generate report</button>
+          </div>
+          <details class="report-more-filters">
+            <summary>More filters <small>Location and reporting period</small></summary>
+            <div class="report-secondary-controls">
+              <label class="field"><span>Location</span><input id="reportLocation" list="countryOptions" placeholder="All locations" /></label>
+              <label class="field"><span>From</span><input id="reportFrom" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+              <label class="field"><span>To</span><input id="reportTo" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+            </div>
+          </details>
         </div>
-        <div class="management-form report-controls report-screen-only">
-          <select id="reportAccount" aria-label="Account"></select>
-          <select id="reportAccountType" aria-label="Account type"></select>
-          <input id="reportLocation" list="countryOptions" placeholder="Location" aria-label="Location" />
-          <input id="reportFrom" class="date-field" inputmode="numeric" placeholder="From dd/mm/yyyy" aria-label="From date" />
-          <input id="reportTo" class="date-field" inputmode="numeric" placeholder="To dd/mm/yyyy" aria-label="To date" />
-          <button id="loadReports" type="button">Run report</button>
-        </div>
-        <p id="reportsExportStatus" class="status-line report-screen-only"></p>
+        <p id="reportsExportStatus" class="status-line report-screen-only" role="status" aria-live="polite"></p>
+        <div id="reportScopeSummary" class="report-scope-summary" role="status" aria-live="polite"></div>
         <div id="reportsSummary" class="report-grid"></div>
         <div id="accountTrendChart" class="chart-card report-chart"></div>
         <div class="account-report-breakdowns">
           <section class="account-report-section">
-            <h3>Account breakdown</h3>
-            <div id="reportsDetails" class="stack management-list"></div>
+            <h3>Accounts included</h3>
+            <div id="reportsDetails" class="account-report-list"></div>
           </section>
           <section class="account-report-section">
-            <h3>Value by account type</h3>
+            <h3>Value by account category</h3>
             <div id="reportsByType" class="report-breakdown-list"></div>
           </section>
           <section class="account-report-section">
@@ -1426,6 +1548,7 @@
               <h3>Pension simulation table</h3>
             </div>
           </div>
+          <p class="simulation-assumption-note" role="note">Projection only. Enter annual return after management fees and other investment costs. Values are nominal and exclude tax, inflation, and actuarial adjustments. Insurance uses generic coefficients; verify them against the fund. Monthly pension equals final balance divided by the payout factor.</p>
           <div id="pensionSimulationResults" class="simulation-results"></div>
         </div>
       </section>
@@ -1506,6 +1629,7 @@
           </div>
           <div id="pensionPeriodEntry" class="retirement-entry-card" hidden>
             <h4>Add a salary period</h4>
+            <p class="schedule-guidance">Enter 0 for salary and deposits to model a period with no work or pension contributions.</p>
             <div class="history-form simulator-period-form popup-period-form salary-period-form">
               <label class="management-field"><span>Starts</span><select id="simPeriodFromMode"><option value="now">From current age</option><option value="custom">Custom age</option></select></label>
               <label class="management-field" id="simPeriodFromField" hidden><span>From age</span><input id="simPeriodFrom" type="number" min="0" step="0.1" placeholder="From age" /></label>
@@ -1547,7 +1671,7 @@
               <label class="management-field"><span>Starts</span><select id="simRateFromMode"><option value="now">From current age</option><option value="custom">Custom age</option></select></label>
               <label class="management-field" id="simRateFromField" hidden><span>From age</span><input id="simRateFrom" type="number" min="0" step="0.1" placeholder="From age" /></label>
               <label class="management-field"><span>To age</span><input id="simRateTo" type="number" min="0" step="0.1" placeholder="To age" /></label>
-              <label class="management-field"><span class="field-label">Annual profit % <span class="ux-tooltip" tabindex="0" role="note" aria-label="About annual profit" data-tooltip="Enter the expected average annual return for this age range. You can use a negative value.">?</span></span><input id="simRateAnnual" type="number" step="0.01" placeholder="Annual profit %" /></label>
+              <label class="management-field"><span class="field-label">Annual profit % <span class="ux-tooltip" tabindex="0" role="note" aria-label="About annual profit" data-tooltip="Enter the expected average annual return after management fees and other investment costs for this age range. You can use a negative value.">?</span></span><input id="simRateAnnual" type="number" step="0.01" placeholder="Annual profit %" /></label>
             </div>
             <div class="retirement-section-actions">
               <button id="addPensionRate" type="button" title="Save this return assumption to the selected scenario." disabled>Save return period</button>
@@ -1805,6 +1929,7 @@
           <nav class="settings-menu" aria-label="Settings sections">
             <button id="settingsNavDisplay" class="settings-menu-button active" type="button" data-settings-section="display" aria-controls="settingsPanelDisplay" aria-current="page">Display and language</button>
             <button id="settingsNavTable" class="settings-menu-button" type="button" data-settings-section="table" aria-controls="settingsPanelTable">Table settings</button>
+            <button id="settingsNavApi" class="settings-menu-button" type="button" data-settings-section="api" aria-controls="settingsPanelApi" data-admin-only hidden>REST API &amp; MCP</button>
             <div class="settings-menu-entry">
               <button id="settingsNavData" class="settings-menu-button" type="button" data-settings-section="data" aria-controls="settingsPanelData">Portfolio data import and export</button>
               <details class="settings-menu-help">
@@ -1839,6 +1964,64 @@
                 <label class="field"><span data-i18n="tableMaPeriod">Table MA period</span><select id="tableMaPeriod"><option value="7">MA 7</option><option value="15">MA 15</option><option value="30">MA 30</option></select></label>
                 <button id="saveTableSettings" type="button" data-i18n="saveTableSettings">Save table settings</button>
               </div>
+            </section>
+
+            <section id="settingsPanelApi" class="settings-section settings-panel" data-settings-panel="api" aria-labelledby="settingsNavApi" hidden>
+              <div class="settings-section-title"><h3>REST API &amp; MCP access</h3></div>
+              <p class="settings-section-description">Control REST API and MCP access independently. Both services are off by default.</p>
+              <div class="integration-access-services">
+                <section class="integration-access-service" aria-labelledby="restAccessTitle">
+                  <div class="integration-access-service-head">
+                    <div><h4 id="restAccessTitle">REST API</h4><p>Use HTTP endpoints to read or maintain portfolio data.</p></div>
+                    <code dir="ltr">/api</code>
+                  </div>
+                  <fieldset class="api-access-options">
+                    <legend>REST API access mode</legend>
+                    <label class="api-access-option">
+                      <input type="radio" name="apiAccessMode" value="disabled" />
+                      <span><b>Off</b><small>REST tokens cannot be created or used. Saving revokes active REST tokens.</small></span>
+                    </label>
+                    <label class="api-access-option">
+                      <input type="radio" name="apiAccessMode" value="read_only" />
+                      <span><b>Read only</b><small>REST tokens can read reports and run read-only analysis.</small></span>
+                    </label>
+                    <label class="api-access-option">
+                      <input type="radio" name="apiAccessMode" value="read_write" />
+                      <span><b>Read and write</b><small>Admin and Operator tokens can change data. Viewer tokens remain read-only.</small></span>
+                    </label>
+                  </fieldset>
+                  <div id="apiAccessSummary" class="api-access-summary" role="status" aria-live="polite"></div>
+                </section>
+
+                <section class="integration-access-service" aria-labelledby="mcpAccessTitle">
+                  <div class="integration-access-service-head">
+                    <div><h4 id="mcpAccessTitle">MCP Server</h4><p>Connect AI clients through the standard Streamable HTTP transport.</p></div>
+                    <code dir="ltr">/mcp/</code>
+                  </div>
+                  <fieldset class="api-access-options">
+                    <legend>MCP access mode</legend>
+                    <label class="api-access-option">
+                      <input type="radio" name="mcpAccessMode" value="disabled" />
+                      <span><b>Off</b><small>MCP tokens cannot be created or used. Saving revokes active MCP tokens.</small></span>
+                    </label>
+                    <label class="api-access-option">
+                      <input type="radio" name="mcpAccessMode" value="read_only" />
+                      <span><b>Read only</b><small>MCP tools can inspect accounts, reports, holdings, funds, and trends.</small></span>
+                    </label>
+                    <label class="api-access-option">
+                      <input type="radio" name="mcpAccessMode" value="read_write" />
+                      <span><b>Read and write</b><small>Admin and Operator tools can record transactions and prices. Viewer tools remain read-only.</small></span>
+                    </label>
+                  </fieldset>
+                  <div id="mcpAccessSummary" class="api-access-summary" role="status" aria-live="polite"></div>
+                </section>
+              </div>
+              <div class="api-access-help" role="note">
+                <b>Token endpoint</b>
+                <code dir="ltr">POST /api/auth/token</code>
+                <p>Send credentials as JSON and set <code dir="ltr">"service": "rest"</code> or <code dir="ltr">"service": "mcp"</code>. Use the returned token as <code dir="ltr">Authorization: Bearer &lt;token&gt;</code>. Tokens expire after 8 hours.</p>
+              </div>
+              <button id="saveApiAccessSettings" type="button">Save integration access</button>
             </section>
 
             <section id="settingsPanelData" class="settings-section settings-panel" data-settings-panel="data" aria-labelledby="settingsNavData" hidden>

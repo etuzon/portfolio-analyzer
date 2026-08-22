@@ -151,6 +151,45 @@ def test_account_trends_clamp_requested_start_date(monkeypatch):
     assert store.filters["from"] == "2026-04-14"
 
 
+def test_portfolio_report_pdf_uses_the_same_scope_and_period(monkeypatch):
+    class Store:
+        def reports(self, filters):
+            self.report_filters = filters
+            return {"accounts": 0, "holdings": 0, "funds": {"count": 0}, "account_details": [], "scope": filters}
+
+        def account_trends(self, filters):
+            self.trend_filters = filters
+            return {"accounts": []}
+
+    store = Store()
+    captured = {}
+
+    def build_pdf(report, trend, **options):
+        captured.update({"report": report, "trend": trend, **options})
+        return b"%PDF-1.7\nreport"
+
+    monkeypatch.setattr(main, "local_store", store)
+    monkeypatch.setattr(main, "build_portfolio_report_pdf", build_pdf)
+
+    response = main.local_reports_pdf(
+        account_type="Long-Term Savings",
+        person_id="person-1",
+        person_name="Dana Levi",
+        date_from="01/08/2026",
+        date_to="22/08/2026",
+        language="he",
+    )
+
+    assert store.report_filters["account_type"] == "Long-Term Savings"
+    assert store.report_filters["person_id"] == "person-1"
+    assert store.trend_filters["from"] == "2026-08-01"
+    assert store.trend_filters["to"] == "2026-08-22"
+    assert captured["language"] == "he"
+    assert response.media_type == "application/pdf"
+    assert response.body.startswith(b"%PDF")
+    assert "portfolio-report-" in response.headers["content-disposition"]
+
+
 def test_security_history_clamps_requested_start_date(monkeypatch):
     class Store:
         def price_history(self, symbol, stock_market, from_date, to_date):

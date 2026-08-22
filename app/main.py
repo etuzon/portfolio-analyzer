@@ -9,6 +9,7 @@ import sqlite3
 import stat
 import tempfile
 import zipfile
+from contextlib import asynccontextmanager
 from datetime import date, datetime, time as clock_time, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
@@ -22,20 +23,46 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from mcp.server.transport_security import TransportSecuritySettings
 import yaml
 
 from . import __version__
 from .alerts import ALERT_JOB_ID, AlertStore, alert_rule_options, start_scheduler
-from .auth import AUTH_ROLES, PASSWORD_MIN_LENGTH, SESSION_COOKIE_NAME, AuthStore
+from .auth import API_ACCESS_MODES, AUTH_ROLES, PASSWORD_MIN_LENGTH, SESSION_COOKIE_NAME, AuthStore
 from .config import data_dir, load_config
 from .external_import import ExternalImportClient
 from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, SUPPORTED_MANAGEMENT_CURRENCIES, LocalPortfolioStore, validate_portfolio_ownership
 from .metrics import analyze_holding, moving_averages, screen, support_resistance, technical_signals, to_dict, volume_metrics
+from .mcp_server import create_portfolio_mcp_server
 from .models import Ohlcv
 from .providers import MarketDataHub
+from .report_pdf import build_portfolio_report_pdf
 
 
-app = FastAPI(title="Portfolio Analyzer")
+@asynccontextmanager
+async def application_lifespan(_app: FastAPI):
+    global scheduler, _mcp_session_context
+    auth_store.initialize()
+    local_store.delete_history_before(HISTORY_START_DATE)
+    local_store.capture_daily_snapshots()
+    if scheduler is None:
+        scheduler = start_scheduler(alert_store, _run_portfolio_alerts, config.alerts, local_store.capture_daily_snapshots)
+    configure_backup_job()
+    configure_dividend_job()
+    if _mcp_session_context is None:
+        _mcp_session_context = portfolio_mcp.session_manager.run()
+        await _mcp_session_context.__aenter__()
+    try:
+        yield
+    finally:
+        if scheduler:
+            scheduler.shutdown(wait=False)
+        if _mcp_session_context is not None:
+            await _mcp_session_context.__aexit__(None, None, None)
+            _mcp_session_context = None
+
+
+app = FastAPI(title="Portfolio Analyzer", lifespan=application_lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -58,6 +85,7 @@ alert_store = AlertStore()
 local_store = LocalPortfolioStore()
 auth_store = AuthStore(local_store.path)
 scheduler = None
+_mcp_session_context = None
 BACKUP_JOB_ID = "local-data-backup"
 DIVIDEND_JOB_ID = "local-dividend-scan"
 DIVIDEND_DEFAULT_START_DATE = date(2026, 8, 1)
@@ -89,7 +117,12 @@ VIEWER_READ_ONLY_POST_PATHS = {
     "/api/market/screener",
 }
 ADMIN_ONLY_API_PREFIXES = ("/api/auth/users", "/api/local/backups")
-ADMIN_ONLY_API_PATHS = {"/api/settings/backup"}
+ADMIN_ONLY_API_PATHS = {
+    "/api/settings/backup",
+    "/api/settings/api-access",
+    "/api/settings/mcp-access",
+    "/api/settings/integration-access",
+}
 
 
 def _auth_error(status_code: int, code: str, message: str, headers: dict[str, str] | None = None) -> JSONResponse:
@@ -108,14 +141,81 @@ def _viewer_request_is_read_only(request: Request) -> bool:
 @app.middleware("http")
 async def enforce_authentication_and_roles(request: Request, call_next):
     path = request.url.path
-    if not path.startswith("/api/") or path in {"/api/auth/login", "/api/health"} or request.method == "OPTIONS":
+    mcp_request = path == "/mcp" or path.startswith("/mcp/")
+    public_token_request = path == "/api/auth/token" and request.method == "POST"
+    if (not path.startswith("/api/") and not mcp_request) or path in {"/api/auth/login", "/api/health"} or public_token_request or request.method == "OPTIONS":
         return await call_next(request)
 
-    session = auth_store.session(request.cookies.get(SESSION_COOKIE_NAME))
-    if not session:
-        return _auth_error(401, "authentication_required", "Sign in to continue")
+    authorization = str(request.headers.get("Authorization") or "").strip()
+    if mcp_request:
+        if not authorization:
+            return _auth_error(
+                401,
+                "authentication_required",
+                "Authenticate with an MCP bearer token",
+                {"WWW-Authenticate": "Bearer"},
+            )
+        scheme, separator, raw_token = authorization.partition(" ")
+        if scheme.casefold() != "bearer" or not separator or not raw_token.strip():
+            return _auth_error(
+                401,
+                "invalid_token",
+                "Use an Authorization header with a valid MCP bearer token",
+                {"WWW-Authenticate": "Bearer"},
+            )
+        mcp_access = auth_store.mcp_access()
+        if mcp_access["mode"] == "disabled":
+            return _auth_error(403, "mcp_disabled", "MCP access is disabled by an administrator")
+        token_session = auth_store.api_token(raw_token.strip(), service="mcp")
+        if not token_session:
+            return _auth_error(
+                401,
+                "invalid_token",
+                "The MCP token is invalid or expired",
+                {"WWW-Authenticate": "Bearer"},
+            )
+        if token_session["user"]["must_change_password"]:
+            return _auth_error(403, "password_change_required", "Change the temporary password to continue")
+        request.state.auth_session = token_session
+        request.state.auth_user = token_session["user"]
+        request.state.auth_kind = "mcp_token"
+        request.state.mcp_mode = mcp_access["mode"]
+        return await call_next(request)
+
+    auth_kind = "browser_session"
+    api_mode = ""
+    if authorization:
+        scheme, separator, raw_token = authorization.partition(" ")
+        if scheme.casefold() != "bearer" or not separator or not raw_token.strip():
+            return _auth_error(
+                401,
+                "invalid_token",
+                "Use an Authorization header with a valid Bearer token",
+                {"WWW-Authenticate": "Bearer"},
+            )
+        token_self_revoke_request = path == "/api/auth/token" and request.method == "DELETE"
+        api_access = auth_store.api_access()
+        api_mode = str(api_access["mode"])
+        if api_mode == "disabled" and not token_self_revoke_request:
+            return _auth_error(403, "api_disabled", "REST API access is disabled by an administrator")
+        token_session = auth_store.api_token(raw_token.strip(), service=None if token_self_revoke_request else "rest")
+        if not token_session:
+            return _auth_error(
+                401,
+                "invalid_token",
+                "The API token is invalid or expired",
+                {"WWW-Authenticate": "Bearer"},
+            )
+        session = {**token_session, "csrf_token": ""}
+        auth_kind = f"{token_session['service']}_token"
+    else:
+        session = auth_store.session(request.cookies.get(SESSION_COOKIE_NAME))
+        if not session:
+            return _auth_error(401, "authentication_required", "Sign in to continue")
     request.state.auth_session = session
     request.state.auth_user = session["user"]
+    request.state.auth_kind = auth_kind
+    request.state.api_mode = api_mode
     user = session["user"]
 
     password_change_paths = {"/api/auth/session", "/api/auth/change-password", "/api/auth/logout"}
@@ -125,11 +225,14 @@ async def enforce_authentication_and_roles(request: Request, call_next):
     admin_only = path in ADMIN_ONLY_API_PATHS or any(path.startswith(prefix) for prefix in ADMIN_ONLY_API_PREFIXES)
     if admin_only and user["role"] != "Admin":
         return _auth_error(403, "admin_required", "Admin access is required")
+    token_self_revoke = auth_kind.endswith("_token") and path == "/api/auth/token" and request.method == "DELETE"
+    if auth_kind == "rest_token" and not token_self_revoke and api_mode != "read_write" and not _viewer_request_is_read_only(request):
+        return _auth_error(403, "api_read_only", "REST API write access is disabled by an administrator")
     viewer_self_service_paths = {"/api/auth/change-password", "/api/auth/logout"}
-    if user["role"] == "Viewer" and path not in viewer_self_service_paths and not _viewer_request_is_read_only(request):
+    if user["role"] == "Viewer" and not token_self_revoke and path not in viewer_self_service_paths and not _viewer_request_is_read_only(request):
         return _auth_error(403, "read_only", "Viewer access is read-only")
 
-    if request.method not in {"GET", "HEAD", "OPTIONS"}:
+    if auth_kind == "browser_session" and request.method not in {"GET", "HEAD", "OPTIONS"}:
         csrf_token = request.headers.get("X-CSRF-Token", "")
         if not csrf_token or not hmac.compare_digest(csrf_token, session["csrf_token"]):
             return _auth_error(403, "csrf_failed", "The request security token is missing or expired")
@@ -2011,24 +2114,6 @@ def clear_portfolio_cache() -> None:
         pass
 
 
-@app.on_event("startup")
-def startup():
-    global scheduler
-    auth_store.initialize()
-    local_store.delete_history_before(HISTORY_START_DATE)
-    local_store.capture_daily_snapshots()
-    if scheduler is None:
-        scheduler = start_scheduler(alert_store, _run_portfolio_alerts, config.alerts, local_store.capture_daily_snapshots)
-    configure_backup_job()
-    configure_dividend_job()
-
-
-@app.on_event("shutdown")
-def shutdown():
-    if scheduler:
-        scheduler.shutdown(wait=False)
-
-
 def _login_attempt_key(request: Request, username: Any) -> str:
     client_host = request.client.host if request.client else "unknown"
     return f"{client_host}|{str(username or '').strip().casefold()[:64]}"
@@ -2104,6 +2189,68 @@ def login(request: Request, response: Response, payload: dict[str, Any]):
     _clear_login_failures(key)
     _set_session_cookie(response, token)
     return {"user": user, "csrf_token": csrf_token}
+
+
+@app.post("/api/auth/token")
+def create_api_token(request: Request, payload: dict[str, Any]):
+    payload = payload or {}
+    service = str(payload.get("service") or "rest").strip().lower()
+    if service not in {"rest", "mcp"}:
+        raise HTTPException(status_code=400, detail={"code": "invalid_service", "message": "Token service must be rest or mcp"})
+    access = auth_store.api_access() if service == "rest" else auth_store.mcp_access()
+    if access["mode"] == "disabled":
+        code = "api_disabled" if service == "rest" else "mcp_disabled"
+        label = "REST API" if service == "rest" else "MCP"
+        raise HTTPException(
+            status_code=403,
+            detail={"code": code, "message": f"{label} access is disabled by an administrator"},
+        )
+    key = _login_attempt_key(request, payload.get("username"))
+    retry_after = _login_retry_after(key)
+    if retry_after:
+        raise HTTPException(
+            status_code=429,
+            detail={"code": "login_rate_limited", "message": "Too many sign-in attempts. Try again later."},
+            headers={"Retry-After": str(retry_after)},
+        )
+    try:
+        user, token, expires_at = auth_store.create_api_token(
+            payload.get("username"), payload.get("password"), service=service
+        )
+    except PermissionError as exc:
+        _clear_login_failures(key)
+        raise HTTPException(
+            status_code=403,
+            detail={"code": "password_change_required", "message": str(exc)},
+        ) from exc
+    except ValueError as exc:
+        _record_login_failure(key)
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "invalid_credentials", "message": "Invalid username or password"},
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    _clear_login_failures(key)
+    write_allowed = access["mode"] == "read_write" and user["role"] in {"Admin", "Operator"}
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "expires_in": access["token_ttl_seconds"],
+        "expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+        "scope": "read write" if write_allowed else "read",
+        "service": service,
+        "endpoint": access["endpoint"],
+        "user": user,
+    }
+
+
+@app.delete("/api/auth/token")
+def revoke_api_token(request: Request):
+    if not str(getattr(request.state, "auth_kind", "")).endswith("_token"):
+        raise HTTPException(status_code=400, detail="Authenticate with the Bearer token you want to revoke")
+    authorization = str(request.headers.get("Authorization") or "")
+    auth_store.revoke_api_token(authorization.partition(" ")[2].strip())
+    return {"revoked": True}
 
 
 @app.get("/api/auth/session")
@@ -2188,15 +2335,6 @@ def about():
     return {
         "name": "Portfolio Analyzer",
         "version": __version__,
-        "python": "3.14",
-        "features": [
-            "Local portfolio database",
-            "Manual instruments and transactions",
-            "Manual historical prices",
-            "Daily history and backups",
-            "Market-data cache",
-            "Multi-user role-based access",
-        ],
     }
 
 
@@ -2603,7 +2741,15 @@ def delete_local_price(price_id: str):
 
 
 @app.get("/api/local/account-trends")
-def local_account_trends(account_id: str = "", account_type: str = "", location: str = "", date_from: str = "", date_to: str = ""):
+def local_account_trends(
+    account_id: str = "",
+    account_type: str = "",
+    location: str = "",
+    person_id: str = "",
+    person_name: str = "",
+    date_from: str = "",
+    date_to: str = "",
+):
     from_date = _clamped_history_start(date_from)
     to_date = _parse_query_date(date_to) or date.today()
     if to_date < from_date:
@@ -2613,6 +2759,8 @@ def local_account_trends(account_id: str = "", account_type: str = "", location:
             "account_id": account_id,
             "account_type": account_type,
             "location": location,
+            "person_id": person_id,
+            "person_name": person_name,
             "from": from_date.isoformat(),
             "to": to_date.isoformat(),
         }
@@ -2620,12 +2768,32 @@ def local_account_trends(account_id: str = "", account_type: str = "", location:
 
 
 @app.get("/api/local/account-snapshots")
-def list_account_snapshots(account_id: str = "", date_from: str = "", date_to: str = ""):
+def list_account_snapshots(
+    account_id: str = "",
+    account_type: str = "",
+    location: str = "",
+    person_id: str = "",
+    person_name: str = "",
+    date_from: str = "",
+    date_to: str = "",
+):
     from_date = _clamped_history_start(date_from)
     to_date = _parse_query_date(date_to) or date.today()
     if to_date < from_date:
         to_date = from_date
-    return {"items": local_store.list_account_snapshots({"account_id": account_id, "from": from_date.isoformat(), "to": to_date.isoformat()})}
+    return {
+        "items": local_store.list_account_snapshots(
+            {
+                "account_id": account_id,
+                "account_type": account_type,
+                "location": location,
+                "person_id": person_id,
+                "person_name": person_name,
+                "from": from_date.isoformat(),
+                "to": to_date.isoformat(),
+            }
+        )
+    }
 
 
 @app.post("/api/local/account-snapshots")
@@ -2656,8 +2824,67 @@ def delete_account_snapshot(account_id: str, snapshot_date: str):
 
 
 @app.get("/api/local/reports")
-def local_reports(account_id: str = "", account_type: str = "", location: str = ""):
-    return local_store.reports({"account_id": account_id, "account_type": account_type, "location": location})
+def local_reports(
+    account_id: str = "",
+    account_type: str = "",
+    location: str = "",
+    person_id: str = "",
+    person_name: str = "",
+):
+    return local_store.reports(
+        {
+            "account_id": account_id,
+            "account_type": account_type,
+            "location": location,
+            "person_id": person_id,
+            "person_name": person_name,
+        }
+    )
+
+
+@app.get("/api/local/reports.pdf")
+def local_reports_pdf(
+    account_id: str = "",
+    account_type: str = "",
+    location: str = "",
+    person_id: str = "",
+    person_name: str = "",
+    date_from: str = "",
+    date_to: str = "",
+    language: str = "en",
+):
+    from_date = _clamped_history_start(date_from)
+    to_date = _parse_query_date(date_to) or date.today()
+    if to_date < from_date:
+        to_date = from_date
+    filters = {
+        "account_id": account_id,
+        "account_type": account_type,
+        "location": location,
+        "person_id": person_id,
+        "person_name": person_name,
+    }
+    report = local_store.reports(filters)
+    trend = local_store.account_trends(
+        {
+            **filters,
+            "from": from_date.isoformat(),
+            "to": to_date.isoformat(),
+        }
+    )
+    content = build_portfolio_report_pdf(
+        report,
+        trend,
+        date_from=from_date.isoformat(),
+        date_to=to_date.isoformat(),
+        language=language,
+    )
+    filename = f"portfolio-report-{date.today().isoformat()}.pdf"
+    return Response(
+        content=content,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.get("/api/local/funds")
@@ -2810,7 +3037,54 @@ def settings_status():
         "local_db": local_store.status(),
         "backup": backup_status(),
         "dividends": dividend_status(),
+        "api_access": auth_store.api_access(),
+        "mcp_access": auth_store.mcp_access(),
+        "integration_access": auth_store.integration_access(),
     }
+
+
+@app.get("/api/settings/api-access")
+def api_access_settings():
+    return {**auth_store.api_access(), "modes": list(API_ACCESS_MODES), "token_endpoint": "/api/auth/token"}
+
+
+@app.put("/api/settings/api-access")
+def update_api_access_settings(payload: dict[str, Any]):
+    try:
+        return auth_store.set_api_access_mode((payload or {}).get("mode"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/settings/mcp-access")
+def mcp_access_settings():
+    return {**auth_store.mcp_access(), "modes": list(API_ACCESS_MODES), "token_endpoint": "/api/auth/token"}
+
+
+@app.put("/api/settings/mcp-access")
+def update_mcp_access_settings(payload: dict[str, Any]):
+    try:
+        return auth_store.set_mcp_access_mode((payload or {}).get("mode"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/settings/integration-access")
+def integration_access_settings():
+    return {
+        **auth_store.integration_access(),
+        "modes": list(API_ACCESS_MODES),
+        "token_endpoint": "/api/auth/token",
+    }
+
+
+@app.put("/api/settings/integration-access")
+def update_integration_access_settings(payload: dict[str, Any]):
+    payload = payload or {}
+    try:
+        return auth_store.set_integration_access_modes(payload.get("rest_mode"), payload.get("mcp_mode"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.put("/api/settings/backup")
@@ -3362,6 +3636,23 @@ def run_alerts():
     results = _run_portfolio_alerts()
     return {"results": results, "state": list_alerts()}
 
+
+portfolio_mcp = create_portfolio_mcp_server(
+    lambda: auth_store,
+    lambda: local_store,
+    clear_portfolio_cache,
+)
+portfolio_mcp_app = portfolio_mcp.streamable_http_app(
+    streamable_http_path="/",
+    json_response=True,
+    stateless_http=True,
+    host="localhost",
+    transport_security=TransportSecuritySettings(
+        allowed_hosts=["localhost:*", "127.0.0.1:*", "[::1]:*", "testserver"],
+        allowed_origins=["https://localhost:*", "https://127.0.0.1:*"],
+    ),
+)
+app.mount("/mcp", portfolio_mcp_app, name="mcp")
 
 web_dir = Path(__file__).resolve().parent.parent / "web"
 app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")

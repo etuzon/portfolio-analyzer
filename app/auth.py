@@ -19,6 +19,8 @@ PASSWORD_MIN_LENGTH = 8
 PASSWORD_MAX_LENGTH = 256
 SESSION_ABSOLUTE_HOURS = 8
 SESSION_IDLE_MINUTES = 30
+API_TOKEN_HOURS = 8
+API_ACCESS_MODES = ("disabled", "read_only", "read_write")
 _USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$")
 _SCRYPT_N = 2**15
 _SCRYPT_R = 8
@@ -176,6 +178,41 @@ class AuthStore:
                 )
                 connection.execute("create index if not exists idx_auth_sessions_user on auth_sessions(user_id)")
                 connection.execute("create index if not exists idx_auth_sessions_expiry on auth_sessions(expires_at)")
+                connection.execute(
+                    """
+                    create table if not exists api_tokens (
+                        token_hash text primary key,
+                        user_id text not null references app_users(id) on delete cascade,
+                        service text not null default 'rest',
+                        created_at text not null,
+                        last_used_at text not null,
+                        expires_at text not null
+                    )
+                    """
+                )
+                connection.execute("create index if not exists idx_api_tokens_user on api_tokens(user_id)")
+                connection.execute("create index if not exists idx_api_tokens_expiry on api_tokens(expires_at)")
+                connection.execute(
+                    """
+                    create table if not exists api_access_settings (
+                        singleton integer primary key check(singleton = 1),
+                        mode text not null check(mode in ('disabled', 'read_only', 'read_write')),
+                        mcp_mode text not null default 'disabled' check(mcp_mode in ('disabled', 'read_only', 'read_write')),
+                        updated_at text not null
+                    )
+                    """
+                )
+                token_columns = {str(row["name"]) for row in connection.execute("pragma table_info(api_tokens)")}
+                if "service" not in token_columns:
+                    connection.execute("alter table api_tokens add column service text not null default 'rest'")
+                access_columns = {str(row["name"]) for row in connection.execute("pragma table_info(api_access_settings)")}
+                if "mcp_mode" not in access_columns:
+                    connection.execute("alter table api_access_settings add column mcp_mode text not null default 'disabled'")
+                connection.execute("create index if not exists idx_api_tokens_service on api_tokens(service)")
+                connection.execute(
+                    "insert or ignore into api_access_settings (singleton, mode, mcp_mode, updated_at) values (1, 'disabled', 'disabled', ?)",
+                    (_timestamp(),),
+                )
                 if connection.execute("select count(*) from app_users").fetchone()[0] == 0:
                     timestamp = _timestamp()
                     connection.execute(
@@ -276,6 +313,7 @@ class AuthStore:
             )
             if not enabled:
                 connection.execute("delete from auth_sessions where user_id = ?", (user_id,))
+                connection.execute("delete from api_tokens where user_id = ?", (user_id,))
             updated = connection.execute("select * from app_users where id = ?", (user_id,)).fetchone()
         return self._user_out(updated)
 
@@ -315,6 +353,174 @@ class AuthStore:
             ),
         )
         return token, csrf_token
+
+    def integration_access(self) -> dict[str, dict[str, Any]]:
+        self._ensure_initialized()
+        now = _timestamp()
+        with self._lock, self._connect() as connection:
+            connection.execute("delete from api_tokens where expires_at <= ?", (now,))
+            row = connection.execute("select mode, mcp_mode, updated_at from api_access_settings where singleton = 1").fetchone()
+            token_counts = {
+                str(item["service"]): int(item["count"])
+                for item in connection.execute(
+                    "select service, count(*) as count from api_tokens group by service"
+                ).fetchall()
+            }
+        updated_at = str(row["updated_at"] if row else "")
+
+        def service_state(service: str, mode: str, endpoint: str) -> dict[str, Any]:
+            return {
+                "service": service,
+                "mode": mode,
+                "enabled": mode != "disabled",
+                "write_enabled": mode == "read_write",
+                "token_ttl_seconds": API_TOKEN_HOURS * 60 * 60,
+                "active_tokens": token_counts.get(service, 0),
+                "endpoint": endpoint,
+                "updated_at": updated_at,
+            }
+
+        return {
+            "rest": service_state("rest", str(row["mode"] if row else "disabled"), "/api"),
+            "mcp": service_state("mcp", str(row["mcp_mode"] if row else "disabled"), "/mcp/"),
+        }
+
+    def api_access(self) -> dict[str, Any]:
+        return self.integration_access()["rest"]
+
+    def mcp_access(self) -> dict[str, Any]:
+        return self.integration_access()["mcp"]
+
+    @staticmethod
+    def _clean_access_mode(mode: Any) -> str:
+        clean_mode = str(mode or "").strip().lower()
+        if clean_mode not in API_ACCESS_MODES:
+            raise ValueError("Access mode must be disabled, read_only, or read_write")
+        return clean_mode
+
+    def set_integration_access_modes(self, rest_mode: Any, mcp_mode: Any) -> dict[str, dict[str, Any]]:
+        self._ensure_initialized()
+        clean_rest_mode = self._clean_access_mode(rest_mode)
+        clean_mcp_mode = self._clean_access_mode(mcp_mode)
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "update api_access_settings set mode = ?, mcp_mode = ?, updated_at = ? where singleton = 1",
+                (clean_rest_mode, clean_mcp_mode, _timestamp()),
+            )
+            if clean_rest_mode == "disabled":
+                connection.execute("delete from api_tokens where service = 'rest'")
+            if clean_mcp_mode == "disabled":
+                connection.execute("delete from api_tokens where service = 'mcp'")
+        return self.integration_access()
+
+    def set_api_access_mode(self, mode: Any) -> dict[str, Any]:
+        self._ensure_initialized()
+        clean_mode = self._clean_access_mode(mode)
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "update api_access_settings set mode = ?, updated_at = ? where singleton = 1",
+                (clean_mode, _timestamp()),
+            )
+            if clean_mode == "disabled":
+                connection.execute("delete from api_tokens where service = 'rest'")
+        return self.api_access()
+
+    def set_mcp_access_mode(self, mode: Any) -> dict[str, Any]:
+        self._ensure_initialized()
+        clean_mode = self._clean_access_mode(mode)
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "update api_access_settings set mcp_mode = ?, updated_at = ? where singleton = 1",
+                (clean_mode, _timestamp()),
+            )
+            if clean_mode == "disabled":
+                connection.execute("delete from api_tokens where service = 'mcp'")
+        return self.mcp_access()
+
+    def create_api_token(self, username: Any, password: Any, service: str = "rest") -> tuple[dict[str, Any], str, datetime]:
+        self._ensure_initialized()
+        clean_service = str(service or "rest").strip().lower()
+        if clean_service not in {"rest", "mcp"}:
+            raise ValueError("Token service must be rest or mcp")
+        candidate = str(username or "").strip()[:64]
+        now = _now()
+        with self._lock, self._connect() as connection:
+            row = connection.execute("select * from app_users where username = ? collate nocase", (candidate,)).fetchone()
+            valid_password = verify_password(password, row["password_hash"] if row else _DUMMY_PASSWORD_HASH)
+            if not row or not valid_password or not row["enabled"]:
+                raise ValueError("Invalid username or password")
+            if row["must_change_password"]:
+                raise PermissionError("Change the temporary password in the dashboard before creating an API token")
+            connection.execute("delete from api_tokens where expires_at <= ?", (_timestamp(now),))
+            token = secrets.token_urlsafe(40)
+            expires_at = now + timedelta(hours=API_TOKEN_HOURS)
+            connection.execute(
+                """
+                insert into api_tokens (token_hash, user_id, service, created_at, last_used_at, expires_at)
+                values (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    self._token_hash(token),
+                    row["id"],
+                    clean_service,
+                    _timestamp(now),
+                    _timestamp(now),
+                    _timestamp(expires_at),
+                ),
+            )
+            connection.execute("update app_users set last_login_at = ? where id = ?", (_timestamp(now), row["id"]))
+            updated = connection.execute("select * from app_users where id = ?", (row["id"],)).fetchone()
+        return self._user_out(updated), token, expires_at
+
+    def api_token(self, token: Any, service: str | None = None) -> dict[str, Any] | None:
+        self._ensure_initialized()
+        clean_service = str(service or "").strip().lower()
+        if clean_service and clean_service not in {"rest", "mcp"}:
+            return None
+        raw_token = str(token or "")
+        if not raw_token or len(raw_token) > 512:
+            return None
+        token_hash = self._token_hash(raw_token)
+        now = _now()
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                select t.token_hash, t.service, t.created_at as token_created_at, t.last_used_at,
+                       t.expires_at, u.*
+                from api_tokens t
+                join app_users u on u.id = t.user_id
+                where t.token_hash = ?
+                """,
+                (token_hash,),
+            ).fetchone()
+            if not row:
+                return None
+            if clean_service and str(row["service"]) != clean_service:
+                return None
+            expires_at = _parse_timestamp(row["expires_at"])
+            if not row["enabled"] or not expires_at or expires_at <= now:
+                connection.execute("delete from api_tokens where token_hash = ?", (token_hash,))
+                return None
+            last_used_at = _parse_timestamp(row["last_used_at"])
+            if not last_used_at or now - last_used_at >= timedelta(minutes=1):
+                connection.execute(
+                    "update api_tokens set last_used_at = ? where token_hash = ?",
+                    (_timestamp(now), token_hash),
+                )
+        return {
+            "user": self._user_out(row),
+            "token_hash": token_hash,
+            "service": str(row["service"]),
+            "expires_at": str(row["expires_at"]),
+        }
+
+    def revoke_api_token(self, token: Any) -> None:
+        self._ensure_initialized()
+        raw_token = str(token or "")
+        if not raw_token or len(raw_token) > 512:
+            return
+        with self._lock, self._connect() as connection:
+            connection.execute("delete from api_tokens where token_hash = ?", (self._token_hash(raw_token),))
 
     def authenticate(self, username: Any, password: Any) -> tuple[dict[str, Any], str, str]:
         self._ensure_initialized()
@@ -403,11 +609,40 @@ class AuthStore:
                 (hash_password(password), _timestamp(), user_id),
             )
             connection.execute("delete from auth_sessions where user_id = ?", (user_id,))
+            connection.execute("delete from api_tokens where user_id = ?", (user_id,))
             token, csrf_token = self._create_session(connection, user_id)
             updated = connection.execute("select * from app_users where id = ?", (user_id,)).fetchone()
         return self._user_out(updated), token, csrf_token
+
+    def reset_admin_password(self, username: Any, new_password: Any) -> dict[str, Any]:
+        """Set a temporary password for an existing Admin and revoke their sessions."""
+        self._ensure_initialized()
+        candidate = str(username or "").strip()[:64]
+        password = validate_password(new_password)
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "select * from app_users where username = ? collate nocase",
+                (candidate,),
+            ).fetchone()
+            if not row or row["role"] != "Admin":
+                raise LookupError("Admin user not found")
+            if verify_password(password, row["password_hash"]):
+                raise ValueError("New password must be different from the current password")
+            connection.execute(
+                """
+                update app_users
+                set password_hash = ?, must_change_password = 1, updated_at = ?
+                where id = ?
+                """,
+                (hash_password(password), _timestamp(), row["id"]),
+            )
+            connection.execute("delete from auth_sessions where user_id = ?", (row["id"],))
+            connection.execute("delete from api_tokens where user_id = ?", (row["id"],))
+            updated = connection.execute("select * from app_users where id = ?", (row["id"],)).fetchone()
+        return self._user_out(updated)
 
     def clear_sessions(self) -> None:
         self._ensure_initialized()
         with self._lock, self._connect() as connection:
             connection.execute("delete from auth_sessions")
+            connection.execute("delete from api_tokens")
