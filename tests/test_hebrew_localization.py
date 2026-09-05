@@ -127,6 +127,18 @@ def test_populated_dashboard_values_are_localized_at_composition_time():
     assert '"Financial Services": "שירותים פיננסיים"' in i18n
 
 
+def test_security_detail_kpi_headers_are_localized_in_hebrew():
+    script = (ROOT / "web/app.js").read_text()
+    i18n = (ROOT / "web/i18n.js").read_text()
+
+    assert '<span>${esc(optionLabel(label))}</span>' in script
+    assert '"Data provider": "ספק נתונים"' in i18n
+    assert '"Cost basis": "בסיס עלות"' in i18n
+    assert '"Average buy price": "מחיר קנייה ממוצע"' in i18n
+    assert '"Holding profit (open)": "רווח מהחזקה (לא ממומש)"' in i18n
+    assert '"Closed profit": "רווח ממומש"' in i18n
+
+
 def test_rtl_layout_uses_semantic_direction_and_logical_properties():
     styles = (ROOT / "web/styles.css").read_text()
 

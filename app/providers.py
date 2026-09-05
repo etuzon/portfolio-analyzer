@@ -1131,6 +1131,9 @@ class SecCompanyFactsProvider(MarketDataProvider):
             ],
             as_of,
         )
+        financial_revenue = _sec_financial_revenue(us_gaap, as_of)
+        for year, row in financial_revenue.items():
+            revenue.setdefault(year, row)
         net_income = _sec_annual_facts(us_gaap, ["NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"], as_of)
         gross_profit = _sec_annual_facts(us_gaap, ["GrossProfit"], as_of)
         operating_income = _sec_annual_facts(us_gaap, ["OperatingIncomeLoss"], as_of)
@@ -1480,6 +1483,26 @@ def _sec_annual_facts(us_gaap: dict[str, Any], concepts: list[str], as_of: date 
                 continue
             by_year[year] = {"val": value, "end": row.get("end"), "filed": row.get("filed"), "concept": concept}
     return by_year
+
+
+def _sec_financial_revenue(us_gaap: dict[str, Any], as_of: date | None = None) -> dict[int, dict[str, Any]]:
+    """Build revenue-like annual income for banks, lenders, and mortgage REITs."""
+    net_interest = _sec_annual_facts(us_gaap, ["InterestIncomeExpenseNet"], as_of)
+    other_income = _sec_annual_facts(us_gaap, ["NoninterestIncome", "NonoperatingIncomeExpense"], as_of)
+    combined: dict[int, dict[str, Any]] = {}
+    for year in sorted(set(net_interest) | set(other_income)):
+        interest_row = net_interest.get(year)
+        other_row = other_income.get(year)
+        if not interest_row:
+            continue
+        components = [interest_row, *([other_row] if other_row else [])]
+        combined[year] = {
+            "val": sum(float(row["val"]) for row in components),
+            "end": interest_row.get("end") or (other_row or {}).get("end"),
+            "filed": max(str(row.get("filed") or "") for row in components),
+            "concept": "+".join(str(row.get("concept") or "") for row in components),
+        }
+    return combined
 
 
 def _sec_latest_fact(facts: dict[str, Any], concepts: list[str], unit_names: list[str]) -> float | None:

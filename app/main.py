@@ -2086,7 +2086,7 @@ def portfolio_payload(force_refresh: bool = False) -> dict[str, Any]:
 def portfolio_cache_signature() -> str | None:
     if not hasattr(local_store, "change_token"):
         return None
-    return f"v6:{local_store.change_token()}"
+    return f"v7:{local_store.change_token()}"
 
 
 def read_portfolio_cache() -> dict[str, Any] | None:

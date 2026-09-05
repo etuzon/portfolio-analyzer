@@ -454,6 +454,81 @@ def test_sec_company_facts_maps_investment_company_income_as_revenue(monkeypatch
     assert reports[-1]["netIncome"] == 82000000
 
 
+@pytest.mark.parametrize(
+    ("other_income_concept", "other_income"),
+    [
+        ("NoninterestIncome", 224_914_000),
+        ("NonoperatingIncomeExpense", 109_653_000),
+    ],
+)
+def test_sec_company_facts_derives_financial_revenue_from_net_interest_and_other_income(
+    monkeypatch,
+    tmp_path,
+    other_income_concept,
+    other_income,
+):
+    provider = SecCompanyFactsProvider({}, SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1))
+    monkeypatch.setattr(provider, "_ticker_row", lambda symbol: {"cik": "0000000001", "title": "Financial Corp"})
+    monkeypatch.setattr(
+        provider,
+        "_company_facts",
+        lambda cik: {
+            "facts": {
+                "us-gaap": {
+                    "InterestIncomeExpenseNet": {"units": {"USD": [
+                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-03-01", "end": "2024-12-31", "val": 40_305_000},
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-01", "end": "2025-12-31", "val": 59_885_000},
+                    ]}},
+                    other_income_concept: {"units": {"USD": [
+                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-03-01", "end": "2024-12-31", "val": 217_312_000},
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-01", "end": "2025-12-31", "val": other_income},
+                    ]}},
+                    "NetIncomeLoss": {"units": {"USD": [
+                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-03-01", "end": "2024-12-31", "val": 50_853_000},
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-01", "end": "2025-12-31", "val": 60_512_000},
+                    ]}},
+                },
+                "dei": {},
+            }
+        },
+    )
+
+    reports = provider.fundamentals("FIN")["income_statement"]["annualReports"]
+
+    assert reports[-2]["totalRevenue"] == 40_305_000 + 217_312_000
+    assert reports[-1]["totalRevenue"] == 59_885_000 + other_income
+    assert reports[-1]["netIncome"] == 60_512_000
+
+
+def test_sec_company_facts_prefers_reported_revenue_over_financial_components(monkeypatch, tmp_path):
+    provider = SecCompanyFactsProvider({}, SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1))
+    monkeypatch.setattr(provider, "_ticker_row", lambda symbol: {"cik": "0000000001", "title": "Example Corp"})
+    monkeypatch.setattr(
+        provider,
+        "_company_facts",
+        lambda cik: {
+            "facts": {
+                "us-gaap": {
+                    "Revenues": {"units": {"USD": [
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "end": "2025-12-31", "val": 500_000_000}
+                    ]}},
+                    "InterestIncomeExpenseNet": {"units": {"USD": [
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "end": "2025-12-31", "val": 60_000_000}
+                    ]}},
+                    "NoninterestIncome": {"units": {"USD": [
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "end": "2025-12-31", "val": 225_000_000}
+                    ]}},
+                },
+                "dei": {},
+            }
+        },
+    )
+
+    reports = provider.fundamentals("EXM")["income_statement"]["annualReports"]
+
+    assert reports[-1]["totalRevenue"] == 500_000_000
+
+
 def test_sec_company_facts_as_of_uses_filing_available_at_historical_cutoff(monkeypatch, tmp_path):
     provider = SecCompanyFactsProvider({}, SqliteCache(tmp_path / "cache.sqlite3", ttl_hours=24))
     monkeypatch.setattr(provider, "_ticker_row", lambda symbol: {"ticker": symbol, "cik": "0000000001", "title": "Example"})

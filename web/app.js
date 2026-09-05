@@ -5367,7 +5367,7 @@ function renderSecurityDetail() {
     ["Holding profit (open)", signedMoney(h.unrealized_profit || 0, h.currency || detail.currency), "Profit/loss on the quantity still held. It changes with the current price."],
     ["Closed profit", signedMoney(h.realized_profit || 0, h.currency || detail.currency), "Profit/loss already recorded by sell, cover, dividend, interest, or fee transactions."],
     ["Account", cleanSourceLabel(h.account || "")],
-  ].map(([label, value, title]) => `<div class="security-kpi" title="${esc(title || "")}"><span>${esc(label)}</span><b>${esc(value || "∅")}</b></div>`).join("");
+  ].map(([label, value, title]) => `<div class="security-kpi" title="${esc(title || "")}"><span>${esc(optionLabel(label))}</span><b>${esc(value || "∅")}</b></div>`).join("");
   const txs = state.localTransactions.filter((tx) => transactionMatchesSecurity(tx, detail));
   $("securityDetailTransactions").innerHTML = txs.length ? txs.map((tx) => `
     <div class="stack-item management-item">
