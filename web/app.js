@@ -116,6 +116,7 @@ const DASHBOARD_WIDGETS = [
   { id: "cash_currency", title: "Cash by currency", view: "basic", size: "compact", area: "investments" },
   { id: "industry_split", title: "Industry split", view: "basic", size: "wide", area: "investments" },
   { id: "top_holdings", title: "Top holdings", view: "basic", size: "wide", area: "investments" },
+  { id: "bond_currency", title: "Bonds by currency", view: "basic", size: "compact", area: "investments" },
   { id: "coverage", title: "Provider data coverage", view: "expanded", size: "medium", area: "investments" },
   { id: "currency", title: "Currency allocation", view: "expanded", size: "compact", area: "investments" },
   { id: "equity_comp", title: "Equity compensation", view: "expanded", size: "wide", area: "employee" },
@@ -151,7 +152,7 @@ const DASHBOARD_SECTIONS = [
 ];
 const DASHBOARD_AREAS = ["all", "investments", "long_term", "employee"];
 const DASHBOARD_AREA_FEATURES = {
-  investments: ["portfolio_value", "account_trend", "asset_mix", "top_holdings"],
+  investments: ["portfolio_value", "account_trend", "asset_mix", "top_holdings", "bond_currency"],
   long_term: ["long_term_savings", "long_term"],
   employee: ["equity_comp"],
 };
@@ -3457,6 +3458,68 @@ function renderCashByCurrencyBars() {
     </div>`;
 }
 
+function bondsByCurrencyData(items) {
+  const groups = (items || []).reduce((totals, item) => {
+    const holding = item.holding || {};
+    const isBond = [holding.asset_class, holding.asset_sub_class]
+      .some((value) => String(value || "").toUpperCase() === "BOND");
+    if (!isBond) return totals;
+    const currency = String(holding.currency || state.baseCurrency).toUpperCase();
+    const group = totals[currency] || { currency, amount: 0, positions: 0 };
+    group.amount += Number(holding.market_value || 0);
+    group.positions += 1;
+    totals[currency] = group;
+    return totals;
+  }, {});
+  return Object.values(groups)
+    .map((group) => ({
+      ...group,
+      baseValue: normalizedAmount(group.amount, group.currency),
+    }))
+    .sort((left, right) => Math.abs(right.baseValue) - Math.abs(left.baseValue));
+}
+
+function renderBondsByCurrency(items) {
+  const rows = bondsByCurrencyData(items);
+  const title = optionLabel("Bonds by currency");
+  if (!rows.length) {
+    return `
+      <div class="chart-card bond-currency-card">
+        <div class="chart-title">${esc(title)}</div>
+        <div class="empty">${esc(optionLabel("No bond holdings"))}</div>
+      </div>`;
+  }
+  const max = Math.max(...rows.map((row) => Math.abs(row.baseValue)), 1);
+  const totalBaseValue = sum(rows.map((row) => row.baseValue));
+  const positionCount = sum(rows.map((row) => row.positions));
+  const positionLabel = optionLabel(positionCount === 1 ? "bond position" : "bond positions");
+  return `
+    <div class="chart-card bond-currency-card">
+      <div class="chart-header bond-currency-header">
+        <div>
+          <div class="chart-title">${esc(title)}</div>
+          <span class="chart-subtitle">${fmt(positionCount, 0)} ${esc(positionLabel)} · ${esc(optionLabel("Base equivalent"))} ${money(totalBaseValue, state.baseCurrency, 0)}</span>
+        </div>
+      </div>
+      <div class="bond-currency-bars" role="img" aria-label="${esc(title)}">
+        ${rows.map((row, index) => {
+          const width = Math.max(Math.abs(row.baseValue) / max * 100, 2);
+          const amount = fmt(row.amount, 0);
+          const rowPositionLabel = optionLabel(row.positions === 1 ? "bond position" : "bond positions");
+          const tooltip = `${currencyDisplayLabel(row.currency)}\n${money(row.amount, row.currency, 0)}\n${row.positions} ${rowPositionLabel}\n${optionLabel("Base equivalent")}: ${money(row.baseValue, state.baseCurrency, 0)}`;
+          return `
+            <div class="bond-currency-row" title="${esc(tooltip)}">
+              <div class="bond-currency-label">
+                <span>${esc(currencyDisplayLabel(row.currency))}</span>
+                <b>${esc(amount)}</b>
+              </div>
+              <div class="bond-currency-track"><i style="width:${width.toFixed(1)}%;background:${colorAt(index)}"></i></div>
+            </div>`;
+        }).join("")}
+      </div>
+    </div>`;
+}
+
 function renderIndustrySplit(items) {
   const groups = Object.values(items.reduce((result, item) => {
     const label = industryLabel(item) || "Not classified";
@@ -4041,6 +4104,7 @@ function renderAnalytics(items) {
     cash_currency: () => renderCashByCurrencyBars(),
     industry_split: () => renderIndustrySplit(items),
     top_holdings: () => renderMiniBars(items),
+    bond_currency: () => renderBondsByCurrency(items),
     coverage: () => renderCompleteness(items),
     currency: () => renderCurrencyAllocation(currencyGroups, currencyTotal),
     equity_comp: () => renderEquityCompDashboard(items),

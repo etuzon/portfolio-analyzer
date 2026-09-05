@@ -185,6 +185,25 @@ def test_asset_mix_includes_cash_amount_and_percentage():
     assert ".cash-currency-bars" in styles
 
 
+def test_dashboard_shows_bond_market_value_grouped_by_currency():
+    script = (ROOT / "web/app.js").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+    i18n = (ROOT / "web/i18n.js").read_text()
+
+    assert '{ id: "bond_currency", title: "Bonds by currency", view: "basic", size: "compact", area: "investments" }' in script
+    assert 'investments: ["portfolio_value", "account_trend", "asset_mix", "top_holdings", "bond_currency"]' in script
+    assert "function bondsByCurrencyData(items)" in script
+    assert "[holding.asset_class, holding.asset_sub_class]" in script
+    assert "group.amount += Number(holding.market_value || 0)" in script
+    assert "baseValue: normalizedAmount(group.amount, group.currency)" in script
+    assert "function renderBondsByCurrency(items)" in script
+    assert "bond_currency: () => renderBondsByCurrency(items)" in script
+    assert ".bond-currency-card" in styles
+    assert ".bond-currency-bars" in styles
+    assert '"Bonds by currency": "אג״ח לפי מטבע"' in i18n
+    assert '"No bond holdings": "אין אחזקות אג״ח"' in i18n
+
+
 def test_market_banner_uses_dense_responsive_cards_without_smaller_text():
     styles = (ROOT / "web/styles.css").read_text()
 
