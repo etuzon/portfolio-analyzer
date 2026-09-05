@@ -4694,6 +4694,7 @@ tbody tr:hover {
 
 .metric-cell {
   max-width: 210px;
+  gap: 4px;
 }
 
 .value-cell strong,
@@ -4757,15 +4758,14 @@ tbody tr:hover {
 
 .metric-row {
   display: grid;
-  grid-template-columns: minmax(58px, auto) minmax(0, 1fr);
+  grid-template-columns: minmax(42px, auto) minmax(max-content, 1fr) max-content;
   align-items: center;
   column-gap: 8px;
   row-gap: 2px;
-  min-height: 24px;
-  padding: 4px 7px;
-  border: 1px solid #26313f;
-  border-radius: 7px;
-  background: #151a21;
+  min-height: 18px;
+  padding: 1px 0;
+  border: 0;
+  background: transparent;
 }
 
 .metric-row span {
@@ -4781,7 +4781,7 @@ tbody tr:hover {
   font-size: 12px;
   font-weight: 850;
   text-align: right;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
 }
 
 .metric-row b.up,
@@ -4800,7 +4800,7 @@ tbody tr:hover {
 }
 
 .metric-row em {
-  grid-column: 2;
+  grid-column: auto;
   color: #8792ad;
   font-size: 10px;
   font-style: normal;
@@ -8473,8 +8473,10 @@ html[dir="rtl"] .settings-menu-button.active {
 }
 
 .macro-prior-panel,
+.macro-trigger-panel,
 .macro-network-panel,
 .macro-breakdown-panel,
+.macro-portfolio-panel,
 .macro-math-summary {
   padding: 14px;
   border: 1px solid #2b3442;
@@ -8560,6 +8562,79 @@ html[dir="rtl"] .settings-menu-button.active {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 9px;
+}
+
+.macro-trigger-library {
+  display: grid;
+  gap: 14px;
+}
+
+.macro-trigger-group {
+  display: grid;
+  gap: 8px;
+}
+
+.macro-trigger-group h4 {
+  margin: 0;
+  color: #8fddff;
+  font-size: 12px;
+}
+
+.macro-trigger-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+}
+
+.macro-trigger-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: stretch;
+  border: 1px solid #303b4b;
+  border-radius: 7px;
+  background: #151c27;
+  overflow: hidden;
+}
+
+.macro-trigger-card.active {
+  border-color: #64d2ff;
+  box-shadow: inset 0 0 0 1px rgba(100, 210, 255, 0.25);
+}
+
+.macro-trigger-card > button {
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  padding: 10px 12px;
+  background: transparent;
+  color: #e8efff;
+  text-align: start;
+}
+
+.macro-trigger-card > button small,
+.macro-trigger-card > button span {
+  color: #8fa0b8;
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.macro-trigger-card > label {
+  display: grid;
+  align-content: center;
+  justify-items: end;
+  gap: 5px;
+  min-width: 138px;
+  padding: 8px;
+  border-inline-start: 1px solid #303b4b;
+}
+
+.macro-trigger-card > label > span:first-child {
+  color: #8fa0b8;
+  font-size: 9px;
+  font-weight: 800;
 }
 
 .macro-scenario-tab {
@@ -8702,6 +8777,97 @@ html[dir="rtl"] .settings-menu-button.active {
 .macro-probability-table td:first-child {
   display: grid;
   gap: 5px;
+}
+
+.macro-node-label {
+  color: #e6eefb;
+  line-height: 1.4;
+}
+
+.macro-node-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.macro-node-meta > span,
+.macro-impact-input {
+  padding: 2px 5px;
+  border: 1px solid #334052;
+  border-radius: 999px;
+  color: #9eabc0;
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.macro-impact-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.macro-impact-input input {
+  width: 42px;
+  min-width: 42px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: #e6eefb;
+  font: inherit;
+  text-align: end;
+}
+
+.macro-impact-input input:focus {
+  outline: 1px solid #64d2ff;
+}
+
+.macro-portfolio-total {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  min-width: 190px;
+}
+
+.macro-portfolio-total span,
+.macro-exposure-table small {
+  color: #8fa0b8;
+  font-size: 10px;
+}
+
+.macro-portfolio-total b {
+  color: #f2f6ff;
+  font-size: 17px;
+}
+
+.macro-exposure-table {
+  min-width: 980px;
+}
+
+.macro-exposure-table td:first-child {
+  display: grid;
+  gap: 4px;
+  min-width: 280px;
+}
+
+.macro-exposure-table td,
+.macro-exposure-table th {
+  white-space: nowrap;
+}
+
+.macro-exposure-table b.positive {
+  color: #6ee787;
+}
+
+.macro-exposure-table b.negative {
+  color: #ff8da4;
+}
+
+.macro-exposure-note {
+  margin: 10px 0 0;
+  color: #8fa0b8;
+  font-size: 10px;
+  line-height: 1.5;
 }
 
 .macro-source,
@@ -8850,5 +9016,17 @@ html[dir="rtl"] .settings-menu-button.active {
 
   .macro-network-edge {
     grid-template-columns: 1fr;
+  }
+
+  .macro-trigger-card {
+    grid-template-columns: 1fr;
+  }
+
+  .macro-trigger-card > label {
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    justify-items: start;
+    border-inline-start: 0;
+    border-top: 1px solid #303b4b;
   }
 }

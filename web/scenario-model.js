@@ -5,9 +5,50 @@
 })(typeof globalThis === "object" ? globalThis : this, () => {
   "use strict";
 
-  const scenario = (id, label, triggerLabel, coreEnd, nodes) => ({ id, label, triggerLabel, coreEnd, nodes });
-  const node = (id, parent, group, label, probability, direction, source = "assumption") => ({
-    id, parent, group, label, probability, direction, source,
+  const scenario = (id, label, triggerLabel, coreEnd, nodes) => ({
+    id, label, triggerLabel, coreEnd, nodes, kind: "fed", category: "United States and Israel",
+  });
+  const independentScenario = (id, label, triggerLabel, category, coreEnd, nodes) => ({
+    id, label, triggerLabel, category, coreEnd, nodes, kind: "independent",
+  });
+  const tagsFor = (tags = {}) => ({
+    countries: Array.isArray(tags.countries) ? tags.countries : [],
+    sectors: Array.isArray(tags.sectors) ? tags.sectors : [],
+    currencies: Array.isArray(tags.currencies) ? tags.currencies : [],
+    assetClasses: Array.isArray(tags.assetClasses) ? tags.assetClasses : [],
+    keywords: Array.isArray(tags.keywords) ? tags.keywords : [],
+  });
+  const inferredTags = (group, label) => {
+    const text = `${group} ${label}`.toLowerCase();
+    const assetClasses = [];
+    const currencies = [];
+    const keywords = [group];
+    if (text.includes("bond") || text.includes("credit rating")) {
+      assetClasses.push("BOND");
+      keywords.push("government bond", "corporate bond", "fixed income", "treasury");
+    }
+    if (text.includes("fund")) assetClasses.push("MUTUALFUND", "ETF");
+    if (text.includes("shekel")) currencies.push("ILS");
+    if (text.includes("gold")) keywords.push("gold", "precious metal");
+    if (text.includes("uranium")) keywords.push("uranium", "nuclear");
+    return { sectors: [group], assetClasses, currencies, keywords };
+  };
+  const node = (id, parent, group, label, probability, direction, source = "assumption", metadata = {}) => ({
+    id,
+    parent,
+    group,
+    label,
+    probability,
+    direction,
+    source,
+    impactMagnitude: Number.isFinite(Number(metadata.impactMagnitude)) ? Math.abs(Number(metadata.impactMagnitude)) : (direction === "mixed" ? 0.02 : 0.05),
+    horizon: metadata.horizon || "3–12 months",
+    lag: metadata.lag || "1–3 months",
+    persistence: metadata.persistence || "6–18 months",
+    confidence: metadata.confidence || (source === "provided" ? "High" : "Medium"),
+    correlation: metadata.correlation || "Medium",
+    asOf: metadata.asOf || "05/09/2026",
+    tags: tagsFor(metadata.tags || inferredTags(group, label)),
   });
 
   const SCENARIOS = Object.freeze([
@@ -119,6 +160,121 @@
     ]),
   ]);
 
+  const TRIGGER_MODULES = Object.freeze([
+    independentScenario("china_downturn", "China property and demand downturn", "China property and debt stress intensifies", "China", "chn_israel_exports", [
+      node("chn_demand", "", "China demand", "Chinese domestic demand weakens", 0.75, "negative", "assumption", { impactMagnitude: 0.06, confidence: "High", tags: { countries: ["China"], sectors: ["China"], keywords: ["China", "Chinese"] } }),
+      node("chn_commodities", "chn_demand", "Commodities", "China commodity imports contract", 0.70, "negative", "assumption", { impactMagnitude: 0.08, tags: { sectors: ["Materials", "Energy", "Mining"], keywords: ["commodity", "mining", "copper", "iron", "steel"] } }),
+      node("chn_metals", "chn_commodities", "Metals and mining", "Industrial metal prices weaken", 0.75, "negative", "assumption", { impactMagnitude: 0.10, tags: { sectors: ["Materials", "Mining"], keywords: ["copper", "iron", "steel", "metals", "mining"] } }),
+      node("chn_oil", "chn_commodities", "Oil", "Oil demand and prices weaken", 0.60, "negative", "assumption", { impactMagnitude: 0.08, tags: { sectors: ["Energy", "Oil & Gas"], keywords: ["oil", "petroleum", "energy"] } }),
+      node("chn_exporters", "chn_commodities", "Global exporters", "Global industrial exporters lose demand", 0.65, "negative", "assumption", { impactMagnitude: 0.07, tags: { sectors: ["Industrials", "Materials"], keywords: ["industrial", "export", "manufacturing"] } }),
+      node("chn_israel_exports", "chn_exporters", "Israeli exporters", "Israeli industrial, water, agritech, and chip exports weaken", 0.55, "negative", "assumption", { impactMagnitude: 0.06, horizon: "6–18 months", tags: { countries: ["Israel"], sectors: ["Industrials", "Technology"], keywords: ["water", "agritech", "semiconductor", "industrial"] } }),
+      node("chn_cny", "chn_demand", "Currencies", "Renminbi weakens and Asian currencies face pressure", 0.72, "mixed", "assumption", { impactMagnitude: 0.05, tags: { currencies: ["CNY", "CNH"], keywords: ["China", "Asia"] } }),
+    ]),
+    independentScenario("china_stimulus", "China stimulus and demand recovery", "China launches effective fiscal and property stimulus", "China", "chs_israel_exports", [
+      node("chs_activity", "", "China demand", "Infrastructure and household activity recover", 0.70, "positive", "assumption", { impactMagnitude: 0.06, tags: { countries: ["China"], keywords: ["China", "Chinese"] } }),
+      node("chs_demand", "chs_activity", "Commodities and technology", "Commodity and technology demand rises", 0.75, "positive", "assumption", { impactMagnitude: 0.08, tags: { sectors: ["Materials", "Energy", "Technology"], keywords: ["commodity", "mining", "semiconductor", "technology"] } }),
+      node("chs_exporters", "chs_demand", "Global exporters", "Global exporters and Asian supply chains strengthen", 0.65, "positive", "assumption", { impactMagnitude: 0.07, tags: { sectors: ["Industrials", "Technology", "Materials"], keywords: ["industrial", "export", "manufacturing"] } }),
+      node("chs_israel_exports", "chs_exporters", "Israeli exporters", "Israeli technology, water, and industrial exports strengthen", 0.55, "positive", "assumption", { impactMagnitude: 0.06, horizon: "6–18 months", tags: { countries: ["Israel"], sectors: ["Industrials", "Technology"], keywords: ["water", "agritech", "semiconductor", "industrial"] } }),
+      node("chs_metals", "chs_demand", "Metals and mining", "Industrial metals and uranium gain demand support", 0.72, "positive", "assumption", { impactMagnitude: 0.09, tags: { sectors: ["Materials", "Mining"], keywords: ["uranium", "copper", "iron", "metals", "mining"] } }),
+    ]),
+    independentScenario("china_trade", "US–China trade and technology escalation", "US–China tariffs and export controls escalate", "China", "cht_israel_tech", [
+      node("cht_tariffs", "", "Global trade", "Tariffs and export controls broaden", 0.80, "negative", "assumption", { impactMagnitude: 0.05, tags: { countries: ["China", "United States"], sectors: ["Industrials"], keywords: ["trade", "export", "manufacturing"] } }),
+      node("cht_chips", "cht_tariffs", "Semiconductors", "Semiconductor and critical-mineral supply is disrupted", 0.70, "negative", "assumption", { impactMagnitude: 0.10, tags: { sectors: ["Semiconductors", "Technology", "Materials"], keywords: ["semiconductor", "chip", "rare earth", "critical mineral"] } }),
+      node("cht_ai_cost", "cht_chips", "Artificial intelligence", "AI and electronics costs rise", 0.75, "negative", "assumption", { impactMagnitude: 0.08, tags: { sectors: ["Technology", "Semiconductors"], keywords: ["AI", "artificial intelligence", "electronics", "chip"] } }),
+      node("cht_israel_tech", "cht_ai_cost", "Israeli high-tech", "Israeli high-tech margins, funding, and exports weaken", 0.65, "negative", "assumption", { impactMagnitude: 0.08, tags: { countries: ["Israel"], sectors: ["Technology", "Semiconductors"], keywords: ["software", "cyber", "AI", "semiconductor"] } }),
+      node("cht_minerals", "cht_chips", "Critical minerals", "Strategic-mineral prices and substitution investment rise", 0.72, "positive", "assumption", { impactMagnitude: 0.12, tags: { sectors: ["Materials", "Mining"], keywords: ["rare earth", "critical mineral", "uranium", "lithium"] } }),
+    ]),
+    independentScenario("europe_recession", "Eurozone recession and ECB response", "Eurozone demand contracts materially", "Europe", "eur_israel_exports", [
+      node("eur_imports", "", "European demand", "European import demand falls", 0.75, "negative", "assumption", { impactMagnitude: 0.06, tags: { countries: ["Europe"], keywords: ["Europe", "European", "Eurozone"] } }),
+      node("eur_industry", "eur_imports", "Industrials", "European industry and discretionary activity weaken", 0.65, "negative", "assumption", { impactMagnitude: 0.08, tags: { sectors: ["Industrials", "Consumer Cyclical"], keywords: ["industrial", "automotive", "consumer discretionary"] } }),
+      node("eur_israel_exports", "eur_industry", "Israeli exporters", "Israeli exports, tourism, and business services to Europe weaken", 0.60, "negative", "assumption", { impactMagnitude: 0.06, tags: { countries: ["Israel"], sectors: ["Industrials", "Technology", "Travel"], keywords: ["export", "tourism", "software", "industrial"] } }),
+      node("eur_ecb", "eur_imports", "Interest rates", "ECB easing lowers euro bond yields", 0.70, "positive", "assumption", { impactMagnitude: 0.05, tags: { currencies: ["EUR"], assetClasses: ["BOND"], keywords: ["European bond", "euro bond"] } }),
+      node("eur_currency", "eur_ecb", "Currencies", "Euro weakens against the dollar", 0.65, "mixed", "assumption", { impactMagnitude: 0.05, tags: { currencies: ["EUR"], keywords: ["euro"] } }),
+    ]),
+    independentScenario("japan_carry", "Japan rate shock and carry-trade unwind", "Bank of Japan tightening triggers a yen carry unwind", "Japan", "jpy_risk_assets", [
+      node("jpy_unwind", "", "Global liquidity", "Leveraged yen-funded positions unwind", 0.75, "negative", "assumption", { impactMagnitude: 0.07, lag: "Days to weeks", tags: { currencies: ["JPY"], keywords: ["Japan", "yen"] } }),
+      node("jpy_selloff", "jpy_unwind", "Global equities", "Global risk assets sell off", 0.70, "negative", "assumption", { impactMagnitude: 0.10, lag: "Days to weeks", tags: { assetClasses: ["EQUITY", "ETF", "MUTUALFUND"], keywords: ["equity", "stock", "growth"] } }),
+      node("jpy_risk_assets", "jpy_selloff", "Israeli high-tech", "Israeli technology valuations and funding come under pressure", 0.65, "negative", "assumption", { impactMagnitude: 0.08, tags: { countries: ["Israel"], sectors: ["Technology"], keywords: ["software", "cyber", "AI", "technology"] } }),
+      node("jpy_havens", "jpy_unwind", "Gold and government bonds", "Safe-haven demand supports gold and high-quality government bonds", 0.60, "positive", "assumption", { impactMagnitude: 0.05, tags: { assetClasses: ["BOND"], keywords: ["gold", "government bond", "treasury"] } }),
+    ]),
+    independentScenario("india_asean_growth", "India and ASEAN growth acceleration", "India and ASEAN manufacturing growth accelerates", "Asia", "ias_israel_exports", [
+      node("ias_manufacturing", "", "Asian manufacturing", "Manufacturing and infrastructure investment rises", 0.70, "positive", "assumption", { impactMagnitude: 0.06, horizon: "6–18 months", tags: { countries: ["India", "Singapore", "Vietnam", "Indonesia"], sectors: ["Industrials"], keywords: ["India", "ASEAN", "manufacturing"] } }),
+      node("ias_demand", "ias_manufacturing", "Energy and materials", "Energy and raw-material demand rises", 0.65, "positive", "assumption", { impactMagnitude: 0.07, tags: { sectors: ["Energy", "Materials"], keywords: ["oil", "gas", "commodity", "materials"] } }),
+      node("ias_oil", "ias_demand", "Oil", "Structural Asian demand supports oil prices", 0.60, "positive", "assumption", { impactMagnitude: 0.07, tags: { sectors: ["Energy", "Oil & Gas"], keywords: ["oil", "petroleum", "energy"] } }),
+      node("ias_israel_exports", "ias_manufacturing", "Israeli exporters", "Demand for Israeli water, agritech, cyber, and defense solutions rises", 0.60, "positive", "assumption", { impactMagnitude: 0.07, horizon: "6–24 months", tags: { countries: ["Israel"], sectors: ["Technology", "Industrials", "Defense"], keywords: ["water", "agritech", "cyber", "defense"] } }),
+    ]),
+    independentScenario("taiwan_conflict", "Taiwan Strait semiconductor disruption", "A Taiwan Strait blockade or conflict disrupts trade", "Asia", "twn_israel_tech", [
+      node("twn_chips", "", "Semiconductors", "Advanced semiconductor supply is disrupted", 0.90, "negative", "assumption", { impactMagnitude: 0.18, lag: "Days to weeks", tags: { countries: ["Taiwan"], sectors: ["Semiconductors", "Technology"], keywords: ["semiconductor", "chip", "electronics"] } }),
+      node("twn_costs", "twn_chips", "Artificial intelligence", "AI, data-center, automotive, and electronics costs spike", 0.80, "negative", "assumption", { impactMagnitude: 0.12, tags: { sectors: ["Technology", "Semiconductors", "Automotive"], keywords: ["AI", "data center", "chip", "electronics"] } }),
+      node("twn_equities", "twn_costs", "Global equities", "Global equities reprice growth and supply-chain risk", 0.75, "negative", "assumption", { impactMagnitude: 0.15, tags: { assetClasses: ["EQUITY", "ETF", "MUTUALFUND"], keywords: ["equity", "stock", "growth"] } }),
+      node("twn_israel_tech", "twn_equities", "Israeli high-tech", "Israeli chip, AI, and hardware companies face valuation and supply pressure", 0.65, "negative", "assumption", { impactMagnitude: 0.12, tags: { countries: ["Israel"], sectors: ["Technology", "Semiconductors"], keywords: ["AI", "chip", "hardware", "semiconductor"] } }),
+      node("twn_gold", "twn_chips", "Gold", "Geopolitical safe-haven demand supports gold", 0.78, "positive", "assumption", { impactMagnitude: 0.10, tags: { keywords: ["gold", "precious metal"] } }),
+    ]),
+    independentScenario("gulf_opec", "Gulf and OPEC oil-supply shock", "OPEC supply restraint or Gulf disruption lifts oil", "Middle East", "gulf_bonds", [
+      node("gulf_oil", "", "Oil", "Oil prices rise sharply", 0.80, "positive", "assumption", { impactMagnitude: 0.15, lag: "Days to weeks", tags: { sectors: ["Energy", "Oil & Gas"], keywords: ["oil", "petroleum", "energy"] } }),
+      node("gulf_inflation", "gulf_oil", "Global inflation", "Transport, manufacturing, and food inflation rises", 0.75, "negative", "assumption", { impactMagnitude: 0.06, tags: { sectors: ["Transportation", "Industrials", "Consumer Defensive"], keywords: ["airline", "shipping", "food", "industrial"] } }),
+      node("gulf_rates", "gulf_inflation", "Interest rates", "Central banks keep rates higher for longer", 0.65, "negative", "assumption", { impactMagnitude: 0.05, tags: { sectors: ["Real Estate", "Financial Services"], keywords: ["real estate", "mortgage", "lender"] } }),
+      node("gulf_bonds", "gulf_rates", "Government and corporate bonds", "Bond prices fall and refinancing pressure rises", 0.70, "negative", "assumption", { impactMagnitude: 0.07, tags: { assetClasses: ["BOND"], keywords: ["bond", "fixed income"] } }),
+      node("gulf_swf", "gulf_oil", "Gulf investment", "Higher Gulf revenue supports sovereign investment and regional projects", 0.60, "positive", "assumption", { impactMagnitude: 0.06, horizon: "6–24 months", tags: { sectors: ["Industrials", "Technology", "Infrastructure"], keywords: ["infrastructure", "technology", "construction"] } }),
+    ]),
+    independentScenario("russia_ukraine", "Russia–Ukraine war escalation", "Russia–Ukraine war disrupts energy, grain, and fertilizer supply", "Europe", "ruk_israel_imports", [
+      node("ruk_supply", "", "Energy and agriculture", "Energy, grain, and fertilizer prices rise", 0.75, "negative", "assumption", { impactMagnitude: 0.12, tags: { sectors: ["Energy", "Agriculture", "Materials"], keywords: ["oil", "gas", "grain", "fertilizer"] } }),
+      node("ruk_eu_cpi", "ruk_supply", "European inflation", "European inflation and industrial costs rise", 0.70, "negative", "assumption", { impactMagnitude: 0.07, tags: { countries: ["Europe"], sectors: ["Industrials"], keywords: ["Europe", "industrial", "manufacturing"] } }),
+      node("ruk_israel_imports", "ruk_eu_cpi", "Israeli importers", "Israeli food, agriculture, and industrial import costs rise", 0.60, "negative", "assumption", { impactMagnitude: 0.07, tags: { countries: ["Israel"], sectors: ["Consumer Defensive", "Industrials", "Agriculture"], keywords: ["food", "agriculture", "industrial", "import"] } }),
+      node("ruk_defense", "ruk_supply", "Defense and security", "European and global defense spending rises", 0.80, "positive", "assumption", { impactMagnitude: 0.10, horizon: "6–24 months", tags: { sectors: ["Defense", "Aerospace"], keywords: ["defense", "aerospace", "security"] } }),
+      node("ruk_gold", "ruk_supply", "Gold", "War-risk hedging supports gold", 0.70, "positive", "assumption", { impactMagnitude: 0.08, tags: { keywords: ["gold", "precious metal"] } }),
+    ]),
+    independentScenario("global_credit", "Global credit and refinancing shock", "A major borrower, bank, or fund triggers a global credit event", "Global finance", "gcr_lenders", [
+      node("gcr_spreads", "", "Credit markets", "Global credit spreads widen", 0.85, "negative", "assumption", { impactMagnitude: 0.08, lag: "Days to weeks", tags: { assetClasses: ["BOND"], keywords: ["credit", "corporate bond", "high yield"] } }),
+      node("gcr_downgrades", "gcr_spreads", "Corporate credit ratings", "Corporate downgrades and refinancing failures rise", 0.70, "negative", "assumption", { impactMagnitude: 0.10, tags: { assetClasses: ["BOND"], keywords: ["corporate bond", "credit", "debt"] } }),
+      node("gcr_lenders", "gcr_downgrades", "Banks and non-bank lenders", "Loan losses and funding pressure hit banks, card companies, and non-bank lenders", 0.75, "negative", "assumption", { impactMagnitude: 0.12, tags: { sectors: ["Financial Services", "Banks", "Credit Services"], keywords: ["bank", "credit", "card", "lender", "finance"] } }),
+      node("gcr_hy", "gcr_downgrades", "Corporate bonds", "High-yield and lower-rated corporate bonds fall sharply", 0.82, "negative", "assumption", { impactMagnitude: 0.14, tags: { assetClasses: ["BOND"], keywords: ["high yield", "corporate bond", "credit"] } }),
+      node("gcr_gold", "gcr_spreads", "Gold and government bonds", "Liquidity and safe-haven flows support gold and top-rated sovereign bonds", 0.62, "positive", "assumption", { impactMagnitude: 0.06, tags: { assetClasses: ["BOND"], keywords: ["gold", "treasury", "government bond"] } }),
+    ]),
+    independentScenario("trade_logistics", "Trade, shipping, and logistics disruption", "Tariffs, Red Sea risk, or Suez disruption restricts trade", "Global trade", "log_israel_margins", [
+      node("log_freight", "", "Shipping and logistics", "Freight, delay, and insurance costs rise", 0.80, "negative", "assumption", { impactMagnitude: 0.10, lag: "Days to weeks", tags: { sectors: ["Transportation", "Industrials"], keywords: ["shipping", "logistics", "freight", "airline"] } }),
+      node("log_imports", "log_freight", "Importers and retail", "Imported input and inventory costs rise", 0.75, "negative", "assumption", { impactMagnitude: 0.07, tags: { sectors: ["Consumer Cyclical", "Consumer Defensive", "Industrials"], keywords: ["retail", "import", "consumer", "industrial"] } }),
+      node("log_israel_margins", "log_imports", "Israeli economy", "Israeli CPI rises and importer margins contract", 0.70, "negative", "assumption", { impactMagnitude: 0.06, tags: { countries: ["Israel"], sectors: ["Consumer Cyclical", "Industrials"], keywords: ["retail", "import", "shipping", "industrial"] } }),
+      node("log_defense", "log_freight", "Defense and cyber", "Maritime defense and logistics-cyber demand rises", 0.65, "positive", "assumption", { impactMagnitude: 0.07, tags: { sectors: ["Defense", "Technology"], keywords: ["defense", "cyber", "security"] } }),
+    ]),
+    independentScenario("climate_shock", "Climate and extreme-weather shock", "Heat, drought, flood, or wildfire disrupts production", "Climate", "clm_israel_costs", [
+      node("clm_supply", "", "Food, power, and insurance", "Food supply, electricity systems, and insured assets come under pressure", 0.75, "negative", "assumption", { impactMagnitude: 0.09, horizon: "3–24 months", tags: { sectors: ["Agriculture", "Utilities", "Insurance"], keywords: ["food", "agriculture", "utility", "insurance"] } }),
+      node("clm_prices", "clm_supply", "Inflation", "Food and electricity inflation rises", 0.70, "negative", "assumption", { impactMagnitude: 0.06, tags: { sectors: ["Consumer Defensive", "Utilities"], keywords: ["food", "electricity", "utility"] } }),
+      node("clm_israel_costs", "clm_prices", "Israeli economy", "Israeli households, agriculture, and insurers face higher costs", 0.65, "negative", "assumption", { impactMagnitude: 0.07, tags: { countries: ["Israel"], sectors: ["Agriculture", "Insurance", "Utilities"], keywords: ["food", "agriculture", "insurance", "utility"] } }),
+      node("clm_water", "clm_supply", "Water and adaptation", "Water, grid, cooling, and climate-adaptation investment rises", 0.72, "positive", "assumption", { impactMagnitude: 0.09, horizon: "6–36 months", tags: { sectors: ["Industrials", "Utilities", "Technology"], keywords: ["water", "grid", "cooling", "climate"] } }),
+    ]),
+    independentScenario("regulation_shock", "Technology, finance, and tax regulation shock", "Major AI, banking, pharmaceutical, or tax rules tighten", "Regulation", "reg_tech", [
+      node("reg_compliance", "", "Regulation", "Compliance costs and business-model constraints rise", 0.70, "negative", "assumption", { impactMagnitude: 0.05, horizon: "6–24 months", tags: { keywords: ["regulated", "platform", "technology", "finance", "pharma"] } }),
+      node("reg_tech", "reg_compliance", "Artificial intelligence and technology", "AI and platform margins and valuations come under pressure", 0.65, "negative", "assumption", { impactMagnitude: 0.09, tags: { sectors: ["Technology"], keywords: ["AI", "software", "platform", "technology"] } }),
+      node("reg_finance", "reg_compliance", "Banks and lenders", "Capital, consumer-credit, and reporting rules pressure financial firms", 0.65, "negative", "assumption", { impactMagnitude: 0.07, tags: { sectors: ["Financial Services", "Banks", "Credit Services"], keywords: ["bank", "credit", "card", "lender", "finance"] } }),
+      node("reg_pharma", "reg_compliance", "Healthcare and pharmaceuticals", "Drug-pricing and approval changes reprice healthcare earnings", 0.60, "mixed", "assumption", { impactMagnitude: 0.08, tags: { sectors: ["Healthcare"], keywords: ["pharma", "drug", "biotech", "health"] } }),
+    ]),
+    independentScenario("ai_power", "AI, electricity, nuclear, and uranium boom", "AI data-center investment accelerates", "Technology and energy", "aip_suppliers", [
+      node("aip_electricity", "", "Electricity and data centers", "Data-center electricity demand rises rapidly", 0.85, "positive", "assumption", { impactMagnitude: 0.10, horizon: "1–5 years", tags: { sectors: ["Utilities", "Technology"], keywords: ["data center", "electricity", "power", "AI"] } }),
+      node("aip_grid", "aip_electricity", "Grid, nuclear, and uranium", "Grid, gas, nuclear, and uranium investment rises", 0.70, "positive", "assumption", { impactMagnitude: 0.12, horizon: "1–5 years", tags: { sectors: ["Utilities", "Energy", "Industrials"], keywords: ["grid", "power", "nuclear", "uranium", "gas"] } }),
+      node("aip_suppliers", "aip_grid", "Power infrastructure", "Power-equipment, utility, and uranium suppliers gain demand", 0.75, "positive", "assumption", { impactMagnitude: 0.14, horizon: "1–5 years", tags: { sectors: ["Utilities", "Industrials", "Energy"], keywords: ["grid", "power", "electrical", "nuclear", "uranium"] } }),
+      node("aip_inflation", "aip_electricity", "Power prices", "Grid bottlenecks lift local electricity prices", 0.65, "negative", "assumption", { impactMagnitude: 0.06, tags: { sectors: ["Utilities", "Industrials"], keywords: ["electricity", "power", "data center"] } }),
+      node("aip_quantum", "aip_electricity", "Quantum computing", "AI infrastructure spillovers support quantum research and funding", 0.55, "positive", "assumption", { impactMagnitude: 0.10, horizon: "2–7 years", tags: { sectors: ["Technology"], keywords: ["quantum", "computing", "research"] } }),
+    ]),
+    independentScenario("israel_war", "Israel regional-war escalation", "A regional war materially escalates", "Israel", "isw_rating", [
+      node("isw_disruption", "", "War and operations", "Reserve duty, labor, aviation, and shipping disruption rises", 0.80, "negative", "assumption", { impactMagnitude: 0.10, lag: "Days to weeks", tags: { countries: ["Israel"], sectors: ["Industrials", "Travel"], keywords: ["airline", "shipping", "tourism", "industrial"] } }),
+      node("isw_macro", "isw_disruption", "Israeli economy", "Israeli GDP weakens while inflation pressure rises", 0.75, "negative", "assumption", { impactMagnitude: 0.08, tags: { countries: ["Israel"], keywords: ["Israel", "Israeli"] } }),
+      node("isw_risk", "isw_macro", "Sovereign risk", "Shekel and sovereign risk premium deteriorate", 0.70, "negative", "assumption", { impactMagnitude: 0.09, tags: { countries: ["Israel"], currencies: ["ILS"], assetClasses: ["BOND"], keywords: ["Israel bond", "shekel"] } }),
+      node("isw_rating", "isw_risk", "Sovereign credit rating", "Government rating pressure and bond yields rise", 0.75, "negative", "assumption", { impactMagnitude: 0.10, tags: { countries: ["Israel"], currencies: ["ILS"], assetClasses: ["BOND"], keywords: ["government bond", "sovereign", "Israel bond"] } }),
+      node("isw_defense", "isw_disruption", "Defense and cyber", "Demand for defense, cyber, and resilient infrastructure rises", 0.85, "positive", "assumption", { impactMagnitude: 0.12, tags: { sectors: ["Defense", "Technology"], keywords: ["defense", "cyber", "security"] } }),
+      node("isw_gold_oil", "isw_disruption", "Oil and gold", "Oil risk premium and gold safe-haven demand rise", 0.72, "positive", "assumption", { impactMagnitude: 0.10, tags: { sectors: ["Energy"], keywords: ["oil", "gold", "energy", "precious metal"] } }),
+    ]),
+    independentScenario("israel_fiscal", "Israel fiscal and sovereign-debt shock", "Israel's deficit and debt path deteriorates", "Israel", "isf_finance", [
+      node("isf_deficit", "", "Fiscal policy", "Government borrowing needs rise", 0.80, "negative", "assumption", { impactMagnitude: 0.05, tags: { countries: ["Israel"], assetClasses: ["BOND"], keywords: ["government bond", "sovereign", "Israel bond"] } }),
+      node("isf_rating", "isf_deficit", "Sovereign credit rating", "Sovereign downgrade or negative-outlook risk rises", 0.70, "negative", "assumption", { impactMagnitude: 0.08, tags: { countries: ["Israel"], assetClasses: ["BOND"], keywords: ["government bond", "sovereign", "Israel bond"] } }),
+      node("isf_yields", "isf_rating", "Government and corporate bonds", "Government yields and corporate spreads rise", 0.75, "negative", "assumption", { impactMagnitude: 0.09, tags: { countries: ["Israel"], currencies: ["ILS"], assetClasses: ["BOND"], keywords: ["bond", "fixed income"] } }),
+      node("isf_finance", "isf_yields", "Banks and non-bank lenders", "Funding costs, credit losses, and housing pressure rise", 0.70, "negative", "assumption", { impactMagnitude: 0.09, tags: { countries: ["Israel"], sectors: ["Financial Services", "Banks", "Credit Services", "Real Estate"], keywords: ["bank", "credit", "card", "lender", "real estate"] } }),
+      node("isf_money_fund", "isf_yields", "Shekel money-market funds", "Shekel money-market fund yields rise", 0.85, "positive", "assumption", { impactMagnitude: 0.04, tags: { currencies: ["ILS"], assetClasses: ["MUTUALFUND"], keywords: ["money market", "shekel fund", "cash fund"] } }),
+    ]),
+  ]);
+
+  const WORKFLOWS = Object.freeze([...SCENARIOS, ...TRIGGER_MODULES]);
+
   function finiteProbability(value) {
     if (value === "" || value === null || value === undefined) return null;
     const number = Number(value);
@@ -126,25 +282,38 @@
   }
 
   function defaultSettings() {
-    return { selected: "increase", priors: { increase: null, decrease: null, unchanged: null }, localTrigger: null, overrides: {} };
+    return {
+      selected: "increase",
+      priors: { increase: null, decrease: null, unchanged: null },
+      localTrigger: null,
+      triggerPriors: Object.fromEntries(TRIGGER_MODULES.map((item) => [item.id, null])),
+      overrides: {},
+      impactOverrides: {},
+    };
   }
 
   function normalizeSettings(value) {
     const defaults = defaultSettings();
     const input = value && typeof value === "object" ? value : {};
-    const selected = SCENARIOS.some((item) => item.id === input.selected) ? input.selected : defaults.selected;
+    const selected = WORKFLOWS.some((item) => item.id === input.selected) ? input.selected : defaults.selected;
     const priors = Object.fromEntries(SCENARIOS.map((item) => [item.id, finiteProbability(input.priors?.[item.id])]));
-    const validIds = new Set(SCENARIOS.flatMap((item) => item.nodes.map((entry) => entry.id)));
+    const triggerPriors = Object.fromEntries(TRIGGER_MODULES.map((item) => [item.id, finiteProbability(input.triggerPriors?.[item.id])]));
+    const validIds = new Set(WORKFLOWS.flatMap((item) => item.nodes.map((entry) => entry.id)));
     const overrides = {};
     Object.entries(input.overrides || {}).forEach(([id, probability]) => {
       const normalized = finiteProbability(probability);
       if (validIds.has(id) && normalized !== null) overrides[id] = normalized;
     });
-    return { selected, priors, localTrigger: finiteProbability(input.localTrigger), overrides };
+    const impactOverrides = {};
+    Object.entries(input.impactOverrides || {}).forEach(([id, magnitude]) => {
+      const normalized = finiteProbability(magnitude);
+      if (validIds.has(id) && normalized !== null) impactOverrides[id] = normalized;
+    });
+    return { selected, priors, localTrigger: finiteProbability(input.localTrigger), triggerPriors, overrides, impactOverrides };
   }
 
   function scenarioById(id) {
-    return SCENARIOS.find((item) => item.id === id) || SCENARIOS[0];
+    return WORKFLOWS.find((item) => item.id === id) || SCENARIOS[0];
   }
 
   function probabilityFor(entry, settings) {
@@ -154,6 +323,7 @@
   }
 
   function triggerProbability(definition, settings) {
+    if (definition.kind === "independent") return settings.triggerPriors[definition.id];
     const fedPriors = SCENARIOS.map((item) => settings.priors[item.id]);
     if (fedPriors.some((value) => value === null)
       || Math.abs(fedPriors.reduce((sum, value) => sum + value, 0) - 1) >= 0.0001) return null;
@@ -184,6 +354,9 @@
       return {
         ...entry,
         probability: probabilityFor(entry, settings),
+        impactMagnitude: Object.prototype.hasOwnProperty.call(settings.impactOverrides, entry.id)
+          ? settings.impactOverrides[entry.id]
+          : entry.impactMagnitude,
         conditional,
         absolute: trigger === null ? null : trigger * conditional,
       };
@@ -216,5 +389,5 @@
     return { complete, total, valid: complete && Math.abs(total - 1) < 0.0001 };
   }
 
-  return { SCENARIOS, defaultSettings, normalizeSettings, calculateScenario, pathTo, priorStatus };
+  return { SCENARIOS, TRIGGER_MODULES, WORKFLOWS, defaultSettings, normalizeSettings, calculateScenario, pathTo, priorStatus };
 });

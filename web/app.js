@@ -9155,6 +9155,7 @@ async function loadPortfolio({ refresh = false } = {}) {
     populateOptions(allItems);
     $("status").textContent = `${state.items.length} portfolio positions · ${Object.entries(data.status).map(([k, v]) => `${k}: ${v}`).join(", ")}`;
     renderPortfolio(state.items);
+    if (!$("macroScenarioModal")?.hidden) renderMacroScenario();
     if (hasActivePortfolioFilter(state.portfolioFilterCriteria)) {
       const matches = filterPortfolioItems(state.allPortfolioItems, state.portfolioFilterCriteria);
       renderRows(matches);
@@ -9651,18 +9652,128 @@ function renderMacroScenarioOverview() {
   </article>`).join("");
 }
 
+function renderMacroTriggerLibrary() {
+  const model = window.PortfolioScenarioModel;
+  const settings = state.macroScenarioSettings;
+  const library = $("macroTriggerLibrary");
+  if (!model || !settings || !library) return;
+  const groups = model.TRIGGER_MODULES.reduce((result, definition) => {
+    (result[definition.category] ||= []).push(definition);
+    return result;
+  }, {});
+  library.innerHTML = Object.entries(groups).map(([category, definitions]) => {
+    const categoryId = `macro-trigger-${category.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`;
+    return `<section class="macro-trigger-group" aria-labelledby="${esc(categoryId)}">
+      <h4 id="${esc(categoryId)}">${esc(optionLabel(category))}</h4>
+      <div class="macro-trigger-grid">
+        ${definitions.map((definition) => {
+          const selected = settings.selected === definition.id;
+          const prior = settings.triggerPriors[definition.id];
+          const result = model.calculateScenario(definition.id, settings);
+          return `<article class="macro-trigger-card${selected ? " active" : ""}">
+            <button type="button" data-macro-scenario="${esc(definition.id)}" aria-pressed="${String(selected)}">
+              <b>${esc(optionLabel(definition.label))}</b>
+              <small>${esc(optionLabel(definition.triggerLabel))}</small>
+              <span>${esc(optionLabel("Headline path"))}: ${esc(macroPercent(result.headline?.conditional))}</span>
+            </button>
+            <label><span>${esc(optionLabel("Trigger P"))}</span><span class="probability-input compact"><input type="number" min="0" max="100" step="0.1" inputmode="decimal" value="${prior === null ? "" : esc(Number((prior * 100).toFixed(4)))}" data-macro-trigger-prior="${esc(definition.id)}" aria-label="${esc(`${optionLabel("Trigger probability")}: ${optionLabel(definition.label)}`)}" placeholder="${esc(optionLabel("Set prior"))}" /><b>%</b></span></label>
+          </article>`;
+        }).join("")}
+      </div>
+    </section>`;
+  }).join("");
+}
+
+function macroImpactLabel(entry) {
+  const prefix = entry.direction === "positive" ? "+" : entry.direction === "negative" ? "−" : "±";
+  return `${prefix}${macroPercent(entry.impactMagnitude)}`;
+}
+
 function renderMacroScenarioRows(result) {
   const labels = Object.fromEntries(result.nodes.map((entry) => [entry.id, entry.label]));
   $("macroScenarioRows").innerHTML = result.nodes.map((entry) => `
     <tr>
       <td data-label="Group"><b>${esc(optionLabel(entry.group))}</b><small class="macro-source ${esc(entry.source)}">${esc(optionLabel(entry.source === "provided" ? "Provided probability" : "Editable assumption"))}</small></td>
-      <td data-label="Outcome node">${esc(optionLabel(entry.label))}</td>
+      <td data-label="Outcome node"><div class="macro-node-label">${esc(optionLabel(entry.label))}</div><div class="macro-node-meta"><label class="macro-impact-input"><span>${esc(optionLabel("Impact"))}</span><input type="number" min="0" max="100" step="0.1" inputmode="decimal" value="${esc(Number((entry.impactMagnitude * 100).toFixed(4)))}" data-macro-impact="${esc(entry.id)}" aria-label="${esc(`${optionLabel("Impact assumption")}: ${optionLabel(entry.label)}`)}" /><b>%</b></label><span>${esc(optionLabel("Horizon"))} ${esc(optionLabel(entry.horizon))}</span><span>${esc(optionLabel("Lag"))} ${esc(optionLabel(entry.lag))}</span><span>${esc(optionLabel("Persistence"))} ${esc(optionLabel(entry.persistence))}</span><span>${esc(optionLabel("Confidence"))} ${esc(optionLabel(entry.confidence))}</span><span>${esc(optionLabel("Correlation"))} ${esc(optionLabel(entry.correlation))}</span><span>${esc(optionLabel("Assumption date"))} ${esc(entry.asOf)}</span></div></td>
       <td data-label="Direction"><span class="macro-direction ${esc(entry.direction)}">${esc(optionLabel(entry.direction))}</span></td>
       <td data-label="Prior event">${esc(optionLabel(labels[entry.parent] || result.triggerLabel))}</td>
       <td data-label="Conditional P"><label class="probability-input compact"><span class="sr-only">${esc(optionLabel("Conditional probability"))}: ${esc(optionLabel(entry.label))}</span><input type="number" min="0" max="100" step="0.1" inputmode="decimal" value="${esc(Number((entry.probability * 100).toFixed(4)))}" data-macro-node="${esc(entry.id)}" /><b>%</b></label></td>
       <td data-label="Path P"><b>${esc(macroPercent(entry.conditional))}</b></td>
       <td data-label="Absolute P">${entry.absolute === null ? `<span class="muted-inline">${esc(optionLabel("Set trigger priors"))}</span>` : `<b>${esc(macroPercent(entry.absolute))}</b>`}</td>
     </tr>`).join("");
+}
+
+function macroHoldingMatchesTags(item, tags = {}) {
+  const holding = item?.holding || {};
+  const descriptive = [
+    holding.symbol, holding.secondary_symbol, holding.name, holding.company_name,
+    holding.sector, holding.industry, item?.sector, item?.industry,
+  ].filter(Boolean).join(" ").toLocaleLowerCase();
+  const country = [holding.country, holding.location].filter(Boolean).join(" ").toLocaleLowerCase();
+  const currency = String(holding.currency || "").toLocaleLowerCase();
+  const assetClass = [holding.asset_class, holding.instrument_type].filter(Boolean).join(" ").toLocaleLowerCase();
+  const descriptiveTerms = [...(tags.sectors || []), ...(tags.keywords || [])]
+    .map((value) => String(value).toLocaleLowerCase()).filter(Boolean);
+  const classTerms = (tags.assetClasses || []).map((value) => String(value).toLocaleLowerCase()).filter(Boolean);
+  const currencyTerms = (tags.currencies || []).map((value) => String(value).toLocaleLowerCase()).filter(Boolean);
+  const countryTerms = (tags.countries || []).map((value) => String(value).toLocaleLowerCase()).filter(Boolean);
+  const axisMatches = [
+    descriptiveTerms.length > 0 && descriptiveTerms.some((term) => descriptive.includes(term)),
+    classTerms.length > 0 && classTerms.some((term) => assetClass === term || assetClass.includes(term)),
+    currencyTerms.length > 0 && currencyTerms.includes(currency),
+  ];
+  if (!axisMatches.some(Boolean)) return false;
+  if (countryTerms.length && country && !countryTerms.some((term) => country.includes(term))) return false;
+  return true;
+}
+
+function macroPortfolioExposure(entry, totalPortfolioValue) {
+  const holdings = (state.items || []).filter((item) => macroHoldingMatchesTags(item, entry.tags));
+  const exposedValue = sum(holdings.map((item) => Math.abs(normalizedField(item, "market_value"))));
+  const probability = entry.absolute === null ? entry.conditional : entry.absolute;
+  const directionFactor = entry.direction === "positive" ? 1 : entry.direction === "negative" ? -1 : 0;
+  return {
+    entry,
+    holdings,
+    exposedValue,
+    exposurePercent: totalPortfolioValue > 0 ? exposedValue / totalPortfolioValue : 0,
+    probability,
+    probabilityBasis: entry.absolute === null ? "Conditional" : "Absolute",
+    estimatedImpact: exposedValue * probability * entry.impactMagnitude * directionFactor,
+  };
+}
+
+function renderMacroPortfolioImpact(result) {
+  const panel = $("macroPortfolioImpact");
+  if (!panel) return;
+  if (!state.portfolioReady) {
+    panel.innerHTML = `<div class="macro-panel-head"><div><h3 id="macroPortfolioImpactTitle">${esc(optionLabel("Portfolio exposure"))}</h3><p>${esc(optionLabel("Portfolio holdings are still loading."))}</p></div></div>`;
+    return;
+  }
+  const totalPortfolioValue = sum((state.items || []).map((item) => Math.abs(normalizedField(item, "market_value"))));
+  const exposures = macroLeafNodes(result)
+    .map((entry) => macroPortfolioExposure(entry, totalPortfolioValue))
+    .filter((item) => item.exposedValue > 0)
+    .sort((left, right) => right.exposedValue - left.exposedValue)
+    .slice(0, 12);
+  const rows = exposures.map((item) => {
+    const symbols = item.holdings.map((holding) => holding.holding?.symbol).filter(Boolean).join(", ");
+    const estimate = item.entry.direction === "mixed"
+      ? `<span class="muted-inline">${esc(optionLabel("Direction not quantified"))}</span>`
+      : `<b class="${esc(item.entry.direction)}">${esc(signedMoney(item.estimatedImpact, state.baseCurrency))}</b>`;
+    return `<tr>
+      <td data-label="Outcome"><b>${esc(optionLabel(item.entry.label))}</b><small title="${esc(symbols)}">${esc(fmt(item.holdings.length, 0))} ${esc(optionLabel("matching holdings"))}</small></td>
+      <td data-label="Exposed value">${esc(money(item.exposedValue, state.baseCurrency))}</td>
+      <td data-label="Portfolio share">${esc(macroPercent(item.exposurePercent))}</td>
+      <td data-label="Probability"><b>${esc(macroPercent(item.probability))}</b><small>${esc(optionLabel(item.probabilityBasis))}</small></td>
+      <td data-label="Impact assumption">${esc(macroImpactLabel(item.entry))}</td>
+      <td data-label="Probability-weighted impact">${estimate}</td>
+    </tr>`;
+  }).join("");
+  panel.innerHTML = `
+    <div class="macro-panel-head"><div><h3 id="macroPortfolioImpactTitle">${esc(optionLabel("Portfolio exposure"))}</h3><p>${esc(optionLabel("Impact magnitude is an editable directional portfolio-value shock assumption, not a forecast. Estimated impact equals probability × impact magnitude × exposed portfolio value."))}</p></div><div class="macro-portfolio-total"><span>${esc(optionLabel("Portfolio value analyzed"))}</span><b>${esc(money(totalPortfolioValue, state.baseCurrency))}</b></div></div>
+    ${rows ? `<div class="table-wrap"><table class="macro-exposure-table"><thead><tr><th>${esc(optionLabel("Outcome"))}</th><th>${esc(optionLabel("Exposed value"))}</th><th>${esc(optionLabel("Portfolio share"))}</th><th>${esc(optionLabel("Probability"))}</th><th>${esc(optionLabel("Impact assumption"))}</th><th>${esc(optionLabel("Probability-weighted impact"))}</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="empty">${esc(optionLabel("No holdings matched this workflow's terminal exposure tags."))}</div>`}
+    <p class="macro-exposure-note">${esc(optionLabel("Do not add these rows together: outcomes can overlap, share holdings, and be correlated. Matching uses available holding country, sector, industry, currency, asset class, symbol, and name metadata."))}</p>`;
 }
 
 function renderMacroMathSummary(result) {
@@ -9690,8 +9801,10 @@ function renderMacroScenario() {
   state.macroScenarioSettings = model.normalizeSettings(state.macroScenarioSettings || {});
   renderMacroPriorStatus();
   renderMacroScenarioOverview();
+  renderMacroTriggerLibrary();
   const result = model.calculateScenario(state.macroScenarioSettings.selected, state.macroScenarioSettings);
   renderMacroScenarioRows(result);
+  renderMacroPortfolioImpact(result);
   renderMacroMathSummary(result);
   renderMacroScenarioDiagram(result);
 }
@@ -9715,6 +9828,11 @@ function updateMacroScenarioProbability(target) {
   target.removeAttribute("aria-invalid");
   if (priorIds[target.id]) settings.priors[priorIds[target.id]] = value;
   else if (target.id === "macroLocalTrigger") settings.localTrigger = value;
+  else if (target.dataset.macroTriggerPrior) settings.triggerPriors[target.dataset.macroTriggerPrior] = value;
+  else if (target.dataset.macroImpact) {
+    if (value === null) delete settings.impactOverrides[target.dataset.macroImpact];
+    else settings.impactOverrides[target.dataset.macroImpact] = value;
+  }
   else if (target.dataset.macroNode) {
     if (value === null) delete settings.overrides[target.dataset.macroNode];
     else settings.overrides[target.dataset.macroNode] = value;
@@ -10636,7 +10754,7 @@ document.addEventListener("click", (event) => {
   if (researchTab) setResearchSection(researchTab);
 
   const macroScenario = event.target.closest("[data-macro-scenario]")?.dataset.macroScenario;
-  if (macroScenario && window.PortfolioScenarioModel?.SCENARIOS.some((item) => item.id === macroScenario)) {
+  if (macroScenario && window.PortfolioScenarioModel?.WORKFLOWS.some((item) => item.id === macroScenario)) {
     state.macroScenarioSettings.selected = macroScenario;
     saveMacroScenarioSettings();
     renderMacroScenario();
@@ -11024,7 +11142,7 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("change", (event) => {
   if (["macroPriorIncrease", "macroPriorDecrease", "macroPriorUnchanged", "macroLocalTrigger"].includes(event.target.id)
-    || event.target.matches("[data-macro-node]")) {
+    || event.target.matches("[data-macro-node], [data-macro-trigger-prior], [data-macro-impact]")) {
     updateMacroScenarioProbability(event.target);
   }
   if (event.target.id === "confirmFullRestoreRisk") {

@@ -16,7 +16,7 @@
       }
     </style>
     <link rel="icon" type="image/svg+xml" href="/assets/app-icon.svg?v=0.5.1" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.4" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.5" />
   </head>
   <body>
     <div id="authOverlay" class="auth-overlay">
@@ -1893,7 +1893,7 @@
           <div>
             <p class="eyebrow">Bayesian scenario workflow</p>
             <h2 id="macroScenarioTitle" tabindex="-1" data-modal-initial-focus>US–Israel transmission scenarios</h2>
-            <p id="macroScenarioIntro" class="section-note">Model how Federal Reserve decisions and Israeli domestic shocks transmit to sectors, bonds, funds, and credit ratings.</p>
+            <p id="macroScenarioIntro" class="section-note">Model how Federal Reserve decisions and independent country or global shocks transmit to sectors, currencies, commodities, bonds, funds, credit ratings, and this portfolio.</p>
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
@@ -1917,6 +1917,16 @@
 
         <div id="macroScenarioTabs" class="macro-scenario-tabs" role="tablist" aria-label="Federal Reserve scenarios"></div>
         <div id="macroScenarioOverview" class="macro-scenario-overview" aria-live="polite"></div>
+
+        <section class="macro-trigger-panel" aria-labelledby="macroTriggerLibraryTitle">
+          <div class="macro-panel-head">
+            <div>
+              <h3 id="macroTriggerLibraryTitle">Country and global trigger library</h3>
+              <p>Select an independent trigger and enter its own probability. These events can overlap, so their probabilities do not need to total 100%.</p>
+            </div>
+          </div>
+          <div id="macroTriggerLibrary" class="macro-trigger-library"></div>
+        </section>
 
         <section class="macro-network-panel" aria-labelledby="macroNetworkTitle">
           <div class="macro-panel-head">
@@ -1943,6 +1953,7 @@
           </div>
         </section>
 
+        <section id="macroPortfolioImpact" class="macro-portfolio-panel" aria-labelledby="macroPortfolioImpactTitle" aria-live="polite"></section>
         <section id="macroMathSummary" class="macro-math-summary" aria-labelledby="macroMathTitle"></section>
         <p class="macro-disclaimer">Decision-support model only. Probabilities describe assumptions and conditional pathways; they are not investment advice or guaranteed forecasts.</p>
         <details class="macro-method-note">
@@ -1952,6 +1963,9 @@
             <li><a href="https://www.boi.org.il/en/communication-and-publications/regular-publications/bank-of-israel-annual-report/bank-of-israel-annual-report-2025-1/" target="_blank" rel="noopener noreferrer">Bank of Israel annual report: exchange rate, risk premium, credit, bonds, and funds</a></li>
             <li><a href="https://www.federalreserve.gov/econres/notes/feds-notes/changes-in-monetary-policy-and-banks-net-interest-margins-a-comparison-20190419.html" target="_blank" rel="noopener noreferrer">Federal Reserve: monetary policy and bank net-interest margins</a></li>
             <li><a href="https://www.bis.org/publ/cgfs70.htm" target="_blank" rel="noopener noreferrer">BIS: interest-rate exposure and borrower creditworthiness</a></li>
+            <li><a href="https://www.imf.org/en/news/articles/2026/02/18/pr-26053-china-imf-executive-board-concludes-2025-article-iv-consultation" target="_blank" rel="noopener noreferrer">IMF: China property, domestic demand, debt, and trade risks</a></li>
+            <li><a href="https://www.iea.org/reports/energy-and-ai" target="_blank" rel="noopener noreferrer">IEA: AI, data centers, electricity, grids, and energy demand</a></li>
+            <li><a href="https://www.worldbank.org/en/news/press-release/2025/04/29/commodity-markets-outlook-april-2025-press-release" target="_blank" rel="noopener noreferrer">World Bank: commodity demand, oil, metals, and gold mechanisms</a></li>
           </ul>
         </details>
       </section>
@@ -2171,8 +2185,8 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="/i18n.js?v=1.2.4"></script>
-  <script src="/scenario-model.js?v=0.9.4"></script>
-  <script src="/app.js?v=0.9.4"></script>
+  <script src="/i18n.js?v=1.2.5"></script>
+  <script src="/scenario-model.js?v=0.9.5"></script>
+  <script src="/app.js?v=0.9.5"></script>
   </body>
 </html>
