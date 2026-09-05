@@ -615,6 +615,22 @@ def test_equity_compensation_table_stays_inside_its_dashboard_card():
     assert "white-space: nowrap;" in muted_value
 
 
+def test_holdings_table_scrolls_with_sticky_headers_on_desktop():
+    html = (ROOT / "web/index.html").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+
+    assert 'class="table-wrap holdings-table-wrap" tabindex="0" role="region" aria-label="Scrollable holdings table"' in html
+    desktop = styles.split("@media (min-width: 901px) {", 1)[1].split("@media", 1)[0]
+    table_wrap = desktop.split(".holdings-table-wrap {", 1)[1].split("}", 1)[0]
+    sticky_header = desktop.split(".holdings-table-wrap .holdings-table thead th {", 1)[1].split("}", 1)[0]
+    assert "max-height: min(72dvh, 760px);" in table_wrap
+    assert "overflow: auto;" in table_wrap
+    assert "overscroll-behavior: contain;" in table_wrap
+    assert "position: sticky;" in sticky_header
+    assert "top: 0;" in sticky_header
+    assert "z-index: 4;" in sticky_header
+
+
 def test_optional_secondary_security_symbol_is_editable_visible_and_searchable():
     html = (ROOT / "web/index.html").read_text()
     script = (ROOT / "web/app.js").read_text()

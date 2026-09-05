@@ -423,6 +423,7 @@
     "IMF: China property, domestic demand, debt, and trade risks": "קרן המטבע: סיכוני נדל״ן, ביקוש מקומי, חוב וסחר בסין",
     "IEA: AI, data centers, electricity, grids, and energy demand": "סוכנות האנרגיה הבין־לאומית: AI, מרכזי נתונים, חשמל, רשתות וביקוש לאנרגיה",
     "World Bank: commodity demand, oil, metals, and gold mechanisms": "הבנק העולמי: מנגנוני ביקוש לסחורות, נפט, מתכות וזהב",
+    "Scrollable holdings table": "טבלת החזקות נגללת",
     "System": "מערכת",
     "Settings": "הגדרות",
     "About": "אודות",
