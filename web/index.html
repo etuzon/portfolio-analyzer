@@ -16,7 +16,7 @@
       }
     </style>
     <link rel="icon" type="image/svg+xml" href="/assets/app-icon.svg?v=0.5.1" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.3" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.4" />
   </head>
   <body>
     <div id="authOverlay" class="auth-overlay">
@@ -107,6 +107,7 @@
             <summary>Markets</summary>
             <div class="nav-children">
               <button class="nav-item" type="button" data-modal="marketModal">Market Screener</button>
+              <button class="nav-item" type="button" data-modal="macroScenarioModal">US–Israel Scenarios</button>
               <button class="nav-item" type="button" data-modal="bannerModal">Market Banner</button>
             </div>
           </details>
@@ -973,6 +974,10 @@
               <article class="help-feature">
                 <h3>Market Screener</h3>
                 <p>Search and filter market instruments, then open a result for deeper price and signal analysis before deciding whether it belongs in the portfolio.</p>
+              </article>
+              <article class="help-feature">
+                <h3>US–Israel Scenarios</h3>
+                <p>Set Fed and domestic trigger probabilities, inspect the dependency graph, and adjust conditional assumptions for sectors, bonds, funds, commodities, and technology themes.</p>
               </article>
               <article class="help-feature">
                 <h3>Market Banner</h3>
@@ -1881,6 +1886,77 @@
       </section>
     </div>
 
+    <div id="macroScenarioModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide macro-scenario-card" role="dialog" aria-modal="true" aria-labelledby="macroScenarioTitle" aria-describedby="macroScenarioIntro">
+        <div class="section-head macro-scenario-heading">
+          <div>
+            <p class="eyebrow">Bayesian scenario workflow</p>
+            <h2 id="macroScenarioTitle" tabindex="-1" data-modal-initial-focus>US–Israel transmission scenarios</h2>
+            <p id="macroScenarioIntro" class="section-note">Model how Federal Reserve decisions and Israeli domestic shocks transmit to sectors, bonds, funds, and credit ratings.</p>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+
+        <section class="macro-prior-panel" aria-labelledby="macroPriorsTitle">
+          <div class="macro-panel-head">
+            <div>
+              <h3 id="macroPriorsTitle">Trigger probabilities</h3>
+              <p>Enter your current scenario priors. Fed probabilities must total 100%; values are never normalized silently.</p>
+            </div>
+            <button id="resetMacroScenario" class="secondary compact-button" type="button">Reset assumptions</button>
+          </div>
+          <div class="macro-prior-grid">
+            <label class="field"><span>Fed raises rates</span><span class="probability-input"><input id="macroPriorIncrease" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="Set prior" /><b>%</b></span></label>
+            <label class="field"><span>Fed cuts rates</span><span class="probability-input"><input id="macroPriorDecrease" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="Set prior" /><b>%</b></span></label>
+            <label class="field"><span>Fed stays unchanged</span><span class="probability-input"><input id="macroPriorUnchanged" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="Set prior" /><b>%</b></span></label>
+            <label class="field"><span>War, geopolitical, or fiscal shock given unchanged Fed</span><span class="probability-input"><input id="macroLocalTrigger" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="Set prior" /><b>%</b></span></label>
+          </div>
+          <p id="macroPriorStatus" class="status-line" role="status" aria-live="polite"></p>
+        </section>
+
+        <div id="macroScenarioTabs" class="macro-scenario-tabs" role="tablist" aria-label="Federal Reserve scenarios"></div>
+        <div id="macroScenarioOverview" class="macro-scenario-overview" aria-live="polite"></div>
+
+        <section class="macro-network-panel" aria-labelledby="macroNetworkTitle">
+          <div class="macro-panel-head">
+            <div>
+              <h3 id="macroNetworkTitle">Visual dependency network</h3>
+              <p>Each arrow is a conditional probability; each node shows its cumulative probability within the selected trigger.</p>
+            </div>
+          </div>
+          <div id="macroScenarioDiagram" class="macro-scenario-diagram" aria-live="polite"></div>
+        </section>
+
+        <section class="macro-breakdown-panel" aria-labelledby="macroBreakdownTitle">
+          <div class="macro-panel-head">
+            <div>
+              <h3 id="macroBreakdownTitle">Conditional probability breakdown</h3>
+              <p>Provided probabilities come from your transmission rules. Added sector values are editable model assumptions—not forecasts.</p>
+            </div>
+          </div>
+          <div class="table-wrap macro-probability-table-wrap">
+            <table class="macro-probability-table">
+              <thead><tr><th>Group</th><th>Outcome node</th><th>Direction</th><th>Prior event</th><th>Conditional P</th><th>Path P</th><th>Absolute P</th></tr></thead>
+              <tbody id="macroScenarioRows"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="macroMathSummary" class="macro-math-summary" aria-labelledby="macroMathTitle"></section>
+        <p class="macro-disclaimer">Decision-support model only. Probabilities describe assumptions and conditional pathways; they are not investment advice or guaranteed forecasts.</p>
+        <details class="macro-method-note">
+          <summary>Model scope and official mechanism references</summary>
+          <p>The supplied US–Israel chain probabilities are preserved as provided. Sector, commodity, technology, and instrument probabilities are editable assumptions informed by documented transmission mechanisms.</p>
+          <ul>
+            <li><a href="https://www.boi.org.il/en/communication-and-publications/regular-publications/bank-of-israel-annual-report/bank-of-israel-annual-report-2025-1/" target="_blank" rel="noopener noreferrer">Bank of Israel annual report: exchange rate, risk premium, credit, bonds, and funds</a></li>
+            <li><a href="https://www.federalreserve.gov/econres/notes/feds-notes/changes-in-monetary-policy-and-banks-net-interest-margins-a-comparison-20190419.html" target="_blank" rel="noopener noreferrer">Federal Reserve: monetary policy and bank net-interest margins</a></li>
+            <li><a href="https://www.bis.org/publ/cgfs70.htm" target="_blank" rel="noopener noreferrer">BIS: interest-rate exposure and borrower creditworthiness</a></li>
+          </ul>
+        </details>
+      </section>
+    </div>
+
     <div id="usersModal" class="modal" hidden>
       <div class="modal-backdrop" data-close></div>
       <section class="modal-card wide users-card" role="dialog" aria-modal="true" aria-labelledby="usersTitle">
@@ -2095,7 +2171,8 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="/i18n.js?v=1.2.3"></script>
-  <script src="/app.js?v=0.9.3"></script>
+  <script src="/i18n.js?v=1.2.4"></script>
+  <script src="/scenario-model.js?v=0.9.4"></script>
+  <script src="/app.js?v=0.9.4"></script>
   </body>
 </html>

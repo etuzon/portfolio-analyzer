@@ -74,6 +74,7 @@ const state = {
   companyOutlook: null,
   companyOutlookHistory: [],
   researchSection: "finance",
+  macroScenarioSettings: null,
   alertData: null,
   alertOptions: { metrics: [], operators: [], signals: [], match_modes: [] },
   alertConditions: [],
@@ -130,6 +131,7 @@ const DASHBOARD_LONG_TERM_STORAGE_KEY = "portfolioAnalyzer.dashboard.longTerm";
 const TABLE_SETTINGS_STORAGE_KEY = "portfolioAnalyzer.tableSettings";
 const LANGUAGE_STORAGE_KEY = "portfolioAnalyzer.language";
 const PENSION_SIMULATION_STORAGE_KEY = "portfolioAnalyzer.pensionSimulation";
+const MACRO_SCENARIO_STORAGE_KEY = "portfolioAnalyzer.macroScenarios";
 const VESTING_ALERT_SETTINGS_STORAGE_KEY = "portfolioAnalyzer.vestingAlerts";
 const ALARM_DISMISSALS_STORAGE_KEY = "portfolioAnalyzer.alarmDismissals";
 const LOG_PREFIX = "[Portfolio Analyzer]";
@@ -200,6 +202,7 @@ const TRANSLATIONS = {
     pensionFunds: "Pension/Funds",
     marketsAlerts: "Markets",
     marketScreener: "Market Screener",
+    macroScenarios: "US–Israel Scenarios",
     alerts: "Alerts",
     marketBanner: "Market Banner",
     system: "System",
@@ -258,6 +261,7 @@ const TRANSLATIONS = {
     pensionFunds: "פנסיה וקופות",
     marketsAlerts: "שווקים",
     marketScreener: "סורק שוק",
+    macroScenarios: "תרחישי ארה״ב–ישראל",
     alerts: "התראות",
     marketBanner: "סרגל שוק",
     system: "מערכת",
@@ -1017,6 +1021,7 @@ function ensureHierarchicalNav() {
       <summary>${esc(t("marketsAlerts"))}</summary>
       <div class="nav-children">
         <button class="nav-item" type="button" data-modal="marketModal">${esc(t("marketScreener"))}</button>
+        <button class="nav-item" type="button" data-modal="macroScenarioModal">${esc(t("macroScenarios"))}</button>
         <button class="nav-item" type="button" data-modal="bannerModal">${esc(t("marketBanner"))}</button>
       </div>
     </details>
@@ -1218,6 +1223,19 @@ function saveLanguageSettings() {
   scheduleClientStateSync();
 }
 
+function loadMacroScenarioSettings() {
+  const model = window.PortfolioScenarioModel;
+  state.macroScenarioSettings = model
+    ? model.normalizeSettings(readLocalJson(MACRO_SCENARIO_STORAGE_KEY, {}))
+    : null;
+}
+
+function saveMacroScenarioSettings() {
+  if (!state.macroScenarioSettings) return;
+  localStorage.setItem(MACRO_SCENARIO_STORAGE_KEY, JSON.stringify(state.macroScenarioSettings));
+  scheduleClientStateSync();
+}
+
 function normalizedVestingAlertDays(value) {
   const days = Math.round(Number(value));
   return Number.isFinite(days) ? Math.min(Math.max(days, 1), 365) : 30;
@@ -1274,6 +1292,7 @@ function collectClientState() {
     language: state.language || "en",
     bannerItems: Array.isArray(state.bannerItems) ? state.bannerItems : readLocalJson("portfolioAnalyzer.bannerItems", []),
     pensionSimulation: readLocalJson(PENSION_SIMULATION_STORAGE_KEY, {}),
+    macroScenarios: state.macroScenarioSettings || readLocalJson(MACRO_SCENARIO_STORAGE_KEY, {}),
     alarms: {
       vestingLeadDays: state.vestingAlertDays,
       dismissedIds: normalizedAlarmDismissals(state.dismissedAlarmIds),
@@ -1299,6 +1318,9 @@ function applyClientState(clientState) {
   if (clientState.pensionSimulation && typeof clientState.pensionSimulation === "object") {
     localStorage.setItem(PENSION_SIMULATION_STORAGE_KEY, JSON.stringify(clientState.pensionSimulation));
   }
+  if (clientState.macroScenarios && typeof clientState.macroScenarios === "object") {
+    localStorage.setItem(MACRO_SCENARIO_STORAGE_KEY, JSON.stringify(clientState.macroScenarios));
+  }
   if (clientState.alarms && typeof clientState.alarms === "object") {
     localStorage.setItem(VESTING_ALERT_SETTINGS_STORAGE_KEY, JSON.stringify({
       leadDays: normalizedVestingAlertDays(clientState.alarms.vestingLeadDays),
@@ -1317,6 +1339,7 @@ function loadClientStateFromStorage() {
   loadDashboardSettings();
   loadTableSettings();
   loadPensionSimulationState();
+  loadMacroScenarioSettings();
   loadVestingAlertSettings();
   loadAlarmDismissals();
   renderPensionInsuranceControls();
@@ -1398,6 +1421,7 @@ function applyLanguage() {
   ensureHierarchicalNav();
   bindNavAccordion();
   renderCurrentUser();
+  renderMacroScenario();
   refreshReportFilterOptions();
   applyAutoDirection();
   window.PortfolioI18n?.applyToDocument(state.language);
@@ -9507,6 +9531,206 @@ async function investigateAlertSignal(symbol) {
   await loadCompanyOutlook();
 }
 
+function macroPercent(value, digits = 1) {
+  return value === null || value === undefined ? "∅" : `${fmt(Number(value) * 100, digits)}%`;
+}
+
+function setMacroProbabilityInput(id, value) {
+  const input = $(id);
+  if (!input || document.activeElement === input) return;
+  input.value = value === null || value === undefined ? "" : String(Number((value * 100).toFixed(4)));
+}
+
+function macroLeafNodes(result) {
+  const parents = new Set(result.nodes.map((entry) => entry.parent).filter(Boolean));
+  return result.nodes.filter((entry) => !parents.has(entry.id));
+}
+
+function macroMostLikelyEnd(result, direction) {
+  return macroLeafNodes(result)
+    .filter((entry) => entry.direction === direction)
+    .sort((left, right) => right.conditional - left.conditional)[0] || null;
+}
+
+function macroScenarioFallback(result) {
+  const labels = Object.fromEntries(result.nodes.map((entry) => [entry.id, entry.label]));
+  return `<div class="macro-network-fallback">
+    <div class="macro-network-trigger"><b>${esc(optionLabel(result.triggerLabel))}</b><span>${esc(optionLabel("Trigger P"))}: ${esc(macroPercent(result.triggerProbability))}</span></div>
+    ${result.nodes.map((entry) => `<div class="macro-network-edge ${esc(entry.direction)}">
+      <span>${esc(optionLabel(labels[entry.parent] || result.triggerLabel))}</span>
+      <b>→ P=${esc(macroPercent(entry.probability))} →</b>
+      <span>${esc(optionLabel(entry.label))} · ${esc(optionLabel("Path P"))} ${esc(macroPercent(entry.conditional))}</span>
+    </div>`).join("")}
+  </div>`;
+}
+
+let macroScenarioDiagramSequence = 0;
+
+function macroMermaidText(result) {
+  const clean = (value) => optionLabel(value).replace(/["<>]/g, "").replace(/\n/g, " ");
+  const trigger = result.triggerProbability === null
+    ? optionLabel("Set trigger priors")
+    : macroPercent(result.triggerProbability);
+  const lines = [
+    "flowchart LR",
+    `trigger["${clean(result.triggerLabel)}<br/>P(trigger) = ${clean(trigger)}"]`,
+  ];
+  result.nodes.forEach((entry) => {
+    lines.push(`${entry.id}["${clean(entry.label)}<br/>P(path) = ${macroPercent(entry.conditional)}"]`);
+    lines.push(`${entry.parent || "trigger"} -->|"P = ${macroPercent(entry.probability)}"| ${entry.id}`);
+    lines.push(`class ${entry.id} ${entry.direction}`);
+  });
+  lines.push("classDef positive fill:#123524,stroke:#6ee787,color:#f4fff7");
+  lines.push("classDef negative fill:#3b1821,stroke:#ff6b88,color:#fff4f6");
+  lines.push("classDef mixed fill:#332b14,stroke:#f0d86a,color:#fffbea");
+  lines.push("classDef trigger fill:#183b56,stroke:#64d2ff,color:#f4fbff");
+  lines.push("class trigger trigger");
+  return lines.join("\n");
+}
+
+async function renderMacroScenarioDiagram(result) {
+  const diagram = $("macroScenarioDiagram");
+  if (!diagram) return;
+  diagram.innerHTML = macroScenarioFallback(result);
+  if (!window.mermaid) return;
+  try {
+    window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "dark", flowchart: { htmlLabels: true } });
+    macroScenarioDiagramSequence += 1;
+    const sequence = macroScenarioDiagramSequence;
+    const rendered = await window.mermaid.render(`macroScenarioMap${sequence}`, macroMermaidText(result));
+    if (sequence !== macroScenarioDiagramSequence || state.macroScenarioSettings?.selected !== result.id) return;
+    diagram.innerHTML = rendered.svg;
+    rendered.bindFunctions?.(diagram);
+  } catch (error) {
+    appWarn("macro_scenario.diagram_fallback", { message: error?.message || "Diagram render failed" });
+  }
+}
+
+function renderMacroPriorStatus() {
+  const model = window.PortfolioScenarioModel;
+  const settings = state.macroScenarioSettings;
+  if (!model || !settings || !$("macroPriorStatus")) return;
+  setMacroProbabilityInput("macroPriorIncrease", settings.priors.increase);
+  setMacroProbabilityInput("macroPriorDecrease", settings.priors.decrease);
+  setMacroProbabilityInput("macroPriorUnchanged", settings.priors.unchanged);
+  setMacroProbabilityInput("macroLocalTrigger", settings.localTrigger);
+  const prior = model.priorStatus(settings);
+  const invalidTotal = prior.complete && !prior.valid;
+  ["macroPriorIncrease", "macroPriorDecrease", "macroPriorUnchanged"].forEach((id) => {
+    $(id)?.setAttribute("aria-invalid", String(invalidTotal));
+  });
+  const status = !prior.complete
+    ? optionLabel("Enter all three Fed priors to calculate absolute probabilities.")
+    : !prior.valid
+      ? `${optionLabel("Fed priors total")} ${macroPercent(prior.total)}. ${optionLabel("They must total 100%.")}`
+      : settings.localTrigger === null
+        ? optionLabel("Fed priors are valid. Set the domestic-shock probability to complete the unchanged-rate scenario.")
+        : optionLabel("Trigger priors are valid. Absolute probabilities are enabled.");
+  $("macroPriorStatus").textContent = status;
+  $("macroPriorStatus").classList.toggle("negative", invalidTotal);
+  $("macroPriorStatus").classList.toggle("positive", prior.valid && settings.localTrigger !== null);
+}
+
+function renderMacroScenarioOverview() {
+  const model = window.PortfolioScenarioModel;
+  const settings = state.macroScenarioSettings;
+  if (!model || !settings) return;
+  const results = model.SCENARIOS.map((definition) => model.calculateScenario(definition.id, settings));
+  $("macroScenarioTabs").innerHTML = results.map((result) => {
+    const active = result.id === settings.selected;
+    return `<button class="macro-scenario-tab ${active ? "active" : ""}" type="button" role="tab" aria-selected="${String(active)}" data-macro-scenario="${esc(result.id)}">
+      <b>${esc(optionLabel(result.label))}</b>
+      <span>${esc(optionLabel("Headline path"))}: ${esc(macroPercent(result.headline?.conditional))}</span>
+    </button>`;
+  }).join("");
+  $("macroScenarioOverview").innerHTML = results.map((result) => `<article class="macro-overview-card ${esc(result.id)}">
+    <span>${esc(optionLabel(result.label))}</span>
+    <b>${esc(macroPercent(result.headline?.conditional))}</b>
+    <small>${esc(optionLabel("Conditional headline outcome"))}</small>
+    <em>${result.headline?.absolute === null ? esc(optionLabel("Set trigger priors for absolute P")) : `${esc(optionLabel("Absolute P"))} ${esc(macroPercent(result.headline.absolute))}`}</em>
+  </article>`).join("");
+}
+
+function renderMacroScenarioRows(result) {
+  const labels = Object.fromEntries(result.nodes.map((entry) => [entry.id, entry.label]));
+  $("macroScenarioRows").innerHTML = result.nodes.map((entry) => `
+    <tr>
+      <td data-label="Group"><b>${esc(optionLabel(entry.group))}</b><small class="macro-source ${esc(entry.source)}">${esc(optionLabel(entry.source === "provided" ? "Provided probability" : "Editable assumption"))}</small></td>
+      <td data-label="Outcome node">${esc(optionLabel(entry.label))}</td>
+      <td data-label="Direction"><span class="macro-direction ${esc(entry.direction)}">${esc(optionLabel(entry.direction))}</span></td>
+      <td data-label="Prior event">${esc(optionLabel(labels[entry.parent] || result.triggerLabel))}</td>
+      <td data-label="Conditional P"><label class="probability-input compact"><span class="sr-only">${esc(optionLabel("Conditional probability"))}: ${esc(optionLabel(entry.label))}</span><input type="number" min="0" max="100" step="0.1" inputmode="decimal" value="${esc(Number((entry.probability * 100).toFixed(4)))}" data-macro-node="${esc(entry.id)}" /><b>%</b></label></td>
+      <td data-label="Path P"><b>${esc(macroPercent(entry.conditional))}</b></td>
+      <td data-label="Absolute P">${entry.absolute === null ? `<span class="muted-inline">${esc(optionLabel("Set trigger priors"))}</span>` : `<b>${esc(macroPercent(entry.absolute))}</b>`}</td>
+    </tr>`).join("");
+}
+
+function renderMacroMathSummary(result) {
+  const model = window.PortfolioScenarioModel;
+  const path = model.pathTo(result.id, result.coreEnd, state.macroScenarioSettings);
+  const equation = path.map((entry) => entry.probability.toFixed(2)).join(" × ");
+  const best = macroMostLikelyEnd(result, "positive");
+  const worst = macroMostLikelyEnd(result, "negative");
+  const absolute = result.headline?.absolute === null
+    ? optionLabel("Set trigger priors to calculate the unconditional end-state probability.")
+    : `P(${optionLabel(result.headline.label)}) = ${macroPercent(result.triggerProbability)} × ${macroPercent(result.headline.conditional)} = ${macroPercent(result.headline.absolute)}`;
+  $("macroMathSummary").innerHTML = `
+    <div class="macro-panel-head"><div><h3 id="macroMathTitle">${esc(optionLabel("Mathematical summary"))}</h3><p>${esc(optionLabel("Multiplication follows the selected parent chain; sibling outcomes are not multiplied together."))}</p></div></div>
+    <div class="macro-equation" dir="ltr">P(${esc(optionLabel(result.headline?.label || result.label))} | ${esc(optionLabel(result.triggerLabel))}) = ${esc(equation)} = <b>${esc(macroPercent(result.headline?.conditional))}</b></div>
+    <div class="macro-equation" dir="ltr">${esc(absolute)}</div>
+    <div class="macro-end-states">
+      <div class="negative"><span>${esc(optionLabel("Most likely adverse leaf"))}</span><b>${esc(worst ? optionLabel(worst.label) : optionLabel("Not available"))}</b><em>${esc(macroPercent(worst?.conditional))}</em></div>
+      <div class="positive"><span>${esc(optionLabel("Most likely favorable leaf"))}</span><b>${esc(best ? optionLabel(best.label) : optionLabel("Not available"))}</b><em>${esc(macroPercent(best?.conditional))}</em></div>
+    </div>`;
+}
+
+function renderMacroScenario() {
+  const model = window.PortfolioScenarioModel;
+  if (!model || !$("macroScenarioModal")) return;
+  state.macroScenarioSettings = model.normalizeSettings(state.macroScenarioSettings || {});
+  renderMacroPriorStatus();
+  renderMacroScenarioOverview();
+  const result = model.calculateScenario(state.macroScenarioSettings.selected, state.macroScenarioSettings);
+  renderMacroScenarioRows(result);
+  renderMacroMathSummary(result);
+  renderMacroScenarioDiagram(result);
+}
+
+function updateMacroScenarioProbability(target) {
+  const settings = state.macroScenarioSettings;
+  if (!settings) return;
+  const priorIds = {
+    macroPriorIncrease: "increase",
+    macroPriorDecrease: "decrease",
+    macroPriorUnchanged: "unchanged",
+  };
+  const raw = String(target.value || "").trim();
+  const percent = raw === "" ? null : Number(raw);
+  const value = percent === null ? null : percent / 100;
+  if (percent !== null && (!Number.isFinite(percent) || percent < 0 || percent > 100)) {
+    target.setAttribute("aria-invalid", "true");
+    $("macroPriorStatus").textContent = optionLabel("Probability must be between 0% and 100%.");
+    return;
+  }
+  target.removeAttribute("aria-invalid");
+  if (priorIds[target.id]) settings.priors[priorIds[target.id]] = value;
+  else if (target.id === "macroLocalTrigger") settings.localTrigger = value;
+  else if (target.dataset.macroNode) {
+    if (value === null) delete settings.overrides[target.dataset.macroNode];
+    else settings.overrides[target.dataset.macroNode] = value;
+  }
+  saveMacroScenarioSettings();
+  renderMacroScenario();
+}
+
+function resetMacroScenario() {
+  if (!window.confirm(optionLabel("Reset all trigger priors and conditional probabilities to their defaults?"))) return;
+  state.macroScenarioSettings = window.PortfolioScenarioModel.defaultSettings();
+  saveMacroScenarioSettings();
+  renderMacroScenario();
+  $("macroPriorStatus").textContent = optionLabel("Scenario assumptions reset.");
+}
+
 async function runAlerts() {
   state.alertConditions = readAlertConditions();
   $("runAlerts").disabled = true;
@@ -10249,6 +10473,10 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
     hideFundCreate({ clear: true });
     Promise.all([loadLocalAccounts(), loadFamilyMembers(), loadFunds()]);
   }
+  if (id === "macroScenarioModal") {
+    renderMacroScenario();
+    requestAnimationFrame(() => modal.querySelector("[data-modal-initial-focus]")?.focus());
+  }
   if (id === "bannerModal") renderBannerSettings();
   if (id === "usersModal") {
     $("userFormStatus").textContent = "";
@@ -10406,6 +10634,14 @@ document.addEventListener("click", (event) => {
 
   const researchTab = event.target.closest("[data-research-tab]")?.dataset.researchTab;
   if (researchTab) setResearchSection(researchTab);
+
+  const macroScenario = event.target.closest("[data-macro-scenario]")?.dataset.macroScenario;
+  if (macroScenario && window.PortfolioScenarioModel?.SCENARIOS.some((item) => item.id === macroScenario)) {
+    state.macroScenarioSettings.selected = macroScenario;
+    saveMacroScenarioSettings();
+    renderMacroScenario();
+  }
+  if (event.target.id === "resetMacroScenario") resetMacroScenario();
 
   const investigateSignal = event.target.closest("[data-investigate-signal]")?.dataset.investigateSignal;
   if (investigateSignal) {
@@ -10787,6 +11023,10 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  if (["macroPriorIncrease", "macroPriorDecrease", "macroPriorUnchanged", "macroLocalTrigger"].includes(event.target.id)
+    || event.target.matches("[data-macro-node]")) {
+    updateMacroScenarioProbability(event.target);
+  }
   if (event.target.id === "confirmFullRestoreRisk") {
     const restoreButton = $("runFullRestore");
     if (restoreButton) restoreButton.disabled = !event.target.checked;

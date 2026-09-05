@@ -8461,3 +8461,394 @@ html[dir="rtl"] .settings-menu-button.active {
     height: 310px;
   }
 }
+
+.macro-scenario-card {
+  width: min(1460px, 100%) !important;
+  display: grid;
+  gap: 14px;
+}
+
+.macro-scenario-heading {
+  margin-bottom: 0;
+}
+
+.macro-prior-panel,
+.macro-network-panel,
+.macro-breakdown-panel,
+.macro-math-summary {
+  padding: 14px;
+  border: 1px solid #2b3442;
+  border-radius: 8px;
+  background: #10151d;
+}
+
+.macro-panel-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.macro-panel-head h3 {
+  margin: 0;
+  color: #f2f6ff;
+  font-size: 15px;
+}
+
+.macro-panel-head p {
+  max-width: 900px;
+  margin: 4px 0 0;
+  color: #8fa0b8;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.macro-prior-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.macro-prior-grid .field {
+  min-width: 0;
+}
+
+.probability-input {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) auto;
+  align-items: center;
+  min-width: 126px;
+  border: 1px solid #354055;
+  border-radius: 7px;
+  overflow: hidden;
+  background: #0d1118;
+}
+
+.probability-input:focus-within {
+  border-color: #64d2ff;
+  box-shadow: 0 0 0 2px rgba(100, 210, 255, 0.18);
+}
+
+.probability-input input {
+  width: 100%;
+  min-width: 90px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  direction: ltr;
+}
+
+.probability-input input:focus {
+  outline: 0;
+  box-shadow: none;
+}
+
+.probability-input b {
+  padding-inline: 8px;
+  color: #8fa0b8;
+  font-size: 12px;
+}
+
+.probability-input.compact {
+  width: 124px;
+}
+
+.macro-scenario-tabs,
+.macro-scenario-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.macro-scenario-tab {
+  display: grid;
+  gap: 4px;
+  min-height: 62px;
+  border: 1px solid #303b4b;
+  background: #151c27;
+  color: #e8efff;
+  text-align: start;
+}
+
+.macro-scenario-tab span {
+  color: #8fa0b8;
+  font-size: 11px;
+}
+
+.macro-scenario-tab.active {
+  border-color: #64d2ff;
+  background: #183b56;
+  box-shadow: inset 0 0 0 1px rgba(100, 210, 255, 0.25);
+}
+
+.macro-overview-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  padding: 11px 13px;
+  border: 1px solid #2d3746;
+  border-inline-start: 3px solid #f0d86a;
+  border-radius: 7px;
+  background: #121923;
+}
+
+.macro-overview-card.increase {
+  border-inline-start-color: #ff6b88;
+}
+
+.macro-overview-card.decrease {
+  border-inline-start-color: #6ee787;
+}
+
+.macro-overview-card span,
+.macro-overview-card small {
+  color: #9baac0;
+  font-size: 11px;
+}
+
+.macro-overview-card b {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  color: #f5f8ff;
+  font-size: 21px;
+}
+
+.macro-overview-card em {
+  grid-column: 1 / -1;
+  color: #c6d3e6;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.macro-scenario-diagram {
+  min-height: 340px;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid #283342;
+  border-radius: 7px;
+  background: #090e15;
+}
+
+.macro-scenario-diagram svg {
+  display: block;
+  min-width: 1500px;
+  max-width: none;
+}
+
+.macro-network-fallback {
+  display: grid;
+  gap: 8px;
+}
+
+.macro-network-trigger,
+.macro-network-edge {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(220px, 1.25fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid #2b3543;
+  border-radius: 6px;
+  color: #dce7f8;
+  font-size: 12px;
+}
+
+.macro-network-trigger {
+  grid-template-columns: 1fr auto;
+  border-color: #32729a;
+  background: #132b3e;
+}
+
+.macro-network-edge > b {
+  color: #8fa0b8;
+  direction: ltr;
+}
+
+.macro-network-edge.positive {
+  border-inline-end-color: #6ee787;
+}
+
+.macro-network-edge.negative {
+  border-inline-end-color: #ff6b88;
+}
+
+.macro-network-edge.mixed {
+  border-inline-end-color: #f0d86a;
+}
+
+.macro-probability-table {
+  min-width: 1180px;
+}
+
+.macro-probability-table th:nth-child(1) {
+  width: 170px;
+}
+
+.macro-probability-table th:nth-child(2),
+.macro-probability-table th:nth-child(4) {
+  width: 280px;
+}
+
+.macro-probability-table th:nth-child(5) {
+  width: 145px;
+}
+
+.macro-probability-table td {
+  vertical-align: middle;
+}
+
+.macro-probability-table td:first-child {
+  display: grid;
+  gap: 5px;
+}
+
+.macro-source,
+.macro-direction {
+  width: fit-content;
+  padding: 3px 7px;
+  border: 1px solid #3b4656;
+  border-radius: 999px;
+  color: #aebbd0;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.macro-source.provided {
+  border-color: rgba(100, 210, 255, 0.42);
+  color: #8fddff;
+}
+
+.macro-direction.positive,
+.macro-end-states .positive em {
+  border-color: rgba(110, 231, 135, 0.42);
+  color: #6ee787;
+}
+
+.macro-direction.negative,
+.macro-end-states .negative em {
+  border-color: rgba(255, 107, 136, 0.42);
+  color: #ff8da4;
+}
+
+.macro-direction.mixed {
+  border-color: rgba(240, 216, 106, 0.42);
+  color: #f0d86a;
+}
+
+.macro-equation {
+  overflow-x: auto;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid #2c394b;
+  border-radius: 6px;
+  background: #0b111a;
+  color: #dce8fb;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.macro-end-states {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 10px;
+}
+
+.macro-end-states > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  padding: 10px 12px;
+  border: 1px solid #2d3746;
+  border-radius: 6px;
+  background: #121923;
+}
+
+.macro-end-states span {
+  grid-column: 1 / -1;
+  color: #8fa0b8;
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.macro-end-states b {
+  color: #e6eefb;
+  font-size: 12px;
+}
+
+.macro-end-states em {
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 850;
+}
+
+.macro-disclaimer {
+  margin: 0;
+  padding: 10px 12px;
+  border-inline-start: 3px solid #f0d86a;
+  background: rgba(240, 216, 106, 0.06);
+  color: #aeb9c9;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.macro-method-note {
+  padding: 11px 13px;
+  border: 1px solid #2b3442;
+  border-radius: 7px;
+  background: #10151d;
+  color: #aeb9c9;
+  font-size: 11px;
+}
+
+.macro-method-note summary {
+  cursor: pointer;
+  color: #dce7f8;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.macro-method-note p {
+  line-height: 1.5;
+}
+
+.macro-method-note ul {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 0;
+}
+
+.macro-method-note a {
+  color: #8fddff;
+}
+
+@media (max-width: 900px) {
+  .macro-prior-grid,
+  .macro-scenario-tabs,
+  .macro-scenario-overview,
+  .macro-end-states {
+    grid-template-columns: 1fr;
+  }
+
+  .macro-panel-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .macro-panel-head > button {
+    width: fit-content;
+  }
+
+  .macro-scenario-diagram {
+    min-height: 280px;
+  }
+
+  .macro-network-edge {
+    grid-template-columns: 1fr;
+  }
+}
