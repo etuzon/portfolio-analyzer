@@ -75,6 +75,26 @@ def test_transient_logo_error_is_retried_after_one_day(monkeypatch, tmp_path):
     assert hub.profile_calls == 2
 
 
+def test_company_website_declared_icon_is_preferred_over_guessed_paths(monkeypatch, tmp_path):
+    hub = FakeHub(
+        SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24),
+        {"website": "https://www.fdus.com"},
+        {"provider": "ok"},
+    )
+    discovered = "https://www.fdus.com/assets/fidus-icon.png"
+    monkeypatch.setattr(company_logos, "_discover_icon_urls", lambda website: [discovered])
+    monkeypatch.setattr(
+        company_logos,
+        "_download_logo",
+        lambda url: (b"\x89PNG\r\n\x1a\nlogo", "image/png", url) if url == discovered else None,
+    )
+
+    result = CompanyLogoService(hub).get_or_resolve("FDUS")
+
+    assert result["status"] == "ready"
+    assert result["source_url"] == discovered
+
+
 def test_logo_url_validation_rejects_private_hosts_and_non_https(monkeypatch):
     monkeypatch.setattr(socket, "getaddrinfo", lambda *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))])
 

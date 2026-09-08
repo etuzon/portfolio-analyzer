@@ -2825,18 +2825,20 @@ function companyLogoHtml(holding) {
   const assetClass = String(holding.asset_class || "EQUITY").toUpperCase();
   const supportsCompanyLogo = ["EQUITY", "ETF", "MUTUALFUND", "RSU"].includes(assetClass);
   const canResolve = supportsCompanyLogo && /^[A-Z0-9.-]+$/i.test(symbol);
+  if (!canResolve) return "";
   const params = new URLSearchParams({ symbol, stock_market: holding.stock_market || "" });
   if (holding.secondary_symbol) params.set("secondary_symbol", holding.secondary_symbol);
-  return `<span class="company-logo-frame" title="${esc(optionLabel("Company logo"))}" aria-hidden="true"><span class="company-logo-placeholder"></span>${canResolve ? `<img class="company-logo" src="/api/company-logo?${esc(params.toString())}" alt="" loading="lazy" decoding="async" />` : ""}</span>`;
+  return `<span class="company-logo-frame" title="${esc(optionLabel("Company logo"))}" aria-hidden="true"><img class="company-logo" src="/api/company-logo?${esc(params.toString())}" alt="" decoding="async" fetchpriority="low" /></span>`;
 }
 
 function bindCompanyLogoImages(scope) {
   scope.querySelectorAll(".company-logo").forEach((image) => {
     const frame = image.closest(".company-logo-frame");
-    const update = () => frame?.classList.toggle("has-logo", image.naturalWidth > 0);
-    image.addEventListener("load", update, { once: true });
-    image.addEventListener("error", update, { once: true });
-    if (image.complete) update();
+    const reveal = () => frame?.classList.add("has-logo");
+    const discard = () => frame?.remove();
+    image.addEventListener("load", reveal, { once: true });
+    image.addEventListener("error", discard, { once: true });
+    if (image.complete) (image.naturalWidth > 0 ? reveal : discard)();
   });
 }
 

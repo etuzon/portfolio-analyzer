@@ -4,6 +4,7 @@ import ipaddress
 import socket
 import time
 from collections.abc import Callable
+from html.parser import HTMLParser
 from threading import Lock, RLock
 from typing import Any
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -14,6 +15,7 @@ from .providers import MarketDataHub
 
 
 MAX_LOGO_BYTES = 256 * 1024
+MAX_ICON_PAGE_BYTES = 512 * 1024
 ERROR_RETRY_SECONDS = 24 * 60 * 60
 MAX_REDIRECTS = 3
 
@@ -59,18 +61,28 @@ class CompanyLogoService:
     def _resolve(self, symbol: str, *, secondary_symbol: str, stock_market: str) -> dict[str, Any]:
         profile = self.hub.cached_profile(symbol, secondary_symbol=secondary_symbol, stock_market=stock_market)
         status: dict[str, str] = {}
-        if not _candidate_urls(profile):
+        if not _has_logo_source(profile):
             try:
                 profile, status = self.hub.profile(symbol, secondary_symbol=secondary_symbol, stock_market=stock_market)
             except Exception:
                 return self._save(symbol, stock_market, "error")
 
-        candidates = _candidate_urls(profile)
-        if not candidates:
+        if not _has_logo_source(profile):
             transient = any(value.startswith("error:") for value in status.values())
             return self._save(symbol, stock_market, "error" if transient else "missing")
 
         transient_failure = False
+        candidates = _direct_logo_urls(profile)
+        website = _normalized_website(profile)
+        if website:
+            try:
+                candidates.extend(_discover_icon_urls(website))
+            except (httpx.HTTPError, OSError):
+                transient_failure = True
+            except UnsafeLogoUrl:
+                pass
+            candidates.extend(_fallback_icon_urls(website))
+        candidates = list(dict.fromkeys(candidates))
         for url in candidates:
             try:
                 downloaded = _download_logo(url)
@@ -114,21 +126,78 @@ class CompanyLogoService:
         return self.cache.get_company_logo(symbol, stock_market) or {"status": status}
 
 
-def _candidate_urls(profile: dict[str, Any]) -> list[str]:
-    candidates: list[str] = []
+def _has_logo_source(profile: dict[str, Any]) -> bool:
+    return bool(str(profile.get("logo_url") or "").strip() or str(profile.get("website") or "").strip())
+
+
+def _direct_logo_urls(profile: dict[str, Any]) -> list[str]:
     logo_url = str(profile.get("logo_url") or "").strip()
-    if logo_url:
-        candidates.append(logo_url)
+    return [logo_url] if logo_url else []
+
+
+def _normalized_website(profile: dict[str, Any]) -> str:
     website = str(profile.get("website") or "").strip()
-    if website:
-        if "://" not in website:
-            website = f"https://{website}"
-        parsed = urlsplit(website)
-        if parsed.scheme.lower() == "http":
-            website = urlunsplit(("https", parsed.netloc, parsed.path, parsed.query, ""))
-        origin = urlunsplit((urlsplit(website).scheme, urlsplit(website).netloc, "/", "", ""))
-        candidates.extend(urljoin(origin, path) for path in ("favicon.ico", "apple-touch-icon.png", "favicon.png"))
-    return list(dict.fromkeys(candidates))
+    if not website:
+        return ""
+    if "://" not in website:
+        website = f"https://{website}"
+    parsed = urlsplit(website)
+    if parsed.scheme.lower() == "http":
+        website = urlunsplit(("https", parsed.netloc, parsed.path, parsed.query, ""))
+    return website
+
+
+def _fallback_icon_urls(website: str) -> list[str]:
+    parsed = urlsplit(website)
+    origin = urlunsplit((parsed.scheme, parsed.netloc, "/", "", ""))
+    return [urljoin(origin, path) for path in ("favicon.ico", "apple-touch-icon.png", "favicon.png")]
+
+
+class _IconLinkParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.hrefs: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.casefold() != "link":
+            return
+        values = {str(key).casefold(): str(value or "") for key, value in attrs}
+        rel = {part.casefold() for part in values.get("rel", "").split()}
+        href = values.get("href", "").strip()
+        if "icon" in rel and href:
+            self.hrefs.append(href)
+
+
+def _discover_icon_urls(website: str) -> list[str]:
+    current = website
+    headers = {"User-Agent": "portfolio-analyzer/1.0", "Accept": "text/html,application/xhtml+xml"}
+    with httpx.Client(timeout=5, follow_redirects=False, headers=headers, trust_env=False) as client:
+        for redirect_count in range(MAX_REDIRECTS + 1):
+            _validate_public_https_url(current)
+            with client.stream("GET", current) as response:
+                if response.status_code in {301, 302, 303, 307, 308}:
+                    if redirect_count >= MAX_REDIRECTS:
+                        return []
+                    location = response.headers.get("location")
+                    if not location:
+                        return []
+                    current = urljoin(current, location)
+                    continue
+                response.raise_for_status()
+                content_type = str(response.headers.get("content-type") or "").casefold()
+                if content_type and "html" not in content_type:
+                    return []
+                chunks: list[bytes] = []
+                size = 0
+                for chunk in response.iter_bytes():
+                    size += len(chunk)
+                    if size > MAX_ICON_PAGE_BYTES:
+                        return []
+                    chunks.append(chunk)
+            parser = _IconLinkParser()
+            parser.feed(b"".join(chunks).decode("utf-8", errors="ignore"))
+            return list(dict.fromkeys(urljoin(current, href) for href in parser.hrefs))
+    return []
 
 
 def _download_logo(url: str) -> tuple[bytes, str, str] | None:

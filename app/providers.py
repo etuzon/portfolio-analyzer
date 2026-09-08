@@ -1042,13 +1042,9 @@ class NasdaqQuoteProvider(MarketDataProvider):
     name = "nasdaq_quote"
     base = "https://api.nasdaq.com/api/quote"
 
-    def quote(self, symbol: str) -> dict[str, Any]:
-        normalized = str(symbol or "").upper().strip()
-        if not normalized or not all(char.isalnum() or char in ".-" for char in normalized):
-            return {}
-        cache_key = f"nasdaq:quote:{normalized}"
+    def _nasdaq_json(self, url: str, params: dict[str, Any], cache_key: str) -> dict[str, Any]:
         cached = self.cache.get(cache_key)
-        if cached is not None:
+        if isinstance(cached, dict):
             return cached
         headers = {
             "User-Agent": "Mozilla/5.0 (compatible; portfolio-analyzer/1.0)",
@@ -1057,9 +1053,23 @@ class NasdaqQuoteProvider(MarketDataProvider):
             "Referer": "https://www.nasdaq.com/",
         }
         with httpx.Client(timeout=20, follow_redirects=True, headers=headers) as client:
-            response = client.get(f"{self.base}/{normalized}/info", params={"assetclass": "stocks"})
+            response = client.get(url, params=params)
             response.raise_for_status()
             payload = response.json()
+        if isinstance(payload, dict):
+            self.cache.set(cache_key, payload)
+            return payload
+        return {}
+
+    def quote(self, symbol: str) -> dict[str, Any]:
+        normalized = str(symbol or "").upper().strip()
+        if not normalized or not all(char.isalnum() or char in ".-" for char in normalized):
+            return {}
+        payload = self._nasdaq_json(
+            f"{self.base}/{normalized}/info",
+            {"assetclass": "stocks"},
+            f"nasdaq:quote-payload:{normalized}",
+        )
         data = payload.get("data") if isinstance(payload, dict) else {}
         primary = data.get("primaryData") if isinstance(data, dict) else {}
         price = _float_or_none(str(primary.get("lastSalePrice") or "").replace("$", "").replace(",", ""))
@@ -1075,8 +1085,31 @@ class NasdaqQuoteProvider(MarketDataProvider):
             "exchange": data.get("exchange") or ("NASDAQ" if data.get("isNasdaqListed") else "US"),
             "time": primary.get("lastTradeTimestamp"),
         }
-        self.cache.set(cache_key, result)
         return result
+
+    def profile(self, symbol: str) -> dict[str, Any]:
+        normalized = str(symbol or "").upper().strip()
+        if not normalized or not all(char.isalnum() or char in ".-" for char in normalized):
+            return {}
+        payload = self._nasdaq_json(
+            f"https://api.nasdaq.com/api/company/{normalized}/company-profile",
+            {},
+            f"nasdaq:profile:{normalized}",
+        )
+        data = payload.get("data") if isinstance(payload, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+
+        def value(key: str) -> Any:
+            field = data.get(key)
+            return field.get("value") if isinstance(field, dict) else field
+
+        return {
+            "name": value("CompanyName"),
+            "industry": value("Industry"),
+            "sector": value("Sector"),
+            "website": value("CompanyUrl"),
+        }
 
 
 class StooqProvider(MarketDataProvider):

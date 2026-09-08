@@ -179,7 +179,7 @@ def test_macro_scenario_surface_is_localized_and_accessible() -> None:
     assert 'id="macroPriorStatus" class="status-line" role="status" aria-live="polite"' in html
     assert 'id="macroTriggerLibrary" class="macro-trigger-library"' in html
     assert 'id="macroPortfolioImpact" class="macro-portfolio-panel"' in html
-    assert html.index('/scenario-model.js?v=0.9.7') < html.index('/app.js?v=0.9.7')
+    assert html.index('/scenario-model.js?v=0.9.7') < html.index('/app.js?v=0.9.8')
     assert 'macroScenarios: "תרחישי ארה״ב–ישראל"' in script
     assert "macroScenarios: state.macroScenarioSettings" in script
     assert "localStorage.setItem(MACRO_SCENARIO_STORAGE_KEY" in script

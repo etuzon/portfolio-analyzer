@@ -664,10 +664,13 @@ def test_holdings_table_shows_cached_company_logo_with_blank_fallback():
 
     renderer = script.split("function companyLogoHtml", 1)[1].split("function chartPath", 1)[0]
     assert 'src="/api/company-logo?' in renderer
-    assert 'class="company-logo-placeholder"' in renderer
-    assert 'alt="" loading="lazy" decoding="async"' in renderer
+    assert 'class="company-logo-placeholder"' not in renderer
+    assert 'alt="" decoding="async" fetchpriority="low"' in renderer
+    assert 'const discard = () => frame?.remove()' in renderer
     assert 'bindCompanyLogoImages($("rows"))' in renderer
-    assert ".company-logo-frame.has-logo .company-logo" in styles
+    frame_styles = styles.split(".company-logo-frame {", 1)[1].split("}", 1)[0]
+    assert "display: none" in frame_styles
+    assert ".company-logo-frame.has-logo" in styles
     assert '"Company logo": "לוגו החברה"' in i18n
 
 

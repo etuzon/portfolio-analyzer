@@ -324,6 +324,29 @@ def test_nasdaq_quote_provider_maps_public_stock_quote(monkeypatch, tmp_path):
     assert quote["changes_percentage"] == 2.14
 
 
+def test_nasdaq_profile_maps_company_website_for_logo_discovery(monkeypatch, tmp_path):
+    provider = NasdaqQuoteProvider({}, SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1))
+
+    monkeypatch.setattr(
+        provider,
+        "_nasdaq_json",
+        lambda url, params, cache_key: {
+            "data": {
+                "CompanyName": {"label": "Company Name", "value": "Fidus Investment Corporation"},
+                "CompanyUrl": {"label": "Company Url", "value": "https://www.fdus.com"},
+                "Industry": {"label": "Industry", "value": "Finance"},
+                "Sector": {"label": "Sector", "value": "Finance"},
+            }
+        },
+    )
+
+    profile = provider.profile("fdus")
+
+    assert profile["name"] == "Fidus Investment Corporation"
+    assert profile["website"] == "https://www.fdus.com"
+    assert profile["industry"] == "Finance"
+
+
 def test_yahoo_summary_maps_fundamentals_and_profile(monkeypatch, tmp_path):
     provider = YahooChartProvider({}, SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1))
 
