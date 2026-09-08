@@ -300,6 +300,21 @@ class MarketDataHub:
                 status[provider.name] = "missing"
         return {**saved_merged, **live_merged}, status or {"providers": "none configured"}
 
+    def cached_profile(
+        self,
+        symbol: str,
+        *,
+        secondary_symbol: str = "",
+        stock_market: str = "",
+    ) -> dict[str, Any]:
+        merged: dict[str, Any] = {}
+        for provider in self.providers:
+            for provider_symbol in _provider_symbol_candidates(provider.name, symbol, secondary_symbol, stock_market):
+                saved = self.cache.get_security_snapshot(provider.name, provider_symbol, "profile")
+                if isinstance(saved, dict):
+                    merged.update({key: value for key, value in saved.items() if value not in (None, "")})
+        return merged
+
     def fx(self, pair: str) -> tuple[dict[str, Any], dict[str, str]]:
         status = {}
         saved_fallback: dict[str, Any] | None = None
@@ -475,6 +490,20 @@ class SqliteCache:
                 """
             )
             conn.execute("create index if not exists idx_security_snapshot_symbol on security_snapshot(symbol, data_type)")
+            conn.execute(
+                """
+                create table if not exists company_logos (
+                    symbol text not null,
+                    stock_market text not null default '',
+                    status text not null,
+                    mime_type text not null default '',
+                    image blob,
+                    source_url text not null default '',
+                    checked_at real not null,
+                    primary key (symbol, stock_market)
+                )
+                """
+            )
 
     def get(self, key: str) -> Any | None:
         with self._connect() as conn:
@@ -609,6 +638,59 @@ class SqliteCache:
                 (provider, str(symbol or "").upper(), data_type, time.time(), payload),
             )
 
+    def get_company_logo(self, symbol: str, stock_market: str = "") -> dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                select status, mime_type, image, source_url, checked_at
+                from company_logos
+                where symbol = ? and stock_market = ?
+                """,
+                (str(symbol or "").upper(), str(stock_market or "").upper()),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "status": row[0],
+            "mime_type": row[1],
+            "image": row[2],
+            "source_url": row[3],
+            "checked_at": float(row[4]),
+        }
+
+    def set_company_logo(
+        self,
+        symbol: str,
+        stock_market: str,
+        *,
+        status: str,
+        mime_type: str = "",
+        image: bytes | None = None,
+        source_url: str = "",
+        checked_at: float | None = None,
+    ) -> None:
+        if status not in {"ready", "missing", "error"}:
+            raise ValueError("Unsupported company logo status")
+        if status == "ready" and (not image or not mime_type):
+            raise ValueError("A ready company logo requires image bytes and a MIME type")
+        with self._connect() as conn:
+            conn.execute(
+                """
+                insert or replace into company_logos
+                  (symbol, stock_market, status, mime_type, image, source_url, checked_at)
+                values (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(symbol or "").upper(),
+                    str(stock_market or "").upper(),
+                    status,
+                    mime_type,
+                    image,
+                    source_url,
+                    time.time() if checked_at is None else checked_at,
+                ),
+            )
+
     def status(self) -> dict[str, Any]:
         size = self.path.stat().st_size if self.path.exists() else 0
         with self._connect() as conn:
@@ -616,12 +698,16 @@ class SqliteCache:
             price_rows = conn.execute("select count(*) from price_cache").fetchone()[0]
             security_snapshots = conn.execute("select count(*) from security_snapshot").fetchone()[0]
             security_symbols = conn.execute("select count(distinct symbol) from security_snapshot").fetchone()[0]
+            company_logos = conn.execute("select count(*) from company_logos where status = 'ready'").fetchone()[0]
+            missing_company_logos = conn.execute("select count(*) from company_logos where status = 'missing'").fetchone()[0]
         return {
             "path": str(self.path),
             "entries": rows,
             "price_entries": price_rows,
             "security_snapshots": security_snapshots,
             "security_symbols": security_symbols,
+            "company_logos": company_logos,
+            "missing_company_logos": missing_company_logos,
             "size_mb": round(size / 1024 / 1024, 3),
             "max_mb": round(self.max_bytes / 1024 / 1024, 3),
             "ttl_hours": round(self.ttl_seconds / 3600, 2),
@@ -783,7 +869,7 @@ class AlphaVantageProvider(MarketDataProvider):
     def profile(self, symbol: str) -> dict[str, Any]:
         fundamentals = self.fundamentals(symbol)
         overview = fundamentals.get("overview", {})
-        return {"name": overview.get("Name"), "industry": overview.get("Industry"), "sector": overview.get("Sector"), "exchange": overview.get("Exchange"), "market_cap": _float_or_none(overview.get("MarketCapitalization"))}
+        return {"name": overview.get("Name"), "industry": overview.get("Industry"), "sector": overview.get("Sector"), "exchange": overview.get("Exchange"), "market_cap": _float_or_none(overview.get("MarketCapitalization")), "website": overview.get("OfficialSite")}
 
     def fx(self, pair: str) -> dict[str, Any]:
         self._require_key()
@@ -879,7 +965,7 @@ class FmpProvider(MarketDataProvider):
         self._require_key()
         data = self._get_json(f"{self.base}/profile", {"symbol": symbol, "apikey": self.api_key}, f"fmp:profile:{symbol}")
         profile = data[0] if data else {}
-        return {"name": profile.get("companyName"), "industry": profile.get("industry"), "sector": profile.get("sector"), "exchange": profile.get("exchange") or profile.get("exchangeShortName"), "market_cap": _float_or_none(profile.get("mktCap"))}
+        return {"name": profile.get("companyName"), "industry": profile.get("industry"), "sector": profile.get("sector"), "exchange": profile.get("exchange") or profile.get("exchangeShortName"), "market_cap": _float_or_none(profile.get("mktCap")), "website": profile.get("website"), "logo_url": profile.get("image")}
 
     def quote(self, symbol: str) -> dict[str, Any]:
         self._require_key()
@@ -1405,6 +1491,7 @@ class YahooChartProvider(MarketDataProvider):
             "name": _yahoo_value(price.get("longName")) or _yahoo_value(price.get("shortName")),
             "industry": asset.get("industry"),
             "sector": asset.get("sector"),
+            "website": asset.get("website"),
             "exchange": _yahoo_value(price.get("exchangeName")) or _yahoo_value(price.get("fullExchangeName")) or _yahoo_value(price.get("exchange")),
             "currency": "ILS" if currency == "ILA" else currency,
             "market_cap": _yahoo_raw(price.get("marketCap")),

@@ -30,6 +30,7 @@ from . import __version__
 from .alerts import ALERT_JOB_ID, AlertStore, alert_rule_options, start_scheduler
 from .auth import API_ACCESS_MODES, AUTH_ROLES, PASSWORD_MIN_LENGTH, SESSION_COOKIE_NAME, AuthStore
 from .config import data_dir, load_config
+from .company_logos import CompanyLogoService
 from .external_import import ExternalImportClient
 from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, SUPPORTED_MANAGEMENT_CURRENCIES, LocalPortfolioStore, validate_portfolio_ownership
 from .metrics import analyze_holding, moving_averages, screen, support_resistance, technical_signals, to_dict, volume_metrics
@@ -75,7 +76,10 @@ app.add_middleware(
 async def add_web_cache_headers(request, call_next):
     response = await call_next(request)
     path = request.url.path
-    if path.startswith("/api/") or path == "/" or path.endswith((".html", ".js", ".css")):
+    if path == "/api/company-logo" and response.status_code == 200:
+        response.headers["Cache-Control"] = "private, max-age=86400"
+        response.headers.pop("Pragma", None)
+    elif path.startswith("/api/") or path == "/" or path.endswith((".html", ".js", ".css")):
         response.headers["Cache-Control"] = "no-store, max-age=0"
         response.headers["Pragma"] = "no-cache"
     return response
@@ -1156,6 +1160,11 @@ def _resolve_supported_stock_market(symbol: str, stock_market: str, allow_manual
 @lru_cache(maxsize=1)
 def hub() -> MarketDataHub:
     return MarketDataHub(config.market_data, config.db)
+
+
+@lru_cache(maxsize=1)
+def company_logo_service() -> CompanyLogoService:
+    return CompanyLogoService(hub())
 
 
 def runtime_settings_path() -> Path:
@@ -3028,6 +3037,33 @@ def resolve_banner(payload: dict[str, Any]):
 @app.get("/api/cache")
 def cache_status():
     return hub().cache_status()
+
+
+@app.get("/api/company-logo")
+def company_logo(symbol: str, stock_market: str = "", secondary_symbol: str = ""):
+    safe_symbol = _safe_symbol(symbol)
+    safe_secondary_symbol = str(secondary_symbol or "").strip().upper()
+    if len(safe_secondary_symbol) > 24 or any(
+        char for char in safe_secondary_symbol if not (char.isalnum() or char in ".-:")
+    ):
+        raise HTTPException(status_code=400, detail="Secondary symbol contains unsupported characters")
+    safe_stock_market = str(stock_market or "").strip().upper()
+    if len(safe_stock_market) > 24 or any(
+        char for char in safe_stock_market if not (char.isalnum() or char in ".-")
+    ):
+        raise HTTPException(status_code=400, detail="Stock market must contain only letters, numbers, dots, or dashes")
+    logo = company_logo_service().get_or_resolve(
+        safe_symbol,
+        secondary_symbol=safe_secondary_symbol,
+        stock_market=safe_stock_market,
+    )
+    if logo.get("status") != "ready" or not logo.get("image"):
+        return Response(status_code=404)
+    return Response(
+        content=logo["image"],
+        media_type=logo["mime_type"],
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
 
 
 @app.get("/api/settings")

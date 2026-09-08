@@ -488,7 +488,10 @@ def test_saved_security_history_is_visible_in_status_and_settings():
     assert "Saved local history:" in script
     assert '["Saved security snapshots", data.security_snapshots ?? 0]' in script
     assert '["Securities with saved history", data.security_symbols ?? 0]' in script
+    assert '["Cached company logos", data.company_logos ?? 0]' in script
+    assert '["Blank logo records", data.missing_company_logos ?? 0]' in script
     assert '"Saved security snapshots": "תמונות מצב שמורות של ניירות ערך"' in i18n
+    assert '"Cached company logos": "לוגואים שמורים של חברות"' in i18n
     assert '/^Saved local history:' in i18n
 
 
@@ -652,6 +655,20 @@ def test_optional_secondary_security_symbol_is_editable_visible_and_searchable()
     assert 'secondary_symbol text not null default \'\'' in store
     assert '"secondary_symbol": holding.secondary_symbol' in metrics
     assert '"stock_market": holding.stock_market' in metrics
+
+
+def test_holdings_table_shows_cached_company_logo_with_blank_fallback():
+    script = (ROOT / "web/app.js").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+    i18n = (ROOT / "web/i18n.js").read_text()
+
+    renderer = script.split("function companyLogoHtml", 1)[1].split("function chartPath", 1)[0]
+    assert 'src="/api/company-logo?' in renderer
+    assert 'class="company-logo-placeholder"' in renderer
+    assert 'alt="" loading="lazy" decoding="async"' in renderer
+    assert 'bindCompanyLogoImages($("rows"))' in renderer
+    assert ".company-logo-frame.has-logo .company-logo" in styles
+    assert '"Company logo": "לוגו החברה"' in i18n
 
 
 def test_security_provider_label_prefers_the_provider_that_supplied_prices():

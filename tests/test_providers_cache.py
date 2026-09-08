@@ -5,7 +5,7 @@ import pytest
 
 from app.models import Ohlcv
 from app import providers
-from app.providers import MarketDataHub, NasdaqQuoteProvider, SecCompanyFactsProvider, SqliteCache, YahooChartProvider
+from app.providers import FmpProvider, MarketDataHub, NasdaqQuoteProvider, SecCompanyFactsProvider, SqliteCache, YahooChartProvider
 
 
 def test_sqlite_cache_round_trips_and_reports_limit(tmp_path):
@@ -50,6 +50,20 @@ def test_sqlite_cache_persists_normalized_security_snapshots(tmp_path):
     assert reopened.get_security_snapshot("provider", "FDUS", "fundamentals")["income_statement"]["annualReports"][0]["netIncome"] == 20
     assert reopened.status()["security_snapshots"] == 1
     assert reopened.status()["security_symbols"] == 1
+
+
+def test_sqlite_cache_persists_company_logos_and_missing_results(tmp_path):
+    path = tmp_path / "market-cache.sqlite3"
+    cache = SqliteCache(path, ttl_hours=1, max_mb=1)
+    cache.set_company_logo("aapl", "nasdaq", status="ready", mime_type="image/png", image=b"logo")
+    cache.set_company_logo("unknown", "", status="missing")
+
+    reopened = SqliteCache(path, ttl_hours=1, max_mb=1)
+
+    assert reopened.get_company_logo("AAPL", "NASDAQ")["image"] == b"logo"
+    assert reopened.get_company_logo("UNKNOWN")["status"] == "missing"
+    assert reopened.status()["company_logos"] == 1
+    assert reopened.status()["missing_company_logos"] == 1
 
 
 def test_market_data_hub_uses_saved_security_history_when_provider_is_offline(monkeypatch, tmp_path):
@@ -324,7 +338,7 @@ def test_yahoo_summary_maps_fundamentals_and_profile(monkeypatch, tmp_path):
                                 {"endDate": {"fmt": "2024-12-31"}, "totalRevenue": {"raw": 100}, "netIncome": {"raw": 10}},
                             ]
                         },
-                        "assetProfile": {"industry": "Medical Instruments", "sector": "Healthcare"},
+                        "assetProfile": {"industry": "Medical Instruments", "sector": "Healthcare", "website": "https://www.bruker.com"},
                         "price": {"longName": "Bruker Corporation", "currency": {"raw": "ILA"}, "marketCap": {"raw": 1000}},
                     }
                 ]
@@ -341,6 +355,25 @@ def test_yahoo_summary_maps_fundamentals_and_profile(monkeypatch, tmp_path):
     assert profile["industry"] == "Medical Instruments"
     assert profile["currency"] == "ILS"
     assert profile["market_cap"] == 1000
+    assert profile["website"] == "https://www.bruker.com"
+
+
+def test_fmp_profile_maps_logo_and_company_website(monkeypatch, tmp_path):
+    provider = FmpProvider({"api_key": "test"}, SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1))
+    monkeypatch.setattr(
+        provider,
+        "_get_json",
+        lambda *args, **kwargs: [{
+            "companyName": "Example Corp",
+            "website": "https://example.com",
+            "image": "https://cdn.example.com/logo.png",
+        }],
+    )
+
+    profile = provider.profile("EXM")
+
+    assert profile["website"] == "https://example.com"
+    assert profile["logo_url"] == "https://cdn.example.com/logo.png"
 
 
 def test_yahoo_normalizes_tase_agorot_prices_and_dividends_to_ils(monkeypatch, tmp_path):

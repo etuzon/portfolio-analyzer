@@ -2820,6 +2820,26 @@ function renderFundsOverview() {
   renderAnalytics(state.items || []);
 }
 
+function companyLogoHtml(holding) {
+  const symbol = String(holding.symbol || "").trim();
+  const assetClass = String(holding.asset_class || "EQUITY").toUpperCase();
+  const supportsCompanyLogo = ["EQUITY", "ETF", "MUTUALFUND", "RSU"].includes(assetClass);
+  const canResolve = supportsCompanyLogo && /^[A-Z0-9.-]+$/i.test(symbol);
+  const params = new URLSearchParams({ symbol, stock_market: holding.stock_market || "" });
+  if (holding.secondary_symbol) params.set("secondary_symbol", holding.secondary_symbol);
+  return `<span class="company-logo-frame" title="${esc(optionLabel("Company logo"))}" aria-hidden="true"><span class="company-logo-placeholder"></span>${canResolve ? `<img class="company-logo" src="/api/company-logo?${esc(params.toString())}" alt="" loading="lazy" decoding="async" />` : ""}</span>`;
+}
+
+function bindCompanyLogoImages(scope) {
+  scope.querySelectorAll(".company-logo").forEach((image) => {
+    const frame = image.closest(".company-logo-frame");
+    const update = () => frame?.classList.toggle("has-logo", image.naturalWidth > 0);
+    image.addEventListener("load", update, { once: true });
+    image.addEventListener("error", update, { once: true });
+    if (image.complete) update();
+  });
+}
+
 function renderRows(items) {
   $("count").textContent = `${items.length} shown`;
   $("rows").innerHTML = items.map((item) => {
@@ -2846,7 +2866,7 @@ function renderRows(items) {
       ? Math.abs(Number(h.cost_basis || 0) / Number(h.quantity || 0))
       : 0;
     return `<tr>
-      <td data-label="Security"><div class="security-cell"><div class="security-symbols"><button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}</div><div class="security-name">${esc(companyLine)}</div>${industryLine}<div class="sub security-meta">${esc(marketLine)}</div></div></td>
+      <td data-label="Security"><div class="security-cell"><div class="security-symbols">${companyLogoHtml(h)}<button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}</div><div class="security-name">${esc(companyLine)}</div>${industryLine}<div class="sub security-meta">${esc(marketLine)}</div></div></td>
       <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(accountMeta)}</div></td>
       <td data-label="Risk">${riskBadge(rowRisk)}</td>
       <td data-label="Value / P&L"><div class="value-cell">
@@ -2862,6 +2882,7 @@ function renderRows(items) {
       <td data-label="Data Status">${statusCell(item)}</td>
     </tr>`;
   }).join("");
+  bindCompanyLogoImages($("rows"));
 }
 
 function chartPath(values, width, height, pad = 14) {
@@ -10002,6 +10023,8 @@ async function loadCacheStatus() {
     ["Cached daily prices", data.price_entries ?? 0],
     ["Saved security snapshots", data.security_snapshots ?? 0],
     ["Securities with saved history", data.security_symbols ?? 0],
+    ["Cached company logos", data.company_logos ?? 0],
+    ["Blank logo records", data.missing_company_logos ?? 0],
     ["Current size", `${data.size_mb} MB`],
     ["Max size", `${data.max_mb} MB`],
     ["TTL", `${data.ttl_hours} hours`],
