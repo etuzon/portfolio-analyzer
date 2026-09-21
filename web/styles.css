@@ -2163,6 +2163,19 @@ textarea.muted-control {
   min-height: 390px;
 }
 
+.industry-total-risk {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 4px;
+  justify-items: end;
+}
+
+.industry-total-risk small {
+  color: #98a6ba;
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .industry-split-list {
   display: grid;
   gap: 10px;
@@ -2200,6 +2213,30 @@ textarea.muted-control {
   color: #aeb9c9;
   font-size: 11px;
   font-weight: 750;
+}
+
+.industry-split-metrics {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.industry-split-metrics > span {
+  color: #aeb9c9;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.industry-split-metrics > small {
+  color: #8997ab;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.industry-split-metrics .risk-badge {
+  min-height: 24px;
+  padding-inline: 6px;
 }
 
 .industry-split-track {
@@ -2911,6 +2948,26 @@ textarea.muted-control {
   color: #ff6875;
 }
 
+.portfolio-risk-summary {
+  display: flex;
+  grid-column: 1;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  width: fit-content;
+  margin-top: 2px;
+  color: #d5deec;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.portfolio-risk-summary > small {
+  flex-basis: 100%;
+  color: #8794aa;
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .currency-strip {
   display: flex;
   grid-column: 1 / -1;
@@ -2987,7 +3044,7 @@ textarea.muted-control {
 
 .summary-drawer {
   grid-column: 2;
-  grid-row: 1 / span 3;
+  grid-row: 1 / span 4;
   justify-self: start;
   width: 100%;
   max-width: 760px;
@@ -7237,6 +7294,34 @@ tbody tr:hover {
   white-space: nowrap;
 }
 
+.help-risk-components {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+  margin: 10px 0;
+}
+
+.help-risk-components > div {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #303a48;
+  border-radius: 6px;
+  background: #111720;
+}
+
+.help-risk-components dt {
+  color: #dce9f8;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.help-risk-components dd {
+  margin: 4px 0 0;
+  color: #9facc0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .settings-layout {
   display: grid;
   grid-template-columns: minmax(210px, 250px) minmax(0, 1fr);
@@ -7864,6 +7949,26 @@ html[dir="rtl"] .settings-menu-button.active {
 }
 
 @media (max-width: 760px) {
+  .industry-split-card {
+    height: auto;
+    min-height: 390px;
+  }
+
+  .industry-split-card .chart-header,
+  .industry-split-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .industry-total-risk {
+    justify-items: start;
+  }
+
+  .industry-split-metrics {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
   .auth-overlay {
     place-items: start center;
     padding: 12px;
@@ -7992,6 +8097,7 @@ html[dir="rtl"] .settings-menu-button.active {
   .help-quick-start,
   .help-group > summary,
   .help-group-content,
+  .help-risk-components,
   .about-principles {
     grid-template-columns: 1fr;
   }

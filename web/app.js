@@ -1906,6 +1906,18 @@ function riskTooltip(risk) {
     high: "Several factors create a high chance of large losses.",
     extreme: "Sharp losses are possible from very strong risk factors.",
   }[band.key];
+  const componentSpecs = [
+    ["concentration", "Concentration", 16],
+    ["asset_mix", "Asset mix", 14],
+    ["currency", "Currency exposure", 10],
+    ["industry", "Industry concentration", 10],
+    ["cash", "Cash buffer", 7],
+    ["derivatives", "Options, futures and leverage", 10],
+    ["volatility", "Volatility", 10],
+    ["horizon", "Investment horizon", 10],
+    ["issuer_country", "Issuer and country concentration", 8],
+    ["data_quality", "Missing data", 5],
+  ];
   const simpleDriver = (driver) => {
     const text = String(driver || "");
     if (text.startsWith("Top holding ")) return `the largest single holding is ${text.slice(12)} of total value, including cash`;
@@ -1932,12 +1944,16 @@ function riskTooltip(risk) {
     return text.toLowerCase();
   };
   const drivers = (risk.drivers || []).slice(0, 4).map(simpleDriver).map(optionLabel);
+  const components = risk.show_component_breakdown === false ? [] : componentSpecs
+    .filter(([key]) => risk.components && Number.isFinite(Number(risk.components[key])))
+    .map(([key, label, maximum]) => `${optionLabel(label)}: ${fmt(risk.components[key], 1)}/${maximum}`);
   const title = state.language === "he"
     ? `${optionLabel("Risk")} ${band.label} · ${risk.score}/100`
     : `${band.label} risk · ${risk.score}/100`;
   return [
     title,
     optionLabel(meaning),
+    ...(components.length ? ["", optionLabel("Components:"), ...components.map((component) => `• ${component}`)] : []),
     "",
     optionLabel("Main reasons:"),
     ...(drivers.length ? drivers.map((driver) => `• ${driver}`) : [`• ${optionLabel("No single factor stands out")}`]),
@@ -1997,7 +2013,7 @@ function riskScoreForItems(items, options = {}) {
   const industry = Math.min(industryHhi / 3000, 1) * 7 + missingIndustryPct / 100 * 3;
 
   const cashPct = cash / totalValue * 100;
-  const cashScore = cashPct >= 5 && cashPct <= 20 ? 0 : cashPct < 5 ? (5 - cashPct) / 5 * 5 : Math.min((cashPct - 20) / 50, 1) * 2;
+  const cashScore = cashPct >= 5 && cashPct <= 20 ? 0 : cashPct < 5 ? (5 - cashPct) / 5 * 7 : Math.min((cashPct - 20) / 50, 1) * 4;
 
   const derivativesValue = rows
     .filter(derivativeHolding)
@@ -2077,6 +2093,7 @@ function riskScoreForItems(items, options = {}) {
       label: `${item.holding.symbol} holding risk`,
       score: itemScore,
       components,
+      show_component_breakdown: false,
       drivers: [
         `Holding weight ${fmt(valuePct, 1)}%`,
         `Asset factor ${fmt(assetRiskFactor(item), 2)}`,
@@ -2676,6 +2693,11 @@ function renderPortfolioValueDashboard(items) {
         <p class="eyebrow">Portfolio value</p>
         <div class="balance-value" title="Securities ${money(securitiesValue, state.baseCurrency, 0)} + cash ${money(cashValue, state.baseCurrency, 0)}">${money(primaryValue, state.baseCurrency)}</div>
         <div class="delta ${profitClass}" title="Holding profit converted to ${esc(state.baseCurrency)} using displayed FX rates when available">${esc(optionLabel("Holding Profit"))} ${signedMoney(primaryProfit, state.baseCurrency)}</div>
+        <div class="portfolio-risk-summary">
+          <span>${esc(optionLabel("Total portfolio risk"))}</span>
+          ${riskBadge(state.riskSnapshot.total)}
+          <small>${esc(optionLabel("0 is very low · 100 is extreme"))}</small>
+        </div>
         <details class="summary-drawer">
           <summary>Portfolio stats</summary>
           <div class="summary">${statsHtml}</div>
@@ -3571,8 +3593,9 @@ function renderIndustrySplit(items) {
   const groups = Object.values(items.reduce((result, item) => {
     const label = industryLabel(item) || "Not classified";
     const value = Math.abs(normalizedField(item, "market_value"));
-    const group = result[label] || { label, value: 0, holdings: [] };
+    const group = result[label] || { label, value: 0, holdings: [], items: [] };
     group.value += value;
+    group.items.push(item);
     group.holdings.push({
       symbol: item.holding.symbol || "Unknown",
       name: item.holding.name || item.holding.symbol || "Unknown",
@@ -3584,14 +3607,29 @@ function renderIndustrySplit(items) {
     .map((group) => ({ ...group, label: optionLabel(group.label), holdings: group.holdings.sort((a, b) => b.value - a.value) }))
     .sort((a, b) => b.value - a.value);
   const total = sum(groups.map((group) => group.value));
+  const combinedCash = sum(portfolioAccounts().map(accountCashValue));
+  const portfolioHorizons = portfolioAccounts().map(accountHorizonYears).filter((value) => value !== null);
+  const horizonYears = portfolioHorizons.length ? Math.min(...portfolioHorizons) : null;
+  groups.forEach((group) => {
+    const allocatedCash = total ? combinedCash * (group.value / total) : 0;
+    group.risk = riskScoreForItems(group.items, {
+      label: `${group.label} industry risk`,
+      cash: allocatedCash,
+      horizonYears,
+    });
+  });
+  const totalRisk = state.riskSnapshot?.total || portfolioRiskSnapshot(items).total;
   return `
     <div class="chart-card industry-split-card">
       <div class="chart-header">
         <div>
           <div class="chart-title">Industry split</div>
-          <span class="chart-subtitle">${state.language === "he" ? `${groups.length} ענפים · ההחזקות מוצגות בתוך כל ענף` : `${groups.length} industries · holdings listed inside each industry`}</span>
+          <span class="chart-subtitle">${state.language === "he" ? `${groups.length} ענפים · ציון הסיכון של כל ענף מחושב בנפרד ואינו מתחבר לציון הכולל` : `${groups.length} industries · each industry risk is calculated separately and does not add up to the total`}</span>
         </div>
-        <div class="chart-legend"><span><i style="background:#21a7ff"></i>Portfolio value</span></div>
+        <div class="industry-total-risk">
+          <small>${esc(optionLabel("Total portfolio risk"))}</small>
+          ${riskBadge(totalRisk)}
+        </div>
       </div>
       <div class="industry-split-list">
         ${groups.map((group, index) => {
@@ -3600,7 +3638,11 @@ function renderIndustrySplit(items) {
             <div class="industry-split-row">
               <div class="industry-split-head">
                 <b>${esc(group.label)}</b>
-                <span>${money(group.value, state.baseCurrency, 0)} · ${fmt(percent, 1)}%</span>
+                <div class="industry-split-metrics">
+                  <span>${money(group.value, state.baseCurrency, 0)} · ${fmt(percent, 1)}%</span>
+                  <small>${esc(optionLabel("Industry risk"))}</small>
+                  ${riskBadge(group.risk, true)}
+                </div>
               </div>
               <div class="industry-split-track" title="${esc(`${group.label}: ${fmt(percent, 1)}%`)}">
                 <i style="width:${Math.max(percent, 0.8)}%;background:${colorAt(index)}"></i>

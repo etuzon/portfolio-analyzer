@@ -110,6 +110,9 @@ def test_populated_dashboard_values_are_localized_at_composition_time():
     assert 'const drivers = (risk.drivers || []).slice(0, 4).map(simpleDriver).map(optionLabel)' in script
     assert '? `${optionLabel("Risk")} ${band.label} · ${risk.score}/100`' in script
     assert 'optionLabel("Main reasons:")' in script
+    assert 'optionLabel("Components:")' in script
+    assert 'optionLabel("Total portfolio risk")' in script
+    assert 'optionLabel("Industry risk")' in script
     assert 'optionLabel("No single factor stands out")' in script
     assert 'const missingField = text.slice(8).trim()' in script
     assert '`היעדר נתוני ${optionLabel(missingField)} מקטין את ודאות האומדן`' in script
@@ -118,6 +121,9 @@ def test_populated_dashboard_values_are_localized_at_composition_time():
     assert 'optionLabel("Total P/L")' in script
     assert 'optionLabel("units")' in script
     assert 'optionLabel(isImportedAccount(account) ? "Imported" : "Manual")' in script
+    assert '"Investment risk formula": "נוסחת סיכון ההשקעות"' in i18n
+    assert '"Total portfolio risk": "סיכון כולל בתיק"' in i18n
+    assert '"Industry risk": "סיכון ענפי"' in i18n
     assert '"Elevated": "מוגבר"' in i18n
     assert '"Price swings could cause meaningful losses.": "תנודות מחירים עלולות לגרום להפסדים משמעותיים."' in i18n
     assert '"Main reasons:": "הסיבות העיקריות:"' in i18n
@@ -125,6 +131,27 @@ def test_populated_dashboard_values_are_localized_at_composition_time():
     assert 'ההחזקה הבודדת הגדולה ביותר מהווה ${value} מהשווי הכולל, כולל מזומן' in i18n
     assert 'לאחר איחוד כל ההחזקות באותו נייר ערך, הוא מהווה ${value} משווי ניירות הערך בלבד, ללא מזומן' in i18n
     assert '"Financial Services": "שירותים פיננסיים"' in i18n
+
+
+def test_provider_industry_labels_have_shared_hebrew_translations():
+    i18n = (ROOT / "web/i18n.js").read_text()
+
+    translations = {
+        "Marine Transportation": "תובלה ימית",
+        "Major Banks": "בנקים גדולים",
+        "Real Estate Investment Trusts": "קרנות השקעה בנדל״ן (ריט)",
+        "Oil & Gas Production": "הפקת נפט וגז",
+        "Apparel": "הלבשה",
+        "Finance/Investors Services": "פיננסים / שירותים למשקיעים",
+        "Diversified Financial Services": "שירותים פיננסיים מגוונים",
+        "Life Insurance": "ביטוח חיים",
+        "Investment Managers": "מנהלי השקעות",
+        "Biotechnology: Laboratory Analytical Instruments": "ביוטכנולוגיה: מכשור אנליטי למעבדות",
+        "EDP Services": "שירותי עיבוד נתונים (EDP)",
+        "Finance: Consumer Services": "פיננסים: שירותים לצרכן",
+    }
+    for english, hebrew in translations.items():
+        assert f'"{english}": "{hebrew}"' in i18n
 
 
 def test_security_detail_kpi_headers_are_localized_in_hebrew():

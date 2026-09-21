@@ -889,6 +889,26 @@
                 <h3>Reports</h3>
                 <p>Review account value, profit, allocation, and saved history. Filter by account, account type, location, and date range before comparing trends or exporting a PDF.</p>
               </article>
+              <article class="help-feature help-feature-wide help-risk-formula">
+                <h3>Investment risk formula</h3>
+                <p>The risk score runs from 0 (very low) to 100 (extreme). It estimates concentration and market exposure; it is not a forecast of the amount you may lose.</p>
+                <p>Risk bands: 0–20 low, 21–40 moderate, 41–60 elevated, 61–80 high, and 81–100 extreme.</p>
+                <code class="help-command" dir="ltr" data-i18n-skip>risk = clamp(round(C + A + FX + I + B + D + V + H + IC + Q), 0, 100)</code>
+                <dl class="help-risk-components">
+                  <div><dt>Concentration · 0–16</dt><dd>Largest-position weight plus the sum of squared position percentages (HHI).</dd></div>
+                  <div><dt>Asset mix · 0–14</dt><dd>Value-weighted asset factors, from 0.05 for cash to 1.00 for options, futures, or leveraged instruments.</dd></div>
+                  <div><dt>Currency exposure · 0–10</dt><dd>Non-base-currency exposure plus the largest single foreign-currency exposure.</dd></div>
+                  <div><dt>Industry concentration · 0–10</dt><dd>Industry HHI contributes up to 7 points and missing industry classifications contribute up to 3.</dd></div>
+                  <div><dt>Cash buffer · 0–7</dt><dd>Five to twenty percent cash adds no risk; lower or unusually high cash adds risk.</dd></div>
+                  <div><dt>Options, futures and leverage · 0–10</dt><dd>Exposure to derivatives or leveraged instruments, plus uncovered shorts.</dd></div>
+                  <div><dt>Volatility · 0–10</dt><dd>Uses the one-year high-low price range when available, otherwise a transparent asset-class proxy.</dd></div>
+                  <div><dt>Investment horizon · 0–10</dt><dd>Uses the shortest linked owner horizon to retirement age; risky assets receive more penalty near retirement.</dd></div>
+                  <div><dt>Issuer and country concentration · 0–8</dt><dd>Measures the largest issuer and unusually concentrated country exposure.</dd></div>
+                  <div><dt>Missing data · 0–5</dt><dd>Adds uncertainty for missing prices, industry, currency, or asset-class data.</dd></div>
+                </dl>
+                <p>Total portfolio risk is 75% of the combined-holdings score plus 25% of the portfolio-value-weighted account scores, rounded and capped to 0–100.</p>
+                <p>Each industry row recalculates the same component formula for that industry's holdings. Portfolio cash is allocated in proportion to industry value. Industry scores are comparisons and must not be added together.</p>
+              </article>
             </div>
           </details>
 

@@ -507,6 +507,30 @@ def test_risk_explanation_distinguishes_single_holding_from_symbol_concentration
     assert 'largestSymbolPct > 25 ? `Symbol concentration ${fmt(largestSymbolPct, 1)}%`' in script
 
 
+def test_total_and_industry_risk_are_visible_and_help_documents_the_formula():
+    html = (ROOT / "web/index.html").read_text()
+    script = (ROOT / "web/app.js").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+
+    assert 'class="portfolio-risk-summary"' in script
+    assert 'optionLabel("Total portfolio risk")' in script
+    assert 'group.risk = riskScoreForItems(group.items' in script
+    assert 'optionLabel("Industry risk")' in script
+    assert 'const allocatedCash = total ? combinedCash * (group.value / total) : 0' in script
+    assert 'const cashScore = cashPct >= 5 && cashPct <= 20 ? 0 : cashPct < 5 ? (5 - cashPct) / 5 * 7' in script
+    assert '0.75 * combinedRisk.score + 0.25 * weightedAccountScore' in script
+    assert 'optionLabel("Components:")' in script
+
+    assert '<h3>Investment risk formula</h3>' in html
+    assert 'risk = clamp(round(C + A + FX + I + B + D + V + H + IC + Q), 0, 100)' in html
+    assert 'Industry HHI contributes up to 7 points' in html
+    assert 'Total portfolio risk is 75% of the combined-holdings score plus 25%' in html
+    assert 'Industry scores are comparisons and must not be added together.' in html
+    assert '.portfolio-risk-summary {' in styles
+    assert '.industry-split-metrics {' in styles
+    assert '.help-risk-components {' in styles
+
+
 def test_employee_option_workflow_filters_to_esop_accounts_and_employee_grants():
     script = (ROOT / "web/app.js").read_text()
 
