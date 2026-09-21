@@ -908,6 +908,7 @@
                 </dl>
                 <p>Total portfolio risk is 75% of the combined-holdings score plus 25% of the portfolio-value-weighted account scores, rounded and capped to 0–100.</p>
                 <p>Each industry row recalculates the same component formula for that industry's holdings. Portfolio cash is allocated in proportion to industry value. Industry scores are comparisons and must not be added together.</p>
+                <p>In Industry split, select a security to assign or correct its industry locally. Manual classifications override provider data and can be removed later. Bonds always appear under Bonds and are not treated as an industry.</p>
               </article>
             </div>
           </details>
@@ -1039,6 +1040,33 @@
               </article>
             </div>
           </details>
+        </div>
+      </section>
+    </div>
+
+    <div id="industryClassificationModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card industry-classification-card" role="dialog" aria-modal="true" aria-labelledby="industryClassificationTitle" aria-describedby="industryClassificationIntro">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Industry split</p>
+            <h2 id="industryClassificationTitle">Classify security</h2>
+          </div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <p id="industryClassificationIntro">Choose the business industry that best describes this security. This local choice overrides provider data.</p>
+        <div class="industry-classification-summary">
+          <strong id="industryClassificationSecurity"></strong>
+          <span id="industryClassificationProvider"></span>
+        </div>
+        <label class="industry-classification-field" for="industryClassificationSelect">
+          <span>Industry</span>
+          <select id="industryClassificationSelect"></select>
+        </label>
+        <p id="industryClassificationStatus" class="status-line" role="status" aria-live="polite"></p>
+        <div class="modal-toolbar industry-classification-actions">
+          <button id="removeIndustryClassification" class="secondary" type="button">Use provider classification</button>
+          <button id="saveIndustryClassification" type="button">Save classification</button>
         </div>
       </section>
     </div>

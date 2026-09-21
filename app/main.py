@@ -104,6 +104,57 @@ FULL_RESTORE_CONFIRMATION = "replace-current-application-state"
 HISTORY_START_DATE = date(2026, 4, 14)
 US_STOCK_MARKETS = {"NASDAQ", "NYSE", "AMEX", "NYSEARCA", "OTC"}
 SUPPORTED_STOCK_MARKETS = {*US_STOCK_MARKETS, "TASE"}
+INDUSTRY_CATALOG = (
+    "Aerospace & Defense",
+    "Agriculture",
+    "Apparel",
+    "Banks",
+    "Basic Materials",
+    "Biotechnology",
+    "Biotechnology: Laboratory Analytical Instruments",
+    "Chemicals",
+    "Communication Equipment",
+    "Construction",
+    "Consumer Cyclical",
+    "Consumer Defensive",
+    "Consumer Products",
+    "Diversified Financial Services",
+    "EDP Services",
+    "Electronic Components",
+    "Energy",
+    "Finance/Investors Services",
+    "Finance: Consumer Services",
+    "Financial Services",
+    "Food & Beverages",
+    "Hardware",
+    "Healthcare",
+    "Healthcare Services",
+    "Industrials",
+    "Information Technology Services",
+    "Insurance",
+    "Investment Managers",
+    "Life Insurance",
+    "Logistics",
+    "Machinery",
+    "Marine Transportation",
+    "Media & Entertainment",
+    "Medical Devices",
+    "Mining",
+    "Oil & Gas Production",
+    "Pharmaceuticals",
+    "Real Estate",
+    "Real Estate Investment Trusts",
+    "Regional Banks",
+    "Renewable Energy",
+    "Retail",
+    "Semiconductors",
+    "Software",
+    "Technology",
+    "Telecommunications",
+    "Transportation",
+    "Utilities",
+)
+INDUSTRY_ALIASES = {"Major Banks": "Banks"}
 CLIENT_STATE_PREF_KEY = "client_state"
 BACKUP_SETTINGS_PREF_KEY = "backup_settings"
 _portfolio_cache_lock = RLock()
@@ -2074,11 +2125,39 @@ def portfolio_payload(force_refresh: bool = False) -> dict[str, Any]:
 
     analyses = enriched_local_holdings()
     local_status = f"ok ({len(analyses)} local positions)"
+    overrides = {
+        (str(row.get("symbol") or "").upper(), str(row.get("stock_market") or "").upper()): row
+        for row in (local_store.list_security_industry_overrides() if hasattr(local_store, "list_security_industry_overrides") else [])
+    }
+    serialized_items = []
+    for analysis in analyses:
+        item = to_dict(analysis)
+        holding = item.get("holding") or {}
+        symbol = str(holding.get("symbol") or "").strip().upper()
+        stock_market = str(holding.get("stock_market") or "").strip().upper()
+        asset_class = str(holding.get("asset_class") or "").strip().upper()
+        asset_sub_class = str(holding.get("asset_sub_class") or "").strip().upper()
+        provider_industry = str(item.get("industry") or holding.get("industry") or holding.get("sector") or "").strip()
+        override = overrides.get((symbol, stock_market)) or overrides.get((symbol, ""))
+        if asset_class == "BOND" or asset_sub_class == "BOND":
+            industry = "Bonds"
+            source = "asset_class"
+        elif override:
+            industry = str(override.get("industry") or "").strip()
+            source = "manual"
+        else:
+            industry = INDUSTRY_ALIASES.get(provider_industry, provider_industry)
+            source = "provider" if industry else "unclassified"
+        item["provider_industry"] = provider_industry
+        item["industry"] = industry
+        item["industry_source"] = source
+        holding["industry"] = industry
+        serialized_items.append(item)
     payload = {
         "status": {"local_portfolio": local_status, "portfolio_cache": "refreshed"},
         "count": len(analyses),
         "display_currencies": config.dashboard.get("display_currencies", []),
-        "items": [to_dict(item) for item in analyses],
+        "items": serialized_items,
     }
     if signature:
         cache_record = {
@@ -2557,6 +2636,37 @@ def update_local_security(transaction_id: str, payload: dict[str, Any]):
 @app.get("/api/local/manual-securities")
 def list_manual_securities():
     return {"items": local_store.list_manual_securities()}
+
+
+@app.get("/api/local/security-industry-overrides")
+def list_security_industry_overrides():
+    return {
+        "items": local_store.list_security_industry_overrides(),
+        "industries": list(INDUSTRY_CATALOG),
+    }
+
+
+@app.put("/api/local/security-industry-overrides")
+def save_security_industry_override(payload: dict[str, Any]):
+    industry = str((payload or {}).get("industry") or "").strip()
+    if industry not in INDUSTRY_CATALOG:
+        raise HTTPException(status_code=400, detail="Choose an industry from the supported list")
+    try:
+        result = local_store.save_security_industry_override({**(payload or {}), "industry": industry})
+        clear_portfolio_cache()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/local/security-industry-overrides/{symbol}")
+def delete_security_industry_override(symbol: str, stock_market: str = ""):
+    try:
+        deleted = local_store.delete_security_industry_override(symbol, stock_market)
+        clear_portfolio_cache()
+        return {"deleted": deleted}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/local/manual-securities")

@@ -113,6 +113,7 @@ EXPORT_TABLES = {
         "comments",
         "created_at",
     ],
+    "security_industry_overrides": ["symbol", "stock_market", "industry", "created_at", "updated_at"],
     "transactions": [
         "id",
         "account_db_id",
@@ -336,6 +337,18 @@ class LocalPortfolioStore:
                         comments text not null default '',
                         created_at text not null,
                         unique(symbol, stock_market)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    create table if not exists security_industry_overrides (
+                        symbol text not null,
+                        stock_market text not null default '',
+                        industry text not null,
+                        created_at text not null,
+                        updated_at text not null,
+                        primary key(symbol, stock_market)
                     )
                     """
                 )
@@ -727,6 +740,7 @@ class LocalPortfolioStore:
                 "transactions": conn.execute("select count(*) from transactions").fetchone()[0],
                 "prices": conn.execute("select count(*) from price_history").fetchone()[0],
                 "manual_securities": conn.execute("select count(*) from manual_securities").fetchone()[0],
+                "security_industry_overrides": conn.execute("select count(*) from security_industry_overrides").fetchone()[0],
                 "issuers": conn.execute("select count(*) from issuers").fetchone()[0],
                 "equity_transitions": conn.execute("select count(*) from equity_transitions").fetchone()[0],
                 "brokers": conn.execute("select count(*) from brokers").fetchone()[0],
@@ -808,13 +822,14 @@ class LocalPortfolioStore:
                 conn.execute("delete from funds")
                 conn.execute("delete from price_history")
                 conn.execute("delete from transactions")
+                conn.execute("delete from security_industry_overrides")
                 conn.execute("delete from manual_securities")
                 conn.execute("delete from issuers")
                 conn.execute("delete from accounts")
                 conn.execute("delete from family_members")
                 conn.execute("delete from brokers")
                 conn.execute("delete from app_preferences")
-                for table in ["app_preferences", "brokers", "family_members", "accounts", "issuers", "manual_securities", "transactions", "equity_transitions", "price_history", "funds", "fund_amount_history", "account_snapshots", "events", "company_report_predictions"]:
+                for table in ["app_preferences", "brokers", "family_members", "accounts", "issuers", "manual_securities", "security_industry_overrides", "transactions", "equity_transitions", "price_history", "funds", "fund_amount_history", "account_snapshots", "events", "company_report_predictions"]:
                     columns = EXPORT_TABLES[table]
                     placeholders = ", ".join([":" + column for column in columns])
                     conn.executemany(
@@ -1410,6 +1425,65 @@ class LocalPortfolioStore:
                 item.update(self._manual_security_deletion_state(conn, item))
                 items.append(item)
         return items
+
+    def list_security_industry_overrides(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                select symbol, stock_market, industry, created_at, updated_at
+                from security_industry_overrides
+                order by symbol, stock_market
+                """
+            ).fetchall()
+        return [_dict(row) for row in rows]
+
+    def save_security_industry_override(self, payload: dict[str, Any]) -> dict[str, Any]:
+        symbol = str(payload.get("symbol") or "").strip().upper()
+        stock_market = str(payload.get("stock_market") or "").strip().upper()
+        industry = str(payload.get("industry") or "").strip()
+        if not symbol:
+            raise ValueError("Security symbol is required")
+        if not industry:
+            raise ValueError("Industry is required")
+        now = _now()
+        with self._sync_lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    insert into security_industry_overrides (symbol, stock_market, industry, created_at, updated_at)
+                    values (?, ?, ?, ?, ?)
+                    on conflict(symbol, stock_market) do update set
+                      industry = excluded.industry,
+                      updated_at = excluded.updated_at
+                    """,
+                    (symbol, stock_market, industry, now, now),
+                )
+                row = conn.execute(
+                    """
+                    select symbol, stock_market, industry, created_at, updated_at
+                    from security_industry_overrides
+                    where symbol = ? and stock_market = ?
+                    """,
+                    (symbol, stock_market),
+                ).fetchone()
+        return _dict(row)
+
+    def delete_security_industry_override(self, symbol: str, stock_market: str = "") -> bool:
+        clean_symbol = str(symbol or "").strip().upper()
+        clean_market = str(stock_market or "").strip().upper()
+        if not clean_symbol:
+            raise ValueError("Security symbol is required")
+        with self._sync_lock:
+            with self._connect() as conn:
+                before = conn.execute(
+                    "select count(*) from security_industry_overrides where symbol = ? and stock_market = ?",
+                    (clean_symbol, clean_market),
+                ).fetchone()[0]
+                conn.execute(
+                    "delete from security_industry_overrides where symbol = ? and stock_market = ?",
+                    (clean_symbol, clean_market),
+                )
+        return bool(before)
 
     def _manual_security_deletion_state(
         self,

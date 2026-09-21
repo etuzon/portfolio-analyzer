@@ -73,6 +73,79 @@ def test_rsu_is_available_for_transactions_but_not_instrument_definitions():
     assert "RSU" not in options["instrument_types"]
 
 
+def test_industry_override_api_uses_supported_catalog_and_clears_cache(monkeypatch):
+    class Store:
+        def __init__(self):
+            self.saved = None
+
+        def list_security_industry_overrides(self):
+            return [{"symbol": "MSFT", "stock_market": "NASDAQ", "industry": "Software"}]
+
+        def save_security_industry_override(self, payload):
+            self.saved = payload
+            return payload
+
+        def delete_security_industry_override(self, symbol, stock_market):
+            return symbol == "MSFT" and stock_market == "NASDAQ"
+
+    store = Store()
+    cache_clears = []
+    monkeypatch.setattr(main, "local_store", store)
+    monkeypatch.setattr(main, "clear_portfolio_cache", lambda: cache_clears.append(True))
+
+    listed = main.list_security_industry_overrides()
+    saved = main.save_security_industry_override(
+        {"symbol": "MSFT", "stock_market": "NASDAQ", "industry": "Software"}
+    )
+    deleted = main.delete_security_industry_override("MSFT", "NASDAQ")
+
+    assert "Banks" in listed["industries"]
+    assert "Bonds" not in listed["industries"]
+    assert saved["industry"] == "Software"
+    assert deleted == {"deleted": True}
+    assert len(cache_clears) == 2
+    with pytest.raises(HTTPException) as exc_info:
+        main.save_security_industry_override(
+            {"symbol": "MSFT", "stock_market": "NASDAQ", "industry": "Made Up"}
+        )
+    assert exc_info.value.status_code == 400
+
+
+def test_portfolio_industry_overrides_and_keeps_bonds_out_of_industries(monkeypatch):
+    class Store:
+        def list_security_industry_overrides(self):
+            return [{"symbol": "MSFT", "stock_market": "NASDAQ", "industry": "Software"}]
+
+    rows = {
+        "stock": {
+            "holding": {"symbol": "MSFT", "stock_market": "NASDAQ", "asset_class": "EQUITY", "industry": "EDP Services", "sector": "Technology"},
+            "industry": "EDP Services",
+        },
+        "bank": {
+            "holding": {"symbol": "BANK", "stock_market": "NYSE", "asset_class": "EQUITY", "industry": "Major Banks", "sector": "Financial Services"},
+            "industry": "Major Banks",
+        },
+        "bond": {
+            "holding": {"symbol": "IL001", "stock_market": "TASE", "asset_class": "BOND", "industry": "Financial Services", "sector": "Financial Services"},
+            "industry": "Financial Services",
+        },
+    }
+    monkeypatch.setattr(main, "local_store", Store())
+    monkeypatch.setattr(main, "enriched_local_holdings", lambda: list(rows))
+    monkeypatch.setattr(main, "to_dict", lambda key: rows[key])
+    monkeypatch.setattr(main, "_portfolio_cache", None)
+
+    items = main.portfolio_payload()["items"]
+
+    assert items[0]["industry"] == "Software"
+    assert items[0]["industry_source"] == "manual"
+    assert items[0]["provider_industry"] == "EDP Services"
+    assert items[1]["industry"] == "Banks"
+    assert items[1]["industry_source"] == "provider"
+    assert items[2]["industry"] == "Bonds"
+    assert items[2]["industry_source"] == "asset_class"
+
+
 class _LocalStore:
     def __init__(self):
         self.imported = False

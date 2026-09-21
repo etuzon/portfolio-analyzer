@@ -966,6 +966,41 @@ def test_manual_securities_round_trip_in_export(tmp_path):
     assert restored.list_manual_securities()[0]["instrument_type"] == "BOND"
 
 
+def test_security_industry_overrides_are_local_persistent_and_exportable(tmp_path):
+    source = LocalPortfolioStore(tmp_path / "source.sqlite3")
+
+    saved = source.save_security_industry_override(
+        {"symbol": " msft ", "stock_market": " nasdaq ", "industry": "Software"}
+    )
+    updated = source.save_security_industry_override(
+        {"symbol": "MSFT", "stock_market": "NASDAQ", "industry": "Technology"}
+    )
+
+    assert saved["symbol"] == "MSFT"
+    assert saved["stock_market"] == "NASDAQ"
+    assert updated["industry"] == "Technology"
+    assert len(source.list_security_industry_overrides()) == 1
+
+    exported = source.export_data()
+    restored = LocalPortfolioStore(tmp_path / "restored.sqlite3")
+    restored.import_data(exported)
+
+    assert exported["counts"]["security_industry_overrides"] == 1
+    assert restored.list_security_industry_overrides()[0]["industry"] == "Technology"
+    assert restored.delete_security_industry_override("msft", "nasdaq") is True
+    assert restored.delete_security_industry_override("msft", "nasdaq") is False
+    assert restored.list_security_industry_overrides() == []
+
+
+def test_security_industry_override_requires_symbol_and_industry(tmp_path):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+
+    with pytest.raises(ValueError, match="symbol"):
+        store.save_security_industry_override({"industry": "Software"})
+    with pytest.raises(ValueError, match="Industry"):
+        store.save_security_industry_override({"symbol": "MSFT"})
+
+
 def test_import_price_history_stores_source_prices_without_renormalizing(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
     result = store.import_price_history(

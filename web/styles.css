@@ -2259,7 +2259,9 @@ textarea.muted-control {
   gap: 5px;
 }
 
-.industry-holdings span {
+.industry-holdings > span,
+.industry-holding-button {
+  min-height: 28px;
   padding: 3px 6px;
   border: 1px solid #303744;
   border-radius: 5px;
@@ -2267,6 +2269,30 @@ textarea.muted-control {
   color: #cbd7e8;
   font-size: 10px;
   font-weight: 800;
+}
+
+.industry-holding-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.industry-holding-button:hover,
+.industry-holding-button:focus-visible {
+  border-color: #6aaefc;
+  color: #f3f8ff;
+}
+
+.industry-holding-button.is-manual {
+  border-color: rgba(167, 111, 255, 0.7);
+  background: rgba(126, 73, 210, 0.16);
+}
+
+.industry-holding-button i {
+  color: #78b9ff;
+  font-size: 11px;
+  font-style: normal;
 }
 
 .bubbles-card {
@@ -5003,6 +5029,46 @@ tbody tr:hover {
 
 .modal-card.wide {
   width: min(1180px, 100%);
+}
+
+.industry-classification-card {
+  width: min(560px, 100%);
+}
+
+.industry-classification-card > p {
+  color: #aeb9c9;
+  line-height: 1.5;
+}
+
+.industry-classification-summary {
+  display: grid;
+  gap: 5px;
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid #2c3542;
+  border-radius: 8px;
+  background: #11151b;
+}
+
+.industry-classification-summary span {
+  color: #aeb9c9;
+  font-size: 13px;
+}
+
+.industry-classification-field {
+  display: grid;
+  gap: 7px;
+  font-weight: 750;
+}
+
+.industry-classification-field select {
+  min-width: 260px;
+  width: 100%;
+}
+
+.industry-classification-actions {
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .transaction-history-subtitle {

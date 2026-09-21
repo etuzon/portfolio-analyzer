@@ -17,6 +17,9 @@ const state = {
   baseCurrency: "ILS",
   localAccounts: [],
   manualSecurities: [],
+  industryClassifications: [],
+  industryCatalog: [],
+  industryClassificationTarget: null,
   localTransactions: [],
   localEvents: [],
   focusedEventId: "",
@@ -595,7 +598,7 @@ const WRITE_CONTROL_IDS = new Set([
   "saveAlert", "saveApiAccessSettings", "saveBackupSettings", "saveBroker", "saveDetailPrice", "saveDisplaySettings", "saveEditAccount",
   "saveEditFund", "saveEmployeeExercise", "saveEmployeeListing", "saveEmployeeOptionGrant", "saveFamilyMember",
   "saveFund", "saveFundHistory", "saveHistorySnapshot", "saveLocalAccount", "saveManualSecurity",
-  "savePositionTransaction", "savePrice", "saveSecurity", "saveTableSettings", "saveUser", "showFundCreate",
+  "saveIndustryClassification", "removeIndustryClassification", "savePositionTransaction", "savePrice", "saveSecurity", "saveTableSettings", "saveUser", "showFundCreate",
   "showPensionPeriodEntry", "showPensionRateEntry",
 ]);
 const WRITE_DATA_ACTIONS = new Set([
@@ -1834,6 +1837,10 @@ function diversifiedFund(item) {
 
 function industryLabel(item) {
   const h = item.holding || {};
+  const asset = String(h.asset_class || "").toUpperCase();
+  const instrument = String(h.asset_sub_class || "").toUpperCase();
+  if (asset === "BOND" || instrument === "BOND") return "Bonds";
+  if (item.industry_source === "manual") return String(item.industry || "").trim();
   if (diversifiedFund(item)) return "Diversified fund";
   return String(item.industry || h.industry || h.sector || "").trim();
 }
@@ -2877,7 +2884,7 @@ function renderRows(items) {
     const provider = dataProviderDisplay(item, h, marketKey);
     const securityName = String(h.name || "").trim();
     const companyLine = securityName || String(h.symbol || "").trim();
-    const industry = String(item.industry || h.industry || h.sector || "").trim();
+    const industry = industryLabel(item);
     const industryLine = `<div class="security-industry">${esc(optionLabel("Industry"))}: ${esc(industry ? optionLabel(industry) : optionLabel("Not available"))}</div>`;
     const marketLine = `${optionLabel(h.asset_class || "Asset")} · ${currencyDisplayLabel(h.currency || "")} · ${optionLabel("Market")}: ${market} · API: ${provider}`;
     const accountMeta = h.account_type
@@ -3599,6 +3606,10 @@ function renderIndustrySplit(items) {
     group.holdings.push({
       symbol: item.holding.symbol || "Unknown",
       name: item.holding.name || item.holding.symbol || "Unknown",
+      stockMarket: holdingMarketKey(item.holding),
+      assetClass: String(item.holding.asset_class || "").toUpperCase(),
+      assetSubClass: String(item.holding.asset_sub_class || "").toUpperCase(),
+      industrySource: item.industry_source || "",
       value,
     });
     result[label] = group;
@@ -3648,7 +3659,13 @@ function renderIndustrySplit(items) {
                 <i style="width:${Math.max(percent, 0.8)}%;background:${colorAt(index)}"></i>
               </div>
               <div class="industry-holdings">
-                ${group.holdings.map((holding) => `<span title="${esc(`${holding.name}: ${money(holding.value, state.baseCurrency, 0)}`)}">${esc(holding.symbol)}</span>`).join("")}
+                ${group.holdings.map((holding) => {
+                  const title = `${holding.name}: ${money(holding.value, state.baseCurrency, 0)}`;
+                  const isBond = holding.assetClass === "BOND" || holding.assetSubClass === "BOND";
+                  if (isBond) return `<span title="${esc(title)}">${esc(holding.symbol)}</span>`;
+                  const actionLabel = holding.industrySource === "manual" ? "Edit manual industry" : "Classify industry";
+                  return `<button class="industry-holding-button${holding.industrySource === "manual" ? " is-manual" : ""}" type="button" data-classify-industry-symbol="${esc(holding.symbol)}" data-classify-industry-market="${esc(holding.stockMarket)}" title="${esc(`${optionLabel(actionLabel)} · ${title}`)}"><span>${esc(holding.symbol)}</span><i aria-hidden="true">✎</i><span class="sr-only">${esc(optionLabel(actionLabel))}</span></button>`;
+                }).join("")}
               </div>
             </div>
           `;
@@ -9189,6 +9206,89 @@ async function saveEditFund() {
   await loadReports();
 }
 
+function portfolioItemBySecurity(symbol, stockMarket) {
+  const cleanSymbol = String(symbol || "").trim().toUpperCase();
+  const cleanMarket = String(stockMarket || "").trim().toUpperCase();
+  return (state.allPortfolioItems || []).find((item) => {
+    const holding = item.holding || {};
+    return String(holding.symbol || "").trim().toUpperCase() === cleanSymbol
+      && holdingMarketKey(holding).toUpperCase() === cleanMarket;
+  });
+}
+
+function openIndustryClassification(symbol, stockMarket, returnFocus) {
+  const item = portfolioItemBySecurity(symbol, stockMarket);
+  if (!item) return;
+  const holding = item.holding || {};
+  const asset = String(holding.asset_class || "").toUpperCase();
+  const instrument = String(holding.asset_sub_class || "").toUpperCase();
+  if (asset === "BOND" || instrument === "BOND") return;
+  const catalog = [...new Set(state.industryCatalog || [])]
+    .sort((left, right) => optionLabel(left).localeCompare(optionLabel(right), state.language === "he" ? "he" : "en"));
+  const current = String(item.industry || "").trim();
+  const provider = String(item.provider_industry || holding.sector || "").trim();
+  state.industryClassificationTarget = {
+    symbol: String(holding.symbol || symbol).trim(),
+    stockMarket: holdingMarketKey(holding),
+  };
+  $("industryClassificationSecurity").textContent = `${holding.symbol}${holding.name ? ` · ${holding.name}` : ""}`;
+  $("industryClassificationProvider").textContent = provider
+    ? `${optionLabel("Provider classification")}: ${optionLabel(provider)}`
+    : optionLabel("The provider did not classify this security.");
+  $("industryClassificationSelect").innerHTML = [
+    `<option value="">${esc(optionLabel("Choose an industry"))}</option>`,
+    ...catalog.map((industry) => `<option value="${esc(industry)}">${esc(optionLabel(industry))}</option>`),
+  ].join("");
+  $("industryClassificationSelect").value = catalog.includes(current) ? current : "";
+  $("industryClassificationStatus").textContent = "";
+  $("removeIndustryClassification").hidden = item.industry_source !== "manual";
+  openModal("industryClassificationModal", returnFocus);
+  applyRolePermissions($("industryClassificationModal"));
+  requestAnimationFrame(() => $("industryClassificationSelect")?.focus());
+}
+
+async function saveIndustryClassification() {
+  const target = state.industryClassificationTarget;
+  if (!target) return;
+  const industry = valueOf("industryClassificationSelect");
+  if (!industry) {
+    $("industryClassificationStatus").textContent = optionLabel("Choose an industry before saving.");
+    $("industryClassificationSelect").focus();
+    return;
+  }
+  const button = $("saveIndustryClassification");
+  button.disabled = true;
+  $("industryClassificationStatus").textContent = optionLabel("Saving classification");
+  try {
+    await api("/api/local/security-industry-overrides", {
+      method: "PUT",
+      body: JSON.stringify({ symbol: target.symbol, stock_market: target.stockMarket, industry }),
+    });
+    closeModal($("industryClassificationModal"));
+    await loadPortfolio();
+    $("status").textContent = optionLabel("Industry classification saved");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function removeIndustryClassification() {
+  const target = state.industryClassificationTarget;
+  if (!target) return;
+  const button = $("removeIndustryClassification");
+  button.disabled = true;
+  $("industryClassificationStatus").textContent = optionLabel("Restoring provider classification");
+  try {
+    const params = new URLSearchParams({ stock_market: target.stockMarket });
+    await api(`/api/local/security-industry-overrides/${encodeURIComponent(target.symbol)}?${params}`, { method: "DELETE" });
+    closeModal($("industryClassificationModal"));
+    await loadPortfolio();
+    $("status").textContent = optionLabel("Provider classification restored");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadPortfolio({ refresh = false } = {}) {
   $("status").textContent = refresh ? "Refreshing analytics" : "Preparing dashboard";
   setLoading(true, refresh ? "Refreshing portfolio analytics" : "Loading portfolio analytics");
@@ -9199,16 +9299,19 @@ async function loadPortfolio({ refresh = false } = {}) {
       date_to: todayString(),
     });
     const portfolioPath = refresh ? "/api/portfolio?refresh=true" : "/api/portfolio";
-    const [data, trend, fxData, accountData, transactionData] = await Promise.all([
+    const [data, trend, fxData, accountData, transactionData, classificationData] = await Promise.all([
       api(portfolioPath),
       api(`/api/local/account-trends?${trendParams}`),
       api("/api/fx").catch(() => ({ quotes: [] })),
       api("/api/local/accounts"),
       api("/api/local/securities"),
+      api("/api/local/security-industry-overrides"),
     ]);
     setCoreFxRates(fxData);
     state.localAccounts = accountData.items || [];
     state.localTransactions = transactionData.items || [];
+    state.industryClassifications = classificationData.items || [];
+    state.industryCatalog = classificationData.industries || [];
     const allItems = data.items || [];
     state.allPortfolioItems = allItems;
     state.items = portfolioItems(allItems);
@@ -10877,6 +10980,15 @@ document.addEventListener("click", (event) => {
     renderAnalytics(state.items || []);
   }
 
+  const industryClassificationButton = event.target.closest("[data-classify-industry-symbol]");
+  if (industryClassificationButton) {
+    openIndustryClassification(
+      industryClassificationButton.dataset.classifyIndustrySymbol,
+      industryClassificationButton.dataset.classifyIndustryMarket,
+      industryClassificationButton,
+    );
+  }
+
   if (event.target.matches("[data-close]")) {
     closeModal(event.target.closest(".modal"));
   }
@@ -11551,6 +11663,8 @@ $("saveDisplaySettings").addEventListener("click", () => {
 $("dashboardEdit").addEventListener("click", () => setDashboardEdit(!state.dashboard.edit));
 $("dashboardReset").addEventListener("click", resetDashboard);
 $("saveManualSecurity").addEventListener("click", () => saveManualSecurity().catch((error) => { $("manualSecurityStatus").textContent = `Error: ${error.message}`; }));
+$("saveIndustryClassification").addEventListener("click", () => saveIndustryClassification().catch((error) => { $("industryClassificationStatus").textContent = `Error: ${error.message}`; }));
+$("removeIndustryClassification").addEventListener("click", () => removeIndustryClassification().catch((error) => { $("industryClassificationStatus").textContent = `Error: ${error.message}`; }));
 $("saveSecurity").addEventListener("click", () => saveSecurity().catch((error) => { $("securityStatus").textContent = `Error: ${error.message}`; }));
 $("newEmployeeOptionGrant").addEventListener("click", beginNewEmployeeOptionGrant);
 $("cancelEmployeeOptionWizard").addEventListener("click", hideEmployeeOptionWizard);

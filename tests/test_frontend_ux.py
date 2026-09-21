@@ -95,6 +95,30 @@ def test_manual_securities_use_all_countries_and_only_three_supported_currencies
     assert "Security currency must be ILS, USD, or EUR." in script
 
 
+def test_industry_split_supports_accessible_local_classification_and_separates_bonds():
+    html = (ROOT / "web/index.html").read_text()
+    script = (ROOT / "web/app.js").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+    translations = (ROOT / "web/i18n.js").read_text()
+    parser = _LabelParser()
+    parser.feed(html)
+
+    assert 'id="industryClassificationModal"' in html
+    assert 'role="dialog" aria-modal="true" aria-labelledby="industryClassificationTitle"' in html
+    assert 'id="industryClassificationStatus" class="status-line" role="status" aria-live="polite"' in html
+    assert "industryClassificationSelect" in parser.labeled_controls
+    assert 'api("/api/local/security-industry-overrides")' in script
+    assert 'method: "PUT"' in script
+    assert 'data-classify-industry-symbol=' in script
+    assert 'if (asset === "BOND" || instrument === "BOND") return "Bonds";' in script
+    assert 'if (isBond) return `<span' in script
+    assert ".industry-holding-button.is-manual" in styles
+    assert '"Bonds": "אג״ח"' in translations
+    assert '"Banks": "בנקים"' in translations
+    assert '"Choose an industry": "בחירת ענף"' in translations
+    assert "Bonds always appear under Bonds and are not treated as an industry." in html
+
+
 def test_account_forms_show_country_flags_and_three_supported_currencies():
     script = (ROOT / "web/app.js").read_text()
 
