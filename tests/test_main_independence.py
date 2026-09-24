@@ -146,6 +146,47 @@ def test_portfolio_industry_overrides_and_keeps_bonds_out_of_industries(monkeypa
     assert items[2]["industry_source"] == "asset_class"
 
 
+def test_portfolio_attaches_local_exposure_profile_by_symbol_and_market(monkeypatch):
+    class Store:
+        def list_security_industry_overrides(self):
+            return []
+
+        def list_security_exposure_profiles(self):
+            return [{"symbol": "5136924", "stock_market": "TASE", "profile": {
+                "asset_focus": "money_market", "fx_basis": "unknown",
+                "currency_exposures": [], "fx_policy_limit_percent": 120,
+            }}]
+
+    item = {"holding": {"symbol": "5136924", "stock_market": "TASE", "asset_class": "MUTUALFUND", "currency": "ILS"}}
+    monkeypatch.setattr(main, "local_store", Store())
+    monkeypatch.setattr(main, "enriched_local_holdings", lambda: [item])
+    monkeypatch.setattr(main, "to_dict", lambda row: row.copy())
+    monkeypatch.setattr(main, "_portfolio_cache", None)
+
+    result = main.portfolio_payload()["items"][0]
+    assert result["exposure_profile"]["asset_focus"] == "money_market"
+    assert result["exposure_profile"]["fx_policy_limit_percent"] == 120
+
+
+def test_exposure_profile_api_clears_cached_portfolio_after_local_write(monkeypatch, tmp_path):
+    from app.local_portfolio import LocalPortfolioStore
+
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    cache_clears = []
+    monkeypatch.setattr(main, "local_store", store)
+    monkeypatch.setattr(main, "clear_portfolio_cache", lambda: cache_clears.append(True))
+    payload = {"symbol": "5136924", "stock_market": "TASE", "profile": {
+        "asset_focus": "money_market", "fx_reference_currency": "USD",
+        "fx_basis": "unknown", "fx_policy_limit_percent": 120,
+    }}
+
+    saved = main.save_security_exposure_profile(payload)
+    assert saved["profile"]["fx_reference_currency"] == "USD"
+    assert main.list_security_exposure_profiles()["items"][0]["profile"]["asset_focus"] == "money_market"
+    assert main.delete_security_exposure_profile("5136924", "TASE") == {"deleted": True}
+    assert cache_clears == [True, True]
+
+
 class _LocalStore:
     def __init__(self):
         self.imported = False

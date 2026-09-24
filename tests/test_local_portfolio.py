@@ -1001,6 +1001,52 @@ def test_security_industry_override_requires_symbol_and_industry(tmp_path):
         store.save_security_industry_override({"symbol": "MSFT"})
 
 
+def test_exposure_profile_preserves_reported_values_and_policy_limit_in_backup(tmp_path):
+    source = LocalPortfolioStore(tmp_path / "source.sqlite3")
+    saved = source.save_security_exposure_profile({
+        "symbol": " 5136924 ", "stock_market": "tase",
+        "profile": {
+            "asset_focus": "money_market", "fx_basis": "reported",
+            "fx_reference_currency": "usd",
+            "currency_exposures": [{"currency": "usd", "percent": 78}, {"currency": "ils", "percent": 12}],
+            "fx_policy_limit_percent": 120, "source_note": "Fund report", "as_of": "2026-09-01",
+        },
+    })
+    assert saved["symbol"] == "5136924"
+    assert saved["profile"]["currency_exposures"] == [
+        {"currency": "USD", "percent": 78}, {"currency": "ILS", "percent": 12},
+    ]
+    assert saved["profile"]["fx_policy_limit_percent"] == 120
+    assert saved["profile"]["fx_reference_currency"] == "USD"
+
+    backup = source.export_data()
+    restored = LocalPortfolioStore(tmp_path / "restored.sqlite3")
+    restored.import_data(backup)
+    profile = restored.list_security_exposure_profiles()[0]["profile"]
+    assert profile["asset_focus"] == "money_market"
+    assert profile["currency_exposures"] == saved["profile"]["currency_exposures"]
+    assert profile["fx_policy_limit_percent"] == 120
+    assert restored.delete_security_exposure_profile("5136924", "TASE") is True
+    assert restored.list_security_exposure_profiles() == []
+
+
+@pytest.mark.parametrize("profile", [
+    {"fx_basis": "unknown", "currency_exposures": [{"currency": "USD", "percent": 100}]},
+    {"fx_basis": "estimated", "currency_exposures": [{"currency": "USD", "percent": 70}, {"currency": "ILS", "percent": 40}]},
+    {"fx_basis": "reported", "currency_exposures": [{"currency": "USD", "percent": 60}, {"currency": "USD", "percent": 10}]},
+    {"fx_basis": "reported", "currency_exposures": [{"currency": "USD", "percent": 80}]},
+    {"asset_focus": "invalid"},
+    {"asset_focus": "single_country_equity"},
+    {"asset_focus": "sector_equity"},
+    {"fx_policy_limit_percent": float("nan")},
+    {"as_of": "2026-02-30"},
+])
+def test_exposure_profile_rejects_misleading_or_invalid_data(tmp_path, profile):
+    store = LocalPortfolioStore(tmp_path / "local.sqlite3")
+    with pytest.raises(ValueError):
+        store.save_security_exposure_profile({"symbol": "5136924", "stock_market": "TASE", "profile": profile})
+
+
 def test_import_price_history_stores_source_prices_without_renormalizing(tmp_path):
     store = LocalPortfolioStore(tmp_path / "local.sqlite3")
     result = store.import_price_history(

@@ -20,6 +20,7 @@ const state = {
   industryClassifications: [],
   industryCatalog: [],
   industryClassificationTarget: null,
+  securityExposureTarget: null,
   localTransactions: [],
   localEvents: [],
   focusedEventId: "",
@@ -599,6 +600,7 @@ const WRITE_CONTROL_IDS = new Set([
   "saveEditFund", "saveEmployeeExercise", "saveEmployeeListing", "saveEmployeeOptionGrant", "saveFamilyMember",
   "saveFund", "saveFundHistory", "saveHistorySnapshot", "saveLocalAccount", "saveManualSecurity",
   "saveIndustryClassification", "removeIndustryClassification", "savePositionTransaction", "savePrice", "saveSecurity", "saveTableSettings", "saveUser", "showFundCreate",
+  "addSecurityExposureCurrency", "saveSecurityExposure", "removeSecurityExposure",
   "showPensionPeriodEntry", "showPensionRateEntry",
 ]);
 const WRITE_DATA_ACTIONS = new Set([
@@ -612,6 +614,7 @@ const WRITE_DATA_ACTIONS = new Set([
   "data-exercise-employee-option", "data-fix-skipped-account", "data-link-employee-listing", "data-remove-alert-condition",
   "data-remove-banner", "data-schedule-pension-scenario", "data-toggle-alert", "data-use-manual-security",
   "data-user-enabled", "data-delete-user",
+  "data-remove-exposure-currency",
 ]);
 
 function currentUser() {
@@ -1703,15 +1706,24 @@ function portfolioCashValue() {
 }
 
 function assetMixGroups(items) {
-  const groups = groupValues(items, (item) => item.holding.asset_class);
+  const groups = groupValues(items, (item) => item.exposure_profile?.asset_focus
+    ? EXPOSURE_FOCUS_LABELS[item.exposure_profile.asset_focus] || item.exposure_profile.asset_focus
+    : ["ETF", "MUTUALFUND"].includes(String(item.holding.asset_class || "").toUpperCase())
+      ? "Unclassified funds" : item.holding.asset_class);
   groups.push({ label: "Cash", value: portfolioCashValue() });
   return groups.sort((left, right) => Number(right.value || 0) - Number(left.value || 0));
 }
 
 function currencyAllocationGroups(items) {
-  const totals = Object.fromEntries(
-    groupValues(items, (item) => item.holding.currency).map((group) => [group.label, group.value]),
-  );
+  const totals = {};
+  items.forEach((item) => {
+    const value = normalizedField(item, "market_value");
+    const exposure = economicCurrencyExposure(item);
+    exposure.allocations.forEach(({ currency, percent }) => {
+      totals[currency] = (totals[currency] || 0) + value * Number(percent || 0) / 100;
+    });
+    if (exposure.unknownPercent > 0) totals.Unknown = (totals.Unknown || 0) + value * exposure.unknownPercent / 100;
+  });
   portfolioAccounts().forEach((account) => {
     const currency = account.currency || state.baseCurrency;
     const cash = accountCashValue(account);
@@ -1801,6 +1813,14 @@ function assetRiskFactor(item) {
   const symbol = String(h.symbol || "").toUpperCase();
   if (["OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"].includes(asset) || ["OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"].includes(instrument)) return 1;
   if (symbol.includes("3X") || symbol.includes("2X") || symbol.includes("LEVERAGED")) return 1;
+  const focus = item.exposure_profile?.asset_focus;
+  const focusFactors = {
+    money_market: 0.12, government_bond: 0.2, investment_grade_bond: 0.35,
+    high_yield_bond: 0.6, broad_equity: 0.65, single_country_equity: 0.75,
+    sector_equity: 0.8, multi_asset: 0.5, real_estate: 0.7,
+    commodity: 0.85, derivative: 1, other: 0.7,
+  };
+  if (focus && Object.hasOwn(focusFactors, focus)) return focusFactors[focus];
   if (asset === "BOND") return 0.35;
   if (asset === "ETF" || asset === "MUTUALFUND") return 0.45;
   if (asset === "EQUITY" || asset === "RSU") return 0.65;
@@ -1831,6 +1851,12 @@ function diversifiedFund(item) {
   const industry = String(item.industry || h.industry || h.sector || "").toLowerCase();
   if (!["ETF", "MUTUALFUND"].includes(asset)) return false;
   if (derivativeHolding(item)) return false;
+  const focus = item.exposure_profile?.asset_focus;
+  if (focus) {
+    const sector = String(item.exposure_profile.sector_exposure || "").trim().toLowerCase();
+    return (!sector || sector === "broad market")
+      && ["broad_equity", "multi_asset", "money_market", "government_bond", "investment_grade_bond"].includes(focus);
+  }
   if (industry.includes("sector") || industry.includes("industry")) return false;
   return !/(ARKK|SOXX|XLK|XLE|XLF|XLV|XLI|XLY|XLP|XLU|XLB|XLC|XBI|KWEB|TAN|ICLN|SMH)/.test(symbol);
 }
@@ -1841,6 +1867,8 @@ function industryLabel(item) {
   const instrument = String(h.asset_sub_class || "").toUpperCase();
   if (asset === "BOND" || instrument === "BOND") return "Bonds";
   if (item.industry_source === "manual") return String(item.industry || "").trim();
+  if (item.exposure_profile?.sector_exposure) return item.exposure_profile.sector_exposure;
+  if (item.exposure_profile?.asset_focus === "money_market") return "Money market";
   if (diversifiedFund(item)) return "Diversified fund";
   return String(item.industry || h.industry || h.sector || "").trim();
 }
@@ -1852,7 +1880,20 @@ function issuerLabel(item) {
 
 function countryLabel(item) {
   const h = item.holding || {};
-  return String(h.country || h.location || h.currency || "Unknown").trim();
+  const fund = ["ETF", "MUTUALFUND"].includes(String(h.asset_class || "").toUpperCase());
+  if (fund) return item.exposure_profile?.asset_focus === "single_country_equity"
+    ? String(item.exposure_profile.geography || "").trim() : "";
+  if (item.exposure_profile?.geography) return item.exposure_profile.geography;
+  return String(h.country || h.location || "").trim();
+}
+
+function economicCurrencyExposure(item) {
+  const h = item.holding || {};
+  const profile = item.exposure_profile;
+  const fund = ["ETF", "MUTUALFUND"].includes(String(h.asset_class || "").toUpperCase());
+  if (!profile && !fund) return { allocations: [{ currency: h.currency || state.baseCurrency, percent: 100 }], unknownPercent: 0 };
+  const allocations = profile?.fx_basis === "unknown" ? [] : (profile?.currency_exposures || []);
+  return { allocations, unknownPercent: Math.max(0, 100 - sum(allocations.map((row) => Number(row.percent || 0)))) };
 }
 
 function volatilityProxy(item) {
@@ -1867,6 +1908,7 @@ function volatilityProxy(item) {
   if (derivativeHolding(item)) return 90;
   const asset = String(h.asset_class || "").toUpperCase();
   if (asset === "BOND") return 14;
+  if (item.exposure_profile?.asset_focus === "money_market") return 12;
   if (asset === "ETF" || asset === "MUTUALFUND") return diversifiedFund(item) ? 24 : 36;
   if (asset === "EQUITY") return 48;
   return 55;
@@ -1939,6 +1981,7 @@ function riskTooltip(risk) {
     if (text.startsWith("Low cash ")) return `the cash buffer is low (${text.slice(9)})`;
     if (text.startsWith("High cash ")) return `a large share is held in cash (${text.slice(10)})`;
     if (text.startsWith("Missing industry ")) return `industry information is missing for ${text.slice(17)}`;
+    if (text.startsWith("Unknown FX exposure ")) return `currency exposure is unknown for ${text.slice(20)} of the portfolio`;
     if (text.startsWith("Asset factor ")) return "its asset type carries market risk";
     if (text === "ETF/fund treated as diversified proxy") return "the fund is treated as diversified";
     if (text === "Option/future/leveraged instrument") return "it uses an option, future, or leveraged instrument";
@@ -1990,10 +2033,14 @@ function riskScoreForItems(items, options = {}) {
   const assetMix = totalValue ? weightedAsset / totalValue * 14 : 0;
 
   const currencyTotals = rows.reduce((totals, item) => {
-    const currency = item.holding.currency || state.baseCurrency;
-    totals[currency] = (totals[currency] || 0) + Math.abs(normalizedField(item, "market_value"));
+    const value = Math.abs(normalizedField(item, "market_value"));
+    economicCurrencyExposure(item).allocations.forEach(({ currency, percent }) => {
+      totals[currency] = (totals[currency] || 0) + value * Number(percent || 0) / 100;
+    });
     return totals;
   }, {});
+  const unknownCurrencyValue = rows.reduce((total, item) => total
+    + Math.abs(normalizedField(item, "market_value")) * economicCurrencyExposure(item).unknownPercent / 100, 0);
   if (cash) {
     const cashCurrency = options.cashCurrency || state.baseCurrency;
     currencyTotals[cashCurrency] = (currencyTotals[cashCurrency] || 0) + cash;
@@ -2003,7 +2050,9 @@ function riskScoreForItems(items, options = {}) {
   const largestForeignCurrencyPct = (foreignValues.length ? Math.max(...foreignValues) : 0) / totalValue * 100;
   const currency = Math.min(nonBaseCurrencyPct / 80, 1) * 7 + Math.min(largestForeignCurrencyPct / 60, 1) * 3;
 
-  const industryRows = rows.filter((item) => Math.abs(normalizedField(item, "market_value")) > 0);
+  const industryRows = rows.filter((item) => Math.abs(normalizedField(item, "market_value")) > 0
+    && ["EQUITY", "RSU", "ETF", "MUTUALFUND"].includes(String(item.holding.asset_class || "").toUpperCase())
+    && !["money_market", "government_bond", "investment_grade_bond", "high_yield_bond"].includes(item.exposure_profile?.asset_focus));
   const industryTotals = industryRows.reduce((totals, item) => {
     const industry = industryLabel(item);
     if (!industry) return totals;
@@ -2056,6 +2105,7 @@ function riskScoreForItems(items, options = {}) {
   }, {});
   const countryTotals = rows.reduce((totals, item) => {
     const country = countryLabel(item);
+    if (!country) return totals;
     totals[country] = (totals[country] || 0) + Math.abs(normalizedField(item, "market_value"));
     return totals;
   }, {});
@@ -2066,7 +2116,8 @@ function riskScoreForItems(items, options = {}) {
 
   const missingPricePct = holdingsValue ? rows.filter((item) => (item.missing || []).includes("price history")).reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")), 0) / holdingsValue * 100 : 0;
   const missingClassPct = holdingsValue ? rows.filter((item) => !item.holding.asset_class || !item.holding.currency).reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")), 0) / holdingsValue * 100 : 0;
-  const dataQuality = missingPricePct / 100 * 2 + missingIndustryPct / 100 * 1.5 + missingClassPct / 100 * 1.5;
+  const dataQuality = Math.min(missingPricePct / 100 * 2 + missingIndustryPct / 100 * 1.5
+    + missingClassPct / 100 * 1.5 + unknownCurrencyValue / totalValue * 1.5, 5);
 
   const components = {
     concentration,
@@ -2084,6 +2135,7 @@ function riskScoreForItems(items, options = {}) {
   const drivers = [
     topPositionPct > 25 ? `Top holding ${fmt(topPositionPct, 1)}%` : "",
     nonBaseCurrencyPct > 40 ? `Foreign currency ${fmt(nonBaseCurrencyPct, 1)}%` : "",
+    unknownCurrencyValue / totalValue > 0.1 ? `Unknown FX exposure ${fmt(unknownCurrencyValue / totalValue * 100, 1)}%` : "",
     derivativePct > 0 ? `Options/futures/leverage ${fmt(derivativePct, 1)}%` : "",
     avgVolatilityPct > 35 ? `1Y volatility proxy ${fmt(avgVolatilityPct, 1)}%` : "",
     horizonYears !== null && horizonYears !== undefined ? `Horizon ${fmt(horizonYears, 1)} years` : "",
@@ -2886,6 +2938,19 @@ function renderRows(items) {
     const companyLine = securityName || String(h.symbol || "").trim();
     const industry = industryLabel(item);
     const industryLine = `<div class="security-industry">${esc(optionLabel("Industry"))}: ${esc(industry ? optionLabel(industry) : optionLabel("Not available"))}</div>`;
+    const exposure = item.exposure_profile;
+    const exposureText = exposure
+      ? [exposure.asset_focus && optionLabel(EXPOSURE_FOCUS_LABELS[exposure.asset_focus] || exposure.asset_focus),
+        exposure.fx_reference_currency && `${currencyDisplayLabel(exposure.fx_reference_currency)} (${optionLabel("Named exposure")})`,
+        exposure.currency_exposures?.length
+          ? exposure.currency_exposures.map((row) => `${currencyDisplayLabel(row.currency)} ${fmt(row.percent, 1)}%`).join(" · ") : optionLabel("FX unknown"),
+        exposure.fx_policy_limit_percent != null && `${optionLabel("Policy maximum")} ${fmt(exposure.fx_policy_limit_percent, 1)}%`,
+        ["reported", "estimated"].includes(exposure.fx_basis) && optionLabel(exposure.fx_basis === "reported" ? "Reported holdings" : "Manual estimate"),
+        exposure.as_of && formatDate(exposure.as_of)].filter(Boolean).join(" · ")
+      : ["ETF", "MUTUALFUND"].includes(String(h.asset_class || "").toUpperCase())
+        ? optionLabel("Exposure unclassified")
+        : `${optionLabel("Currency proxy")}: ${currencyDisplayLabel(h.currency || state.baseCurrency)}`;
+    const exposureLine = `<div class="security-exposure"><button class="secondary compact-button" type="button" data-edit-security-exposure-symbol="${esc(h.symbol)}" data-edit-security-exposure-market="${esc(marketKey)}" title="${esc(optionLabel("Edit exposure profile"))}">${esc(optionLabel("Exposure"))} ✎</button><span>${esc(exposureText)}</span></div>`;
     const marketLine = `${optionLabel(h.asset_class || "Asset")} · ${currencyDisplayLabel(h.currency || "")} · ${optionLabel("Market")}: ${market} · API: ${provider}`;
     const accountMeta = h.account_type
       ? optionLabel(h.account_type)
@@ -2897,7 +2962,7 @@ function renderRows(items) {
       ? Math.abs(Number(h.cost_basis || 0) / Number(h.quantity || 0))
       : 0;
     return `<tr>
-      <td data-label="Security"><div class="security-cell"><div class="security-symbols">${companyLogoHtml(h)}<button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}</div><div class="security-name">${esc(companyLine)}</div>${industryLine}<div class="sub security-meta">${esc(marketLine)}</div></div></td>
+      <td data-label="Security"><div class="security-cell"><div class="security-symbols">${companyLogoHtml(h)}<button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}</div><div class="security-name">${esc(companyLine)}</div>${industryLine}${exposureLine}<div class="sub security-meta">${esc(marketLine)}</div></div></td>
       <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(accountMeta)}</div></td>
       <td data-label="Risk">${riskBadge(rowRisk)}</td>
       <td data-label="Value / P&L"><div class="value-cell">
@@ -3447,8 +3512,10 @@ function renderDonut(groups, title, centerLabel, total, centerSub = null, extraC
   let offset = 0;
   const visibleGroups = groups.slice(0, 6);
   const localizedTitle = optionLabel(title);
+  const groupLabel = (label) => extraClass === "currency-allocation-card" && label !== "Unknown" && label !== "Other currencies"
+    ? currencyDisplayLabel(label) : optionLabel(label);
   const requestedCenterSub = centerSub || (state.language === "he" ? ["נכס", "מוביל"] : ["TOP", "ASSET"]);
-  const centerSubLines = requestedCenterSub.filter(Boolean).map(optionLabel);
+  const centerSubLines = requestedCenterSub.filter(Boolean).map(groupLabel);
   const centerSubText = centerSubLines.length <= 1
     ? `<text x="65" y="82" class="donut-sub single">${esc(centerSubLines[0] || "")}</text>`
     : centerSubLines.slice(0, 2).map((line, index) => `<text x="65" y="${76 + index * 12}" class="donut-sub">${esc(line)}</text>`).join("");
@@ -3460,7 +3527,7 @@ function renderDonut(groups, title, centerLabel, total, centerSub = null, extraC
         ${visibleGroups.map((group, index) => {
           const dash = total ? (group.value / total) * circumference : 0;
           const percent = total ? Math.round(group.value / total * 100) : 0;
-          const tooltip = `${optionLabel(group.label)}\n${money(group.value, state.baseCurrency, 0)}\n${percent}%`;
+          const tooltip = `${groupLabel(group.label)}\n${money(group.value, state.baseCurrency, 0)}\n${percent}%`;
           const circle = `<circle cx="65" cy="65" r="42" fill="none" stroke="${colorAt(index)}" stroke-width="14" stroke-dasharray="${dash.toFixed(1)} ${(circumference - dash).toFixed(1)}" stroke-dashoffset="${(-offset).toFixed(1)}" transform="rotate(-90 65 65)"><title>${esc(tooltip)}</title></circle>`;
           offset += dash;
           return circle;
@@ -3473,16 +3540,23 @@ function renderDonut(groups, title, centerLabel, total, centerSub = null, extraC
         ${visibleGroups.map((group, index) => {
           const percent = total ? Math.round(group.value / total * 100) : 0;
           const cashAmount = group.label === "Cash" ? ` · ${money(group.value, state.baseCurrency, 0)}` : "";
-          const tooltip = `${optionLabel(group.label)} · ${money(group.value, state.baseCurrency, 0)} · ${percent}%`;
-          return `<span title="${esc(tooltip)}"><i style="background:${colorAt(index)}"></i>${esc(optionLabel(group.label))} ${percent}%${cashAmount}</span>`;
+          const tooltip = `${groupLabel(group.label)} · ${money(group.value, state.baseCurrency, 0)} · ${percent}%`;
+          return `<span title="${esc(tooltip)}"><i style="background:${colorAt(index)}"></i>${esc(groupLabel(group.label))} ${percent}%${cashAmount}</span>`;
         }).join("")}
       </div>
     </div>`;
 }
 
 function renderCurrencyAllocation(groups, total) {
-  const topPercent = total ? Math.round((groups[0]?.value || 0) / total * 100) : 0;
-  return renderDonut(groups, "Currency allocation", `${topPercent}%`, total, [groups[0]?.label || state.baseCurrency], "currency-allocation-card");
+  const known = groups.filter((group) => group.label !== "Unknown");
+  const unknown = groups.find((group) => group.label === "Unknown");
+  const visible = known.slice(0, 4);
+  const other = sum(known.slice(4).map((group) => group.value));
+  if (other) visible.push({ label: "Other currencies", value: other });
+  if (unknown) visible.push(unknown);
+  visible.sort((left, right) => right.value - left.value);
+  const topPercent = total ? Math.round((visible[0]?.value || 0) / total * 100) : 0;
+  return renderDonut(visible, "Economic currency exposure", `${topPercent}%`, total, [visible[0]?.label || state.baseCurrency], "currency-allocation-card");
 }
 
 function cashByCurrencyData() {
@@ -9289,6 +9363,143 @@ async function removeIndustryClassification() {
   }
 }
 
+const EXPOSURE_FOCUS_LABELS = {
+  money_market: "Money market", government_bond: "Government bonds",
+  investment_grade_bond: "Investment grade bonds", high_yield_bond: "High yield bonds",
+  broad_equity: "Broad equities", single_country_equity: "Single-country equities",
+  sector_equity: "Sector equities", multi_asset: "Mixed assets", real_estate: "Real estate",
+  commodity: "Commodities", derivative: "Derivatives / leverage", other: "Other assets",
+};
+
+const EXPOSURE_CURRENCIES = ["ILS", "USD", "EUR", "GBP", "INR", "JPY", "CHF", "CAD", "AUD"];
+
+function securityExposureCurrencyOptions(selected = "") {
+  return [...new Set([...EXPOSURE_CURRENCIES, selected].filter(Boolean))]
+    .map((code) => `<option value="${esc(code)}"${code === selected ? " selected" : ""}>${esc(currencyDisplayLabel(code))}</option>`).join("");
+}
+
+function securityExposureCurrencyRow(currency = "", percent = "") {
+  return `<div class="exposure-currency-row">
+    <label class="field"><span>${esc(optionLabel("Currency"))}</span><select data-exposure-currency><option value="">${esc(optionLabel("Choose currency"))}</option>${securityExposureCurrencyOptions(currency)}</select></label>
+    <label class="field"><span>${esc(optionLabel("Exposure %"))}</span><input data-exposure-percent type="number" min="0.1" max="100" step="0.1" value="${esc(percent)}" /></label>
+    <button class="secondary compact-button" type="button" data-remove-exposure-currency aria-label="${esc(optionLabel("Remove currency"))}">×</button>
+  </div>`;
+}
+
+function updateSecurityExposureCurrencyState() {
+  const known = $("securityExposureFxBasis").value !== "unknown";
+  $("addSecurityExposureCurrency").disabled = !known || !canWrite();
+  $("securityExposureCurrencies").querySelectorAll("select, input, button").forEach((field) => { field.disabled = !known || !canWrite(); });
+  const total = known ? [...$("securityExposureCurrencies").querySelectorAll("[data-exposure-percent]")]
+    .reduce((value, input) => value + Number(input.value || 0), 0) : 0;
+  $("securityExposureUnknown").textContent = `${optionLabel("Unclassified currency exposure")}: ${fmt(Math.max(0, 100 - total), 1)}%`;
+}
+
+function openSecurityExposure(symbol, stockMarket, returnFocus) {
+  const item = portfolioItemBySecurity(symbol, stockMarket);
+  if (!item) return;
+  const holding = item.holding || {};
+  const profile = item.exposure_profile || {};
+  state.securityExposureTarget = { symbol: holding.symbol, stockMarket: String(holding.stock_market || "").trim() };
+  $("securityExposureSecurity").textContent = `${holding.symbol}${holding.name ? ` · ${holding.name}` : ""}`;
+  $("securityExposureTradingCurrency").textContent = `${optionLabel("Trading currency")}: ${currencyDisplayLabel(holding.currency)}`;
+  $("securityExposureFocus").innerHTML = `<option value="">${esc(optionLabel("Unknown"))}</option>`
+    + Object.entries(EXPOSURE_FOCUS_LABELS).map(([key, label]) => `<option value="${esc(key)}">${esc(optionLabel(label))}</option>`).join("");
+  $("securityExposureFocus").value = profile.asset_focus || "";
+  $("securityExposureGeography").value = profile.geography || "";
+  $("securityExposureSector").value = profile.sector_exposure || "";
+  $("securityExposureFxBasis").value = profile.fx_basis || "unknown";
+  $("securityExposureFxReference").innerHTML = `<option value="">${esc(optionLabel("Unknown"))}</option>${securityExposureCurrencyOptions(profile.fx_reference_currency || "")}`;
+  $("securityExposureFxReference").value = profile.fx_reference_currency || "";
+  $("securityExposureCurrencies").innerHTML = (profile.currency_exposures || [])
+    .map((row) => securityExposureCurrencyRow(row.currency, row.percent)).join("");
+  $("securityExposureFxLimit").value = profile.fx_policy_limit_percent ?? "";
+  setDateField("securityExposureDate", profile.as_of || "");
+  $("securityExposureSource").value = profile.source_note || "";
+  $("securityExposureStatus").textContent = "";
+  $("removeSecurityExposure").hidden = !item.exposure_profile;
+  updateSecurityExposureCurrencyState();
+  openModal("securityExposureModal", returnFocus);
+  applyRolePermissions($("securityExposureModal"));
+  requestAnimationFrame(() => $("securityExposureFocus")?.focus());
+}
+
+async function saveSecurityExposure() {
+  const target = state.securityExposureTarget;
+  if (!target) return;
+  const basis = $("securityExposureFxBasis").value;
+  const rows = basis === "unknown" ? [] : [...$("securityExposureCurrencies").querySelectorAll(".exposure-currency-row")];
+  const currencyExposures = rows.map((row) => ({
+    currency: row.querySelector("[data-exposure-currency]").value,
+    percent: Number(row.querySelector("[data-exposure-percent]").value),
+  }));
+  const total = sum(currencyExposures.map((row) => row.percent));
+  if (currencyExposures.some((row) => !row.currency || !Number.isFinite(row.percent) || row.percent <= 0) || total > 100.00001) {
+    $("securityExposureStatus").textContent = optionLabel("Enter unique currencies with positive percentages totaling at most 100%.");
+    return;
+  }
+  const enteredDate = valueOf("securityExposureDate");
+  const asOf = parseDateInput(enteredDate);
+  if (enteredDate && !asOf) {
+    $("securityExposureStatus").textContent = optionLabel("Enter a valid date as dd/mm/yyyy.");
+    return;
+  }
+  if (basis === "reported" && currencyExposures.length && !asOf) {
+    $("securityExposureStatus").textContent = optionLabel("Reported currency exposures require an information date.");
+    return;
+  }
+  const profile = {
+    asset_focus: valueOf("securityExposureFocus"),
+    geography: valueOf("securityExposureGeography"),
+    sector_exposure: valueOf("securityExposureSector"),
+    fx_basis: basis,
+    fx_reference_currency: valueOf("securityExposureFxReference"),
+    currency_exposures: currencyExposures,
+    fx_policy_limit_percent: valueOf("securityExposureFxLimit") || null,
+    as_of: asOf,
+    source_note: valueOf("securityExposureSource"),
+  };
+  if (profile.asset_focus === "single_country_equity" && !profile.geography) {
+    $("securityExposureStatus").textContent = optionLabel("Choose an underlying country for a single-country fund.");
+    $("securityExposureGeography").focus();
+    return;
+  }
+  if (profile.asset_focus === "sector_equity" && !profile.sector_exposure) {
+    $("securityExposureStatus").textContent = optionLabel("Choose an underlying sector for a sector fund.");
+    $("securityExposureSector").focus();
+    return;
+  }
+  const button = $("saveSecurityExposure");
+  button.disabled = true;
+  $("securityExposureStatus").textContent = optionLabel("Saving exposure profile");
+  try {
+    await api("/api/local/security-exposure-profiles", {
+      method: "PUT", body: JSON.stringify({ symbol: target.symbol, stock_market: target.stockMarket, profile }),
+    });
+    closeModal($("securityExposureModal"));
+    await loadPortfolio();
+    $("status").textContent = optionLabel("Exposure profile saved");
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function removeSecurityExposure() {
+  const target = state.securityExposureTarget;
+  if (!target) return;
+  const button = $("removeSecurityExposure");
+  button.disabled = true;
+  try {
+    const params = new URLSearchParams({ stock_market: target.stockMarket });
+    await api(`/api/local/security-exposure-profiles/${encodeURIComponent(target.symbol)}?${params}`, { method: "DELETE" });
+    closeModal($("securityExposureModal"));
+    await loadPortfolio();
+    $("status").textContent = optionLabel("Exposure profile removed");
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function loadPortfolio({ refresh = false } = {}) {
   $("status").textContent = refresh ? "Refreshing analytics" : "Preparing dashboard";
   setLoading(true, refresh ? "Refreshing portfolio analytics" : "Loading portfolio analytics");
@@ -10989,6 +11200,15 @@ document.addEventListener("click", (event) => {
     );
   }
 
+  const exposureButton = event.target.closest("[data-edit-security-exposure-symbol]");
+  if (exposureButton) {
+    openSecurityExposure(exposureButton.dataset.editSecurityExposureSymbol, exposureButton.dataset.editSecurityExposureMarket, exposureButton);
+  }
+  if (event.target.closest("[data-remove-exposure-currency]")) {
+    event.target.closest(".exposure-currency-row")?.remove();
+    updateSecurityExposureCurrencyState();
+  }
+
   if (event.target.matches("[data-close]")) {
     closeModal(event.target.closest(".modal"));
   }
@@ -11665,6 +11885,14 @@ $("dashboardReset").addEventListener("click", resetDashboard);
 $("saveManualSecurity").addEventListener("click", () => saveManualSecurity().catch((error) => { $("manualSecurityStatus").textContent = `Error: ${error.message}`; }));
 $("saveIndustryClassification").addEventListener("click", () => saveIndustryClassification().catch((error) => { $("industryClassificationStatus").textContent = `Error: ${error.message}`; }));
 $("removeIndustryClassification").addEventListener("click", () => removeIndustryClassification().catch((error) => { $("industryClassificationStatus").textContent = `Error: ${error.message}`; }));
+$("securityExposureFxBasis").addEventListener("change", updateSecurityExposureCurrencyState);
+$("securityExposureCurrencies").addEventListener("input", updateSecurityExposureCurrencyState);
+$("addSecurityExposureCurrency").addEventListener("click", () => {
+  $("securityExposureCurrencies").insertAdjacentHTML("beforeend", securityExposureCurrencyRow());
+  updateSecurityExposureCurrencyState();
+});
+$("saveSecurityExposure").addEventListener("click", () => saveSecurityExposure().catch((error) => { $("securityExposureStatus").textContent = `Error: ${error.message}`; }));
+$("removeSecurityExposure").addEventListener("click", () => removeSecurityExposure().catch((error) => { $("securityExposureStatus").textContent = `Error: ${error.message}`; }));
 $("saveSecurity").addEventListener("click", () => saveSecurity().catch((error) => { $("securityStatus").textContent = `Error: ${error.message}`; }));
 $("newEmployeeOptionGrant").addEventListener("click", beginNewEmployeeOptionGrant);
 $("cancelEmployeeOptionWizard").addEventListener("click", hideEmployeeOptionWizard);

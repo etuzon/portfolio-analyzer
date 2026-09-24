@@ -4814,6 +4814,21 @@ tbody tr:hover {
   line-height: 1.25;
 }
 
+.security-exposure {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  color: #a9b8cf;
+  font-size: 11px;
+}
+
+.security-exposure .compact-button {
+  min-height: 24px;
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
 .security-meta {
   line-height: 1.3;
 }
@@ -5038,6 +5053,57 @@ tbody tr:hover {
 
 .industry-classification-card {
   width: min(560px, 100%);
+}
+
+.exposure-profile-card {
+  width: min(720px, 100%);
+}
+
+.exposure-profile-card > p {
+  color: #aeb9c9;
+  line-height: 1.5;
+}
+
+.exposure-profile-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.exposure-source-note {
+  grid-column: 1 / -1;
+}
+
+.exposure-currency-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.exposure-currency-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.exposure-currency-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(115px, 150px) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.exposure-currency-row [data-exposure-percent] {
+  min-width: 110px;
+}
+
+@media (max-width: 540px) {
+  .exposure-profile-fields { grid-template-columns: 1fr; }
+  .exposure-currency-row { grid-template-columns: minmax(110px, 1fr) auto; }
+  .exposure-currency-row .field:first-child { grid-column: 1 / -1; }
 }
 
 .industry-classification-card > p {

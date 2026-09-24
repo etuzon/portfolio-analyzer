@@ -1071,6 +1071,39 @@
       </section>
     </div>
 
+    <div id="securityExposureModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card exposure-profile-card" role="dialog" aria-modal="true" aria-labelledby="securityExposureTitle" aria-describedby="securityExposureIntro">
+        <div class="section-head">
+          <div><p class="eyebrow" data-i18n="Security exposure">Security exposure</p><h2 id="securityExposureTitle" data-i18n="Edit exposure profile">Edit exposure profile</h2></div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <p id="securityExposureIntro" data-i18n="Describe underlying assets and economic exposure. Unknown values remain unclassified in risk calculations.">Describe underlying assets and economic exposure. Unknown values remain unclassified in risk calculations.</p>
+        <div class="industry-classification-summary"><strong id="securityExposureSecurity"></strong><span id="securityExposureTradingCurrency"></span></div>
+        <div class="exposure-profile-fields">
+          <label class="field"><span data-i18n="Underlying asset">Underlying asset</span><select id="securityExposureFocus"></select></label>
+          <label class="field"><span data-i18n="Underlying geography">Underlying geography</span><input id="securityExposureGeography" maxlength="240" placeholder="India / Global" /></label>
+          <label class="field"><span data-i18n="Underlying sector">Underlying sector</span><input id="securityExposureSector" maxlength="240" placeholder="Technology / Broad market" /></label>
+          <label class="field"><span data-i18n="Currency exposure source">Currency exposure source</span><select id="securityExposureFxBasis"><option value="unknown" data-i18n="Unknown">Unknown</option><option value="reported" data-i18n="Reported holdings">Reported holdings</option><option value="estimated" data-i18n="Manual estimate">Manual estimate</option></select></label>
+          <label class="field"><span data-i18n="Named FX exposure">Named FX exposure</span><select id="securityExposureFxReference"></select></label>
+        </div>
+        <div class="exposure-currency-head"><strong data-i18n="Economic currency exposure">Economic currency exposure</strong><button id="addSecurityExposureCurrency" class="secondary compact-button" type="button" data-i18n="Add currency">Add currency</button></div>
+        <div id="securityExposureCurrencies" class="exposure-currency-list"></div>
+        <p id="securityExposureUnknown" class="sub" role="status"></p>
+        <div class="exposure-profile-fields">
+          <label class="field"><span data-i18n="FX policy maximum %">FX policy maximum %</span><input id="securityExposureFxLimit" type="number" min="0" max="1000" step="0.1" placeholder="Optional" /></label>
+          <label class="field"><span data-i18n="Information date">Information date</span><input id="securityExposureDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+          <label class="field exposure-source-note"><span data-i18n="Source or note">Source or note</span><input id="securityExposureSource" maxlength="240" placeholder="Fund report, provider, or your estimate" /></label>
+        </div>
+        <p class="sub" data-i18n="A policy maximum is not counted as current currency exposure.">A policy maximum is not counted as current currency exposure.</p>
+        <p id="securityExposureStatus" class="status-line" role="status" aria-live="polite"></p>
+        <div class="modal-toolbar industry-classification-actions">
+          <button id="removeSecurityExposure" class="secondary compact-button" type="button" data-i18n="Remove local profile">Remove local profile</button>
+          <button id="saveSecurityExposure" type="button" data-i18n="Save exposure profile">Save exposure profile</button>
+        </div>
+      </section>
+    </div>
+
     <div id="securityDetailModal" class="modal" hidden>
       <div class="modal-backdrop" data-close></div>
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="securityDetailTitle">

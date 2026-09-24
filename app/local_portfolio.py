@@ -51,6 +51,11 @@ INSTRUMENT_TYPES = [
 OPTION_TYPES = ["CALL", "PUT"]
 ISSUER_LISTING_STATUSES = ["PRIVATE", "PUBLIC"]
 SUPPORTED_MANAGEMENT_CURRENCIES = {"ILS", "USD", "EUR"}
+EXPOSURE_ASSET_FOCUSES = {
+    "money_market", "government_bond", "investment_grade_bond", "high_yield_bond",
+    "broad_equity", "single_country_equity", "sector_equity", "multi_asset",
+    "real_estate", "commodity", "derivative", "other",
+}
 COMPANY_OUTLOOK_ACCURACY_TARGET_PERCENT = 75.0
 COMPANY_OUTLOOK_MIN_EVALUATED_PREDICTIONS = 30
 TRANSACTION_ACTIONS = ["ADD", "REMOVE", "BUY", "SELL", "SHORT", "DIVIDEND", "INTEREST", "FEE"]
@@ -114,6 +119,7 @@ EXPORT_TABLES = {
         "created_at",
     ],
     "security_industry_overrides": ["symbol", "stock_market", "industry", "created_at", "updated_at"],
+    "security_exposure_profiles": ["symbol", "stock_market", "profile_json", "created_at", "updated_at"],
     "transactions": [
         "id",
         "account_db_id",
@@ -346,6 +352,18 @@ class LocalPortfolioStore:
                         symbol text not null,
                         stock_market text not null default '',
                         industry text not null,
+                        created_at text not null,
+                        updated_at text not null,
+                        primary key(symbol, stock_market)
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    create table if not exists security_exposure_profiles (
+                        symbol text not null,
+                        stock_market text not null default '',
+                        profile_json text not null,
                         created_at text not null,
                         updated_at text not null,
                         primary key(symbol, stock_market)
@@ -741,6 +759,7 @@ class LocalPortfolioStore:
                 "prices": conn.execute("select count(*) from price_history").fetchone()[0],
                 "manual_securities": conn.execute("select count(*) from manual_securities").fetchone()[0],
                 "security_industry_overrides": conn.execute("select count(*) from security_industry_overrides").fetchone()[0],
+                "security_exposure_profiles": conn.execute("select count(*) from security_exposure_profiles").fetchone()[0],
                 "issuers": conn.execute("select count(*) from issuers").fetchone()[0],
                 "equity_transitions": conn.execute("select count(*) from equity_transitions").fetchone()[0],
                 "brokers": conn.execute("select count(*) from brokers").fetchone()[0],
@@ -823,13 +842,14 @@ class LocalPortfolioStore:
                 conn.execute("delete from price_history")
                 conn.execute("delete from transactions")
                 conn.execute("delete from security_industry_overrides")
+                conn.execute("delete from security_exposure_profiles")
                 conn.execute("delete from manual_securities")
                 conn.execute("delete from issuers")
                 conn.execute("delete from accounts")
                 conn.execute("delete from family_members")
                 conn.execute("delete from brokers")
                 conn.execute("delete from app_preferences")
-                for table in ["app_preferences", "brokers", "family_members", "accounts", "issuers", "manual_securities", "security_industry_overrides", "transactions", "equity_transitions", "price_history", "funds", "fund_amount_history", "account_snapshots", "events", "company_report_predictions"]:
+                for table in ["app_preferences", "brokers", "family_members", "accounts", "issuers", "manual_securities", "security_industry_overrides", "security_exposure_profiles", "transactions", "equity_transitions", "price_history", "funds", "fund_amount_history", "account_snapshots", "events", "company_report_predictions"]:
                     columns = EXPORT_TABLES[table]
                     placeholders = ", ".join([":" + column for column in columns])
                     conn.executemany(
@@ -1436,6 +1456,123 @@ class LocalPortfolioStore:
                 """
             ).fetchall()
         return [_dict(row) for row in rows]
+
+    def list_security_exposure_profiles(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select symbol, stock_market, profile_json, created_at, updated_at "
+                "from security_exposure_profiles order by symbol, stock_market"
+            ).fetchall()
+        return [
+            {**_dict(row), "profile": json.loads(row["profile_json"])}
+            for row in rows
+        ]
+
+    def save_security_exposure_profile(self, payload: dict[str, Any]) -> dict[str, Any]:
+        symbol = str(payload.get("symbol") or "").strip().upper()
+        stock_market = str(payload.get("stock_market") or "").strip().upper()
+        if not symbol or len(symbol) > 80 or len(stock_market) > 80:
+            raise ValueError("A valid security symbol and market are required")
+        profile = payload.get("profile")
+        if not isinstance(profile, dict):
+            raise ValueError("Exposure profile must be an object")
+        asset_focus = str(profile.get("asset_focus") or "").strip()
+        if asset_focus and asset_focus not in EXPOSURE_ASSET_FOCUSES:
+            raise ValueError("Choose a supported underlying asset type")
+        fx_basis = str(profile.get("fx_basis") or "unknown").strip()
+        if fx_basis not in {"unknown", "reported", "estimated"}:
+            raise ValueError("Currency exposure source must be reported, estimated, or unknown")
+        fx_reference_currency = str(profile.get("fx_reference_currency") or "").strip().upper()
+        if fx_reference_currency and (len(fx_reference_currency) != 3 or not fx_reference_currency.isalpha()):
+            raise ValueError("Reference FX currency must be a three-letter code")
+        exposures = profile.get("currency_exposures") or []
+        if not isinstance(exposures, list) or len(exposures) > 12:
+            raise ValueError("Currency exposures must be a list of at most 12 currencies")
+        if fx_basis == "unknown" and exposures:
+            raise ValueError("Choose a source before entering currency exposures")
+        cleaned_exposures = []
+        seen_currencies = set()
+        for exposure in exposures:
+            if not isinstance(exposure, dict):
+                raise ValueError("Each currency exposure must be an object")
+            currency = str(exposure.get("currency") or "").strip().upper()
+            if len(currency) != 3 or not currency.isalpha() or currency in seen_currencies:
+                raise ValueError("Currency codes must be unique three-letter codes")
+            try:
+                percent = float(exposure.get("percent"))
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Currency exposure percent must be a number") from exc
+            if not math.isfinite(percent) or percent <= 0 or percent > 100:
+                raise ValueError("Currency exposure percent must be between 0 and 100")
+            seen_currencies.add(currency)
+            cleaned_exposures.append({"currency": currency, "percent": percent})
+        if sum(entry["percent"] for entry in cleaned_exposures) > 100.00001:
+            raise ValueError("Currency exposure percentages cannot exceed 100")
+        limit = profile.get("fx_policy_limit_percent")
+        if limit not in (None, ""):
+            try:
+                limit = float(limit)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Policy limit must be a number") from exc
+            if not math.isfinite(limit) or limit < 0 or limit > 1000:
+                raise ValueError("Policy limit must be between 0 and 1000")
+        else:
+            limit = None
+        as_of = str(profile.get("as_of") or "").strip()
+        if as_of:
+            try:
+                date.fromisoformat(as_of)
+            except ValueError as exc:
+                raise ValueError("Exposure date must be a valid date") from exc
+        if fx_basis == "reported" and cleaned_exposures and not as_of:
+            raise ValueError("Reported currency exposures require an information date")
+        def short_text(key: str) -> str:
+            value = str(profile.get(key) or "").strip()
+            if len(value) > 240:
+                raise ValueError(f"{key} is too long")
+            return value
+        geography = short_text("geography")
+        sector_exposure = short_text("sector_exposure")
+        if asset_focus == "single_country_equity" and not geography:
+            raise ValueError("A single-country equity profile requires an underlying country")
+        if asset_focus == "sector_equity" and not sector_exposure:
+            raise ValueError("A sector equity profile requires an underlying sector")
+        cleaned_profile = {
+            "asset_focus": asset_focus,
+            "geography": geography,
+            "sector_exposure": sector_exposure,
+            "fx_basis": fx_basis,
+            "fx_reference_currency": fx_reference_currency,
+            "currency_exposures": cleaned_exposures,
+            "fx_policy_limit_percent": limit,
+            "source_note": short_text("source_note"),
+            "as_of": as_of,
+        }
+        now = _now()
+        with self._sync_lock:
+            with self._connect() as conn:
+                conn.execute(
+                    """insert into security_exposure_profiles
+                       (symbol, stock_market, profile_json, created_at, updated_at)
+                       values (?, ?, ?, ?, ?)
+                       on conflict(symbol, stock_market) do update set
+                         profile_json = excluded.profile_json, updated_at = excluded.updated_at""",
+                    (symbol, stock_market, json.dumps(cleaned_profile), now, now),
+                )
+        return {"symbol": symbol, "stock_market": stock_market, "profile": cleaned_profile, "updated_at": now}
+
+    def delete_security_exposure_profile(self, symbol: str, stock_market: str = "") -> bool:
+        clean_symbol = str(symbol or "").strip().upper()
+        clean_market = str(stock_market or "").strip().upper()
+        if not clean_symbol:
+            raise ValueError("Security symbol is required")
+        with self._sync_lock:
+            with self._connect() as conn:
+                deleted = conn.execute(
+                    "delete from security_exposure_profiles where symbol = ? and stock_market = ?",
+                    (clean_symbol, clean_market),
+                ).rowcount
+        return bool(deleted)
 
     def save_security_industry_override(self, payload: dict[str, Any]) -> dict[str, Any]:
         symbol = str(payload.get("symbol") or "").strip().upper()

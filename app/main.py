@@ -2129,6 +2129,10 @@ def portfolio_payload(force_refresh: bool = False) -> dict[str, Any]:
         (str(row.get("symbol") or "").upper(), str(row.get("stock_market") or "").upper()): row
         for row in (local_store.list_security_industry_overrides() if hasattr(local_store, "list_security_industry_overrides") else [])
     }
+    exposure_profiles = {
+        (str(row.get("symbol") or "").upper(), str(row.get("stock_market") or "").upper()): row["profile"]
+        for row in (local_store.list_security_exposure_profiles() if hasattr(local_store, "list_security_exposure_profiles") else [])
+    }
     serialized_items = []
     for analysis in analyses:
         item = to_dict(analysis)
@@ -2152,6 +2156,7 @@ def portfolio_payload(force_refresh: bool = False) -> dict[str, Any]:
         item["industry"] = industry
         item["industry_source"] = source
         holding["industry"] = industry
+        item["exposure_profile"] = exposure_profiles.get((symbol, stock_market)) or exposure_profiles.get((symbol, ""))
         serialized_items.append(item)
     payload = {
         "status": {"local_portfolio": local_status, "portfolio_cache": "refreshed"},
@@ -2644,6 +2649,31 @@ def list_security_industry_overrides():
         "items": local_store.list_security_industry_overrides(),
         "industries": list(INDUSTRY_CATALOG),
     }
+
+
+@app.get("/api/local/security-exposure-profiles")
+def list_security_exposure_profiles():
+    return {"items": local_store.list_security_exposure_profiles()}
+
+
+@app.put("/api/local/security-exposure-profiles")
+def save_security_exposure_profile(payload: dict[str, Any]):
+    try:
+        result = local_store.save_security_exposure_profile(payload or {})
+        clear_portfolio_cache()
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/api/local/security-exposure-profiles/{symbol}")
+def delete_security_exposure_profile(symbol: str, stock_market: str = ""):
+    try:
+        deleted = local_store.delete_security_exposure_profile(symbol, stock_market)
+        clear_portfolio_cache()
+        return {"deleted": deleted}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.put("/api/local/security-industry-overrides")

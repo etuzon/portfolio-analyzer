@@ -85,8 +85,9 @@ def test_donut_charts_localize_composed_titles_captions_and_legend_labels():
     i18n = (ROOT / "web/i18n.js").read_text()
 
     assert "const localizedTitle = optionLabel(title)" in script
-    assert ".filter(Boolean).map(optionLabel)" in script
-    assert "optionLabel(group.label)" in script
+    assert ".filter(Boolean).map(groupLabel)" in script
+    assert 'extraClass === "currency-allocation-card" && label !== "Unknown"' in script
+    assert "currencyDisplayLabel(label) : optionLabel(label)" in script
     assert '["נכס", "מוביל"]' in script
     assert '"Asset mix": "הרכב הנכסים"' in i18n
 
