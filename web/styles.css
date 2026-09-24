@@ -1992,6 +1992,11 @@ textarea.muted-control {
   grid-column: span 6;
 }
 
+/* The portfolio total is the dashboard's primary decision surface. */
+.dashboard-widget[data-widget="portfolio_value"] {
+  grid-column: 1 / -1;
+}
+
 .dashboard-widget-medium {
   grid-column: span 4;
 }
