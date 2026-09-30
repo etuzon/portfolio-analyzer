@@ -1,6 +1,7 @@
 import time
 from datetime import date, timedelta
 
+import httpx
 import pytest
 
 from app.models import Ohlcv
@@ -379,6 +380,35 @@ def test_yahoo_summary_maps_fundamentals_and_profile(monkeypatch, tmp_path):
     assert profile["currency"] == "ILS"
     assert profile["market_cap"] == 1000
     assert profile["website"] == "https://www.bruker.com"
+
+
+def test_yahoo_summary_stops_retrying_after_an_unauthorized_response(monkeypatch, tmp_path):
+    provider = YahooChartProvider({}, SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1))
+    calls = []
+
+    def unauthorized(*_args, **_kwargs):
+        calls.append(True)
+        request = httpx.Request("GET", "https://query2.finance.yahoo.com/v10/finance/quoteSummary/TEST")
+        response = httpx.Response(401, request=request)
+        raise httpx.HTTPStatusError("Unauthorized", request=request, response=response)
+
+    monkeypatch.setattr(provider, "_get_json", unauthorized)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        provider.fundamentals("TEST")
+
+    assert provider.profile("TEST")["name"] is None
+    assert calls == [True]
+
+
+def test_yahoo_summary_uses_saved_data_outside_its_refresh_window(monkeypatch, tmp_path):
+    cache = SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1)
+    cache.set_security_snapshot("yahoo_finance", "TEST", "summary", {"price": {"longName": "Cached company"}})
+    provider = YahooChartProvider({}, cache)
+    monkeypatch.setattr(provider, "_refresh_slot", lambda *_args: False)
+    monkeypatch.setattr(provider, "_get_json", lambda *_args, **_kwargs: pytest.fail("Yahoo must not be queried outside its refresh window"))
+
+    assert provider.profile("TEST")["name"] == "Cached company"
 
 
 def test_fmp_profile_maps_logo_and_company_website(monkeypatch, tmp_path):

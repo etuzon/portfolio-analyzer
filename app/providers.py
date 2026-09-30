@@ -4,9 +4,10 @@ import csv
 import json
 import sqlite3
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
@@ -1430,21 +1431,52 @@ class ExternalImportMarketDataProvider(MarketDataProvider):
 class YahooChartProvider(MarketDataProvider):
     name = "yahoo_finance"
 
+    def __init__(self, config: dict[str, Any], cache: SqliteCache):
+        super().__init__(config, cache)
+        self._summary_unauthorized = False
+
     @staticmethod
     def _price_factor(result: dict[str, Any]) -> float:
         currency = str((result.get("meta") or {}).get("currency") or "").upper()
         return 0.01 if currency == "ILA" else 1.0
 
+    def _refresh_slot(self, symbol: str, data_type: str) -> bool:
+        """Allow one first-use refresh and one 23:20 Israel refresh per day."""
+        now = datetime.now(ZoneInfo("Asia/Jerusalem"))
+        slot = "scheduled" if (now.hour, now.minute) >= (23, 20) else "first-use"
+        key = f"yahoo:refresh-window:{now.date().isoformat()}:{slot}:{data_type}:{symbol.upper()}"
+        if self.cache.get(key) is not None:
+            return False
+        self.cache.set(key, True)
+        return True
+
     def _summary(self, symbol: str) -> dict[str, Any]:
-        data = self._get_json(
-            f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}",
-            {"modules": "incomeStatementHistory,assetProfile,price,summaryDetail"},
-            f"yahoo:summary:{symbol}",
-        )
+        if self._summary_unauthorized:
+            return {}
+        saved = self.cache.get_security_snapshot(self.name, symbol, "summary")
+        if not self._refresh_slot(symbol, "summary"):
+            return saved if isinstance(saved, dict) else {}
+        try:
+            data = self._get_json(
+                f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}",
+                {"modules": "incomeStatementHistory,assetProfile,price,summaryDetail"},
+                f"yahoo:summary:{symbol}",
+                force_refresh=True,
+            )
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 401:
+                self._summary_unauthorized = True
+            raise
         result = (data.get("quoteSummary", {}).get("result") or [{}])[0]
-        return result if isinstance(result, dict) else {}
+        result = result if isinstance(result, dict) else {}
+        self.cache.set_security_snapshot(self.name, symbol, "summary", result)
+        return result
 
     def prices(self, symbol: str, from_date: date, to_date: date) -> list[Ohlcv]:
+        cached = self.cache.get_prices(self.name, symbol, from_date, to_date)
+        if not self._refresh_slot(symbol, "prices"):
+            return cached
+
         def fetch(start: date, end: date) -> list[Ohlcv]:
             cache_key = f"yahoo:prices:{symbol}:{start}:{end}"
             cached = self.cache.get(cache_key)

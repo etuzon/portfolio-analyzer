@@ -168,6 +168,45 @@ def test_portfolio_attaches_local_exposure_profile_by_symbol_and_market(monkeypa
     assert result["exposure_profile"]["fx_policy_limit_percent"] == 120
 
 
+def test_deferred_portfolio_payload_returns_stale_cache_without_waiting_for_provider_enrichment(monkeypatch):
+    cached_payload = {"count": 1, "items": [{"holding": {"symbol": "CACHED"}}], "status": {"local_portfolio": "ok"}}
+    monkeypatch.setattr(main, "portfolio_cache_signature", lambda: "current")
+    monkeypatch.setattr(main, "_portfolio_cache", {"signature": "current", "expires_at": 0, "payload": cached_payload})
+    monkeypatch.setattr(main, "enriched_local_holdings", lambda: pytest.fail("provider enrichment must stay off the request path"))
+    refreshes = []
+    monkeypatch.setattr(main, "schedule_portfolio_refresh", lambda: refreshes.append(True) or True)
+
+    result = main.portfolio_payload(defer_enrichment=True)
+
+    assert result["items"][0]["holding"]["symbol"] == "CACHED"
+    assert result["refresh_pending"] is True
+    assert result["status"]["portfolio_cache"] == "stale (refreshing in background)"
+    assert refreshes == [True]
+
+
+def test_portfolio_refresh_job_runs_at_2320_in_israel(monkeypatch):
+    class Scheduler:
+        def __init__(self):
+            self.added = None
+
+        def remove_job(self, _job_id):
+            return None
+
+        def add_job(self, func, trigger, **kwargs):
+            self.added = (func, trigger, kwargs)
+
+    scheduler = Scheduler()
+    monkeypatch.setattr(main, "scheduler", scheduler)
+
+    main.configure_portfolio_refresh_job()
+
+    _func, trigger, kwargs = scheduler.added
+    assert kwargs["id"] == main.PORTFOLIO_REFRESH_JOB_ID
+    assert str(trigger.timezone) == "Asia/Jerusalem"
+    assert str(trigger.fields[5]) == "23"
+    assert str(trigger.fields[6]) == "20"
+
+
 def test_exposure_profile_api_clears_cached_portfolio_after_local_write(monkeypatch, tmp_path):
     from app.local_portfolio import LocalPortfolioStore
 

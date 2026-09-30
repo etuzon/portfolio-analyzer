@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import io
 import json
+import logging
 import os
 import sqlite3
 import stat
@@ -13,7 +14,7 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, time as clock_time, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
-from threading import RLock
+from threading import RLock, Thread
 import time
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -40,6 +41,9 @@ from .providers import MarketDataHub
 from .report_pdf import build_portfolio_report_pdf
 
 
+logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def application_lifespan(_app: FastAPI):
     global scheduler, _mcp_session_context
@@ -50,6 +54,7 @@ async def application_lifespan(_app: FastAPI):
         scheduler = start_scheduler(alert_store, _run_portfolio_alerts, config.alerts, local_store.capture_daily_snapshots)
     configure_backup_job()
     configure_dividend_job()
+    configure_portfolio_refresh_job()
     if _mcp_session_context is None:
         _mcp_session_context = portfolio_mcp.session_manager.run()
         await _mcp_session_context.__aenter__()
@@ -92,6 +97,7 @@ scheduler = None
 _mcp_session_context = None
 BACKUP_JOB_ID = "local-data-backup"
 DIVIDEND_JOB_ID = "local-dividend-scan"
+PORTFOLIO_REFRESH_JOB_ID = "daily-portfolio-analytics-refresh"
 DIVIDEND_DEFAULT_START_DATE = date(2026, 8, 1)
 WEEKDAY_CRON = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 PORTFOLIO_CACHE_FILE = "portfolio-analysis-cache.json"
@@ -159,6 +165,7 @@ CLIENT_STATE_PREF_KEY = "client_state"
 BACKUP_SETTINGS_PREF_KEY = "backup_settings"
 _portfolio_cache_lock = RLock()
 _portfolio_cache: dict[str, Any] | None = None
+_portfolio_refresh_in_progress = False
 _full_restore_lock = RLock()
 _login_attempt_lock = RLock()
 _login_failures: dict[str, list[float]] = {}
@@ -2105,25 +2112,8 @@ def enriched_local_holdings():
     return enriched
 
 
-def portfolio_payload(force_refresh: bool = False) -> dict[str, Any]:
-    global _portfolio_cache
-    signature = portfolio_cache_signature()
-    now = time.time()
-    with _portfolio_cache_lock:
-        cached = _portfolio_cache or read_portfolio_cache()
-        if (
-            not force_refresh
-            and cached
-            and signature
-            and cached.get("signature") == signature
-            and float(cached.get("expires_at") or 0) > now
-        ):
-            _portfolio_cache = cached
-            payload = cached.get("payload") or {}
-            payload["status"] = {**payload.get("status", {}), "portfolio_cache": "hit"}
-            return payload
-
-    analyses = enriched_local_holdings()
+def _serialized_portfolio_payload(analyses, cache_status: str) -> dict[str, Any]:
+    """Serialize analyses without performing provider I/O."""
     local_status = f"ok ({len(analyses)} local positions)"
     overrides = {
         (str(row.get("symbol") or "").upper(), str(row.get("stock_market") or "").upper()): row
@@ -2158,12 +2148,92 @@ def portfolio_payload(force_refresh: bool = False) -> dict[str, Any]:
         holding["industry"] = industry
         item["exposure_profile"] = exposure_profiles.get((symbol, stock_market)) or exposure_profiles.get((symbol, ""))
         serialized_items.append(item)
-    payload = {
-        "status": {"local_portfolio": local_status, "portfolio_cache": "refreshed"},
+    return {
+        "status": {"local_portfolio": local_status, "portfolio_cache": cache_status},
         "count": len(analyses),
         "display_currencies": config.dashboard.get("display_currencies", []),
         "items": serialized_items,
     }
+
+
+def _refresh_portfolio_cache() -> None:
+    """Refresh provider analytics off the request path."""
+    global _portfolio_cache, _portfolio_refresh_in_progress
+    try:
+        signature = portfolio_cache_signature()
+        payload = _serialized_portfolio_payload(enriched_local_holdings(), "refreshed")
+        if signature:
+            cache_record = {
+                "signature": signature,
+                "expires_at": time.time() + portfolio_cache_ttl_seconds(),
+                "payload": payload,
+            }
+            with _portfolio_cache_lock:
+                _portfolio_cache = cache_record
+                write_portfolio_cache(cache_record)
+    except Exception as exc:
+        logger.warning("Background portfolio analytics refresh failed: %s", exc.__class__.__name__)
+    finally:
+        with _portfolio_cache_lock:
+            _portfolio_refresh_in_progress = False
+
+
+def schedule_portfolio_refresh() -> bool:
+    global _portfolio_refresh_in_progress
+    with _portfolio_cache_lock:
+        if _portfolio_refresh_in_progress:
+            return False
+        _portfolio_refresh_in_progress = True
+    Thread(target=_refresh_portfolio_cache, name="portfolio-analytics-refresh", daemon=True).start()
+    return True
+
+
+def configure_portfolio_refresh_job() -> None:
+    if scheduler is None:
+        return
+    try:
+        scheduler.remove_job(PORTFOLIO_REFRESH_JOB_ID)
+    except Exception:
+        pass
+    scheduler.add_job(
+        schedule_portfolio_refresh,
+        CronTrigger(hour=23, minute=20, timezone="Asia/Jerusalem"),
+        id=PORTFOLIO_REFRESH_JOB_ID,
+        replace_existing=True,
+        coalesce=True,
+        max_instances=1,
+        misfire_grace_time=60 * 60,
+    )
+
+
+def portfolio_payload(force_refresh: bool = False, defer_enrichment: bool = False) -> dict[str, Any]:
+    global _portfolio_cache
+    signature = portfolio_cache_signature()
+    now = time.time()
+    with _portfolio_cache_lock:
+        cached = _portfolio_cache or read_portfolio_cache()
+        if (
+            not force_refresh
+            and cached
+            and signature
+            and cached.get("signature") == signature
+            and float(cached.get("expires_at") or 0) > now
+        ):
+            _portfolio_cache = cached
+            payload = cached.get("payload") or {}
+            payload["status"] = {**payload.get("status", {}), "portfolio_cache": "hit"}
+            return payload
+
+    if defer_enrichment:
+        if cached and signature and cached.get("signature") == signature:
+            payload = dict(cached.get("payload") or {})
+            payload["status"] = {**payload.get("status", {}), "portfolio_cache": "stale (refreshing in background)"}
+        else:
+            payload = _serialized_portfolio_payload(local_store.holdings(), "local (refreshing in background)")
+        payload["refresh_pending"] = schedule_portfolio_refresh()
+        return payload
+
+    payload = _serialized_portfolio_payload(enriched_local_holdings(), "refreshed")
     if signature:
         cache_record = {
             "signature": signature,
@@ -2433,7 +2503,7 @@ def about():
 
 @app.get("/api/portfolio")
 def portfolio(refresh: bool = False):
-    return portfolio_payload(force_refresh=refresh)
+    return portfolio_payload(force_refresh=refresh, defer_enrichment=True)
 
 
 @app.post("/api/screener")
