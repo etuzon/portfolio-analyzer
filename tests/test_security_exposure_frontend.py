@@ -37,3 +37,22 @@ def test_fund_economic_fx_exposure_is_not_inferred_from_ils_trading_currency():
     }
     assert result["unknown"] == [{"label": "Unknown", "value": 1000}]
     assert result["factor"] == 0.12
+
+
+def test_named_fx_exposure_is_a_full_allocation_when_no_detailed_split_is_entered():
+    source = (ROOT / "web/app.js").read_text()
+    start = source.index("function economicCurrencyExposure(")
+    end = source.find("\nfunction ", start + 1)
+    function = source[start:end if end != -1 else None]
+    script = function + """
+      const state = {baseCurrency: 'ILS'};
+      const sum = (values) => values.reduce((total, value) => total + value, 0);
+      const item = {holding: {asset_class: 'MUTUALFUND', currency: 'ILS'},
+        exposure_profile: {asset_focus: 'money_market', fx_basis: 'estimated',
+          fx_reference_currency: 'USD', currency_exposures: []}};
+      process.stdout.write(JSON.stringify(economicCurrencyExposure(item)));
+    """
+    completed = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+    assert json.loads(completed.stdout) == {
+        "allocations": [{"currency": "USD", "percent": 100}], "unknownPercent": 0,
+    }

@@ -1892,7 +1892,15 @@ function economicCurrencyExposure(item) {
   const profile = item.exposure_profile;
   const fund = ["ETF", "MUTUALFUND"].includes(String(h.asset_class || "").toUpperCase());
   if (!profile && !fund) return { allocations: [{ currency: h.currency || state.baseCurrency, percent: 100 }], unknownPercent: 0 };
-  const allocations = profile?.fx_basis === "unknown" ? [] : (profile?.currency_exposures || []);
+  const enteredAllocations = profile?.currency_exposures || [];
+  // A named FX exposure is a complete allocation when the user has not supplied
+  // a detailed split. This avoids making users enter the same currency twice.
+  const allocations = profile?.fx_basis === "unknown" ? []
+    : (enteredAllocations.length
+      ? enteredAllocations
+      : (profile?.fx_reference_currency
+        ? [{ currency: profile.fx_reference_currency, percent: 100 }]
+        : []));
   return { allocations, unknownPercent: Math.max(0, 100 - sum(allocations.map((row) => Number(row.percent || 0)))) };
 }
 
