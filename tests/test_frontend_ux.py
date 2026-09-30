@@ -95,6 +95,15 @@ def test_manual_securities_use_all_countries_and_only_three_supported_currencies
     assert "Security currency must be ILS, USD, or EUR." in script
 
 
+def test_underlying_geography_uses_the_shared_country_combobox():
+    html = (ROOT / "web/index.html").read_text()
+    script = (ROOT / "web/app.js").read_text()
+
+    assert 'id="securityExposureGeography" list="countryOptions" autocomplete="country-name"' in html
+    assert 'function refreshCountryDatalist()' in script
+    assert 'datalist.innerHTML = REGION_CODES.map' in script
+
+
 def test_industry_split_supports_accessible_local_classification_and_separates_bonds():
     html = (ROOT / "web/index.html").read_text()
     script = (ROOT / "web/app.js").read_text()
@@ -564,11 +573,21 @@ def test_each_account_has_a_value_weighted_four_band_risk_allocation_that_totals
     assert '{ key: "low", label: "Low risk"' in script
     assert '{ key: "medium", label: "Medium risk"' in script
     assert '{ key: "high", label: "High risk"' in script
-    assert 'allocation: riskAllocationForItems(rows, { cash })' in script
+    assert 'allocation: riskAllocationForItems(rows, { cash, cashCurrency: account?.currency })' in script
     assert 'optionLabel("Account risk allocation")' in script
     assert 'optionLabel("Total")' in script
     assert '.account-risk-allocations-grid {' in styles
     assert '.account-risk-allocation-bar {' in styles
+
+
+def test_foreign_currency_cash_and_money_market_holdings_are_low_risk_in_account_allocation():
+    script = (ROOT / "web/app.js").read_text()
+
+    assert 'const foreignCurrencyExposure = economicCurrencyExposure(item).allocations' in script
+    assert 'if (factor <= 0.12) return foreignCurrencyExposure ? "low" : "no-risk";' in script
+    assert 'cashCurrency === baseCurrency ? cash : 0' in script
+    assert 'cashCurrency === baseCurrency ? 0 : cash' in script
+    assert 'riskAllocationForItems(rows, { cash, cashCurrency: account?.currency })' in script
 
 
 def test_employee_option_workflow_filters_to_esop_accounts_and_employee_grants():

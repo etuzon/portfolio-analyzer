@@ -1939,16 +1939,21 @@ function riskBand(score) {
 
 function riskAllocationBand(item) {
   const factor = assetRiskFactor(item);
-  if (factor <= 0.12) return "no-risk";
+  const foreignCurrencyExposure = economicCurrencyExposure(item).allocations
+    .some(({ currency, percent }) => String(currency || "").toUpperCase() !== String(state.baseCurrency || "").toUpperCase() && Number(percent || 0) > 0);
+  if (factor <= 0.12) return foreignCurrencyExposure ? "low" : "no-risk";
   if (factor <= 0.35) return "low";
   if (factor <= 0.65) return "medium";
   return "high";
 }
 
 function riskAllocationForItems(items, options = {}) {
+  const cash = Math.max(0, Number(options.cash || 0));
+  const cashCurrency = String(options.cashCurrency || state.baseCurrency || "").toUpperCase();
+  const baseCurrency = String(state.baseCurrency || "").toUpperCase();
   const bands = [
-    { key: "no-risk", label: "No risk", value: Math.max(0, Number(options.cash || 0)) },
-    { key: "low", label: "Low risk", value: 0 },
+    { key: "no-risk", label: "No risk", value: cashCurrency === baseCurrency ? cash : 0 },
+    { key: "low", label: "Low risk", value: cashCurrency === baseCurrency ? 0 : cash },
     { key: "medium", label: "Medium risk", value: 0 },
     { key: "high", label: "High risk", value: 0 },
   ];
@@ -2222,7 +2227,7 @@ function portfolioRiskSnapshot(items) {
       value,
       horizonYears,
       risk: riskScoreForItems(rows, { label: `${label || "Account"} risk`, cash, cashCurrency: account?.currency, horizonYears }),
-      allocation: riskAllocationForItems(rows, { cash }),
+      allocation: riskAllocationForItems(rows, { cash, cashCurrency: account?.currency }),
     };
   });
   const combinedCash = sum(portfolioAccounts().map(accountCashValue));
@@ -2774,7 +2779,7 @@ function renderPortfolioValueDashboard(items) {
       if (!allocation?.total) return "";
       const segments = allocation.bands.map((band) => `<span class="account-risk-segment account-risk-${band.key}" style="--risk-allocation:${band.percent}%" title="${esc(`${optionLabel(band.label)}: ${fmt(band.percent, 1)}%`)}"></span>`).join("");
       const labels = allocation.bands.map((band) => `<span class="account-risk-allocation-label"><i class="account-risk-dot account-risk-${band.key}"></i>${esc(optionLabel(band.label))} <b>${esc(fmt(band.percent, 1))}%</b></span>`).join("");
-      return `<article class="account-risk-allocation-card" title="${esc(optionLabel("Allocation is based on each holding's asset-risk category; cash and money-market holdings are shown as No risk."))}">
+      return `<article class="account-risk-allocation-card" title="${esc(optionLabel("Allocation is based on each holding's asset-risk category. Cash and money-market holdings are No risk only in the base currency; foreign-currency exposure is Low risk."))}">
         <div class="account-risk-allocation-heading"><b>${esc(entry.account)}</b>${riskBadge(entry.risk, true)}</div>
         <div class="account-risk-allocation-bar" role="img" aria-label="${esc(`${entry.account}: ${allocation.bands.map((band) => `${optionLabel(band.label)} ${fmt(band.percent, 1)}%`).join(", ")}`)}">${segments}</div>
         <div class="account-risk-allocation-labels">${labels}</div>
