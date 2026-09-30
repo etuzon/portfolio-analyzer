@@ -555,6 +555,22 @@ def test_total_and_industry_risk_are_visible_and_help_documents_the_formula():
     assert '.help-risk-components {' in styles
 
 
+def test_each_account_has_a_value_weighted_four_band_risk_allocation_that_totals_100_percent():
+    script = (ROOT / "web/app.js").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+
+    assert 'function riskAllocationForItems(items, options = {})' in script
+    assert '{ key: "no-risk", label: "No risk"' in script
+    assert '{ key: "low", label: "Low risk"' in script
+    assert '{ key: "medium", label: "Medium risk"' in script
+    assert '{ key: "high", label: "High risk"' in script
+    assert 'allocation: riskAllocationForItems(rows, { cash })' in script
+    assert 'optionLabel("Account risk allocation")' in script
+    assert 'optionLabel("Total")' in script
+    assert '.account-risk-allocations-grid {' in styles
+    assert '.account-risk-allocation-bar {' in styles
+
+
 def test_employee_option_workflow_filters_to_esop_accounts_and_employee_grants():
     script = (ROOT / "web/app.js").read_text()
 

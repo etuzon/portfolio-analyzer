@@ -1937,6 +1937,39 @@ function riskBand(score) {
   return { ...band, label: optionLabel(band.label) };
 }
 
+function riskAllocationBand(item) {
+  const factor = assetRiskFactor(item);
+  if (factor <= 0.12) return "no-risk";
+  if (factor <= 0.35) return "low";
+  if (factor <= 0.65) return "medium";
+  return "high";
+}
+
+function riskAllocationForItems(items, options = {}) {
+  const bands = [
+    { key: "no-risk", label: "No risk", value: Math.max(0, Number(options.cash || 0)) },
+    { key: "low", label: "Low risk", value: 0 },
+    { key: "medium", label: "Medium risk", value: 0 },
+    { key: "high", label: "High risk", value: 0 },
+  ];
+  const byKey = Object.fromEntries(bands.map((band) => [band.key, band]));
+  (items || []).forEach((item) => {
+    byKey[riskAllocationBand(item)].value += Math.abs(normalizedField(item, "market_value"));
+  });
+  const total = sum(bands.map((band) => band.value));
+  let allocatedPercent = 0;
+  return {
+    total,
+    bands: bands.map((band, index) => {
+      const percent = total
+        ? (index === bands.length - 1 ? Math.max(0, 100 - allocatedPercent) : Math.round(band.value / total * 1000) / 10)
+        : 0;
+      allocatedPercent += percent;
+      return { ...band, percent };
+    }),
+  };
+}
+
 function riskBadge(risk, compact = false) {
   if (!risk) return "";
   const band = riskBand(risk.score);
@@ -2174,17 +2207,22 @@ function portfolioRiskSnapshot(items) {
     groups[key].push(item);
     return groups;
   }, {});
+  portfolioAccounts().forEach((account) => {
+    if (accountCashValue(account) > 0 && !itemsByAccount[account.id]) itemsByAccount[account.id] = [];
+  });
   const accountRisks = Object.entries(itemsByAccount).map(([key, rows]) => {
-    const account = accountsById[key] || accountRecordForHolding(rows[0].holding);
+    const account = accountsById[key] || (rows[0] ? accountRecordForHolding(rows[0].holding) : null);
     const cash = accountCashValue(account);
     const value = sum(rows.map((item) => Math.abs(normalizedField(item, "market_value")))) + cash;
     const horizonYears = accountHorizonYears(account);
+    const label = cleanSourceLabel(rows[0]?.holding.account) || account?.account_id || "Unassigned";
     return {
       key,
-      account: cleanSourceLabel(rows[0].holding.account) || account?.account_id || "Unassigned",
+      account: label,
       value,
       horizonYears,
-      risk: riskScoreForItems(rows, { label: `${cleanSourceLabel(rows[0].holding.account) || "Account"} risk`, cash, cashCurrency: account?.currency, horizonYears }),
+      risk: riskScoreForItems(rows, { label: `${label || "Account"} risk`, cash, cashCurrency: account?.currency, horizonYears }),
+      allocation: riskAllocationForItems(rows, { cash }),
     };
   });
   const combinedCash = sum(portfolioAccounts().map(accountCashValue));
@@ -2729,6 +2767,21 @@ function renderPortfolioValueDashboard(items) {
       return `<span class="account-chip" title="${esc(title)}"><b>${esc(account.account)}</b><span class="account-chip-values"><strong>${money(account.value, state.baseCurrency, 0)}</strong>${localLine}</span>${riskBadge(accountRisk, true)}</span>`;
     })
     .join("");
+  const accountRiskAllocationsHtml = state.riskSnapshot.accounts
+    .sort((left, right) => right.value - left.value)
+    .map((entry) => {
+      const allocation = entry.allocation;
+      if (!allocation?.total) return "";
+      const segments = allocation.bands.map((band) => `<span class="account-risk-segment account-risk-${band.key}" style="--risk-allocation:${band.percent}%" title="${esc(`${optionLabel(band.label)}: ${fmt(band.percent, 1)}%`)}"></span>`).join("");
+      const labels = allocation.bands.map((band) => `<span class="account-risk-allocation-label"><i class="account-risk-dot account-risk-${band.key}"></i>${esc(optionLabel(band.label))} <b>${esc(fmt(band.percent, 1))}%</b></span>`).join("");
+      return `<article class="account-risk-allocation-card" title="${esc(optionLabel("Allocation is based on each holding's asset-risk category; cash and money-market holdings are shown as No risk."))}">
+        <div class="account-risk-allocation-heading"><b>${esc(entry.account)}</b>${riskBadge(entry.risk, true)}</div>
+        <div class="account-risk-allocation-bar" role="img" aria-label="${esc(`${entry.account}: ${allocation.bands.map((band) => `${optionLabel(band.label)} ${fmt(band.percent, 1)}%`).join(", ")}`)}">${segments}</div>
+        <div class="account-risk-allocation-labels">${labels}</div>
+        <small>${esc(optionLabel("Total"))}: <b>${esc(fmt(sum(allocation.bands.map((band) => band.percent)), 1))}%</b></small>
+      </article>`;
+    })
+    .join("");
 
   const totalRiskBand = riskBand(state.riskSnapshot.total.score);
   const statsHtml = [
@@ -2762,6 +2815,7 @@ function renderPortfolioValueDashboard(items) {
           <div class="summary">${statsHtml}</div>
         </details>
         <div class="currency-strip">${accountsHtml}</div>
+        ${accountRiskAllocationsHtml ? `<section class="account-risk-allocations" aria-label="${esc(optionLabel("Account risk allocation"))}"><div class="account-risk-allocations-title"><span>${esc(optionLabel("Account risk allocation"))}</span><small>${esc(optionLabel("Split by current account value"))}</small></div><div class="account-risk-allocations-grid">${accountRiskAllocationsHtml}</div></section>` : ""}
       </div>
     </div>
   `;
