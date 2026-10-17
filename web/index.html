@@ -98,6 +98,7 @@
           <details class="nav-menu">
             <summary><span class="nav-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.35-4.35M11 8v6M8 11h6"/></svg></span><span class="nav-menu-label">Research</span></summary>
             <div class="nav-children">
+              <button class="nav-item" type="button" data-modal="assistantModal">Ask portfolio assistant</button>
               <button class="nav-item" type="button" data-modal="researchModal" data-research-section="finance">Company Reports</button>
               <button class="nav-item" type="button" data-modal="researchModal" data-research-section="outlook">Company Outlook</button>
               <button class="nav-item" type="button" data-modal="researchModal" data-research-section="signals">Portfolio Signals</button>
@@ -268,6 +269,21 @@
           </div>
         </section>
       </main>
+    </div>
+
+    <div id="assistantModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="assistantTitle">
+        <div class="section-head">
+          <div><p class="eyebrow">Read-only AI</p><h2 id="assistantTitle">Ask about your portfolio</h2></div>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <p class="info-strip">Ask in any language. The assistant can only read approved portfolio data and cannot change anything.</p>
+        <label class="field"><span>Your question</span><textarea id="assistantPrompt" rows="4" maxlength="8000" placeholder="For example: What are my largest holdings?"></textarea></label>
+        <div class="form-actions"><button id="askAssistant" type="button">Ask</button><button id="clearAssistantContext" class="secondary" type="button">Clear context</button></div>
+        <p id="assistantStatus" class="status-line" role="status" aria-live="polite"></p>
+        <article id="assistantAnswer" class="info-strip" dir="auto" hidden></article>
+      </section>
     </div>
 
     <div id="loadingOverlay" class="loading-overlay" role="status" aria-live="polite" aria-labelledby="loadingTitle" aria-describedby="loadingDetail" hidden>

@@ -45,6 +45,21 @@ alerts:
   notification:
     channels: ["dashboard"]
 
+# Optional OpenAI-compatible service for the in-app, read-only portfolio assistant.
+# Keep the real key in config.yaml or LLM_API_KEY; it is never sent to browsers or the model.
+# The assistant may invoke only the read-only tools advertised at /api/assistant/read-tools.
+llm:
+  enabled: false
+  base_url: "https://api.openai.com/v1"
+  api_key: "${LLM_API_KEY}"
+  model: ""
+  # none, minimal, low, medium, high, xhigh, or max. Provider/model support varies.
+  reasoning_effort: "medium"
+  max_tool_loops: 6
+  # Saved user/assistant messages included with the next question; 0 disables context.
+  max_context_messages: 12
+  timeout_seconds: 30
+
 dividends:
   enabled: true
   schedule: "15 8 * * *"

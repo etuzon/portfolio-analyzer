@@ -590,6 +590,33 @@ async function api(path, options = {}) {
   }
 }
 
+async function askPortfolioAssistant() {
+  const prompt = valueOf("assistantPrompt").trim();
+  if (!prompt) {
+    $("assistantStatus").textContent = "Enter a question first.";
+    return;
+  }
+  $("assistantStatus").textContent = "Reading approved portfolio data…";
+  $("assistantAnswer").hidden = true;
+  const result = await api("/api/assistant/questions", {
+    method: "POST",
+    body: JSON.stringify({ prompt, language: state.language }),
+  });
+  $("assistantAnswer").textContent = result.answer;
+  $("assistantAnswer").hidden = false;
+  $("assistantStatus").textContent = result.tool_calls?.length
+    ? `Used ${result.tool_calls.length} read-only data request${result.tool_calls.length === 1 ? "" : "s"}.`
+    : "Answered without portfolio data.";
+}
+
+async function clearPortfolioAssistantContext() {
+  await api("/api/assistant/context/clear", { method: "POST", body: JSON.stringify({}) });
+  $("assistantPrompt").value = "";
+  $("assistantAnswer").hidden = true;
+  $("assistantStatus").textContent = "Context cleared. Your next question starts a new conversation.";
+  $("assistantPrompt").focus();
+}
+
 const WRITE_CONTROL_IDS = new Set([
   "addAlertCondition", "addBannerItem", "addPensionPeriod", "addPensionRate", "addPensionScenario",
   "applyBackupSchedule", "attachAccountToMember", "attachEditAccountPerson", "attachLocalAccountPerson",
@@ -11975,6 +12002,12 @@ $("refresh").addEventListener("click", () => {
   loadPortfolio({ refresh: true }).catch((error) => { $("status").textContent = `Error: ${error.message}`; });
   loadBanner().catch(() => {});
 });
+$("askAssistant").addEventListener("click", () => askPortfolioAssistant().catch((error) => {
+  $("assistantStatus").textContent = `Error: ${error.message}`;
+}));
+$("clearAssistantContext").addEventListener("click", () => clearPortfolioAssistantContext().catch((error) => {
+  $("assistantStatus").textContent = `Error: ${error.message}`;
+}));
 $("apply").addEventListener("click", applyFilter);
 $("saveAlert").addEventListener("click", saveAlert);
 $("runAlerts").addEventListener("click", runAlerts);

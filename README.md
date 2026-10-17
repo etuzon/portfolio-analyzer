@@ -62,6 +62,16 @@ Read tools expose access status, accounts, filtered reports, and account trends.
 
 `DELETE /api/auth/token` revokes the bearer token used for that request, including an MCP token when REST is off. Tokens are stored only as SHA-256 hashes and are also revoked when the user is disabled, changes their password, or an Admin turns the relevant service off. Users with a temporary password must complete the dashboard password-change flow before creating a token.
 
+## Read-only LLM assistant
+
+The optional in-app assistant uses an OpenAI-compatible `POST /chat/completions` provider and can answer in the language of the question. Configure the `llm` section in private `config.yaml`; leave `enabled: false` until a provider URL, API key, and model are set. The key remains server-side and is never included in API responses or prompts.
+
+Set `llm.model` to the model identifier supported by your provider and `llm.reasoning_effort` to one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. The effort setting is forwarded as `reasoning_effort` in the provider request; choose a provider/model that supports it.
+
+The app saves each signed-in user's prompts and final answers locally as limited conversation context (`llm.max_context_messages`, default `12`). Tool payloads are not retained as context. `POST /api/assistant/context/clear` removes that user's saved context, so the next question starts a new conversation.
+
+For each question, the model receives only a fixed catalog at `GET /api/assistant/read-tools`. It can request application-owned read skills for portfolio/risk, accounts, securities, price history and technicals, funds, events, alerts, FX, market data, reports, and screeners. Read data uses `GET`; bounded read calculations use a catalogued `POST` endpoint with a JSON body. It cannot choose arbitrary REST paths and cannot invoke a write endpoint. `POST /api/assistant/questions` runs the model/tool exchange and enforces `llm.max_tool_loops` (default `6`) for that one user prompt; the next prompt starts a new bounded exchange.
+
 ## Data Sources
 
 The dashboard reads holdings, transactions, account records, pension/fund records, and manual prices from the local SQLite portfolio database. External portfolio data is imported only when the Sync import action is run. Dividends, income, company profit, market cap, long price history, profile data, and non-portfolio stock screening come from configured market-data APIs:

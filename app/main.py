@@ -34,6 +34,7 @@ from .config import data_dir, load_config
 from .company_logos import CompanyLogoService
 from .external_import import ExternalImportClient
 from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, SUPPORTED_MANAGEMENT_CURRENCIES, LocalPortfolioStore, validate_portfolio_ownership
+from .llm_assistant import AssistantError, PortfolioAssistant, assistant_settings
 from .metrics import analyze_holding, moving_averages, screen, support_resistance, technical_signals, to_dict, volume_metrics
 from .mcp_server import create_portfolio_mcp_server
 from .models import Ohlcv
@@ -163,6 +164,7 @@ INDUSTRY_CATALOG = (
 INDUSTRY_ALIASES = {"Major Banks": "Banks"}
 CLIENT_STATE_PREF_KEY = "client_state"
 BACKUP_SETTINGS_PREF_KEY = "backup_settings"
+ASSISTANT_CONTEXT_PREF_PREFIX = "assistant_context:"
 _portfolio_cache_lock = RLock()
 _portfolio_cache: dict[str, Any] | None = None
 _portfolio_refresh_in_progress = False
@@ -172,6 +174,8 @@ _login_failures: dict[str, list[float]] = {}
 AUTH_LOGIN_MAX_FAILURES = 5
 AUTH_LOGIN_WINDOW_SECONDS = 300
 VIEWER_READ_ONLY_POST_PATHS = {
+    "/api/assistant/questions",
+    "/api/assistant/context/clear",
     "/api/screener",
     "/api/banner/resolve",
     "/api/local/backups/inspect",
@@ -197,7 +201,155 @@ def _auth_error(status_code: int, code: str, message: str, headers: dict[str, st
 def _viewer_request_is_read_only(request: Request) -> bool:
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return True
-    return request.method == "POST" and request.url.path in VIEWER_READ_ONLY_POST_PATHS
+    return request.method == "POST" and (
+        request.url.path in VIEWER_READ_ONLY_POST_PATHS
+        or request.url.path.startswith("/api/assistant/read-tools/")
+    )
+
+
+ASSISTANT_READ_TOOLS: dict[str, dict[str, Any]] = {
+    "get_portfolio_summary": {
+        "path": "/api/portfolio", "description": "Get the current portfolio dashboard summary and holdings.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    "list_accounts": {
+        "path": "/api/local/accounts", "description": "List local portfolio accounts and their status.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    "get_portfolio_report": {
+        "path": "/api/local/reports", "description": "Get an account, person, type, or location filtered portfolio report.",
+        "parameters": {"type": "object", "properties": {key: {"type": "string"} for key in ("account_id", "account_type", "location", "person_id", "person_name")}},
+    },
+    "get_account_trends": {
+        "path": "/api/local/account-trends", "description": "Get historical account value and profit trends. Dates use dd/mm/yyyy.",
+        "parameters": {"type": "object", "properties": {key: {"type": "string"} for key in ("account_id", "account_type", "location", "person_id", "person_name", "date_from", "date_to")}},
+    },
+    "get_finance_report": {
+        "path": "/api/finance-reports/{symbol}", "description": "Get a public fundamentals report for one ticker symbol.",
+        "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}}, "required": ["symbol"]},
+    },
+    "get_securities": {"path": "/api/local/securities", "description": "List recorded portfolio security transactions and positions.", "parameters": {"type": "object", "properties": {}}},
+    "get_manual_securities": {"path": "/api/local/manual-securities", "description": "List manually defined securities, including private holdings.", "parameters": {"type": "object", "properties": {}}},
+    "get_security_risk_profiles": {"path": "/api/local/security-exposure-profiles", "description": "Get saved economic exposure, industry, geography, and currency profiles used in risk analysis.", "parameters": {"type": "object", "properties": {}}},
+    "get_security_history": {
+        "path": "/api/security/history", "description": "Get a security price chart, high/low levels, moving averages, volume, and support/resistance.",
+        "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}, "stock_market": {"type": "string"}, "period": {"type": "string", "enum": ["1m", "6m", "1y", "3y", "5y"]}, "date_from": {"type": "string"}, "level_periods": {"type": "string"}}, "required": ["symbol"]},
+    },
+    "get_prices": {"path": "/api/local/prices", "description": "List locally stored historical prices.", "parameters": {"type": "object", "properties": {}}},
+    "get_events": {"path": "/api/local/events", "description": "List portfolio events, including dividend and income events.", "parameters": {"type": "object", "properties": {}}},
+    "get_funds": {"path": "/api/local/funds", "description": "List pension, provident, and savings fund records.", "parameters": {"type": "object", "properties": {}}},
+    "get_fund_history": {"path": "/api/local/funds/{fund_id}/amount-history", "description": "Get amount history for one pension, provident, or savings fund.", "parameters": {"type": "object", "properties": {"fund_id": {"type": "string"}}, "required": ["fund_id"]}},
+    "get_account_snapshots": {
+        "path": "/api/local/account-snapshots", "description": "Get saved daily account-value snapshots with optional account, person, location, and date filters.",
+        "parameters": {"type": "object", "properties": {key: {"type": "string"} for key in ("account_id", "account_type", "location", "person_id", "person_name", "date_from", "date_to")}},
+    },
+    "get_employee_options": {"path": "/api/local/employee-option-grants", "description": "List employee stock-option grants.", "parameters": {"type": "object", "properties": {}}},
+    "get_equity_transitions": {"path": "/api/local/equity-transitions", "description": "List equity compensation transitions, listings, and exercises.", "parameters": {"type": "object", "properties": {}}},
+    "get_fx_rates": {"path": "/api/fx", "description": "Get configured foreign-exchange rates used by the dashboard.", "parameters": {"type": "object", "properties": {}}},
+    "get_market_banner": {"path": "/api/banner", "description": "Get configured market, index, commodity, and foreign-exchange banner quotes.", "parameters": {"type": "object", "properties": {}}},
+    "get_alerts": {"path": "/api/alerts", "description": "Get read-only alert rules, recent runs, and active portfolio signals.", "parameters": {"type": "object", "properties": {}}},
+    "get_company_outlook_scorecard": {"path": "/api/company-outlook/scorecard", "description": "Get the company-outlook prediction scorecard.", "parameters": {"type": "object", "properties": {}}},
+    "get_company_outlook_predictions": {"path": "/api/company-outlook/predictions", "description": "List saved company-outlook predictions, optionally for a symbol.", "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}}}},
+    "run_portfolio_screener": {
+        "method": "POST", "path": "/api/screener", "description": "Run a read-only screen over the current portfolio holdings.",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "account": {"type": "string"}, "assetClass": {"type": "string"}, "currency": {"type": "string"}, "sector": {"type": "string"}, "includeMissing": {"type": "boolean"}}},
+    },
+    "run_market_screener": {
+        "method": "POST", "path": "/api/market/screener", "description": "Run a read-only market screener. This may use configured market-data providers.",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "sector": {"type": "string"}, "industry": {"type": "string"}, "country": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}, "sortBy": {"type": "string"}, "includeMissing": {"type": "boolean"}}},
+    },
+    "simulate_pension": {
+        "method": "POST", "path": "/api/local/pension-simulate", "description": "Run a read-only pension projection using supplied scenario inputs.",
+        "parameters": {"type": "object", "properties": {"person_id": {"type": "string"}, "retire_age": {"type": "number"}, "monthly_salary": {"type": "number"}, "current_savings": {"type": "number"}, "monthly_deposit": {"type": "number"}, "annual_return": {"type": "number"}}},
+    },
+}
+
+
+def _assistant_tool_result(name: str, arguments: dict[str, Any]) -> Any:
+    if name == "get_portfolio_summary":
+        return portfolio_payload(force_refresh=False, defer_enrichment=True)
+    if name == "list_accounts":
+        return {"items": local_store.list_accounts(), "status": local_store.status()}
+    if name == "get_portfolio_report":
+        return local_store.reports({key: str(arguments.get(key) or "") for key in ("account_id", "account_type", "location", "person_id", "person_name")})
+    if name == "get_account_trends":
+        from_date = _clamped_history_start(str(arguments.get("date_from") or ""))
+        to_date = _parse_query_date(str(arguments.get("date_to") or "")) or date.today()
+        return local_store.account_trends({
+            **{key: str(arguments.get(key) or "") for key in ("account_id", "account_type", "location", "person_id", "person_name")},
+            "from": from_date.isoformat(), "to": max(from_date, to_date).isoformat(),
+        })
+    if name == "get_finance_report":
+        return _finance_report_payload(str(arguments.get("symbol") or ""), min(max(int(arguments.get("limit") or 6), 1), 20))
+    if name == "get_securities":
+        return {"items": local_store.list_transactions()}
+    if name == "get_manual_securities":
+        return {"items": local_store.list_manual_securities()}
+    if name == "get_security_risk_profiles":
+        return {"items": local_store.list_security_exposure_profiles()}
+    if name == "get_security_history":
+        return security_history(**{key: str(arguments[key]) for key in ("symbol", "stock_market", "period", "date_from", "level_periods") if arguments.get(key) is not None})
+    if name == "get_prices":
+        return {"items": local_store.list_prices()}
+    if name == "get_events":
+        return {"items": local_store.list_events(), "dividends": dividend_status()}
+    if name == "get_funds":
+        return {"items": local_store.list_funds()}
+    if name == "get_fund_history":
+        fund_id = str(arguments.get("fund_id") or "")
+        fund = next((item for item in local_store.list_funds() if item["id"] == fund_id), None)
+        if not fund:
+            raise ValueError("Fund record not found")
+        return {"fund": fund, "items": local_store.list_fund_amount_history(fund_id)}
+    if name == "get_account_snapshots":
+        from_date = _clamped_history_start(str(arguments.get("date_from") or ""))
+        to_date = _parse_query_date(str(arguments.get("date_to") or "")) or date.today()
+        return {"items": local_store.list_account_snapshots({
+            **{key: str(arguments.get(key) or "") for key in ("account_id", "account_type", "location", "person_id", "person_name")},
+            "from": from_date.isoformat(), "to": max(from_date, to_date).isoformat(),
+        })}
+    if name == "get_employee_options":
+        return {"items": local_store.list_employee_option_grants()}
+    if name == "get_equity_transitions":
+        return {"items": local_store.list_equity_transitions()}
+    if name == "get_fx_rates":
+        return fx()
+    if name == "get_market_banner":
+        return banner()
+    if name == "get_alerts":
+        return list_alerts()
+    if name == "get_company_outlook_scorecard":
+        return local_store.company_report_scorecard()
+    if name == "get_company_outlook_predictions":
+        symbol = str(arguments.get("symbol") or "")
+        return {"items": local_store.list_company_report_predictions(symbol), "scorecard": local_store.company_report_scorecard()}
+    if name == "run_portfolio_screener":
+        criteria = arguments or {}
+        results = screen(analyze_all(), criteria)
+        return {"count": len(results), "items": [to_dict(item) for item in results]}
+    if name == "run_market_screener":
+        return market_screener(arguments or {})
+    if name == "simulate_pension":
+        return local_store.simulate_pension(arguments or {})
+    raise ValueError("Unknown assistant read tool")
+
+
+def _assistant_context_key(request: Request) -> str:
+    return f"{ASSISTANT_CONTEXT_PREF_PREFIX}{request.state.auth_user['id']}"
+
+
+def _assistant_context(request: Request, max_messages: int) -> list[dict[str, str]]:
+    stored = local_store.get_preference(_assistant_context_key(request), [])
+    if not isinstance(stored, list) or max_messages <= 0:
+        return []
+    context: list[dict[str, str]] = []
+    for item in stored[-max_messages:]:
+        if not isinstance(item, dict) or item.get("role") not in {"user", "assistant"}:
+            continue
+        content = str(item.get("content") or "").strip()
+        if content:
+            context.append({"role": str(item["role"]), "content": content[:8_000]})
+    return context
 
 
 @app.middleware("http")
@@ -2525,6 +2677,67 @@ def about():
         "name": "Portfolio Analyzer",
         "version": __version__,
     }
+
+
+@app.get("/api/assistant/status")
+def assistant_status():
+    """Safe configuration status; deliberately never returns provider credentials."""
+    return PortfolioAssistant(assistant_settings(config.raw), ASSISTANT_READ_TOOLS).status()
+
+
+@app.get("/api/assistant/read-tools")
+def assistant_read_tools():
+    """Catalog exposed to an LLM. Every entry is an application-owned GET-only capability."""
+    return {"items": PortfolioAssistant(assistant_settings(config.raw), ASSISTANT_READ_TOOLS).status()["tools"]}
+
+
+@app.get("/api/assistant/read-tools/{tool_name}")
+def assistant_read_tool(tool_name: str, request: Request):
+    """Execute one allow-listed, read-only REST skill for an authenticated caller."""
+    if tool_name not in ASSISTANT_READ_TOOLS:
+        raise HTTPException(status_code=404, detail="Assistant read tool not found")
+    if ASSISTANT_READ_TOOLS[tool_name].get("method", "GET") != "GET":
+        raise HTTPException(status_code=405, detail="This read tool requires POST with a JSON body")
+    try:
+        return _assistant_tool_result(tool_name, dict(request.query_params))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/assistant/read-tools/{tool_name}")
+def assistant_read_tool_post(tool_name: str, payload: dict[str, Any]):
+    """Run an allow-listed read computation that requires criteria in its JSON body."""
+    if tool_name not in ASSISTANT_READ_TOOLS:
+        raise HTTPException(status_code=404, detail="Assistant read tool not found")
+    if ASSISTANT_READ_TOOLS[tool_name].get("method", "GET") != "POST":
+        raise HTTPException(status_code=405, detail="This read tool requires GET query parameters")
+    try:
+        return _assistant_tool_result(tool_name, payload or {})
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/assistant/questions")
+def assistant_question(payload: dict[str, Any], request: Request):
+    """Run one bounded LLM/tool interaction. It has no write capability."""
+    assistant = PortfolioAssistant(assistant_settings(config.raw), ASSISTANT_READ_TOOLS)
+    try:
+        context = _assistant_context(request, assistant.settings["max_context_messages"])
+        result = assistant.ask(payload.get("prompt", ""), payload.get("language", ""), _assistant_tool_result, context)
+        updated_context = [*context, {"role": "user", "content": str(payload.get("prompt") or "").strip()}, {"role": "assistant", "content": result["answer"]}]
+        retained_context = updated_context[-assistant.settings["max_context_messages"]:] if assistant.settings["max_context_messages"] else []
+        local_store.set_preference(_assistant_context_key(request), retained_context)
+        return {**result, "context_messages": len(retained_context)}
+    except AssistantError as exc:
+        status = 503 if "not configured" in str(exc) or "unavailable" in str(exc) else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+@app.post("/api/assistant/context/clear")
+def clear_assistant_context(request: Request):
+    """Forget the signed-in user's saved assistant conversation context."""
+    local_store.set_preference(_assistant_context_key(request), [])
+    return {"cleared": True, "context_messages": 0}
 
 
 @app.get("/api/portfolio")
