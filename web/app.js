@@ -2474,17 +2474,13 @@ function statusCell(item) {
   const providerHint = providerStatusHint(item.provider_status);
   const localizedMissing = item.missing.map(optionLabel);
   const detail = `${localizedMissing.join(", ")}${providerText ? `; ${providerText}` : ""}`;
-  const hintTooltip = providerHint ? `<span class="ux-tooltip status-detail-tooltip" tabindex="0" role="note" aria-label="Data source details" title="${esc(providerHint)}" data-tooltip="${esc(providerHint)}">i</span>` : "";
   if (!item.missing.length) {
-    return `<div class="status-cell status-cell-compact" title="${esc(providerText || "All displayed metrics are available")}">
-      <span class="badge ok">All displayed data available</span>
-      ${hintTooltip}
+    return `<div class="status-cell status-cell-compact">
+      <span class="badge ok" title="${esc(providerHint || providerText || "All displayed metrics are available")}">All displayed data available</span>
     </div>`;
   }
-  return `<div class="status-cell status-cell-compact" title="${esc(detail)}">
-    <strong>${item.missing.length} data gaps</strong>
-    <span class="ux-tooltip status-detail-tooltip" tabindex="0" role="note" aria-label="Missing data details" title="${esc(detail || "Provider data is unavailable")}" data-tooltip="${esc(detail || "Provider data is unavailable")}">i</span>
-    ${hintTooltip}
+  return `<div class="status-cell status-cell-compact">
+    <strong title="${esc(detail || "Provider data is unavailable")}">${item.missing.length} data gaps</strong>
   </div>`;
 }
 

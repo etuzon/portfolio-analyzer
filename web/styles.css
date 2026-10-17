@@ -4960,16 +4960,14 @@ tbody tr:hover {
   font-size: 11px;
 }
 
-.security-meta-tooltip,
-.status-detail-tooltip {
+.security-meta-tooltip {
   flex: 0 0 18px;
   margin-inline-start: 2px;
 }
 
 /* Table scrollers clip CSS popovers. Use the browser tooltip for these compact
    details so it stays visible at either horizontal edge of the holdings list. */
-.holdings-table-wrap .security-meta-tooltip::after,
-.holdings-table-wrap .status-detail-tooltip::after {
+.holdings-table-wrap .security-meta-tooltip::after {
   display: none;
 }
 
