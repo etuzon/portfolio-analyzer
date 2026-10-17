@@ -66,9 +66,11 @@ def test_holdings_rows_compact_source_and_data_gap_details_into_tooltips():
     assert 'class="ux-tooltip security-meta-tooltip"' in script
     assert 'class="status-cell status-cell-compact"' in script
     assert 'class="ux-tooltip status-detail-tooltip"' in script
+    assert 'title="${esc(marketLine)}"' in script
     assert "const detail = `${localizedMissing.join" in script
-    assert ".metric-cell .metric-head {" in styles
+    assert "grid-template-columns: minmax(0, 1fr);" in styles
     assert ".status-cell.status-cell-compact {" in styles
+    assert ".holdings-table-wrap .security-meta-tooltip::after," in styles
 
 
 def test_employee_option_critical_inputs_have_visible_labels_and_status_feedback():

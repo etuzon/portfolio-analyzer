@@ -4944,6 +4944,13 @@ tbody tr:hover {
   margin-inline-start: 2px;
 }
 
+/* Table scrollers clip CSS popovers. Use the browser tooltip for these compact
+   details so it stays visible at either horizontal edge of the holdings list. */
+.holdings-table-wrap .security-meta-tooltip::after,
+.holdings-table-wrap .status-detail-tooltip::after {
+  display: none;
+}
+
 .value-cell,
 .metric-cell,
 .status-cell {
@@ -4954,7 +4961,7 @@ tbody tr:hover {
 
 .metric-cell {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   max-width: 210px;
   gap: 4px 9px;
