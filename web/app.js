@@ -981,7 +981,9 @@ function openDatePickerFor(input) {
 function ensureHierarchicalNav() {
   const nav = document.querySelector(".nav");
   if (!nav) return;
-  const defaultOpen = window.matchMedia("(min-width: 761px)").matches ? " open" : "";
+  // Top-level groups open as compact popovers, so keep the header uncluttered
+  // until the user chooses a group.
+  const defaultOpen = "";
   nav.innerHTML = `
     <details class="nav-menu"${defaultOpen}>
       <summary>${esc(t("dashboard"))}</summary>

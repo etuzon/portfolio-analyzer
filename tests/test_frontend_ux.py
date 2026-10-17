@@ -345,7 +345,7 @@ def test_help_menu_covers_every_navigation_group_with_accessible_submenus():
 
     assert 'help: "Help"' in script
     assert 'help: "עזרה"' in script
-    assert 'const defaultOpen = window.matchMedia("(min-width: 761px)").matches ? " open" : "";' in script
+    assert 'const defaultOpen = "";' in script
     assert 'data-modal="helpModal">${esc(t("help"))}</button>' in script
     assert 'if (id === "helpModal") requestAnimationFrame' in script
 

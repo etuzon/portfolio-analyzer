@@ -172,7 +172,7 @@ def test_rtl_layout_uses_semantic_direction_and_logical_properties():
 
     assert 'html[dir="rtl"] .app-shell' in styles
     assert 'font-family: "Noto Sans Hebrew", Inter' in styles
-    assert "border-inline-end: 1px solid #24262b" in styles
+    assert "border-bottom: 1px solid #24262b" in styles
     assert "margin-inline-start: auto" in styles
     assert "padding-inline-start: 22px" in styles
     assert "inset-inline-start: 8px" in styles
