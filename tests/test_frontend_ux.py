@@ -44,6 +44,21 @@ def test_employee_stock_options_have_a_direct_guided_navigation_path():
     assert 'api("/api/local/employee-option-grants")' in script
 
 
+def test_portfolio_signal_rules_explain_each_selected_financial_measure():
+    html = (ROOT / "web/index.html").read_text()
+    script = (ROOT / "web/app.js").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+
+    assert "Save this rule, then create another independent rule" in html
+    assert "function alertMetricGuidance(metricKey)" in script
+    assert "function updateAlertConditionGuidance(row)" in script
+    assert 'class="ux-tooltip signal-condition-help"' in script
+    assert 'class="signal-condition-guidance"' in script
+    assert 'event.target.closest("[data-alert-condition-metric]")' in script
+    assert ".signal-condition-guidance {" in styles
+    assert ".signal-condition-control {" in styles
+
+
 def test_employee_option_critical_inputs_have_visible_labels_and_status_feedback():
     html = (ROOT / "web/index.html").read_text()
     parser = _LabelParser()

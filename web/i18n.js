@@ -1777,6 +1777,7 @@
     "Each point is a balance entered for that date.": "כל נקודה היא יתרה שהוזנה עבור אותו תאריך.",
     "Saved amount progress": "התקדמות הסכום שנצבר",
     "Financial measure": "מדד פיננסי",
+    "Save this rule, then create another independent rule for a separate investment question.": "שמרו כלל זה, ואז צרו כלל עצמאי נוסף לשאלת השקעה נפרדת.",
     "Fiscal date": "תאריך כספי",
     "Comparison": "השוואה",
     "Confidence": "רמת ביטחון",

@@ -9804,6 +9804,25 @@ function alertMetricOptions(selected = "") {
   `).join("");
 }
 
+function alertMetricGuidance(metricKey) {
+  return alertMetric(metricKey).guidance || {
+    description: "The latest available value for this financial measure.",
+    example: "Choose a threshold that fits your research question.",
+    use: "Use it with other conditions to narrow the review list.",
+  };
+}
+
+function alertConditionGuidanceHtml(metricKey) {
+  const guidance = alertMetricGuidance(metricKey);
+  return `<b>What it measures:</b> ${esc(guidance.description)} <b>Example:</b> ${esc(guidance.example)} <b>What it tells you:</b> ${esc(guidance.use)}`;
+}
+
+function alertConditionGuidanceTooltip(metricKey) {
+  const metric = alertMetric(metricKey);
+  const guidance = alertMetricGuidance(metricKey);
+  return `${metric.label}. ${guidance.description} Example: ${guidance.example}. What it tells you: ${guidance.use}`;
+}
+
 function readAlertConditions() {
   return [...document.querySelectorAll("[data-alert-condition]")].map((row) => ({
     metric: row.querySelector("[data-alert-condition-metric]")?.value || "",
@@ -9816,12 +9835,25 @@ function renderAlertConditions() {
   const operatorOptions = state.alertOptions.operators || [];
   $("alertConditions").innerHTML = state.alertConditions.map((condition, index) => `
     <div class="signal-condition-row" data-alert-condition="${index}">
-      <label><span>Financial measure</span><select data-alert-condition-metric>${alertMetricOptions(condition.metric)}</select></label>
+      <div class="signal-condition-metric"><label for="alertConditionMetric${index}"><span>Financial measure</span></label><div class="signal-condition-control"><select id="alertConditionMetric${index}" data-alert-condition-metric>${alertMetricOptions(condition.metric)}</select><button class="ux-tooltip signal-condition-help" type="button" aria-label="Explain ${esc(alertMetric(condition.metric).label)}" data-tooltip="${esc(alertConditionGuidanceTooltip(condition.metric))}">?</button></div></div>
       <label><span>Comparison</span><select data-alert-condition-operator>${operatorOptions.map((operator) => `<option value="${esc(operator.key)}"${operator.key === condition.operator ? " selected" : ""}>${esc(operator.label)}</option>`).join("")}</select></label>
       <label><span>Value</span><input data-alert-condition-value type="number" step="any" value="${esc(condition.value)}" inputmode="decimal" /></label>
       <button class="icon-button signal-remove-condition" type="button" data-remove-alert-condition="${index}" aria-label="Remove condition" title="Remove condition">×</button>
+      <p class="signal-condition-guidance">${alertConditionGuidanceHtml(condition.metric)}</p>
     </div>
   `).join("");
+}
+
+function updateAlertConditionGuidance(row) {
+  const metricKey = row.querySelector("[data-alert-condition-metric]")?.value || "";
+  const metric = alertMetric(metricKey);
+  const help = row.querySelector(".signal-condition-help");
+  if (help) {
+    help.setAttribute("aria-label", `Explain ${metric.label}`);
+    help.dataset.tooltip = alertConditionGuidanceTooltip(metricKey);
+  }
+  const guidance = row.querySelector(".signal-condition-guidance");
+  if (guidance) guidance.innerHTML = alertConditionGuidanceHtml(metricKey);
 }
 
 function resetAlertForm() {
@@ -11645,6 +11677,8 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  const alertMetricSelect = event.target.closest("[data-alert-condition-metric]");
+  if (alertMetricSelect) updateAlertConditionGuidance(alertMetricSelect.closest("[data-alert-condition]"));
   if (["macroPriorIncrease", "macroPriorDecrease", "macroPriorUnchanged", "macroLocalTrigger"].includes(event.target.id)
     || event.target.matches("[data-macro-node], [data-macro-trigger-prior], [data-macro-impact]")) {
     updateMacroScenarioProbability(event.target);

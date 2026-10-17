@@ -6821,13 +6821,15 @@ tbody tr:hover {
 }
 
 .signal-rule-grid .field,
-.signal-condition-row label {
+.signal-condition-row label,
+.signal-condition-metric {
   display: grid;
   gap: 6px;
 }
 
 .signal-rule-grid .field > span,
-.signal-condition-row label > span {
+.signal-condition-row label > span,
+.signal-condition-metric label > span {
   color: #aeb8c7;
   font-size: 11px;
   font-weight: 700;
@@ -6888,6 +6890,40 @@ tbody tr:hover {
 .signal-condition-row input {
   width: 100%;
   min-width: 0;
+}
+
+.signal-condition-control {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.signal-condition-control select {
+  flex: 1 1 auto;
+}
+
+.signal-condition-guidance {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-top: 2px;
+  color: #9eabba;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.signal-condition-guidance b {
+  color: #d7e4f5;
+}
+
+.signal-condition-head > div {
+  display: grid;
+  gap: 3px;
+}
+
+.signal-condition-head small {
+  color: #8f9aab;
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .signal-remove-condition {

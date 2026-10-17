@@ -137,6 +137,9 @@ def test_alert_options_expose_financial_portfolio_and_market_metrics():
     assert {"dividend_yield_percent", "profit_market_cap_percent", "free_cash_flow_yield_percent"} <= metrics
     assert {"holding_allocation_percent", "price_vs_ma30_percent"} <= metrics
     assert {"confirmed_breakout", "relative_volume_20d", "ma30_slope_percent"} <= metrics
+    dividend_yield = next(item for item in options["metrics"] if item["key"] == "dividend_yield_percent")
+    assert dividend_yield["guidance"]["example"] == "Dividend yield > 2.5%"
+    assert "income rate" in dividend_yield["guidance"]["use"]
     assert {item["key"] for item in options["operators"]} == {">", ">=", "<", "<=", "="}
     assert {item["key"] for item in options["signals"]} == {"buy", "sell", "watch"}
 
