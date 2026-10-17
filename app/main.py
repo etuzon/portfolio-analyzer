@@ -2115,6 +2115,11 @@ def enriched_local_holdings():
 def _serialized_portfolio_payload(analyses, cache_status: str) -> dict[str, Any]:
     """Serialize analyses without performing provider I/O."""
     local_status = f"ok ({len(analyses)} local positions)"
+    # The initial dashboard response deliberately avoids provider I/O.  It can
+    # still use a previously fetched company profile, though; otherwise local
+    # holdings briefly render as "Not classified" even when their sector and
+    # industry are already available in the market-data cache.
+    market_hub = hub()
     overrides = {
         (str(row.get("symbol") or "").upper(), str(row.get("stock_market") or "").upper()): row
         for row in (local_store.list_security_industry_overrides() if hasattr(local_store, "list_security_industry_overrides") else [])
@@ -2131,7 +2136,23 @@ def _serialized_portfolio_payload(analyses, cache_status: str) -> dict[str, Any]
         stock_market = str(holding.get("stock_market") or "").strip().upper()
         asset_class = str(holding.get("asset_class") or "").strip().upper()
         asset_sub_class = str(holding.get("asset_sub_class") or "").strip().upper()
-        provider_industry = str(item.get("industry") or holding.get("industry") or holding.get("sector") or "").strip()
+        cached_profile = market_hub.cached_profile(
+            symbol,
+            secondary_symbol=str(holding.get("secondary_symbol") or ""),
+            stock_market=stock_market,
+        ) if symbol else {}
+        if cached_profile.get("name") and (not holding.get("name") or str(holding.get("name")).upper() == symbol):
+            holding["name"] = str(cached_profile["name"])
+        if cached_profile.get("sector") and not holding.get("sector"):
+            holding["sector"] = str(cached_profile["sector"])
+        provider_industry = str(
+            item.get("industry")
+            or holding.get("industry")
+            or cached_profile.get("industry")
+            or holding.get("sector")
+            or cached_profile.get("sector")
+            or ""
+        ).strip()
         override = overrides.get((symbol, stock_market)) or overrides.get((symbol, ""))
         if asset_class == "BOND" or asset_sub_class == "BOND":
             industry = "Bonds"
