@@ -2230,7 +2230,12 @@ def portfolio_payload(force_refresh: bool = False, defer_enrichment: bool = Fals
             payload["status"] = {**payload.get("status", {}), "portfolio_cache": "stale (refreshing in background)"}
         else:
             payload = _serialized_portfolio_payload(local_store.holdings(), "local (refreshing in background)")
-        payload["refresh_pending"] = schedule_portfolio_refresh()
+        # Report the actual state rather than whether this particular request
+        # started the worker.  A second client request can arrive while the
+        # worker is already running and must still know to await its result.
+        refresh_started = schedule_portfolio_refresh()
+        with _portfolio_cache_lock:
+            payload["refresh_pending"] = refresh_started or _portfolio_refresh_in_progress
         return payload
 
     payload = _serialized_portfolio_payload(enriched_local_holdings(), "refreshed")
@@ -2503,7 +2508,10 @@ def about():
 
 @app.get("/api/portfolio")
 def portfolio(refresh: bool = False):
-    return portfolio_payload(force_refresh=refresh, defer_enrichment=True)
+    # A user-requested refresh is allowed to wait for enriched data.  Regular
+    # dashboard loads remain non-blocking and are refreshed by the client when
+    # the background worker completes.
+    return portfolio_payload(force_refresh=refresh, defer_enrichment=not refresh)
 
 
 @app.post("/api/screener")

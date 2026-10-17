@@ -9567,7 +9567,11 @@ async function removeSecurityExposure() {
   }
 }
 
-async function loadPortfolio({ refresh = false } = {}) {
+let portfolioEnrichmentRetryTimer = null;
+const PORTFOLIO_ENRICHMENT_RETRY_MS = 1500;
+const MAX_PORTFOLIO_ENRICHMENT_RETRIES = 40;
+
+async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
   $("status").textContent = refresh ? "Refreshing analytics" : "Preparing dashboard";
   setLoading(true, refresh ? "Refreshing portfolio analytics" : "Loading portfolio analytics");
   appLog("portfolio.load.start", { refresh });
@@ -9618,6 +9622,17 @@ async function loadPortfolio({ refresh = false } = {}) {
         local_accounts: state.localAccounts.length,
         message: "Portfolio has no local position transactions. Use Accounts > Sync import to import positions.",
       });
+    }
+    if (!refresh && data.refresh_pending && enrichmentRetry < MAX_PORTFOLIO_ENRICHMENT_RETRIES) {
+      clearTimeout(portfolioEnrichmentRetryTimer);
+      portfolioEnrichmentRetryTimer = setTimeout(() => {
+        loadPortfolio({ enrichmentRetry: enrichmentRetry + 1 }).catch((error) => {
+          appWarn("portfolio.enrichment.refresh_failed", { message: error.message });
+        });
+      }, PORTFOLIO_ENRICHMENT_RETRY_MS);
+    } else if (!data.refresh_pending) {
+      clearTimeout(portfolioEnrichmentRetryTimer);
+      portfolioEnrichmentRetryTimer = null;
     }
   } finally {
     setLoading(false);
