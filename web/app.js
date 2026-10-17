@@ -2851,7 +2851,7 @@ function renderPensionDashboardTable(monthlyEstimate) {
   if (scenarios.length) {
     if (!hasResults && canAutoRun) schedulePensionSimulationAutoRun();
     return `
-      <div class="dashboard-projection-table">
+      <div class="dashboard-projection-table" data-preserve-scroll="pension-projection">
         <table class="projection-result-table compact-projection-table">
           <thead>
             <tr>
@@ -2888,7 +2888,7 @@ function renderPensionDashboardTable(monthlyEstimate) {
     `;
   }
   return `
-    <div class="dashboard-projection-table">
+    <div class="dashboard-projection-table" data-preserve-scroll="pension-projection">
       <table class="projection-result-table compact-projection-table compact-projection-table-empty">
         <thead>
           <tr>
@@ -3783,7 +3783,7 @@ function renderIndustrySplit(items) {
           ${riskBadge(totalRisk)}
         </div>
       </div>
-      <div class="industry-split-list">
+      <div class="industry-split-list" data-preserve-scroll="industry-split">
         ${groups.map((group, index) => {
           const percent = total ? group.value / total * 100 : 0;
           return `
@@ -4328,9 +4328,30 @@ function renderEquityCompDashboard(items) {
   `;
 }
 
+function dashboardScrollPositions(board) {
+  return new Map([...board.querySelectorAll("[data-preserve-scroll]")]
+    .map((element) => [element.dataset.preserveScroll, {
+      left: element.scrollLeft,
+      top: element.scrollTop,
+    }]));
+}
+
+function restoreDashboardScrollPositions(board, positions) {
+  positions.forEach(({ left, top }, key) => {
+    const element = board.querySelector(`[data-preserve-scroll="${key}"]`);
+    if (element) {
+      element.scrollLeft = left;
+      element.scrollTop = top;
+    }
+  });
+}
+
 function renderAnalytics(items) {
   const board = $("analyticsBoard");
   if (!board) return;
+  // Background enrichment replaces dashboard markup. Keep a reader's place in
+  // bounded lists so that the refresh is not perceived as a jump to the top.
+  const scrollPositions = dashboardScrollPositions(board);
   if (!state.dashboard) loadDashboardSettings();
   renderDashboardControls();
   if (!items.length && !(state.localFunds || []).length && state.dashboard.area !== "employee") {
@@ -4360,12 +4381,14 @@ function renderAnalytics(items) {
   };
   if (state.dashboard.edit) {
     board.innerHTML = renderDashboardEditor(renderers);
+    restoreDashboardScrollPositions(board, scrollPositions);
     return;
   }
   const visible = visibleDashboardWidgets();
   board.innerHTML = visible.length
     ? visible.map((widget) => withDashboardToolbar(widget, renderers[widget.id]())).join("")
     : '<div class="empty">No dashboard cards in this area</div>';
+  restoreDashboardScrollPositions(board, scrollPositions);
 }
 
 function renderPortfolio(items) {

@@ -812,6 +812,18 @@ def test_dashboard_pension_comparison_is_bounded_scrollable_and_reconciles_resul
     assert '"Investment Gain": "רווח מהשקעות"' in i18n
 
 
+def test_dashboard_refresh_preserves_bounded_list_scroll_positions():
+    script = (ROOT / "web/app.js").read_text()
+
+    assert 'data-preserve-scroll="industry-split"' in script
+    assert 'data-preserve-scroll="pension-projection"' in script
+    assert "function dashboardScrollPositions(board)" in script
+    assert "function restoreDashboardScrollPositions(board, positions)" in script
+    analytics = script.split("function renderAnalytics(items) {", 1)[1].split("function renderPortfolio(items)", 1)[0]
+    assert "const scrollPositions = dashboardScrollPositions(board);" in analytics
+    assert analytics.count("restoreDashboardScrollPositions(board, scrollPositions);") == 2
+
+
 def test_retirement_salary_schedule_allows_a_zero_income_period():
     script = (ROOT / "web/app.js").read_text()
     validation = script.split("function pensionPeriodFormValid() {", 1)[1].split("function pensionRateFormValid()", 1)[0]
