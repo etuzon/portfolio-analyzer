@@ -978,6 +978,21 @@ function openDatePickerFor(input) {
   }
 }
 
+const NAV_MENU_ICONS = Object.freeze({
+  dashboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+  portfolio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18M10 12v2h4v-2"/></svg>',
+  people: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  retirement: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 18 0Z"/><path d="M12 12v9M8 21h8M7 12V9M17 12V9"/></svg>',
+  research: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.35-4.35M11 8v6M8 11h6"/></svg>',
+  markets: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17 9 11l4 4 8-9"/><path d="M15 6h6v6"/></svg>',
+  system: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.2 2.2-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56v.1h-3.12v-.1a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-2.2-2.2.06-.06A1.7 1.7 0 0 0 6.74 15a1.7 1.7 0 0 0-1.56-1.03h-.1v-3.12h.1A1.7 1.7 0 0 0 6.74 9.8a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.2-2.2.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.56v-.1h3.12v.1a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.2 2.2-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03h.1v3.12h-.1A1.7 1.7 0 0 0 19.4 15Z"/></svg>',
+  help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.4 9a2.7 2.7 0 1 1 4.7 1.8c-.9.9-2.1 1.35-2.1 2.7M12 17h.01"/></svg>',
+});
+
+function navMenuSummary(icon, label) {
+  return `<summary><span class="nav-menu-icon" aria-hidden="true">${NAV_MENU_ICONS[icon]}</span><span class="nav-menu-label">${esc(label)}</span></summary>`;
+}
+
 function ensureHierarchicalNav() {
   const nav = document.querySelector(".nav");
   if (!nav) return;
@@ -986,14 +1001,14 @@ function ensureHierarchicalNav() {
   const defaultOpen = "";
   nav.innerHTML = `
     <details class="nav-menu"${defaultOpen}>
-      <summary>${esc(t("dashboard"))}</summary>
+      ${navMenuSummary("dashboard", t("dashboard"))}
       <div class="nav-children">
         <button class="nav-item active" type="button">${esc(t("overview"))}</button>
         <button class="nav-item" type="button" data-modal="reportsModal">${esc(t("reports"))}</button>
       </div>
     </details>
     <details class="nav-menu"${defaultOpen}>
-      <summary>${esc(t("portfolioData"))}</summary>
+      ${navMenuSummary("portfolio", t("portfolioData"))}
       <div class="nav-children">
         <button class="nav-item" type="button" data-modal="accountsModal">${esc(t("accounts"))}</button>
         <button class="nav-item" type="button" data-modal="brokersModal">${esc(t("brokers"))}</button>
@@ -1004,21 +1019,21 @@ function ensureHierarchicalNav() {
       </div>
     </details>
     <details class="nav-menu">
-      <summary>${esc(t("people"))}</summary>
+      ${navMenuSummary("people", t("people"))}
       <div class="nav-children">
         <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="familyMembersSection" data-modal-focus="familyMemberFirstName">${esc(t("familyMembers"))}</button>
         <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="accountOwnershipSection" data-modal-focus="familyAttachAccount">${esc(t("accountOwnership"))}</button>
       </div>
     </details>
     <details class="nav-menu">
-      <summary>${esc(t("retirement"))}</summary>
+      ${navMenuSummary("retirement", t("retirement"))}
       <div class="nav-children">
         <button class="nav-item" type="button" data-modal="fundsModal" data-modal-target="fundsTitle" data-modal-focus="showFundCreate">${esc(t("pensionsFunds"))}</button>
         <button class="nav-item" type="button" data-modal="fundsModal" data-modal-target="simulatorPanel" data-modal-focus="simPersonSource">${esc(t("retirementProjections"))}</button>
       </div>
     </details>
     <details class="nav-menu">
-      <summary>${esc(t("research"))}</summary>
+      ${navMenuSummary("research", t("research"))}
       <div class="nav-children">
         <button class="nav-item" type="button" data-modal="researchModal" data-research-section="finance">${esc(t("companyReports"))}</button>
         <button class="nav-item" type="button" data-modal="researchModal" data-research-section="outlook">${esc(t("companyOutlook"))}</button>
@@ -1026,7 +1041,7 @@ function ensureHierarchicalNav() {
       </div>
     </details>
     <details class="nav-menu">
-      <summary>${esc(t("marketsAlerts"))}</summary>
+      ${navMenuSummary("markets", t("marketsAlerts"))}
       <div class="nav-children">
         <button class="nav-item" type="button" data-modal="marketModal">${esc(t("marketScreener"))}</button>
         <button class="nav-item" type="button" data-modal="macroScenarioModal">${esc(t("macroScenarios"))}</button>
@@ -1034,14 +1049,14 @@ function ensureHierarchicalNav() {
       </div>
     </details>
     <details class="nav-menu">
-      <summary>${esc(t("system"))}</summary>
+      ${navMenuSummary("system", t("system"))}
       <div class="nav-children">
         ${canAdmin() ? `<button class="nav-item" type="button" data-modal="usersModal">${esc(t("users"))}</button>` : ""}
         <button class="nav-item" type="button" data-modal="settingsModal">${esc(t("settings"))}</button>
       </div>
     </details>
     <details class="nav-menu">
-      <summary>${esc(t("help"))}</summary>
+      ${navMenuSummary("help", t("help"))}
       <div class="nav-children">
         <button class="nav-item" type="button" data-modal="aboutModal">${esc(t("about"))}</button>
         <button class="nav-item" type="button" data-modal="helpModal">${esc(t("help"))}</button>

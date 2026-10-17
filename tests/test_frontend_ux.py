@@ -318,8 +318,8 @@ def test_help_menu_covers_every_navigation_group_with_accessible_submenus():
     i18n = (ROOT / "web/i18n.js").read_text()
 
     sidebar = html.split('<aside class="sidebar"', 1)[1].split("</aside>", 1)[0]
-    system_menu = sidebar.split("<summary>System</summary>", 1)[1].split("</details>", 1)[0]
-    help_menu = sidebar.split("<summary>Help</summary>", 1)[1].split("</details>", 1)[0]
+    system_menu = sidebar.split('<span class="nav-menu-label">System</span>', 1)[1].split("</details>", 1)[0]
+    help_menu = sidebar.split('<span class="nav-menu-label">Help</span>', 1)[1].split("</details>", 1)[0]
     assert 'data-modal="settingsModal">Settings</button>' in system_menu
     assert 'data-modal="aboutModal"' not in system_menu
     assert 'data-modal="aboutModal">About</button>' in help_menu

@@ -365,6 +365,7 @@ h2 {
 .nav-menu summary {
   display: flex;
   align-items: center;
+  gap: 7px;
   min-height: 40px;
   border-radius: 7px;
   padding: 0 10px;
@@ -375,6 +376,23 @@ h2 {
   font-size: 12px;
   font-weight: 850;
   list-style: none;
+}
+
+.nav-menu-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  color: #82b7ef;
+}
+
+.nav-menu-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.nav-menu-label {
+  white-space: nowrap;
 }
 
 .nav-menu summary::-webkit-details-marker {
@@ -400,6 +418,11 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
   border-color: #354050;
   background: #181a20;
   color: #fff;
+}
+
+.nav-menu[open] .nav-menu-icon,
+.nav-menu summary:hover .nav-menu-icon {
+  color: #b9dcff;
 }
 
 .nav-menu summary:focus-visible,

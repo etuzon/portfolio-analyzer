@@ -21,13 +21,13 @@ def test_people_and_retirement_are_separate_navigation_groups_with_deep_links():
     html = (ROOT / "web/index.html").read_text()
     script = (ROOT / "web/app.js").read_text()
 
-    assert ">People</summary>" in html
+    assert '<span class="nav-menu-label">People</span>' in html
     assert ">Family Members</button>" in html
     assert ">Account Ownership</button>" in html
-    assert ">Retirement</summary>" in html
+    assert '<span class="nav-menu-label">Retirement</span>' in html
     assert ">Pensions & Funds</button>" in html
     assert ">Retirement Projections</button>" in html
-    assert html.index(">People</summary>") < html.index(">Retirement</summary>")
+    assert html.index('<span class="nav-menu-label">People</span>') < html.index('<span class="nav-menu-label">Retirement</span>')
     assert 'data-modal-target="familyMembersSection" data-modal-focus="familyMemberFirstName"' in html
     assert 'data-modal-target="accountOwnershipSection" data-modal-focus="familyAttachAccount"' in html
     assert 'data-modal-target="simulatorPanel" data-modal-focus="simPersonSource"' in html
