@@ -2471,21 +2471,18 @@ function statusCell(item) {
   const providerText = providerStatusText(item.provider_status);
   const providerHint = providerStatusHint(item.provider_status);
   const localizedMissing = item.missing.map(optionLabel);
+  const detail = `${localizedMissing.join(", ")}${providerText ? `; ${providerText}` : ""}`;
+  const hintTooltip = providerHint ? `<span class="ux-tooltip status-detail-tooltip" tabindex="0" role="note" aria-label="Data source details" data-tooltip="${esc(providerHint)}">i</span>` : "";
   if (!item.missing.length) {
-    return `<div class="status-cell" title="${esc(providerText || "All displayed metrics are available")}">
+    return `<div class="status-cell status-cell-compact" title="${esc(providerText || "All displayed metrics are available")}">
       <span class="badge ok">All displayed data available</span>
-      ${providerHint ? `<small>${esc(providerHint)}</small>` : ""}
+      ${hintTooltip}
     </div>`;
   }
-  const visible = localizedMissing.slice(0, 3);
-  const hiddenCount = Math.max(0, localizedMissing.length - visible.length);
-  return `<div class="status-cell" title="${esc(`${localizedMissing.join(", ")}${providerText ? `; ${providerText}` : ""}`)}">
+  return `<div class="status-cell status-cell-compact" title="${esc(detail)}">
     <strong>${item.missing.length} data gaps</strong>
-    <div class="status-badges">
-      ${visible.map((m) => `<span class="badge warn">${esc(m)}</span>`).join("")}
-      ${hiddenCount ? `<span class="badge warn">+${hiddenCount} more</span>` : ""}
-    </div>
-    ${providerHint ? `<small>${esc(providerHint)}</small>` : ""}
+    <span class="ux-tooltip status-detail-tooltip" tabindex="0" role="note" aria-label="Missing data details" data-tooltip="${esc(detail || "Provider data is unavailable")}">i</span>
+    ${hintTooltip}
   </div>`;
 }
 
@@ -3029,7 +3026,7 @@ function renderRows(items) {
       ? Math.abs(Number(h.cost_basis || 0) / Number(h.quantity || 0))
       : 0;
     return `<tr>
-      <td data-label="Security"><div class="security-cell"><div class="security-symbols">${companyLogoHtml(h)}<button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}</div><div class="security-name">${esc(companyLine)}</div>${industryLine}${exposureLine}<div class="sub security-meta">${esc(marketLine)}</div></div></td>
+      <td data-label="Security"><div class="security-cell"><div class="security-symbols">${companyLogoHtml(h)}<button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}<span class="ux-tooltip security-meta-tooltip" tabindex="0" role="note" aria-label="Security details" data-tooltip="${esc(marketLine)}">i</span></div><div class="security-name">${esc(companyLine)}</div>${industryLine}${exposureLine}</div></td>
       <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(accountMeta)}</div></td>
       <td data-label="Risk">${riskBadge(rowRisk)}</td>
       <td data-label="Value / P&L"><div class="value-cell">

@@ -59,6 +59,18 @@ def test_portfolio_signal_rules_explain_each_selected_financial_measure():
     assert ".signal-condition-control {" in styles
 
 
+def test_holdings_rows_compact_source_and_data_gap_details_into_tooltips():
+    script = (ROOT / "web/app.js").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+
+    assert 'class="ux-tooltip security-meta-tooltip"' in script
+    assert 'class="status-cell status-cell-compact"' in script
+    assert 'class="ux-tooltip status-detail-tooltip"' in script
+    assert "const detail = `${localizedMissing.join" in script
+    assert ".metric-cell .metric-head {" in styles
+    assert ".status-cell.status-cell-compact {" in styles
+
+
 def test_employee_option_critical_inputs_have_visible_labels_and_status_feedback():
     html = (ROOT / "web/index.html").read_text()
     parser = _LabelParser()

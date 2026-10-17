@@ -4938,8 +4938,10 @@ tbody tr:hover {
   font-size: 11px;
 }
 
-.security-meta {
-  line-height: 1.3;
+.security-meta-tooltip,
+.status-detail-tooltip {
+  flex: 0 0 18px;
+  margin-inline-start: 2px;
 }
 
 .value-cell,
@@ -4951,8 +4953,15 @@ tbody tr:hover {
 }
 
 .metric-cell {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: center;
   max-width: 210px;
-  gap: 4px;
+  gap: 4px 9px;
+}
+
+.metric-cell .metric-head {
+  grid-column: 1 / -1;
 }
 
 .value-cell strong,
@@ -5065,6 +5074,17 @@ tbody tr:hover {
   font-weight: 800;
   line-height: 1.1;
   text-align: right;
+  white-space: nowrap;
+}
+
+.status-cell.status-cell-compact {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status-cell.status-cell-compact strong,
+.status-cell.status-cell-compact .badge {
   white-space: nowrap;
 }
 
