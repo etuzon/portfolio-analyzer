@@ -203,6 +203,7 @@ class AlertStore:
                 stored_rule["last_missing_count"] = 0
                 stored_rule["last_status"] = "Running"
                 stored_rule["last_run_id"] = run_id
+                stored_rule["last_progress"] = {"phase": "starting", "completed": 0, "total": 0}
                 selected.append({"rule_id": stored_rule.get("id"), "name": stored_rule.get("name")})
             runs = data.setdefault("runs", [])
             runs.append({
@@ -213,11 +214,30 @@ class AlertStore:
                 "matched_signals": 0,
                 "rules_evaluated": len(selected),
                 "rule_results": selected,
+                "progress": {"phase": "starting", "completed": 0, "total": 0},
                 "metadata": {},
             })
             data["runs"] = runs[-100:]
             self._write(data)
         return run_id
+
+    def update_progress(self, run_id: str, rule_ids: set[str], phase: str, completed: int = 0, total: int = 0) -> None:
+        """Make progress durable so reopening the panel shows the live job state."""
+        progress = {"phase": str(phase), "completed": max(int(completed), 0), "total": max(int(total), 0)}
+        with self._lock:
+            data = self._read()
+            changed = False
+            for stored_rule in data.setdefault("rules", []):
+                if stored_rule.get("id") in rule_ids and stored_rule.get("last_run_id") == run_id and stored_rule.get("last_status") == "Running":
+                    stored_rule["last_progress"] = progress
+                    changed = True
+            for run in data.setdefault("runs", []):
+                if run.get("id") == run_id and run.get("status") == "running":
+                    run["progress"] = progress
+                    run["evaluated_symbols"] = progress["completed"]
+                    changed = True
+            if changed:
+                self._write(data)
 
     def record_failure(
         self,

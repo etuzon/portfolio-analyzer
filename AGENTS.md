@@ -52,6 +52,7 @@ The Docker app is served at `https://localhost:6443`.
 - Preserve the hierarchical sidebar navigation unless explicitly asked to change it.
 - User-facing dates in forms, tables, tooltips, and reports should use `dd/mm/yyyy`.
 - Loading behavior may be blocking only when explicitly requested; otherwise keep analytics loading lightweight and non-blocking.
+- Honor the active interface language completely. Keep API status values machine-readable, but localize every user-visible status, action, count label, error summary, badge, tooltip, and empty state. Hebrew UI must not show English operational labels, and English UI must not show Hebrew labels.
 - For form and table fields, especially numeric amount/percent/age/factor inputs, use stable min-widths or fixed column widths so entered values are visible and not clipped.
 
 ## Implementation Notes

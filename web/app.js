@@ -9976,6 +9976,32 @@ function alertReasonText(reason) {
   return `${metric.label}: ${alertMetricValue(reason.metric, reason.value)} ${reason.operator} ${alertMetricValue(reason.metric, reason.threshold)}`;
 }
 
+function alertRunStatusText(status) {
+  const value = String(status || "completed");
+  if (value === "Running" || value === "running") return t("Running…");
+  if (value === "completed") return t("Completed");
+  if (value === "failed") return t("Failed");
+  if (value === "Not run") return t("Not run");
+  if (value === "No matches") return t("No matches");
+  const match = value.match(/^(\d+) match(?:es)?$/);
+  if (match) return `${fmt(Number(match[1]), 0)} ${t(Number(match[1]) === 1 ? "match" : "matches")}`;
+  if (value.startsWith("Rule check failed:")) return t("Rule check failed.");
+  return t(value);
+}
+
+function alertRunProgressText(progress) {
+  const value = progress || {};
+  const completed = Number(value.completed || 0);
+  const total = Number(value.total || 0);
+  const label = {
+    starting: t("Starting…"),
+    loading_saved_data: t("Loading saved portfolio data…"),
+    loading_rule_data: t("Loading rule data…"),
+    evaluating: t("Evaluating rule…"),
+  }[String(value.phase || "starting")] || t("Running…");
+  return total ? `${label} ${fmt(completed, 0)}/${fmt(total, 0)}` : label;
+}
+
 function renderAlerts(data) {
   state.alertData = data;
   state.alertOptions = data.options || state.alertOptions;
@@ -9987,10 +10013,10 @@ function renderAlerts(data) {
   const runs = data.runs || [];
   $("alertActiveSummary").textContent = fmt(signals.length, 0);
   $("alertRuleSummary").textContent = `${rules.filter((rule) => rule.enabled).length} of ${rules.length}`;
-  $("alertScheduleSummary").textContent = data.schedule?.next_run ? formatDateTime(data.schedule.next_run) : "Not scheduled";
+  $("alertScheduleSummary").textContent = data.schedule?.next_run ? formatDateTime(data.schedule.next_run) : t("Not scheduled");
   $("alertRunSummary").textContent = runs[0]?.run_at
-    ? `${runs[0].status === "failed" ? "Failed · " : ""}${formatDateTime(runs[0].run_at)}`
-    : "Not run";
+    ? `${runs[0].status === "failed" ? `${t("Failed")} · ` : ""}${formatDateTime(runs[0].run_at)}`
+    : t("Not run");
 
   $("alertsSignals").innerHTML = signals.length ? signals.map((signal) => {
     const signalType = ["buy", "sell", "watch"].includes(signal.signal) ? signal.signal : "watch";
@@ -9999,7 +10025,7 @@ function renderAlerts(data) {
     const missingRuleMetrics = (signal.missing_metrics || []).map((metric) => alertMetric(metric).label);
     return `<article class="signal-card signal-match-card signal-${esc(signalType)}">
       <div class="signal-card-head">
-        <div><span class="signal-badge">${esc(signalType)} signal</span><h5>${esc(signal.symbol)} <small>${esc(signal.name || "")}</small></h5></div>
+        <div><span class="signal-badge">${esc(t(`${signalType[0].toUpperCase()}${signalType.slice(1)} signal`))}</span><h5>${esc(signal.symbol)} <small>${esc(signal.name || "")}</small></h5></div>
         <span class="signal-time">${esc(formatDateTime(signal.matched_at))}</span>
       </div>
       <p class="signal-rule-name">Matched “${esc(signal.rule_name || "Rule")}”</p>
@@ -10014,22 +10040,22 @@ function renderAlerts(data) {
 
   $("alertsList").innerHTML = rules.length ? rules.map((rule) => {
     const conditions = rule.conditions || [];
-    const joiner = rule.match_mode === "any" ? " OR " : " AND ";
+    const joiner = rule.match_mode === "any" ? ` ${t("or")} ` : ` ${t("and")} `;
     const conditionText = conditions.length ? conditions.map(alertConditionText).join(joiner) : "This older rule needs a condition before it can run.";
     const matchCount = (rule.last_matches || []).length;
     const isRunning = rule.last_status === "Running";
     return `<article class="signal-card saved-rule-card${rule.enabled ? "" : " is-disabled"}${isRunning ? " is-running" : ""}">
       <div class="signal-card-head">
         <div><span class="signal-badge signal-${esc(rule.signal || "watch")}">${esc(rule.signal || "watch")}</span><h5>${esc(rule.name)}</h5></div>
-        <span class="rule-state">${isRunning ? t("Checking…") : rule.enabled ? "Daily" : "Paused"}</span>
+        <span class="rule-state">${isRunning ? t("Running…") : rule.enabled ? t("Daily") : t("Paused")}</span>
       </div>
       <p>${esc(conditionText)}</p>
-      <div class="signal-rule-meta"><span>${isRunning ? t("Checking your saved portfolio data…") : esc(rule.last_status || "Not run")}</span><span>${isRunning ? t("Results will appear automatically.") : `${matchCount} current match${matchCount === 1 ? "" : "es"}`}</span></div>
+      <div class="signal-rule-meta"><span>${isRunning ? esc(alertRunProgressText(rule.last_progress)) : esc(alertRunStatusText(rule.last_status || "Not run"))}</span><span>${isRunning ? t("Results will appear automatically.") : `${fmt(matchCount, 0)} ${t(matchCount === 1 ? "current match" : "current matches")}`}</span></div>
       <div class="signal-card-actions">
-        <button class="secondary compact-button" type="button" data-run-alert="${esc(rule.id)}"${isRunning ? " disabled" : ""}>${isRunning ? t("Checking…") : t("Run now")}</button>
-        <button class="secondary compact-button" type="button" data-edit-alert="${esc(rule.id)}">Edit</button>
-        <button class="secondary compact-button" type="button" data-toggle-alert="${esc(rule.id)}">${rule.enabled ? "Pause" : "Enable"}</button>
-        <button class="danger compact-button" type="button" data-delete-alert="${esc(rule.id)}">Remove</button>
+        <button class="secondary compact-button" type="button" data-run-alert="${esc(rule.id)}"${isRunning ? " disabled" : ""}>${isRunning ? t("Running…") : t("Run now")}</button>
+        <button class="secondary compact-button" type="button" data-edit-alert="${esc(rule.id)}">${t("Edit")}</button>
+        <button class="secondary compact-button" type="button" data-toggle-alert="${esc(rule.id)}">${rule.enabled ? t("Pause") : t("Enable")}</button>
+        <button class="danger compact-button" type="button" data-delete-alert="${esc(rule.id)}">${t("Remove")}</button>
       </div>
     </article>`;
   }).join("") : '<div class="empty signal-empty">No saved rules. The example above starts with dividend yield &gt; 2.5%.</div>';
@@ -10037,9 +10063,10 @@ function renderAlerts(data) {
   $("alertRunHistory").innerHTML = runs.length ? runs.slice(0, 12).map((run) => {
     const providerErrors = run.metadata?.provider_errors?.length || 0;
     return `<article class="signal-card signal-run-card${run.status === "failed" ? " is-failed" : ""}">
-      <div class="signal-card-head"><h5>${esc(formatDateTime(run.run_at))}</h5><span class="run-state">${esc(run.status || "completed")}</span></div>
-      ${run.error ? `<p class="signal-missing">${esc(run.error)}</p>` : ""}
-      <div class="signal-run-stats"><span><b>${fmt(run.evaluated_symbols || 0, 0)}</b> stocks checked</span><span><b>${fmt(run.matched_signals || 0, 0)}</b> matches</span><span><b>${fmt(providerErrors, 0)}</b> data errors</span></div>
+      <div class="signal-card-head"><h5>${esc(formatDateTime(run.run_at))}</h5><span class="run-state">${esc(alertRunStatusText(run.status))}</span></div>
+      ${run.error ? `<p class="signal-missing">${esc(alertRunStatusText(run.error))}</p>` : ""}
+      ${run.status === "running" ? `<p class="signal-run-progress">${esc(alertRunProgressText(run.progress))}</p>` : ""}
+      <div class="signal-run-stats"><span><b>${fmt(run.evaluated_symbols || 0, 0)}</b> ${t("stocks checked")}</span><span><b>${fmt(run.matched_signals || 0, 0)}</b> ${t("matches")}</span><span><b>${fmt(providerErrors, 0)}</b> ${t("data errors")}</span></div>
     </article>`;
   }).join("") : '<div class="empty signal-empty">No run history yet.</div>';
   if (state.alertRefreshTimer) clearTimeout(state.alertRefreshTimer);
@@ -10127,7 +10154,7 @@ async function runAlertRule(ruleId, button) {
   try {
     const result = await api(`/api/alerts/${encodeURIComponent(ruleId)}/run`, { method: "POST", body: "{}" });
     renderAlerts(result.state);
-    $("alertStatus").textContent = result.started ? t("Checking your saved portfolio data…") : t("This rule is already being checked.");
+    $("alertStatus").textContent = result.started ? t("Running your saved portfolio rule…") : t("This rule is already running.");
   } catch (error) {
     $("alertStatus").textContent = `Error: ${error.message}`;
   }

@@ -105,6 +105,18 @@ def test_running_rule_state_is_persisted_and_replaced_by_its_result(tmp_path):
     assert store.list_runs()[0]["status"] == "completed"
 
 
+def test_running_rule_persists_live_progress(tmp_path):
+    store = AlertStore(tmp_path / "alerts.json")
+    rule = store.add_rule({"name": "Progress", "conditions": [{"metric": "current_ratio", "operator": ">", "value": 1}]})
+    run_id = store.mark_running({rule["id"]})
+
+    store.update_progress(run_id, {rule["id"]}, "loading_rule_data", 3, 12)
+
+    assert store.list_rules()[0]["last_progress"] == {"phase": "loading_rule_data", "completed": 3, "total": 12}
+    assert store.list_runs()[0]["progress"] == {"phase": "loading_rule_data", "completed": 3, "total": 12}
+    assert store.list_runs()[0]["evaluated_symbols"] == 3
+
+
 def test_portfolio_alert_rows_reuse_matching_local_analytics_cache(monkeypatch):
     item = {
         "holding": {"symbol": "LOCAL", "name": "Local", "currency": "ILS", "market_value": 100, "cost_basis": 80, "unrealized_profit": 20, "account": "Brokerage"},
@@ -276,6 +288,7 @@ def test_portfolio_alert_rows_derive_portfolio_and_enriched_metrics(monkeypatch)
         holding=replace(analysis.holding, symbol="RSUGRANT", asset_class="RSU", market_value=10_000),
     )
     monkeypatch.setattr(main, "analyze_all", lambda: [analysis, rsu_analysis])
+    monkeypatch.setattr(main, "_portfolio_alert_source_items", lambda: ([main.to_dict(analysis), main.to_dict(rsu_analysis)], "refreshed"))
     monkeypatch.setattr(main, "hub", lambda: Hub())
     monkeypatch.setattr(main, "_enrich_market_screener_item", enrich)
 

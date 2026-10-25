@@ -3879,7 +3879,9 @@ def _portfolio_alert_source_items() -> tuple[list[dict[str, Any]], str]:
     return [to_dict(analysis) for analysis in analyze_all()], "refreshed"
 
 
-def _portfolio_alert_rows(required_metrics: set[str] | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+def _portfolio_alert_rows(required_metrics: set[str] | None = None, progress=None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if progress:
+        progress("loading_saved_data")
     analyses, _cache_status = _portfolio_alert_source_items()
     all_metrics = required_metrics is None
     required_metrics = required_metrics or set()
@@ -3944,7 +3946,10 @@ def _portfolio_alert_rows(required_metrics: set[str] | None = None) -> tuple[lis
     )
     rows: list[dict[str, Any]] = []
     enrichment_errors = 0
-    for symbol, group in grouped.items():
+    total_symbols = len(grouped)
+    for index, (symbol, group) in enumerate(grouped.items(), start=1):
+        if progress:
+            progress("loading_rule_data" if needs_financials else "evaluating", index - 1, total_symbols)
         analysis = group["analysis"]
         price_ranges = analysis.get("price_ranges") or {}
         moving_average_values = analysis.get("moving_averages") or {}
@@ -4000,6 +4005,8 @@ def _portfolio_alert_rows(required_metrics: set[str] | None = None) -> tuple[lis
             }
         )
         rows.append(row)
+        if progress:
+            progress("evaluating", index, total_symbols)
     return rows, {
         "portfolio_symbols": len(grouped),
         "enriched_symbols": len(rows) - enrichment_errors,
@@ -4017,7 +4024,8 @@ def _run_portfolio_alerts(rule_id: str | None = None, run_id: str | None = None)
     try:
         selected_rules = [rule for rule in rules if (not rule_id or rule.get("id") == rule_id) and (rule_id or rule.get("enabled", True))]
         required_metrics = {condition.get("metric") for rule in selected_rules for condition in rule.get("conditions") or [] if condition.get("metric")}
-        rows, metadata = _portfolio_alert_rows(required_metrics)
+        progress = (lambda phase, completed=0, total=0: alert_store.update_progress(run_id, {rule_id}, phase, completed, total)) if run_id and rule_id else None
+        rows, metadata = _portfolio_alert_rows(required_metrics, progress)
         return alert_store.evaluate(rows, metadata, {rule_id} if rule_id else None, include_disabled=bool(rule_id), run_id=run_id)
     except Exception as exc:
         alert_store.record_failure(
