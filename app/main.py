@@ -3150,12 +3150,13 @@ def list_local_prices():
 @app.get("/api/security/history")
 def security_history(symbol: str, stock_market: str = "", period: str = "1y", date_from: str = "", level_periods: str = ""):
     days_by_period = {"1m": 31, "6m": 183, "1y": 366, "3y": 366 * 3, "5y": 366 * 5}
-    days = days_by_period.get(period, days_by_period["1y"])
+    to_date = date.today()
+    is_max_period = period == "max"
+    days = (to_date - HISTORY_START_DATE).days if is_max_period else days_by_period.get(period, days_by_period["1y"])
     requested_level_periods = [item.strip().lower() for item in level_periods.split(",") if item.strip()]
     level_days = [days_by_period[item] for item in requested_level_periods if item in days_by_period]
     analysis_days = max([days_by_period["1y"], days, *level_days])
-    to_date = date.today()
-    period_start = to_date - timedelta(days=days)
+    period_start = HISTORY_START_DATE if is_max_period else to_date - timedelta(days=days)
     from_date = _clamped_history_start(date_from, HISTORY_START_DATE if not date_from else period_start)
     analysis_from_date = _clamped_history_start((to_date - timedelta(days=analysis_days)).isoformat())
     fetch_from_date = min(from_date, analysis_from_date)

@@ -73,6 +73,19 @@ def test_portfolio_signal_rules_explain_each_selected_financial_measure():
     assert ".signal-add-condition {" in styles
 
 
+def test_alert_matches_can_open_the_existing_price_chart_with_all_requested_ranges():
+    html = (ROOT / "web/index.html").read_text()
+    script = (ROOT / "web/app.js").read_text()
+
+    assert 'data-alert-chart="${esc(signal.symbol)}"' in script
+    assert "async function openAlertSignalChart(symbol, button)" in script
+    assert 'data-security-chart-period="6m"' in html
+    assert 'data-security-chart-period="1y"' in html
+    assert 'data-security-chart-period="3y"' in html
+    assert 'data-security-chart-period="5y"' in html
+    assert 'data-security-chart-period="max"' in html
+
+
 def test_holdings_rows_compact_source_and_data_gap_details_into_tooltips():
     script = (ROOT / "web/app.js").read_text()
     styles = (ROOT / "web/styles.css").read_text()

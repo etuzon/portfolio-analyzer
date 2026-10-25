@@ -2777,6 +2777,7 @@ function clampedHistoryDate(value) {
 }
 
 function startDateForPeriod(period) {
+  if (period === "max") return HISTORY_START_DATE;
   const days = { "1m": 31, "6m": 183, "1y": 366, "3y": 366 * 3, "5y": 366 * 5 }[period] || 366;
   return clampedHistoryDate(new Date(Date.now() - days * 86400000).toISOString().slice(0, 10));
 }
@@ -9976,6 +9977,21 @@ function alertReasonText(reason) {
   return `${metric.label}: ${alertMetricValue(reason.metric, reason.value)} ${reason.operator} ${alertMetricValue(reason.metric, reason.threshold)}`;
 }
 
+async function openAlertSignalChart(symbol, button) {
+  const normalized = cleanSecuritySymbol(symbol);
+  const item = (state.allPortfolioItems || state.items || []).find((candidate) => cleanSecuritySymbol((candidate.holding || {}).symbol) === normalized);
+  const holding = item?.holding || {};
+  await openSecurityDetail({
+    securityDetailSymbol: normalized,
+    securityDetailMarketKey: holdingMarketKey(holding),
+    securityDetailStockMarket: stockMarketDisplay(holding, holdingMarketKey(holding)),
+    securityDetailProvider: dataProviderDisplay(item || {}, holding, holdingMarketKey(holding)),
+    securityDetailAsset: holding.asset_class || "EQUITY",
+    securityDetailCurrency: holding.currency || "USD",
+    securityDetailLocation: holding.country || holding.location || "USA",
+  }, button);
+}
+
 function alertRunStatusText(status) {
   const value = String(status || "completed");
   if (value === "Running" || value === "running") return t("Running…");
@@ -10033,6 +10049,7 @@ function renderAlerts(data) {
       ${missingRuleMetrics.length ? `<p class="signal-missing">Rule data unavailable: ${esc(missingRuleMetrics.join(", "))}</p>` : ""}
       ${missing.length ? `<p class="signal-missing">Some provider data is unavailable: ${esc(missing.join(", "))}</p>` : ""}
       <div class="signal-card-actions">
+        <button class="secondary compact-button" type="button" data-alert-chart="${esc(signal.symbol)}">${t("Chart")}</button>
         <button type="button" data-investigate-signal="${esc(signal.symbol)}">Investigate &amp; score</button>
       </div>
     </article>`;
@@ -11412,6 +11429,13 @@ document.addEventListener("click", (event) => {
   if (investigateSignal) {
     investigateAlertSignal(investigateSignal).catch((error) => {
       $("companyOutlookStatus").textContent = `Error: ${error.message}`;
+    });
+  }
+
+  const alertChartButton = event.target.closest("[data-alert-chart]");
+  if (alertChartButton) {
+    openAlertSignalChart(alertChartButton.dataset.alertChart, alertChartButton).catch((error) => {
+      $("alertStatus").textContent = `Error: ${error.message}`;
     });
   }
 

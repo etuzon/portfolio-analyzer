@@ -1268,6 +1268,8 @@
     "New rule ready. Add one or more conditions, then save it.": "הכלל החדש מוכן. הוסיפו תנאי אחד או יותר, ואז שמרו אותו.",
     "Rule saved. Start the next rule above, or add more conditions before saving it.": "הכלל נשמר. אפשר להתחיל כלל נוסף למעלה, או להוסיף תנאים נוספים לפני שמירתו.",
     "Matches": "התאמות",
+    "Chart": "גרף",
+    "MAX": "מקסימום",
     "Open a company investigation before making a decision.": "מומלץ לפתוח בדיקת חברה לפני קבלת החלטה.",
     "Automation": "אוטומציה",
     "Saved rules": "כללים שמורים",

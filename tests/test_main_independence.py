@@ -410,6 +410,30 @@ def test_security_history_returns_ohlcv_and_chart_metrics(monkeypatch):
     assert result["technical_signals"]["confirmed_breakout"]["score_total"] == 4
 
 
+def test_security_history_max_uses_the_full_saved_history_range(monkeypatch):
+    captured = {}
+
+    class Store:
+        def price_history(self, symbol, stock_market, from_date, to_date):
+            return []
+
+        def manual_security_exists(self, symbol, stock_market):
+            return False
+
+    class Hub:
+        def prices(self, symbol, from_date, to_date, **kwargs):
+            captured["from_date"] = from_date
+            return [], {}
+
+    monkeypatch.setattr(main, "HISTORY_START_DATE", date(2020, 1, 1))
+    monkeypatch.setattr(main, "local_store", Store())
+    monkeypatch.setattr(main, "hub", lambda: Hub())
+
+    main.security_history("CSCO", "NASDAQ", period="max")
+
+    assert captured["from_date"] == date(2020, 1, 1)
+
+
 def test_security_signal_uses_analysis_history_when_visible_chart_is_short():
     start = date.today() - timedelta(days=39)
     analysis_prices = [
