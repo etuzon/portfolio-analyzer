@@ -77,6 +77,70 @@ def test_any_condition_can_match_but_reports_unavailable_rule_data(tmp_path):
     assert results[0]["rule"]["last_missing_count"] == 2
 
 
+def test_can_evaluate_one_paused_rule_without_running_other_rules(tmp_path):
+    store = AlertStore(tmp_path / "alerts.json")
+    selected = store.add_rule({"name": "Selected", "enabled": False, "conditions": [{"metric": "current_ratio", "operator": ">", "value": 1}]})
+    other = store.add_rule({"name": "Other", "conditions": [{"metric": "current_ratio", "operator": ">", "value": 3}]})
+
+    results = store.evaluate([{"symbol": "ABC", "current_ratio": 2}], rule_ids={selected["id"]}, include_disabled=True)
+
+    assert [result["rule"]["id"] for result in results] == [selected["id"]]
+    rules = {rule["id"]: rule for rule in store.list_rules()}
+    assert rules[selected["id"]]["last_status"] == "1 match"
+    assert rules[other["id"]]["last_status"] == "Not run"
+
+
+def test_running_rule_state_is_persisted_and_replaced_by_its_result(tmp_path):
+    store = AlertStore(tmp_path / "alerts.json")
+    rule = store.add_rule({"name": "Quick check", "conditions": [{"metric": "current_ratio", "operator": ">", "value": 1}]})
+
+    run_id = store.mark_running({rule["id"]})
+
+    assert store.list_rules()[0]["last_status"] == "Running"
+    assert store.list_runs()[0]["status"] == "running"
+    store.evaluate([{"symbol": "ABC", "current_ratio": 2}], rule_ids={rule["id"]}, run_id=run_id)
+
+    assert store.list_rules()[0]["last_status"] == "1 match"
+    assert len(store.list_runs()) == 1
+    assert store.list_runs()[0]["status"] == "completed"
+
+
+def test_portfolio_alert_rows_reuse_matching_local_analytics_cache(monkeypatch):
+    item = {
+        "holding": {"symbol": "LOCAL", "name": "Local", "currency": "ILS", "market_value": 100, "cost_basis": 80, "unrealized_profit": 20, "account": "Brokerage"},
+        "price_ranges": {"1y": {"current": 10, "percent_from_high": -5}},
+        "moving_averages": {"30": {"price_vs_ma_percent": 2, "slope_percent": 0.1}},
+        "technical_signals": {"confirmed_breakout": {"state": "ok", "triggered": False}},
+        "volume": {"relative_20d": 1.2},
+        "dividend_trend": {"percent_change": 4},
+        "market_cap": 1_000_000,
+        "missing": [],
+        "industry": "Software",
+    }
+    monkeypatch.setattr(main, "portfolio_cache_signature", lambda: "current")
+    monkeypatch.setattr(main, "_portfolio_cache", {"signature": "current", "expires_at": 9999999999, "payload": {"items": [item]}})
+    monkeypatch.setattr(main, "analyze_all", lambda: pytest.fail("alert run should reuse the local analytics cache"))
+
+    rows, metadata = main._portfolio_alert_rows({"price_from_high_1y_percent"})
+
+    assert rows[0]["symbol"] == "LOCAL"
+    assert rows[0]["price_from_high_1y_percent"] == -5
+    assert metadata["portfolio_symbols"] == 1
+
+
+def test_one_rule_failure_does_not_overwrite_other_rule_status(tmp_path):
+    store = AlertStore(tmp_path / "alerts.json")
+    selected = store.add_rule({"name": "Selected", "conditions": [{"metric": "current_ratio", "operator": ">", "value": 1}]})
+    other = store.add_rule({"name": "Other", "conditions": [{"metric": "current_ratio", "operator": ">", "value": 3}]})
+    store.evaluate([{"symbol": "ABC", "current_ratio": 2}])
+
+    store.record_failure("Rule check failed: ProviderError", rule_ids={selected["id"]})
+
+    rules = {rule["id"]: rule for rule in store.list_rules()}
+    assert rules[selected["id"]]["last_status"] == "Rule check failed: ProviderError"
+    assert rules[other["id"]]["last_status"] == "No matches"
+
+
 def test_rule_validation_update_delete_and_legacy_migration(tmp_path):
     path = tmp_path / "alerts.json"
     store = AlertStore(path)

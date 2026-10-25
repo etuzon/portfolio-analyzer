@@ -1534,7 +1534,8 @@
 
           <section class="signal-rule-builder" aria-labelledby="signalRuleBuilderTitle">
             <div class="section-head compact-head">
-              <div><p class="eyebrow">Rule builder</p><h4 id="signalRuleBuilderTitle">When should a signal appear?</h4></div>
+              <div><p class="eyebrow">Rule builder</p><h4 id="signalRuleBuilderTitle">Create a research rule</h4><p class="section-note">A rule can have several conditions. Save it, then start another rule for a different investment question.</p></div>
+              <button id="newAlertRule" class="secondary compact-button" type="button">+ New rule</button>
             </div>
             <div class="signal-rule-grid">
               <label class="field" for="alertName"><span>Rule name</span><input id="alertName" placeholder="For example, Income opportunity" maxlength="120" /></label>
@@ -1543,12 +1544,13 @@
               <label class="signal-enabled" for="alertEnabled"><input id="alertEnabled" type="checkbox" checked /><span>Run this rule daily</span></label>
             </div>
             <div class="signal-condition-head">
-              <div><b>Conditions</b><small>Save this rule, then create another independent rule for a separate investment question.</small></div>
-              <button id="addAlertCondition" class="secondary compact-button" type="button">+ Add condition</button>
+              <div><b>Conditions <span id="alertConditionCount" class="signal-condition-count">1</span></b><small>Use all conditions to narrow results, or choose “Any condition” to broaden them.</small></div>
+              <button id="addAlertCondition" class="secondary compact-button" type="button">+ Add another condition</button>
             </div>
             <div id="alertConditions" class="signal-conditions"></div>
+            <button class="signal-add-condition" type="button" data-add-alert-condition>+ Add another condition</button>
             <div class="form-actions signal-form-actions">
-              <button id="saveAlert" type="button">Save rule</button>
+              <button id="saveAlert" type="button">Save rule &amp; start another</button>
               <button id="cancelAlertEdit" class="secondary" type="button" hidden>Cancel edit</button>
             </div>
             <p id="alertStatus" class="status-line" role="status" aria-live="polite"></p>

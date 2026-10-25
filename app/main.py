@@ -168,6 +168,8 @@ ASSISTANT_CONTEXT_PREF_PREFIX = "assistant_context:"
 _portfolio_cache_lock = RLock()
 _portfolio_cache: dict[str, Any] | None = None
 _portfolio_refresh_in_progress = False
+_alert_run_lock = RLock()
+_alert_runs_in_progress: set[str] = set()
 _full_restore_lock = RLock()
 _login_attempt_lock = RLock()
 _login_failures: dict[str, list[float]] = {}
@@ -3857,23 +3859,52 @@ def _alert_current_price(analysis: Any) -> float | None:
     return _number_or_none((analysis.support_resistance.get("1m") or {}).get("current_price"))
 
 
-def _portfolio_alert_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    analyses = analyze_all()
+def _portfolio_alert_source_items() -> tuple[list[dict[str, Any]], str]:
+    """Use the dashboard's local analytics snapshot before doing provider work."""
+    try:
+        signature = portfolio_cache_signature()
+    except (OSError, sqlite3.Error):
+        # A transient SQLite lock/read-only state must not prevent a manual rule check.
+        return [to_dict(analysis) for analysis in analyze_all()], "unavailable"
+    with _portfolio_cache_lock:
+        cached = _portfolio_cache or read_portfolio_cache()
+    if cached and signature and cached.get("signature") == signature:
+        payload = cached.get("payload") or {}
+        items = payload.get("items") if isinstance(payload, dict) else None
+        if isinstance(items, list):
+            if float(cached.get("expires_at") or 0) <= time.time():
+                schedule_portfolio_refresh()
+                return items, "stale (refreshing in background)"
+            return items, "hit"
+    return [to_dict(analysis) for analysis in analyze_all()], "refreshed"
+
+
+def _portfolio_alert_rows(required_metrics: set[str] | None = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    analyses, _cache_status = _portfolio_alert_source_items()
+    all_metrics = required_metrics is None
+    required_metrics = required_metrics or set()
+    needs_financials = all_metrics or bool(required_metrics & {
+        "dividend_yield_percent", "market_cap_millions", "annual_net_income_millions",
+        "profit_market_cap_percent", "price_earnings_ratio", "revenue_growth_percent",
+        "net_income_growth_percent", "net_margin_percent", "free_cash_flow_millions",
+        "free_cash_flow_yield_percent", "debt_to_revenue_percent", "current_ratio",
+    })
+    needs_dividend_history = all_metrics or "dividend_yield_percent" in required_metrics
     grouped: dict[str, dict[str, Any]] = {}
     for analysis in analyses:
-        holding = analysis.holding
-        asset_class = str(holding.asset_class or holding.asset_sub_class or "").upper()
-        if str(holding.account_type or "").upper() == "ESOP" or asset_class in {"RSU", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"}:
+        holding = analysis.get("holding") or {}
+        asset_class = str(holding.get("asset_class") or holding.get("asset_sub_class") or "").upper()
+        if str(holding.get("account_type") or "").upper() == "ESOP" or asset_class in {"RSU", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"}:
             continue
-        symbol = str(holding.symbol or "").upper().strip()
+        symbol = str(holding.get("symbol") or "").upper().strip()
         if not symbol:
             continue
         group = grouped.setdefault(
             symbol,
             {
                 "analysis": analysis,
-                "name": holding.name or symbol,
-                "currency": holding.currency,
+                "name": holding.get("name") or symbol,
+                "currency": holding.get("currency"),
                 "market_value": 0.0,
                 "cost_basis": 0.0,
                 "unrealized_profit": 0.0,
@@ -3881,12 +3912,12 @@ def _portfolio_alert_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "missing": set(),
             },
         )
-        group["market_value"] += float(holding.market_value or 0)
-        group["cost_basis"] += float(holding.cost_basis or 0)
-        group["unrealized_profit"] += float(holding.unrealized_profit or 0)
-        if holding.account:
-            group["accounts"].add(str(holding.account))
-        group["missing"].update(analysis.missing or [])
+        group["market_value"] += float(holding.get("market_value") or 0)
+        group["cost_basis"] += float(holding.get("cost_basis") or 0)
+        group["unrealized_profit"] += float(holding.get("unrealized_profit") or 0)
+        if holding.get("account"):
+            group["accounts"].add(str(holding["account"]))
+        group["missing"].update(analysis.get("missing") or [])
     provider_hub = hub()
     base_currency = str(config.dashboard.get("base_currency") or "ILS").upper()
     provider_errors: list[dict[str, str]] = []
@@ -3915,25 +3946,34 @@ def _portfolio_alert_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     enrichment_errors = 0
     for symbol, group in grouped.items():
         analysis = group["analysis"]
-        current_price = _alert_current_price(analysis)
+        price_ranges = analysis.get("price_ranges") or {}
+        moving_average_values = analysis.get("moving_averages") or {}
+        technical_signal_values = analysis.get("technical_signals") or {}
+        current_price = next((_number_or_none((price_ranges.get(period) or {}).get("current")) for period in ["1m", "6m", "1y", "3y", "5y"] if _number_or_none((price_ranges.get(period) or {}).get("current")) is not None), None)
+        if current_price is None:
+            current_price = _number_or_none(((analysis.get("support_resistance") or {}).get("1m") or {}).get("current_price"))
+        holding = analysis.get("holding") or {}
         base = {
             "symbol": symbol,
             "name": group["name"],
             "currency": group["currency"],
             "price": current_price,
-            "market_cap": analysis.market_cap,
-            "sector": analysis.holding.sector,
-            "industry": analysis.industry or analysis.holding.industry,
+            "market_cap": analysis.get("market_cap"),
+            "sector": holding.get("sector"),
+            "industry": analysis.get("industry") or holding.get("industry"),
         }
-        try:
-            row, _has_financials = _enrich_market_screener_item(base, provider_hub, True)
-        except Exception as exc:
+        if needs_financials:
+            try:
+                row, _has_financials = _enrich_market_screener_item(base, provider_hub, needs_dividend_history)
+            except Exception as exc:
+                row = base
+                enrichment_errors += 1
+                provider_errors.append({"symbol": symbol, "error": type(exc).__name__})
+        else:
             row = base
-            enrichment_errors += 1
-            provider_errors.append({"symbol": symbol, "error": type(exc).__name__})
-        one_year = analysis.price_ranges.get("1y") or {}
-        ma30 = analysis.moving_averages.get("30") or {}
-        breakout = analysis.technical_signals.get("confirmed_breakout") or {}
+        one_year = price_ranges.get("1y") or {}
+        ma30 = moving_average_values.get("30") or {}
+        breakout = technical_signal_values.get("confirmed_breakout") or {}
         market_cap = _number_or_none(row.get("market_cap"))
         annual_profit = _number_or_none(row.get("annual_net_income"))
         free_cash_flow = _number_or_none(row.get("free_cash_flow"))
@@ -3950,10 +3990,10 @@ def _portfolio_alert_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
                 "market_cap_millions": market_cap / 1_000_000 if market_cap is not None else None,
                 "annual_net_income_millions": annual_profit / 1_000_000 if annual_profit is not None else None,
                 "free_cash_flow_millions": free_cash_flow / 1_000_000 if free_cash_flow is not None else None,
-                "dividend_growth_percent": analysis.dividend_trend.percent_change,
+                "dividend_growth_percent": _number_or_none((analysis.get("dividend_trend") or {}).get("percent_change")),
                 "price_vs_ma30_percent": _number_or_none(ma30.get("price_vs_ma_percent")),
                 "ma30_slope_percent": _number_or_none(ma30.get("slope_percent")),
-                "relative_volume_20d": _number_or_none(analysis.volume.get("relative_20d")),
+                "relative_volume_20d": _number_or_none((analysis.get("volume") or {}).get("relative_20d")),
                 "confirmed_breakout": 1.0 if breakout.get("state") == "ok" and breakout.get("triggered") else (0.0 if breakout.get("state") == "ok" else None),
                 "price_from_high_1y_percent": _number_or_none(one_year.get("percent_from_high")),
                 "missing": sorted(set(group["missing"]) | set(row.get("missing") or [])),
@@ -3968,18 +4008,45 @@ def _portfolio_alert_rows() -> tuple[list[dict[str, Any]], dict[str, Any]]:
     }
 
 
-def _run_portfolio_alerts() -> list[dict[str, Any]]:
-    if not any(rule.get("enabled", True) for rule in alert_store.list_rules()):
+def _run_portfolio_alerts(rule_id: str | None = None, run_id: str | None = None) -> list[dict[str, Any]]:
+    rules = alert_store.list_rules()
+    if rule_id and not any(rule.get("id") == rule_id for rule in rules):
+        raise ValueError("Alert rule not found")
+    if not rule_id and not any(rule.get("enabled", True) for rule in rules):
         return alert_store.evaluate([], {"status": "no enabled rules", "portfolio_symbols": 0})
     try:
-        rows, metadata = _portfolio_alert_rows()
-        return alert_store.evaluate(rows, metadata)
+        selected_rules = [rule for rule in rules if (not rule_id or rule.get("id") == rule_id) and (rule_id or rule.get("enabled", True))]
+        required_metrics = {condition.get("metric") for rule in selected_rules for condition in rule.get("conditions") or [] if condition.get("metric")}
+        rows, metadata = _portfolio_alert_rows(required_metrics)
+        return alert_store.evaluate(rows, metadata, {rule_id} if rule_id else None, include_disabled=bool(rule_id), run_id=run_id)
     except Exception as exc:
         alert_store.record_failure(
             f"Rule check failed: {type(exc).__name__}",
             {"error_type": type(exc).__name__},
+            {rule_id} if rule_id else None,
+            include_disabled=bool(rule_id),
+            run_id=run_id,
         )
         return []
+
+
+def _start_portfolio_alert_run(rule_id: str) -> bool:
+    """Start one rule in the background, retaining a durable UI state while it runs."""
+    with _alert_run_lock:
+        if rule_id in _alert_runs_in_progress:
+            return False
+        _alert_runs_in_progress.add(rule_id)
+    run_id = alert_store.mark_running({rule_id}, include_disabled=True)
+
+    def evaluate() -> None:
+        try:
+            _run_portfolio_alerts(rule_id, run_id)
+        finally:
+            with _alert_run_lock:
+                _alert_runs_in_progress.discard(rule_id)
+
+    Thread(target=evaluate, name=f"portfolio-alert-{rule_id[:8]}", daemon=True).start()
+    return True
 
 
 def _market_screener_basic_metrics(item: dict[str, Any]) -> dict[str, Any]:
@@ -4123,6 +4190,14 @@ def delete_alert(rule_id: str):
 def run_alerts():
     results = _run_portfolio_alerts()
     return {"results": results, "state": list_alerts()}
+
+
+@app.post("/api/alerts/{rule_id}/run")
+def run_alert(rule_id: str):
+    if not any(rule.get("id") == rule_id for rule in alert_store.list_rules()):
+        raise HTTPException(status_code=404, detail="Alert rule not found")
+    started = _start_portfolio_alert_run(rule_id)
+    return {"started": started, "state": list_alerts()}
 
 
 portfolio_mcp = create_portfolio_mcp_server(

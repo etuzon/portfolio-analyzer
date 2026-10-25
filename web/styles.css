@@ -6883,6 +6883,15 @@ tbody tr:hover {
   color: #f4f7fc;
 }
 
+.signal-rule-builder > .section-head {
+  align-items: flex-start;
+}
+
+.signal-rule-builder > .section-head > button {
+  width: auto;
+  white-space: nowrap;
+}
+
 .signal-rule-grid {
   display: grid;
   grid-template-columns: minmax(220px, 1.3fr) minmax(150px, 0.65fr) minmax(170px, 0.75fr) auto;
@@ -6985,6 +6994,11 @@ tbody tr:hover {
   color: #d7e4f5;
 }
 
+html[dir="rtl"] .signal-condition-help::after {
+  direction: rtl;
+  text-align: right;
+}
+
 .signal-condition-head > div {
   display: grid;
   gap: 3px;
@@ -6994,6 +7008,32 @@ tbody tr:hover {
   color: #8f9aab;
   font-size: 11px;
   font-weight: 600;
+}
+
+.signal-condition-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  margin-inline-start: 6px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: rgba(33, 167, 255, 0.14);
+  color: #83d2ff;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.signal-add-condition {
+  width: 100%;
+  margin-top: 9px;
+  border: 1px dashed rgba(33, 167, 255, 0.5);
+  background: rgba(33, 167, 255, 0.07);
+  color: #a8dcfa;
+}
+
+.signal-add-condition:hover {
+  border-color: #21a7ff;
+  background: rgba(33, 167, 255, 0.14);
 }
 
 .signal-remove-condition {
@@ -7151,6 +7191,11 @@ tbody tr:hover {
 
 .saved-rule-card.is-disabled {
   opacity: 0.62;
+}
+
+.saved-rule-card.is-running {
+  border-color: rgba(33, 167, 255, 0.72);
+  box-shadow: 0 0 0 1px rgba(33, 167, 255, 0.12);
 }
 
 .signal-run-card.is-failed {

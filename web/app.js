@@ -80,6 +80,7 @@ const state = {
   researchSection: "finance",
   macroScenarioSettings: null,
   alertData: null,
+  alertRefreshTimer: null,
   alertOptions: { metrics: [], operators: [], signals: [], match_modes: [] },
   alertConditions: [],
   editingAlertId: "",
@@ -229,6 +230,8 @@ const TRANSLATIONS = {
     language: "Language",
     display: "Display",
     appLanguage: "App language",
+    condition: "condition",
+    conditions: "conditions",
     saveDisplaySettings: "Save display settings",
     displaySettingsSaved: "Display settings saved",
     tableDisplay: "Table display",
@@ -288,6 +291,8 @@ const TRANSLATIONS = {
     language: "שפה",
     display: "תצוגה",
     appLanguage: "שפת הממשק",
+    condition: "תנאי",
+    conditions: "תנאים",
     saveDisplaySettings: "שמור הגדרות תצוגה",
     displaySettingsSaved: "הגדרות התצוגה נשמרו",
     tableDisplay: "תצוגת טבלה",
@@ -305,6 +310,31 @@ function locale() {
 function t(key) {
   return TRANSLATIONS[state.language]?.[key] || TRANSLATIONS.en[key] || key;
 }
+
+const ALERT_METRIC_LOCALIZATIONS = {
+  he: {
+    dividend_yield_percent: { label: "תשואת דיבידנד", guidance: { description: "סך הדיבידנדים השנתיים למניה חלקי מחיר המניה הנוכחי.", example: "תשואת דיבידנד > 2.5%", use: "מציג את שיעור ההכנסה הנוכחי, אך אינו מבטיח שהדיבידנד בטוח." } },
+    dividend_growth_percent: { label: "צמיחת דיבידנד", guidance: { description: "השינוי בדיבידנד השנתי לעומת השנה הקודמת.", example: "צמיחת דיבידנד > 5%", use: "מציג אם תשלומי הדיבידנד לבעלי המניות גדלים או קטנים." } },
+    market_cap_millions: { label: "שווי שוק", guidance: { description: "שווי השוק הכולל של כל מניות החברה, במיליוני דולרים.", example: "שווי שוק > 10,000 מיליון דולר", use: "מבדיל בין חברות גדולות ומבוססות לבין סיכון של חברות קטנות יותר." } },
+    annual_net_income_millions: { label: "רווח נקי שנתי", guidance: { description: "רווח לאחר הוצאות ומס בדוח השנתי האחרון, במיליוני דולרים.", example: "רווח נקי שנתי > 500 מיליון דולר", use: "מאשר שהרווח המדווח חיובי ומהותי." } },
+    profit_market_cap_percent: { label: "רווח / שווי שוק", guidance: { description: "הרווח הנקי השנתי האחרון חלקי שווי השוק; מדד הדומה לתשואת רווחים.", example: "רווח / שווי שוק > 5%", use: "משווה בין הרווח לשווי, אך אינו המלצת תמחור." } },
+    price_earnings_ratio: { label: "מכפיל רווח", guidance: { description: "שווי השוק חלקי הרווח הנקי השנתי האחרון.", example: "מכפיל רווח < 20", use: "מציג כמה המשקיעים משלמים עבור כל יחידת רווח נוכחי." } },
+    revenue_growth_percent: { label: "צמיחת הכנסות", guidance: { description: "השינוי השנתי במכירות לפי הדוח השנתי האחרון.", example: "צמיחת הכנסות > 10%", use: "מציג אם הביקוש והיקף הפעילות של החברה מתרחבים." } },
+    net_income_growth_percent: { label: "צמיחת רווח", guidance: { description: "השינוי השנתי ברווח הנקי לפי הדוח השנתי האחרון.", example: "צמיחת רווח > 10%", use: "מציג אם הרווחים משתפרים מהר יותר או לאט יותר מבעבר." } },
+    net_margin_percent: { label: "שיעור רווח נקי", guidance: { description: "הרווח הנקי כאחוז מההכנסות.", example: "שיעור רווח נקי > 15%", use: "מציג כמה מכל שקל הכנסה נשאר לאחר כל ההוצאות." } },
+    free_cash_flow_millions: { label: "תזרים מזומנים חופשי", guidance: { description: "מזומן שנותר לאחר עלויות תפעול והשקעות הון, במיליוני דולרים.", example: "תזרים מזומנים חופשי > 250 מיליון דולר", use: "מציג מזומן הזמין להפחתת חוב, דיבידנדים, רכישות עצמיות או השקעה מחדש." } },
+    free_cash_flow_yield_percent: { label: "תשואת תזרים מזומנים חופשי", guidance: { description: "תזרים המזומנים החופשי חלקי שווי השוק.", example: "תשואת תזרים חופשי > 4%", use: "משווה את ייצור המזומנים למחיר שהמשקיעים משלמים עבור העסק." } },
+    debt_to_revenue_percent: { label: "חוב / הכנסות", guidance: { description: "סך החוב כאחוז מההכנסות השנתיות.", example: "חוב / הכנסות < 100%", use: "מסמן מינוף ביחס לגודל הפעילות." } },
+    current_ratio: { label: "יחס שוטף", guidance: { description: "נכסים שוטפים חלקי התחייבויות שוטפות.", example: "יחס שוטף > 1.5", use: "מצביע על נזילות לטווח קצר, אך אינו מדד מלא ליכולת פירעון." } },
+    unrealized_profit_percent: { label: "רווח/הפסד לא ממומש בהחזקה", guidance: { description: "הרווח או ההפסד הנוכחי בהחזקה ביחס לעלות הקנייה.", example: "רווח/הפסד לא ממומש < ‎-15%", use: "מדגיש החזקות שדורשות בדיקה, אך אינו הוראת מכירה." } },
+    holding_allocation_percent: { label: "הקצאה בתיק", guidance: { description: "אחוז ההחזקה מתוך שווי התיק הכולל.", example: "הקצאה בתיק > 10%", use: "מזהה סיכון ריכוזיות וגודל פוזיציה." } },
+    price_vs_ma30_percent: { label: "מחיר לעומת ממוצע נע 30", guidance: { description: "המחיר הנוכחי ביחס לממוצע הנע של 30 ימי מסחר.", example: "מחיר לעומת ממוצע נע 30 > 5%", use: "מציג מומנטום מחיר קצר טווח ביחס למגמה האחרונה." } },
+    ma30_slope_percent: { label: "שיפוע ממוצע נע 30", guidance: { description: "הכיוון האחרון של הממוצע הנע ל־30 ימי מסחר.", example: "שיפוע ממוצע נע 30 > 0%", use: "מציג אם המגמה האחרונה עולה או יורדת." } },
+    relative_volume_20d: { label: "מחזור יחסי לעומת 20 ימים", guidance: { description: "מחזור המסחר היום חלקי המחזור הממוצע ב־20 ימי המסחר האחרונים.", example: "מחזור יחסי > 1.5×", use: "מסמן מסחר חריג שיכול לאשש או לאתגר תנועת מחיר." } },
+    confirmed_breakout: { label: "פריצת התנגדות מאושרת", guidance: { description: "האם המחיר חצה רמת התנגדות מחושבת עם אישור.", example: "פריצה מאושרת = 1", use: "מסמן אירוע טכני למחקר; רמות התנגדות הן הערכות." } },
+    price_from_high_1y_percent: { label: "מחיר מהשיא השנתי", guidance: { description: "מרחק המחיר הנוכחי מהמחיר הגבוה ביותר בשנה האחרונה.", example: "מחיר מהשיא השנתי < ‎-20%", use: "מציג ירידה מהשיא השנתי, ולא אם מניה זולה." } },
+  },
+};
 const OPTION_LABELS = {
   MUTUALFUND: "Mutual Fund",
   OPTION: "Exchange-Traded Option",
@@ -618,7 +648,7 @@ async function clearPortfolioAssistantContext() {
 }
 
 const WRITE_CONTROL_IDS = new Set([
-  "addAlertCondition", "addBannerItem", "addPensionPeriod", "addPensionRate", "addPensionScenario",
+  "addAlertCondition", "newAlertRule", "addBannerItem", "addPensionPeriod", "addPensionRate", "addPensionScenario",
   "applyBackupSchedule", "attachAccountToMember", "attachEditAccountPerson", "attachLocalAccountPerson",
   "captureHistorySnapshot", "chooseFullRestore", "chooseImportData", "clearAlarms", "dashboardEdit",
   "dashboardReset", "importSource", "newEmployeeOptionGrant", "newPensionScenario", "runAlerts",
@@ -638,8 +668,8 @@ const WRITE_DATA_ACTIONS = new Set([
   "data-delete-security", "data-edit-account", "data-edit-alert", "data-edit-broker", "data-edit-employee-option-grant",
   "data-edit-family-member", "data-edit-fund", "data-edit-fund-history", "data-edit-manual-security",
   "data-edit-pension-scenario", "data-edit-position-transaction", "data-edit-security", "data-evaluate-company-outlook",
-  "data-exercise-employee-option", "data-fix-skipped-account", "data-link-employee-listing", "data-remove-alert-condition",
-  "data-remove-banner", "data-schedule-pension-scenario", "data-toggle-alert", "data-use-manual-security",
+  "data-exercise-employee-option", "data-fix-skipped-account", "data-link-employee-listing", "data-remove-alert-condition", "data-add-alert-condition",
+  "data-remove-banner", "data-run-alert", "data-schedule-pension-scenario", "data-toggle-alert", "data-use-manual-security",
   "data-user-enabled", "data-delete-user",
   "data-remove-exposure-currency",
 ]);
@@ -9809,12 +9839,14 @@ function addBannerItem() {
 }
 
 function alertMetric(metricKey) {
-  return (state.alertOptions.metrics || []).find((item) => item.key === metricKey) || {
+  const metric = (state.alertOptions.metrics || []).find((item) => item.key === metricKey) || {
     key: metricKey,
     label: metricKey.replaceAll("_", " "),
     unit: "",
     digits: 2,
   };
+  const localized = ALERT_METRIC_LOCALIZATIONS[state.language]?.[metricKey];
+  return localized ? { ...metric, ...localized, guidance: { ...metric.guidance, ...localized.guidance } } : metric;
 }
 
 function alertMetricValue(metricKey, value) {
@@ -9830,7 +9862,7 @@ function alertMetricValue(metricKey, value) {
 function alertMetricOptions(selected = "") {
   const groups = (state.alertOptions.metrics || []).reduce((result, metric) => {
     const group = metric.group || "Financials";
-    (result[group] ||= []).push(metric);
+    (result[group] ||= []).push(alertMetric(metric.key));
     return result;
   }, {});
   if (!Object.keys(groups).length) return '<option value="">Loading metrics</option>';
@@ -9851,13 +9883,19 @@ function alertMetricGuidance(metricKey) {
 
 function alertConditionGuidanceHtml(metricKey) {
   const guidance = alertMetricGuidance(metricKey);
-  return `<b>What it measures:</b> ${esc(guidance.description)} <b>Example:</b> ${esc(guidance.example)} <b>What it tells you:</b> ${esc(guidance.use)}`;
+  const labels = state.language === "he"
+    ? { measures: "מה המדד מודד:", example: "דוגמה:", tells: "מה ניתן ללמוד ממנו:" }
+    : { measures: "What it measures:", example: "Example:", tells: "What it tells you:" };
+  return `<b>${labels.measures}</b> ${esc(guidance.description)} <b>${labels.example}</b> ${esc(guidance.example)} <b>${labels.tells}</b> ${esc(guidance.use)}`;
 }
 
 function alertConditionGuidanceTooltip(metricKey) {
   const metric = alertMetric(metricKey);
   const guidance = alertMetricGuidance(metricKey);
-  return `${metric.label}. ${guidance.description} Example: ${guidance.example}. What it tells you: ${guidance.use}`;
+  const labels = state.language === "he"
+    ? { example: "דוגמה:", tells: "מה ניתן ללמוד ממנו:" }
+    : { example: "Example:", tells: "What it tells you:" };
+  return `${metric.label}. ${guidance.description} ${labels.example} ${guidance.example}. ${labels.tells} ${guidance.use}`;
 }
 
 function readAlertConditions() {
@@ -9870,6 +9908,9 @@ function readAlertConditions() {
 
 function renderAlertConditions() {
   const operatorOptions = state.alertOptions.operators || [];
+  const conditionCount = state.alertConditions.length;
+  const count = $("alertConditionCount");
+  if (count) count.textContent = `${conditionCount} ${t(conditionCount === 1 ? "condition" : "conditions")}`;
   $("alertConditions").innerHTML = state.alertConditions.map((condition, index) => `
     <div class="signal-condition-row" data-alert-condition="${index}">
       <div class="signal-condition-metric"><label for="alertConditionMetric${index}"><span>Financial measure</span></label><div class="signal-condition-control"><select id="alertConditionMetric${index}" data-alert-condition-metric>${alertMetricOptions(condition.metric)}</select><button class="ux-tooltip signal-condition-help" type="button" aria-label="Explain ${esc(alertMetric(condition.metric).label)}" data-tooltip="${esc(alertConditionGuidanceTooltip(condition.metric))}">?</button></div></div>
@@ -9900,7 +9941,7 @@ function resetAlertForm() {
   $("alertSignal").value = "buy";
   $("alertMatchMode").value = "all";
   $("alertEnabled").checked = true;
-  $("saveAlert").textContent = "Save rule";
+  $("saveAlert").textContent = t("Save rule & start another");
   $("cancelAlertEdit").hidden = true;
   renderAlertConditions();
 }
@@ -9976,14 +10017,16 @@ function renderAlerts(data) {
     const joiner = rule.match_mode === "any" ? " OR " : " AND ";
     const conditionText = conditions.length ? conditions.map(alertConditionText).join(joiner) : "This older rule needs a condition before it can run.";
     const matchCount = (rule.last_matches || []).length;
-    return `<article class="signal-card saved-rule-card${rule.enabled ? "" : " is-disabled"}">
+    const isRunning = rule.last_status === "Running";
+    return `<article class="signal-card saved-rule-card${rule.enabled ? "" : " is-disabled"}${isRunning ? " is-running" : ""}">
       <div class="signal-card-head">
         <div><span class="signal-badge signal-${esc(rule.signal || "watch")}">${esc(rule.signal || "watch")}</span><h5>${esc(rule.name)}</h5></div>
-        <span class="rule-state">${rule.enabled ? "Daily" : "Paused"}</span>
+        <span class="rule-state">${isRunning ? t("Checking…") : rule.enabled ? "Daily" : "Paused"}</span>
       </div>
       <p>${esc(conditionText)}</p>
-      <div class="signal-rule-meta"><span>${esc(rule.last_status || "Not run")}</span><span>${matchCount} current match${matchCount === 1 ? "" : "es"}</span></div>
+      <div class="signal-rule-meta"><span>${isRunning ? t("Checking your saved portfolio data…") : esc(rule.last_status || "Not run")}</span><span>${isRunning ? t("Results will appear automatically.") : `${matchCount} current match${matchCount === 1 ? "" : "es"}`}</span></div>
       <div class="signal-card-actions">
+        <button class="secondary compact-button" type="button" data-run-alert="${esc(rule.id)}"${isRunning ? " disabled" : ""}>${isRunning ? t("Checking…") : t("Run now")}</button>
         <button class="secondary compact-button" type="button" data-edit-alert="${esc(rule.id)}">Edit</button>
         <button class="secondary compact-button" type="button" data-toggle-alert="${esc(rule.id)}">${rule.enabled ? "Pause" : "Enable"}</button>
         <button class="danger compact-button" type="button" data-delete-alert="${esc(rule.id)}">Remove</button>
@@ -9999,6 +10042,10 @@ function renderAlerts(data) {
       <div class="signal-run-stats"><span><b>${fmt(run.evaluated_symbols || 0, 0)}</b> stocks checked</span><span><b>${fmt(run.matched_signals || 0, 0)}</b> matches</span><span><b>${fmt(providerErrors, 0)}</b> data errors</span></div>
     </article>`;
   }).join("") : '<div class="empty signal-empty">No run history yet.</div>';
+  if (state.alertRefreshTimer) clearTimeout(state.alertRefreshTimer);
+  if (rules.some((rule) => rule.last_status === "Running")) {
+    state.alertRefreshTimer = window.setTimeout(() => loadAlerts().catch(() => {}), 1500);
+  }
 }
 
 async function loadAlerts() {
@@ -10024,7 +10071,7 @@ async function saveAlert() {
       body: JSON.stringify(payload),
     });
     resetAlertForm();
-    $("alertStatus").textContent = "Rule saved. It will run during the daily check.";
+    $("alertStatus").textContent = t("Rule saved. Start the next rule above, or add more conditions before saving it.");
     await loadAlerts();
   } catch (error) {
     $("alertStatus").textContent = `Error: ${error.message}`;
@@ -10066,6 +10113,24 @@ async function toggleAlertRule(ruleId) {
   });
   $("alertStatus").textContent = rule.enabled ? "Rule paused." : "Rule enabled.";
   await loadAlerts();
+}
+
+async function runAlertRule(ruleId, button) {
+  const rule = (state.alertData?.rules || []).find((item) => item.id === ruleId);
+  if (!rule) return;
+  if (button) {
+    button.disabled = true;
+    button.textContent = t("Running…");
+    button.closest(".saved-rule-card")?.classList.add("is-running");
+  }
+  $("alertStatus").textContent = `Checking “${rule.name}” now…`;
+  try {
+    const result = await api(`/api/alerts/${encodeURIComponent(ruleId)}/run`, { method: "POST", body: "{}" });
+    renderAlerts(result.state);
+    $("alertStatus").textContent = result.started ? t("Checking your saved portfolio data…") : t("This rule is already being checked.");
+  } catch (error) {
+    $("alertStatus").textContent = `Error: ${error.message}`;
+  }
 }
 
 async function deleteAlertRule(ruleId) {
@@ -11331,6 +11396,10 @@ document.addEventListener("click", (event) => {
     toggleAlertRule(toggleAlertId).catch((error) => { $("alertStatus").textContent = `Error: ${error.message}`; });
   }
 
+  const runAlertButton = event.target.closest("[data-run-alert]");
+  const runAlertId = runAlertButton?.dataset.runAlert;
+  if (runAlertId) runAlertRule(runAlertId, runAlertButton).catch((error) => { $("alertStatus").textContent = `Error: ${error.message}`; });
+
   const deleteAlertId = event.target.closest("[data-delete-alert]")?.dataset.deleteAlert;
   if (deleteAlertId) {
     deleteAlertRule(deleteAlertId).catch((error) => { $("alertStatus").textContent = `Error: ${error.message}`; });
@@ -11338,6 +11407,8 @@ document.addEventListener("click", (event) => {
 
   const removeAlertConditionIndex = event.target.closest("[data-remove-alert-condition]")?.dataset.removeAlertCondition;
   if (removeAlertConditionIndex !== undefined) removeAlertCondition(Number(removeAlertConditionIndex));
+
+  if (event.target.closest("[data-add-alert-condition]")) addAlertCondition();
 
   const marketReportSymbol = event.target.closest("[data-open-market-report]")?.dataset.openMarketReport;
   if (marketReportSymbol) {
@@ -12012,6 +12083,11 @@ $("apply").addEventListener("click", applyFilter);
 $("saveAlert").addEventListener("click", saveAlert);
 $("runAlerts").addEventListener("click", runAlerts);
 $("addAlertCondition").addEventListener("click", addAlertCondition);
+$("newAlertRule").addEventListener("click", () => {
+  resetAlertForm();
+  $("alertStatus").textContent = t("New rule ready. Add one or more conditions, then save it.");
+  $("alertName").focus();
+});
 $("cancelAlertEdit").addEventListener("click", () => {
   resetAlertForm();
   $("alertStatus").textContent = "Edit cancelled.";

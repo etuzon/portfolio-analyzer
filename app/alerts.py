@@ -113,7 +113,14 @@ class AlertStore:
                 self._write(data)
             return changed
 
-    def evaluate(self, rows: list[dict[str, Any]], metadata: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    def evaluate(
+        self,
+        rows: list[dict[str, Any]],
+        metadata: dict[str, Any] | None = None,
+        rule_ids: set[str] | None = None,
+        include_disabled: bool = False,
+        run_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         run_at = _now()
         safe_rows = [row for row in rows if isinstance(row, dict) and str(row.get("symbol") or "").strip()]
         results: list[dict[str, Any]] = []
@@ -122,7 +129,9 @@ class AlertStore:
             for stored_rule in data.setdefault("rules", []):
                 rule = self._normalize_stored_rule(stored_rule)
                 stored_rule.update(rule)
-                if not rule.get("enabled", True):
+                if rule_ids is not None and rule.get("id") not in rule_ids:
+                    continue
+                if not include_disabled and not rule.get("enabled", True):
                     continue
                 conditions = rule.get("conditions") or []
                 if not conditions:
@@ -145,7 +154,7 @@ class AlertStore:
                 stored_rule["last_missing_count"] = missing_count
                 results.append({"rule": dict(stored_rule), "matches": matches})
             run = {
-                "id": str(uuid4()),
+                "id": run_id or str(uuid4()),
                 "run_at": run_at,
                 "status": "completed",
                 "evaluated_symbols": len(safe_rows),
@@ -163,12 +172,61 @@ class AlertStore:
                 "metadata": metadata or {},
             }
             runs = data.setdefault("runs", [])
-            runs.append(run)
+            if run_id and any(existing.get("id") == run_id for existing in runs):
+                runs = [run if existing.get("id") == run_id else existing for existing in runs]
+            else:
+                runs.append(run)
             data["runs"] = runs[-100:]
             self._write(data)
         return results
 
-    def record_failure(self, error: str, metadata: dict[str, Any] | None = None) -> dict[str, Any]:
+    def mark_running(
+        self,
+        rule_ids: set[str] | None = None,
+        include_disabled: bool = False,
+    ) -> str:
+        """Persist a visible running state before an asynchronous evaluation starts."""
+        run_at = _now()
+        run_id = str(uuid4())
+        with self._lock:
+            data = self._read()
+            selected = []
+            for stored_rule in data.setdefault("rules", []):
+                rule = self._normalize_stored_rule(stored_rule)
+                stored_rule.update(rule)
+                if rule_ids is not None and rule.get("id") not in rule_ids:
+                    continue
+                if not include_disabled and not rule.get("enabled", True):
+                    continue
+                stored_rule["last_run"] = run_at
+                stored_rule["last_matches"] = []
+                stored_rule["last_missing_count"] = 0
+                stored_rule["last_status"] = "Running"
+                stored_rule["last_run_id"] = run_id
+                selected.append({"rule_id": stored_rule.get("id"), "name": stored_rule.get("name")})
+            runs = data.setdefault("runs", [])
+            runs.append({
+                "id": run_id,
+                "run_at": run_at,
+                "status": "running",
+                "evaluated_symbols": 0,
+                "matched_signals": 0,
+                "rules_evaluated": len(selected),
+                "rule_results": selected,
+                "metadata": {},
+            })
+            data["runs"] = runs[-100:]
+            self._write(data)
+        return run_id
+
+    def record_failure(
+        self,
+        error: str,
+        metadata: dict[str, Any] | None = None,
+        rule_ids: set[str] | None = None,
+        include_disabled: bool = False,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
         run_at = _now()
         message = str(error or "Rule check failed")[:200]
         with self._lock:
@@ -177,14 +235,16 @@ class AlertStore:
             for stored_rule in data.setdefault("rules", []):
                 rule = self._normalize_stored_rule(stored_rule)
                 stored_rule.update(rule)
-                if not rule.get("enabled", True):
+                if rule_ids is not None and rule.get("id") not in rule_ids:
+                    continue
+                if not include_disabled and not rule.get("enabled", True):
                     continue
                 enabled_rules += 1
                 stored_rule["last_run"] = run_at
                 stored_rule["last_matches"] = []
                 stored_rule["last_status"] = message
             run = {
-                "id": str(uuid4()),
+                "id": run_id or str(uuid4()),
                 "run_at": run_at,
                 "status": "failed",
                 "evaluated_symbols": 0,
@@ -195,7 +255,10 @@ class AlertStore:
                 "metadata": metadata or {},
             }
             runs = data.setdefault("runs", [])
-            runs.append(run)
+            if run_id and any(existing.get("id") == run_id for existing in runs):
+                runs = [run if existing.get("id") == run_id else existing for existing in runs]
+            else:
+                runs.append(run)
             data["runs"] = runs[-100:]
             self._write(data)
         return run

@@ -49,14 +49,28 @@ def test_portfolio_signal_rules_explain_each_selected_financial_measure():
     script = (ROOT / "web/app.js").read_text()
     styles = (ROOT / "web/styles.css").read_text()
 
-    assert "Save this rule, then create another independent rule" in html
+    assert 'id="newAlertRule"' in html
+    assert 'id="alertConditionCount"' in html
+    assert 'data-add-alert-condition' in html
+    assert "Save rule &amp; start another" in html
     assert "function alertMetricGuidance(metricKey)" in script
     assert "function updateAlertConditionGuidance(row)" in script
     assert 'class="ux-tooltip signal-condition-help"' in script
     assert 'class="signal-condition-guidance"' in script
     assert 'event.target.closest("[data-alert-condition-metric]")' in script
+    assert 'event.target.closest("[data-add-alert-condition]")' in script
+    assert '$("newAlertRule").addEventListener("click"' in script
+    assert "ALERT_METRIC_LOCALIZATIONS" in script
+    assert 'data-add-alert-condition' in script.split("const WRITE_DATA_ACTIONS", 1)[1]
+    assert '"newAlertRule"' in script.split("const WRITE_CONTROL_IDS", 1)[1]
+    assert 'data-run-alert="${esc(rule.id)}"' in script
+    assert '"data-run-alert"' in script.split("const WRITE_DATA_ACTIONS", 1)[1]
+    assert "async function runAlertRule(ruleId, button)" in script
+    assert "CSS.escape(ruleId)" not in script
+    assert 'button.textContent = t("Running…")' in script
     assert ".signal-condition-guidance {" in styles
     assert ".signal-condition-control {" in styles
+    assert ".signal-add-condition {" in styles
 
 
 def test_holdings_rows_compact_source_and_data_gap_details_into_tooltips():
