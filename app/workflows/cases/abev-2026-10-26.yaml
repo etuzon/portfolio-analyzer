@@ -1,0 +1,160 @@
+schema_version: 1
+workflow_id: world-event-impact
+workflow_version: 1.0.0
+recorded_at: '2026-10-27T10:58:54.489231+00:00'
+case:
+  id: abev-2026-10-26
+  event_id: brazil-presidential-runoff-2026-10-25
+  event_category: political
+  event_summary: Cross-stock comparison after the same Brazilian runoff event as the
+    BBD case; reason-to-exposure channel is a hypothesis, not identified causal attribution.
+  origin_regions:
+  - BR
+  event_occurred_at: '2026-10-25'
+  first_public_at: null
+  information_cutoff: '2026-10-27T10:58:54.489231+00:00'
+  symbol: ABEV
+  exchange: NYSE
+  currency: USD
+  user_reported_move_pct: null
+  verified_outcomes:
+  - id: abev-2026-10-26-close-return
+    metric: stock_return
+    record_kind: observed
+    baseline_value: 3.3
+    end_value: 2.83
+    unit: USD_per_listed_unit
+    currency: USD
+    baseline_period: null
+    end_period: null
+    baseline_published_at: null
+    end_published_at: null
+    window_start: '2026-10-23'
+    window_end: '2026-10-26'
+    horizon: one_trading_session_close_to_close
+    adjustment_basis: Displayed close and adjusted-close columns agree on both dates;
+      independent corporate-action verification remains pending.
+    change_pct: -14.24242424
+    absolute_change: -0.47
+    benchmark: EWZ_USD_close_to_close
+    benchmark_return_pct: -19.81685842
+    excess_return_pp: 5.57443418
+    method: 100 * (end_value / baseline_value - 1), using displayed closing prices.
+    source_ids:
+    - stock-prices
+    - ewz-prices
+    missing_reason: null
+    vendor_reported_change_pct: -14.24
+    calculated_minus_vendor_pp: -0.00242424
+    reconciliation_note: Calculated return is canonical here. Small differences from
+      vendor percentages are retained; undisplayed precision or vendor corrections
+      are not assumed verified.
+  regional_effects:
+  - origin_region: BR
+    destination_region: US_listed_equity
+    company_or_sector: ABEV
+    channel: local-sales-dollar-inputs
+    mechanism: Input costs can rise relative to local sales, pressuring margins if
+      prices cannot adjust.
+    direction: down
+    exposure_pct: null
+    exposure_basis: null
+    lag: First US trading session after the runoff.
+    mitigating_factors:
+    - FX and commodity hedges
+    - Price increases
+    - Geographic diversification
+    reversal_conditions: []
+    source_ids:
+    - ambev-risk
+    - stock-prices
+    linked_probability_ids: []
+    linked_metric_ids:
+    - abev-2026-10-26-close-return
+    evidence_status: observed_direction_filing_backed_mechanism_causal_share_unknown
+  source_ids:
+  - stock-prices
+  - ewz-prices
+  - spy-prices
+  - ambev-risk
+  competing_explanations:
+  - Country repricing and FX
+  - Company-specific news and prior positioning
+  - Global demand, commodity prices and market-wide factors where relevant
+  causal_support: Price observations and company risk disclosures support investigating
+    this channel. They do not identify how much of the return was caused by the election,
+    FX, rates or company news.
+  missing_data:
+  - Event-attributable revenue and net-income changes
+  - Aligned local-share and FX observations
+  - Company-news and corporate-action audit for the session
+  - Representative independent-event cohort and chronological validation
+  review_status: observed_move_verified_cause_partially_supported
+  company_name: Ambev
+  instrument_type: ADR
+  economic_exposure_group: beverages
+  pattern_ids:
+  - brazil-fiscal-repricing
+  channel_ids:
+  - local-sales-dollar-inputs
+probabilities: []
+probability_status:
+  status: insufficient_evidence
+  estimate_pct: null
+  missing_reason: One shared event and a retrospective purposive comparison are not
+    a probability cohort.
+event_attributable_changes:
+  revenue_change_pct: null
+  net_income_change_pct: null
+  causal_contribution_pct_by_driver: null
+market_context:
+  spy_return_pct: 0.71055436
+  ewz_return_pct: -19.81685842
+  note: Contemporaneous comparisons, not causal controls; EWZ includes overlapping
+    country/sector exposures.
+learning_status:
+  record_type: retrospective_case
+  selected_because: Post-event exposure comparison, including a positive exporter
+    observation.
+  eligible_as_population_probability_sample: false
+  calibrated_forecast: false
+  model_updated: false
+  event_cluster_id: brazil-presidential-runoff-2026-10-25
+sources:
+- id: stock-prices
+  evidence_kind: market_data
+  publisher: Stock Analysis
+  url: https://stockanalysis.com/stocks/abev/history/
+  retrieved_at: '2026-10-27T10:58:54.489231+00:00'
+  locator: Historical table rows 23/10/2026 and 26/10/2026; close and adjusted close.
+  observed_rows:
+  - date: '2026-10-23'
+    close: 3.3
+    adjusted_close: 3.3
+  - date: '2026-10-26'
+    close: 2.83
+    adjusted_close: 2.83
+  verified: true
+- id: ewz-prices
+  evidence_kind: market_data
+  url: https://stockanalysis.com/etf/ewz/history/
+  retrieved_at: '2026-10-27T10:58:54.489231+00:00'
+  baseline_close: 42.59
+  end_close: 34.15
+  verified: true
+- id: spy-prices
+  evidence_kind: market_data
+  url: https://stockanalysis.com/etf/spy/history/
+  retrieved_at: '2026-10-27T10:58:54.489231+00:00'
+  baseline_close: 759.97
+  end_close: 765.37
+  verified: true
+- id: ambev-risk
+  url: https://www.sec.gov/Archives/edgar/data/1565025/000129281426000640/abevform20f_2025.htm
+  scope: 2025 Form 20-F; local-currency sales, dollar-linked inputs, liabilities and
+    hedges.
+  evidence_kind: company_disclosure
+  retrieved_at: '2026-10-27T10:58:54.489231+00:00'
+  verified: true
+  verification_scope: Disclosed business exposure only; election-day attribution is
+    unverified.

@@ -210,6 +210,16 @@ def _viewer_request_is_read_only(request: Request) -> bool:
 
 
 ASSISTANT_READ_TOOLS: dict[str, dict[str, Any]] = {
+    "get_event_impact_cases": {
+        "path": "/api/assistant/workflows/world-event-impact/cases",
+        "description": "Read curated historical world-event cases and related reason-to-exposure patterns, optionally filtered by ticker and/or shared event ID. Cases sharing an event are correlated observations, not independent trials or calibrated forecasts.",
+        "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}, "event_id": {"type": "string"}}},
+    },
+    "get_event_impact_workflow": {
+        "path": "/api/assistant/workflows/world-event-impact",
+        "description": "Get the evidence-only world-event research workflow and blank historical-case, regional-impact, probability, forecast and evaluation templates. Use before explaining event-driven stock moves or estimating event, exposure, severity, timing, recovery, spillover, scenario or joint-loss probabilities. This does not calculate probabilities or store cases.",
+        "parameters": {"type": "object", "properties": {}},
+    },
     "get_portfolio_summary": {
         "path": "/api/portfolio", "description": "Get the current portfolio dashboard summary and holdings.",
         "parameters": {"type": "object", "properties": {}},
@@ -268,6 +278,10 @@ ASSISTANT_READ_TOOLS: dict[str, dict[str, Any]] = {
 
 
 def _assistant_tool_result(name: str, arguments: dict[str, Any]) -> Any:
+    if name == "get_event_impact_cases":
+        return event_impact_cases(str(arguments.get("symbol") or ""), str(arguments.get("event_id") or ""))
+    if name == "get_event_impact_workflow":
+        return event_impact_workflow()
     if name == "get_portfolio_summary":
         return portfolio_payload(force_refresh=False, defer_enrichment=True)
     if name == "list_accounts":
@@ -2691,6 +2705,33 @@ def assistant_status():
 def assistant_read_tools():
     """Catalog exposed to an LLM. Every entry is an application-owned GET-only capability."""
     return {"items": PortfolioAssistant(assistant_settings(config.raw), ASSISTANT_READ_TOOLS).status()["tools"]}
+
+
+@app.get("/api/assistant/workflows/world-event-impact")
+def event_impact_workflow():
+    """Read the versioned research contract; no provider calls or local writes."""
+    path = Path(__file__).parent / "workflows" / "world-event-impact.yaml"
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+@app.get("/api/assistant/workflows/world-event-impact/cases")
+def event_impact_cases(symbol: str = "", event_id: str = ""):
+    """Read bundled research records without touching portfolio runtime data."""
+    symbol = symbol.strip().upper()
+    event_id = event_id.strip()
+    root = Path(__file__).parent / "workflows" / "cases"
+    items = []
+    for path in sorted(root.glob("*.yaml")):
+        record = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if (not symbol or record["case"]["symbol"].upper() == symbol) and (not event_id or record["case"]["event_id"] == event_id):
+            items.append(record)
+    event_ids = {item["case"]["event_id"] for item in items}
+    patterns = []
+    for path in sorted((root.parent / "patterns").glob("*.yaml")):
+        pattern = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if event_ids.intersection(pattern["event_ids"]):
+            patterns.append(pattern)
+    return {"items": items, "count": len(items), "event_patterns": patterns, "distinct_event_count": len(event_ids), "record_type": "curated_retrospective_cases", "calibrated_probability_model": False}
 
 
 @app.get("/api/assistant/read-tools/{tool_name}")

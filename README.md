@@ -72,6 +72,44 @@ The app saves each signed-in user's prompts and final answers locally as limited
 
 For each question, the model receives only a fixed catalog at `GET /api/assistant/read-tools`. It can request application-owned read skills for portfolio/risk, accounts, securities, price history and technicals, funds, events, alerts, FX, market data, reports, and screeners. Read data uses `GET`; bounded read calculations use a catalogued `POST` endpoint with a JSON body. It cannot choose arbitrary REST paths and cannot invoke a write endpoint. `POST /api/assistant/questions` runs the model/tool exchange and enforces `llm.max_tool_loops` (default `6`) for that one user prompt; the next prompt starts a new bounded exchange.
 
+## World-event research workflow
+
+Curated historical examples are bundled under `app/workflows/cases/` and exposed
+through `get_event_impact_cases` or authenticated
+`GET /api/assistant/workflows/world-event-impact/cases?symbol=BBD`.
+The Brazil election example includes BBD and eight comparison stocks, with
+aligned USD closing returns, EWZ/SPY context and filing-backed exposure channels.
+Pass `event_id=brazil-presidential-runoff-2026-10-25` to retrieve the full group.
+Responses include related `event_patterns` from `app/workflows/patterns/`:
+reason → business exposure → transmission → possible effect, with offsets and
+missing estimates. `distinct_event_count` counts event IDs, not independent
+statistical trials. These manually maintained records are readable examples;
+they do not establish a calibrated loss probability. See the
+[sourced comparison](research/world-events/brazil-2026-10-26.md).
+
+The assistant can load `get_event_impact_workflow`, also available at authenticated
+`GET /api/assistant/workflows/world-event-impact`. Its canonical template is
+[`app/workflows/world-event-impact.yaml`](app/workflows/world-event-impact.yaml),
+with a repository skill at [`.agents/skills/world-event-impact/SKILL.md`](.agents/skills/world-event-impact/SKILL.md).
+Ask the assistant to use the world-event workflow, then supply stocks, dates and
+observed moves. It separates sourced facts, possible explanations, historical
+observations and validated forecasts, including different effects across regions.
+
+Records cover event occurrence, company exposure, direction, severity, impact
+onset, persistence, recovery, spillover, scenario branches and joint portfolio
+loss. Stock returns, revenue and net income have separate baselines and horizons.
+Unsupported percentages remain unknown. Historical frequencies require a defined
+comparison population; selected winners/losers alone cannot establish predictive
+probabilities. Validation includes uncertainty, dependence and chronological
+holdout checks; the interval method references the
+[NIST statistical handbook](https://itl.nist.gov/div898/handbook/prc/section2/prc241.htm).
+
+This release supplies a workflow and blank records, not automated news ingestion,
+a persistent case library, a probability calculator or a trained learning model.
+The read-only assistant cannot save research cases through this tool. Its limited
+chat context is not durable learning. Later implementation can consume these
+versioned records without treating unverified examples as established outcomes.
+
 ## Data Sources
 
 The dashboard reads holdings, transactions, account records, pension/fund records, and manual prices from the local SQLite portfolio database. External portfolio data is imported only when the Sync import action is run. Dividends, income, company profit, market cap, long price history, profile data, and non-portfolio stock screening come from configured market-data APIs:

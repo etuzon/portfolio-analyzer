@@ -1,0 +1,186 @@
+schema_version: 1
+workflow_id: world-event-impact
+workflow_version: 1.0.0
+recorded_at: '2026-10-27T10:22:20Z'
+case:
+  id: bbd-2026-10-26
+  event_id: brazil-presidential-runoff-2026-10-25
+  event_category: political
+  event_summary: Brazil's presidential runoff result was followed by a sharp BBD ADR decline; market commentary attributes the selloff to political and fiscal repricing.
+  origin_regions: [BR]
+  event_occurred_at: '2026-10-25'
+  first_public_at: null
+  information_cutoff: '2026-10-27T10:22:20Z'
+  symbol: BBD
+  exchange: NYSE
+  company_name: Banco Bradesco S.A.
+  currency: USD
+  identity_note: Assumes the user means the NYSE BBD ADR; the matching recent move is identified below.
+  user_reported_move_pct: -30
+  user_reported_move_is_approximate: true
+  review_status: observed_move_verified_cause_partially_supported
+  source_ids: [user-observation, price-history, election-authority, company-results, market-commentary]
+  causal_support: The election result and price move are separately sourced. The fiscal/FX explanation is attributed market commentary, not an identified causal model. No percentage of the loss is assigned to an individual cause.
+  verified_outcomes:
+    - id: bbd-close-return
+      metric: stock_return
+      record_kind: observed
+      baseline_value: 4.07
+      end_value: 2.93
+      unit: USD_per_ADR
+      currency: USD
+      window_start: '2026-10-23'
+      window_end: '2026-10-26'
+      horizon: one_trading_session_close_to_close
+      adjustment_basis: Provider close and adjusted-close columns agree for both dates; independent corporate-action verification is pending.
+      change_pct: -28.00982801
+      absolute_change: -1.14
+      benchmark: null
+      benchmark_return_pct: null
+      excess_return_pp: null
+      method: 100 * (2.93 / 4.07 - 1)
+      source_ids: [price-history]
+      missing_reason: null
+    - id: bbd-revenue-before-event
+      metric: revenue
+      record_kind: observed
+      baseline_period: 3Q2025
+      end_period: 3Q2026
+      end_value: 38.0
+      baseline_value: null
+      unit: BRL_billion
+      currency: BRL
+      change_pct: 8.4
+      method: Company-reported year-over-year total revenue growth, managerial results basis.
+      source_ids: [company-results]
+      event_impact: false
+      missing_reason: Baseline amount not transcribed; growth is reported by the company, not recomputed from rounded values. This period precedes the election.
+    - id: bbd-recurring-profit-before-event
+      metric: net_income
+      record_kind: observed
+      profit_basis: consolidated_recurring_managerial_not_statutory_IFRS
+      baseline_period: 3Q2025
+      end_period: 3Q2026
+      end_value: 7.1
+      baseline_value: null
+      unit: BRL_billion
+      currency: BRL
+      change_pct: 14.6
+      method: Company-reported year-over-year recurring net-income growth; rounded amount.
+      source_ids: [company-results]
+      event_impact: false
+      missing_reason: Recurring profit is separately labeled; statutory IFRS profit is not substituted. This period precedes the election.
+  regional_effects:
+    - origin_region: BR
+      destination_region: US
+      company_or_sector: BBD ADR holders
+      channel: underlying_equity_and_FX
+      mechanism: Market commentary reports Brazil-specific repricing and real weakness affecting USD ADR valuation. The local-share and currency contributions have not been measured separately.
+      direction: down
+      exposure_pct: null
+      lag: First US trading session after the Sunday runoff.
+      source_ids: [election-authority, market-commentary, price-history]
+      linked_metric_ids: [bbd-close-return]
+      evidence_status: observed_price_move_with_reported_transmission_hypothesis
+      mitigating_factors: []
+      reversal_conditions: []
+    - origin_region: BR
+      destination_region: BR
+      company_or_sector: Banco Bradesco lending operations
+      channel: credit_costs_and_funding
+      mechanism: Existing credit pressure is documented by the company. Election-related future changes to funding costs, lending and credit losses remain hypotheses.
+      direction: unknown
+      exposure_pct: null
+      lag: null
+      source_ids: [company-results, market-commentary]
+      linked_metric_ids: []
+      evidence_status: pre_event_vulnerability_verified_future_effect_unquantified
+      mitigating_factors: [Pre-event revenue and recurring profit were growing.]
+      reversal_conditions: []
+  competing_explanations:
+    - explanation: Fiscal-policy repricing and a weaker real after the runoff.
+      status: reported_primary_catalyst_not_causally_quantified
+      source_ids: [market-commentary, election-authority]
+    - explanation: Existing credit-quality pressure; the company reported a 4.6% over-90-day non-performing-loan ratio and 24.3% year-over-year growth in expanded loan-loss provisions.
+      status: verified_pre_event_vulnerability_not_proven_share_of_selloff
+      source_ids: [company-results]
+    - explanation: Earnings-related repricing, flows, liquidity or corporate actions may confound attribution.
+      status: not_isolated
+      source_ids: []
+  missing_data:
+    - Exact date/window and exchange confirmation from the user.
+    - Aligned BBDC4 local-share, BRL/USD, market-index and banking-peer returns to separate FX, country and company effects.
+    - Independently verified corporate actions and total-return adjustment convention.
+    - Primary evidence of investor positioning and analyst consensus before the event.
+    - First-announcement timestamp and post-event financial reports.
+    - A predefined historical comparison universe including neutral outcomes and failed analogues.
+probabilities:
+  - id: bbd-future-similar-event-loss
+    kind: severity
+    target: BBD close-to-close USD ADR return at or below -30% in the first US trading session after a comparable event.
+    metric: stock_return
+    threshold: -30
+    threshold_unit: percent_return
+    conditions: [Comparable Brazilian political event, Comparable company exposures and market regime]
+    horizon: first_US_trading_session
+    estimate_pct: null
+    interval_95_pct: [null, null]
+    independent_event_count: 1
+    eligible_count: null
+    observed_target_count: null
+    missing_outcome_count: null
+    eligible_case_ids: []
+    estimation_method: null
+    validation_record_id: null
+    status: insufficient_evidence
+    missing_reason: This user-selected example is not a defined comparison cohort. Its verified closing decline is 28.01%, which does not meet an exact 30% loss threshold; do not relabel it to force a match.
+event_attributable_changes:
+  revenue_change_pct: null
+  net_income_change_pct: null
+  causal_contribution_pct_by_driver: null
+  missing_reason: No post-event financial outcome or validated counterfactual attribution model is available in this case.
+learning_status:
+  record_type: retrospective_case
+  selected_because: user_reported_large_decline
+  eligible_as_population_probability_sample: false
+  calibrated_forecast: false
+  model_updated: false
+  note: Retain as a sourced observation and causal hypothesis for future comparisons, not a universal election-to-price rule.
+sources:
+  - id: user-observation
+    evidence_kind: user_report
+    claim_supported: User reported BBD down approximately 30%, without a date or exchange.
+    verified: false
+  - id: price-history
+    evidence_kind: market_data
+    publisher: FinancialContent / CloudQuote
+    url: https://www.financialcontent.com/quote/NY:BBD/historical
+    retrieved_at: '2026-10-27T10:22:20Z'
+    locator: Historical prices, rows 23/10/2026 and 26/10/2026, close and adjusted close.
+    claim_supported: Both columns show 4.07 and 2.93 respectively. Calculated closing return is -28.00982801%.
+    verified: true
+  - id: election-authority
+    evidence_kind: official_event
+    publisher: Tribunal Regional Eleitoral de Sao Paulo
+    url: https://www.tre-sp.jus.br/comunicacao/noticias/2026/Outubro/eleicoes-2026-lula-e-reeleito-presidente-da-republica-confira-resultado-do-2o-turno-em-sp
+    published_at: '2026-10-25T21:48:00-03:00'
+    retrieved_at: '2026-10-27T10:22:20Z'
+    claim_supported: Official court report confirms Lula won the 25/10/2026 presidential runoff. It does not explain the stock-price reaction.
+    verified: true
+  - id: company-results
+    evidence_kind: filing
+    publisher: Banco Bradesco S.A., SEC Form 6-K
+    url: https://www.sec.gov/Archives/edgar/data/1160330/000129281426004994/bbdpr3q26_6k.htm
+    retrieved_at: '2026-10-27T10:22:20Z'
+    locator: 3Q26 managerial highlights, expanded loan-loss provisions and loan portfolio indicators.
+    claim_supported: Pre-election revenue and recurring earnings growth alongside credit-quality pressure. Managerial recurring figures are distinguished from statutory IFRS profit.
+    verified: true
+  - id: market-commentary
+    evidence_kind: secondary_market_commentary
+    publisher: Investing.com
+    url: https://www.investing.com/news/stock-market-news/why-is-banco-bradesco-stock-crashing-today-93CH-4971736
+    retrieved_at: '2026-10-27T10:22:20Z'
+    locator: Article dated 26/10/2026, political/fiscal repricing and currency discussion.
+    claim_supported: Reports the election, fiscal concerns and weaker real as selloff drivers. Its premarket figure is not used as BBD's verified closing return.
+    limitations: AI-assisted editorial article; embedded ADR link points to BBDO. Use only as attributed commentary, not independent verification of BBD prices, consensus or causal percentages.
+    verified: false

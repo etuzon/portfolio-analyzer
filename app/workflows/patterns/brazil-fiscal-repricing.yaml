@@ -1,0 +1,149 @@
+schema_version: 1
+id: brazil-fiscal-repricing
+event_ids: [brazil-presidential-runoff-2026-10-25]
+title: Political surprise with fiscal-risk, interest-rate and currency repricing
+status: evidence_backed_mechanisms_unvalidated_forecast
+independent_event_count: 1
+observed_symbols: [BBD, ITUB, XP, STNE, NU, PBR, ABEV, VALE, SUZ]
+trigger_conditions:
+  - A political result changes market expectations about fiscal policy or governance.
+  - Verify whether yields, currency and country assets actually repriced; do not assume this from the politician or party name.
+  - Identify expectations and positioning before the result, not only explanations published after prices moved.
+scope_limits:
+  - This event is a retrospective sector comparison, not an independent multi-event backtest.
+  - The universe was chosen after the event to investigate exposures and includes an exporter that rose. It is not representative of all stocks.
+  - Shared event IDs prevent counting nine companies as nine independent political shocks.
+  - Historical returns are observations, never default future impact percentages or calibrated probabilities.
+  - A US listing does not imply US economic exposure; geographic revenue, costs, financing and control matter.
+  - Sector classification alone is insufficient; confirm the actual business, debt repricing, FX hedges, customer geography and regulation.
+  - All eight added stock comparisons use USD regular-session closes on 23/10/2026 and 26/10/2026; premarket headlines are excluded.
+  - Filing-backed exposures support plausible mechanisms, not the causal percentage of the observed return.
+reason_to_exposure:
+  - id: domestic-credit
+    reason: Fiscal uncertainty, higher required returns or tighter domestic financial conditions.
+    affected_type: Domestic banks and consumer lenders.
+    examples: [BBD, ITUB, NU]
+    exposure_features: [Brazilian lending, Deposit and wholesale funding repricing, Customer repayment capacity, Sovereign securities]
+    transmission: Financing pressure and weaker borrowers can raise losses or reduce lending demand; valuation can reprice immediately.
+    price_direction_if_channel_dominates: down
+    revenue_direction: mixed
+    profit_direction: conditional_downside
+    timing: Valuation can move in one session; realized credit and income effects require later reporting periods.
+    offsets: [Loan repricing, Higher asset yields, Deposits, Hedges, International operations]
+    evidence_source_ids: [itau-risk, nu-risk, bradesco-case]
+    application_note: Banks can benefit from some rate changes. Never apply a blanket higher-rates-means-lower-profit rule.
+  - id: investment-platforms
+    reason: Country risk and capital-market repricing.
+    affected_type: Brokers, investment platforms and asset managers exposed to local client assets and flows.
+    examples: [XP]
+    exposure_features: [Brazil client assets, Fee base, Investment product mix, Fund flows, Trading activity]
+    transmission: Lower asset prices and weaker flows can pressure some fee income; investment product mix and valuation change.
+    price_direction_if_channel_dominates: down
+    revenue_direction: mixed
+    profit_direction: unknown
+    timing: Immediate valuation; flows and fees develop over subsequent periods.
+    offsets: [Higher trading activity, Interest income, Migration to fixed-income products]
+    evidence_source_ids: [xp-risk]
+  - id: merchant-finance
+    reason: Higher funding rates and weaker consumer purchasing conditions.
+    affected_type: Merchant payment processors, receivables finance and SME credit providers.
+    examples: [STNE]
+    exposure_features: [Variable-rate funding, Merchant prepayment pricing, Payment volume, SME credit quality]
+    transmission: Funding costs may rise before merchant prices adjust; transaction demand and credit quality may weaken.
+    price_direction_if_channel_dominates: down
+    revenue_direction: conditional_downside
+    profit_direction: conditional_downside
+    timing: Immediate valuation; operational effect depends on repricing and hedge maturities.
+    offsets: [Cost pass-through, Funding hedges, Changing product mix]
+    evidence_source_ids: [stone-risk]
+  - id: state-control
+    reason: Reassessment of government influence over corporate policy.
+    affected_type: State-controlled companies.
+    examples: [PBR]
+    exposure_features: [Voting control, Board appointments, Investment policy, Shareholder remuneration]
+    transmission: Investor expectations about investment allocation and distributions can change before any actual policy change.
+    price_direction_if_channel_dominates: down
+    revenue_direction: unknown
+    profit_direction: unknown
+    timing: Immediate valuation; business effects require an actual policy and implementation timeline.
+    offsets: [Oil prices, Export revenue, Operational results, Unchanged governance or distribution policy]
+    evidence_source_ids: [petrobras-risk]
+    application_note: The filing establishes government influence, not an election-day dividend cut or pricing intervention.
+  - id: local-sales-dollar-inputs
+    reason: Local currency weakens against supplier/input currencies.
+    affected_type: Domestic sellers with dollar-linked costs or foreign-currency debt.
+    examples: [ABEV]
+    exposure_features: [Local-currency sales, Dollar-linked packaging and ingredients, Foreign-currency liabilities]
+    transmission: Input costs can rise relative to local sales, pressuring margins if prices cannot adjust.
+    price_direction_if_channel_dominates: down
+    revenue_direction: mixed
+    profit_direction: conditional_downside
+    timing: Valuation immediate; margins depend on inventories, customer pricing and hedge roll-off.
+    offsets: [FX and commodity hedges, Price increases, Geographic diversification]
+    evidence_source_ids: [ambev-risk]
+  - id: export-offset
+    reason: Local currency weakens while export prices are dollar-linked.
+    affected_type: Exporters with foreign-currency sales and local-currency costs.
+    examples: [VALE, SUZ]
+    exposure_features: [Sales currency, Cost currency, Commodity demand, Debt currency, Derivatives]
+    transmission: Translation or cost advantages can offset country risk. Global commodity prices and demand remain separate drivers.
+    price_direction_if_channel_dominates: mixed
+    revenue_direction: potentially_up_in_local_currency
+    profit_direction: mixed
+    timing: Valuation immediate; realized margins and debt/derivative effects depend on reporting periods.
+    offsets: [Dollar-linked costs and debt, Hedges, Lower commodity prices, Global demand changes]
+    evidence_source_ids: [vale-risk, suzano-risk]
+    application_note: SUZ rose in USD while VALE fell modestly in USD. Neither outcome proves every exporter benefits. Revenue gains do not guarantee net-income gains.
+regional_transmission:
+  - origin: BR
+    destination: US_listed_equities
+    mechanism: Brazilian operating exposures and investor currency affect US-listed ADRs and ordinary shares; listing venue does not move the underlying business to the US.
+    status: exposure_mapping_not_measured_causal_contribution
+  - origin: BR
+    destination: MX_and_CO
+    mechanism: NU operates in Brazil, Mexico and Colombia. Those markets have different policy, currency and credit conditions.
+    status: multinational_exposure_verified_spillover_unproven
+    application_note: Do not infer a loss in Mexican or Colombian operations from the consolidated NU stock decline.
+  - origin: BR
+    destination: global_export_markets
+    mechanism: Dollar-priced export demand and Brazil-based costs can react differently from domestic lending or consumption.
+    status: filing_backed_mechanism_unquantified
+    application_note: No foreign competitor benefit or supplier loss is assigned without additional trade and exposure evidence.
+currency_comparison:
+  definition: For a fixed ADR ratio and synchronized prices, 1 + USD return = (1 + BRL underlying-share return) / (1 + change in BRL per USD).
+  assumptions: Constant ADR ratio, aligned valuation timestamps, comparable dividend/corporate-action basis and no material pricing frictions.
+  application_note: Local-share gains and USD ADR losses can coexist. Local and US closes are not necessarily simultaneous; do not attribute their difference entirely to FX without aligned data.
+unquantified:
+  future_loss_probability_pct: null
+  expected_future_stock_return_pct: null
+  event_attributable_revenue_change_pct: null
+  event_attributable_net_income_change_pct: null
+  missing_reason: No representative independent-event cohort, causal counterfactual or validated forecasting model.
+sources:
+  - id: bradesco-case
+    path: app/workflows/cases/bbd-2026-10-26.yaml
+    scope: Existing sourced BBD observation and pre-event credit context.
+  - id: itau-risk
+    url: https://www.sec.gov/Archives/edgar/data/1132597/000113259726000132/itub-20251231.htm
+    scope: 2025 Form 20-F; Brazilian banking and geographic revenues. Rate exposure additionally documented in March 2026 financials.
+  - id: nu-risk
+    url: https://www.sec.gov/Archives/edgar/data/1691493/000129281426002166/nuform20f_2025.htm
+    scope: 2025 Form 20-F; Brazil, Mexico and Colombia operations and financing exposure.
+  - id: xp-risk
+    url: https://www.sec.gov/Archives/edgar/data/1787425/000207097926000182/xp-20251231.htm
+    scope: 2025 Form 20-F; Brazilian capital-market, rate and flow exposure, including potential spread offsets.
+  - id: stone-risk
+    url: https://investors.stone.co/about-us/key-risk-factors/
+    scope: Company risk disclosure; interest rates, merchant financing and funding/pricing mismatch.
+  - id: petrobras-risk
+    url: https://www.sec.gov/Archives/edgar/data/1119639/000129281426002168/pbrform20f_2025.htm
+    scope: 2025 Form 20-F; government control, governance and shareholder-remuneration risks.
+  - id: ambev-risk
+    url: https://www.sec.gov/Archives/edgar/data/1565025/000129281426000640/abevform20f_2025.htm
+    scope: 2025 Form 20-F; local-currency sales, dollar-linked inputs, liabilities and hedges.
+  - id: vale-risk
+    url: https://www.sec.gov/Archives/edgar/data/917851/000129281426001844/valeform20f_2025.htm
+    scope: 2025 Form 20-F; dollar revenue and debt, mixed cost currencies and commodity exposure.
+  - id: suzano-risk
+    url: https://www.sec.gov/Archives/edgar/data/909327/000090932726000045/suz-20251231.htm
+    scope: 2025 Form 20-F; exchange-rate effects on sales, costs, derivatives and financial results.

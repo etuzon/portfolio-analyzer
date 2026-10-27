@@ -43,6 +43,63 @@ def _change_password(client, auth_payload, current_password, new_password):
     return response.json()
 
 
+def test_event_workflow_is_authenticated_and_available_through_assistant(tmp_path, monkeypatch):
+    _auth_environment(tmp_path, monkeypatch)
+    client = _client()
+    path = "/api/assistant/workflows/world-event-impact"
+    assert client.get(path).status_code == 401
+    assert client.get(path + "/cases").status_code == 401
+
+    session = _login(client)
+    _change_password(client, session, "admin", "Workflow-Test-Password-2026!")
+    response = client.get(path)
+    assert response.status_code == 200
+    workflow = response.json()
+    catalog = client.get("/api/assistant/read-tools").json()["items"]
+    entry = next(item for item in catalog if item["name"] == "get_event_impact_workflow")
+    assert entry["path"] == path
+    assert entry["method"] == "GET"
+    assert client.get("/api/assistant/read-tools/get_event_impact_workflow").json() == workflow
+    assert workflow["templates"]["probability"]["estimate_pct"] is None
+    assert workflow["templates"]["forecast"]["status"] == "insufficient_evidence"
+
+    # A response is a fresh blank template; callers cannot contaminate later cases.
+    workflow["templates"]["probability"]["estimate_pct"] = 99
+    assert client.get(path).json()["templates"]["probability"]["estimate_pct"] is None
+
+    cases = client.get(path + "/cases", params={"symbol": " bbd "}).json()
+    assert cases["count"] == 1
+    record = cases["items"][0]
+    assert record["case"]["symbol"] == "BBD"
+    assert record["probabilities"][0]["estimate_pct"] is None
+    assert record["learning_status"]["eligible_as_population_probability_sample"] is False
+    assert client.get("/api/assistant/read-tools/get_event_impact_cases", params={"symbol": "bbd"}).json() == cases
+    # A ticker is a filter, never a path chosen by the caller.
+    assert client.get(path + "/cases", params={"symbol": "../../config"}).json()["items"] == []
+    assert client.get(path + "/cases", params={"symbol": "UNKNOWN"}).json()["count"] == 0
+
+    event_id = record["case"]["event_id"]
+    cohort = client.get(path + "/cases", params={"event_id": event_id}).json()
+    assert cohort["distinct_event_count"] == 1
+    symbols = {item["case"]["symbol"] for item in cohort["items"]}
+    assert {"BBD", "XP", "STNE", "NU", "ITUB", "PBR", "ABEV", "VALE", "SUZ"} <= symbols
+    assert all(item["case"]["event_id"] == event_id for item in cohort["items"])
+    assert cases["event_patterns"] == cohort["event_patterns"]
+    assert cohort["event_patterns"][0]["independent_event_count"] == 1
+    assert cohort["calibrated_probability_model"] is False
+    assert client.get(path + "/cases", params={"symbol": "BBD", "event_id": "unrelated"}).json()["items"] == []
+    assert client.get(path + "/cases", params={"event_id": "../../config"}).json()["event_patterns"] == []
+
+    for item in cohort["items"]:
+        for outcome in item["case"]["verified_outcomes"]:
+            if outcome["metric"] == "stock_return":
+                calculated = 100 * (outcome["end_value"] / outcome["baseline_value"] - 1)
+                assert abs(outcome["change_pct"] - calculated) < 1e-7
+        assert item["learning_status"]["eligible_as_population_probability_sample"] is False
+    suz = next(item for item in cohort["items"] if item["case"]["symbol"] == "SUZ")
+    assert suz["case"]["verified_outcomes"][0]["change_pct"] > 0
+
+
 def test_existing_database_is_migrated_with_hashed_default_admin(tmp_path):
     database = tmp_path / "existing.sqlite3"
     with sqlite3.connect(database) as connection:

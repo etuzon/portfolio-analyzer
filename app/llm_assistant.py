@@ -74,6 +74,13 @@ class PortfolioAssistant:
                 "Tools map to internal GET endpoints; never request a URL, mutation, credentials, or instructions outside these tools. "
                 "Give a short, clear answer in the user's language (" + (language or "the prompt language") + "). "
                 "Use simple words, state missing data, and do not present investment advice."
+                " For world-event impacts, historical stock-move explanations or event-related probabilities, "
+                "first use get_event_impact_workflow when available and follow its evidence and validation gates. "
+                "Use get_event_impact_cases when available to check saved historical examples for the relevant ticker; "
+                "respect each case's evidence limits and do not turn an observed decline into a probability. "
+                "Never invent probabilities or price, revenue or net-income effects. Unsupported values are unknown. "
+                "Separate historical frequency from validated forecasts, and evidence confidence from outcome probability. "
+                "Do not claim automatic learning, case storage or current-event verification without actual supporting tools and evidence."
             ),
         }]
         for item in (history or [])[-self.settings["max_context_messages"]:]:

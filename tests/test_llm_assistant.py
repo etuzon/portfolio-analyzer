@@ -1,3 +1,5 @@
+import json
+
 from app.llm_assistant import AssistantError, PortfolioAssistant, assistant_settings
 
 
@@ -24,6 +26,33 @@ def test_assistant_executes_only_catalogued_read_tool_then_answers():
 
     assert result["answer"] == "Your report is ready."
     assert result["tool_calls"] == [{"tool": "get_report", "path": "/api/local/reports", "arguments": {}}]
+
+
+def test_assistant_receives_event_workflow_before_answering_without_evidence():
+    from app import main
+
+    messages_seen = []
+    responses = iter([
+        {"choices": [{"message": {"role": "assistant", "tool_calls": [{"id": "workflow", "function": {"name": "get_event_impact_workflow", "arguments": "{}"}}]}}]},
+        {"choices": [{"message": {"role": "assistant", "content": "Unknown: no verified comparable cases were supplied."}}]},
+    ])
+
+    def provider(**kwargs):
+        messages_seen.append(list(kwargs["messages"]))
+        return next(responses)
+
+    assistant = PortfolioAssistant(_settings(), main.ASSISTANT_READ_TOOLS, caller=provider)
+    result = assistant.ask("How likely is a stock loss after this event?", "en", main._assistant_tool_result)
+    received = json.loads(messages_seen[-1][-1]["content"])
+    assert received["workflow_id"] == "world-event-impact"
+    assert set(received["probability_definitions"]) >= {
+        "event", "exposure", "direction", "severity", "onset", "persistence",
+        "recovery", "spillover", "scenario", "joint_loss",
+    }
+    assert received["templates"]["probability"]["estimate_pct"] is None
+    assert received["capabilities"]["trained_probability_model"] is False
+    assert "Unknown" in result["answer"]
+    # This verifies tool delivery, not the forecasting reliability of an external LLM.
 
 
 def test_assistant_rejects_tool_outside_allow_list():
