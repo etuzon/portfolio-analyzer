@@ -1,0 +1,130 @@
+schema_version: 1
+workflow_id: world-event-impact
+workflow_version: 1.0.0
+recorded_at: '2026-10-27T18:19:55.917196+00:00'
+case:
+  id: ftse100-brexit-result-2016-06-24
+  event_id: brexit-result-2016-06-24
+  event_category: political
+  event_summary: The UK vote to leave the EU accompanied losses in European banks
+    and gains in gold producers.
+  origin_regions:
+  - GB
+  - EU
+  event_occurred_at: '2016-06-24'
+  first_public_at: null
+  information_cutoff: '2026-10-27T18:19:55.917196+00:00'
+  symbol: ^FTSE
+  exchange: null
+  currency: GBP
+  user_reported_move_pct: null
+  verified_outcomes:
+  - id: ftse100-brexit-result-2016-06-24-return
+    metric: index_return
+    record_kind: observed
+    baseline_value: null
+    end_value: null
+    unit: percent_return
+    currency: GBP
+    baseline_period: null
+    end_period: null
+    baseline_published_at: null
+    end_published_at: null
+    window_start: '2016-06-23'
+    window_end: '2016-06-24'
+    horizon: previous_regular_session_close_to_named_session_close
+    adjustment_basis: Source report; adjusted price levels and corporate actions not
+      independently audited.
+    change_pct: -3.2
+    absolute_change: null
+    benchmark: null
+    benchmark_return_pct: null
+    excess_return_pp: null
+    method: source_reported_close_to_close
+    source_ids:
+    - market-report
+    missing_reason: Price levels not transcribed; do not back-solve or invent a baseline.
+    measurement_basis: source_reported_percentage_not_recomputed
+    reported_precision: approximate_whole_percent
+    evidence_note: null
+  regional_effects:
+  - origin_region: GB
+    destination_region: GBP_quoted_market
+    company_or_sector: ^FTSE
+    channel: cross-border-finance
+    mechanism: Trade, financial-access and growth uncertainty can raise risk premiums
+      and weaken lending expectations.
+    direction: down
+    exposure_pct: null
+    exposure_basis: null
+    lag: null
+    mitigating_factors:
+    - Central-bank liquidity
+    - Different domestic exposures
+    - Currency translation
+    reversal_conditions: []
+    source_ids:
+    - event-primary
+    - market-report
+    linked_probability_ids: []
+    linked_metric_ids: []
+    evidence_status: reported_channel_not_a_causal_forecast
+  source_ids:
+  - event-primary
+  - market-report
+  competing_explanations:
+  - Prior positioning for a Remain outcome
+  - Policy reassurance
+  - FX and local-currency composition
+  causal_support: Historical association with a reported mechanism; no causal percentage
+    is identified.
+  missing_data:
+  - Representative comparable-event cohort and chronological validation
+  - Event-attributable price, revenue and profit decomposition
+  review_status: sourced_retrospective_observation_not_forecast
+  company_name: FTSE 100
+  instrument_type: broad_market_index
+  symbol_is_research_identifier: false
+  pattern_ids:
+  - brexit-result-2016-06-24-exposures
+  channel_ids:
+  - cross-border-finance
+  instrument_identity_note: Historical instrument identifier; exchange venue not transcribed.
+    Verify identity before live provider or security matching. RESEARCH-prefixed symbols
+    are non-tradable sector identifiers.
+probabilities: []
+probability_status:
+  status: insufficient_evidence
+  estimate_pct: null
+  missing_reason: Selected retrospective examples are not a validated probability
+    cohort.
+event_attributable_changes:
+  revenue_change_pct: null
+  net_income_change_pct: null
+  causal_contribution_pct_by_driver: null
+learning_status:
+  record_type: retrospective_case
+  event_cluster_id: brexit-result-2016-06-24
+  event_family_id: brexit
+  selected_because: Purposive coverage of event types, exposures and contrasting outcomes.
+  eligible_as_population_probability_sample: false
+  calibrated_forecast: false
+  model_updated: false
+sources:
+- id: event-primary
+  publisher: Bank of England
+  url: https://www.bankofengland.co.uk/news/2016/june/statement-from-the-governor-of-the-boe-following-the-eu-referendum-result
+  published_at: '2016-06-24'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: official_event
+  verification_scope: Result, adjustment uncertainty and policy response; the vote
+    preceded legal exit.
+  verified: true
+- id: market-report
+  publisher: Reuters
+  url: https://www.business-standard.com/article/reuters/banks-plunge-as-brexit-vote-sends-european-shares-reeling-116062401411_1.html
+  published_at: '2016-06-24'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: secondary_market_report
+  verification_scope: Closing European index, bank-sector and gold-producer moves.
+  verified: true

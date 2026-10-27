@@ -1,0 +1,176 @@
+schema_version: 1
+workflow_id: world-event-impact
+workflow_version: 1.0.0
+recorded_at: '2026-10-27T18:19:55.917196+00:00'
+case:
+  id: dal-financials-covid-global-selloff-2020-03-16
+  event_id: covid-global-selloff-2020-03-16
+  event_category: health
+  event_summary: Pandemic disruption and recession concerns accompanied a broad US
+    selloff on 16/03/2020.
+  origin_regions:
+  - CN
+  - US
+  - GLOBAL
+  event_occurred_at: '2020-03-11'
+  first_public_at: null
+  information_cutoff: '2026-10-27T18:19:55.917196+00:00'
+  symbol: DAL
+  exchange: null
+  currency: USD
+  user_reported_move_pct: null
+  verified_outcomes:
+  - id: dal-financials-covid-global-selloff-2020-03-16-revenue
+    metric: revenue
+    record_kind: observed
+    baseline_value: 47007
+    end_value: 17095
+    unit: USD_million
+    currency: USD
+    baseline_period: FY2019
+    end_period: FY2020
+    baseline_published_at: null
+    end_published_at: '2021-01-14'
+    window_start: null
+    window_end: null
+    horizon: full_fiscal_year_year_over_year
+    adjustment_basis: null
+    change_pct: -63.63307592
+    absolute_change: -29912
+    benchmark: null
+    benchmark_return_pct: null
+    excess_return_pp: null
+    method: reported_GAAP_statement_values
+    source_ids:
+    - delta-results
+    missing_reason: null
+    measurement_basis: reported_financial_statement_comparison
+    event_attributable: false
+    evidence_available_after_market_event: true
+    company_reported_rounded_change_pct: -64
+  - id: dal-financials-covid-global-selloff-2020-03-16-net_income
+    metric: net_income
+    record_kind: observed
+    baseline_value: 4767
+    end_value: -12385
+    unit: USD_million
+    currency: USD
+    baseline_period: FY2019
+    end_period: FY2020
+    baseline_published_at: null
+    end_published_at: '2021-01-14'
+    window_start: null
+    window_end: null
+    horizon: full_fiscal_year_year_over_year
+    adjustment_basis: null
+    change_pct: null
+    absolute_change: -17152
+    benchmark: null
+    benchmark_return_pct: null
+    excess_return_pp: null
+    method: reported_GAAP_statement_values
+    source_ids:
+    - delta-results
+    missing_reason: Profit-to-loss transition; show absolute change instead of a conventional
+      growth percentage.
+    measurement_basis: reported_financial_statement_comparison
+    event_attributable: false
+    evidence_available_after_market_event: true
+    transition: profit_to_loss
+  regional_effects:
+  - origin_region: CN
+    destination_region: USD_quoted_market
+    company_or_sector: DAL
+    channel: contact-travel
+    mechanism: Mobility restrictions and reduced passenger demand can cut revenue
+      while fixed costs remain.
+    direction: unknown
+    exposure_pct: null
+    exposure_basis: null
+    lag: null
+    mitigating_factors:
+    - Capacity reductions
+    - Lower fuel expense
+    - Government support
+    reversal_conditions: []
+    source_ids:
+    - event-primary
+    - delta-results
+    linked_probability_ids: []
+    linked_metric_ids: []
+    evidence_status: reported_channel_not_a_causal_forecast
+  source_ids:
+  - event-primary
+  - delta-results
+  competing_explanations:
+  - Emergency Fed action on 15/03/2020
+  - Shutdown and recession news
+  - Oil-price and funding-market stress
+  causal_support: Historical association with a reported mechanism; no causal percentage
+    is identified.
+  missing_data:
+  - Representative comparable-event cohort and chronological validation
+  - Event-attributable price, revenue and profit decomposition
+  review_status: sourced_retrospective_observation_not_forecast
+  company_name: Delta Air Lines
+  instrument_type: ordinary_share
+  symbol_is_research_identifier: false
+  pattern_ids:
+  - covid-global-selloff-2020-03-16-exposures
+  channel_ids:
+  - contact-travel
+  instrument_identity_note: Historical instrument identifier; exchange venue not transcribed.
+    Verify identity before live provider or security matching. RESEARCH-prefixed symbols
+    are non-tradable sector identifiers.
+probabilities: []
+probability_status:
+  status: insufficient_evidence
+  estimate_pct: null
+  missing_reason: Selected retrospective examples are not a validated probability
+    cohort.
+event_attributable_changes:
+  revenue_change_pct: null
+  net_income_change_pct: null
+  causal_contribution_pct_by_driver: null
+learning_status:
+  record_type: retrospective_case
+  event_cluster_id: covid-global-selloff-2020-03-16
+  event_family_id: covid19-pandemic
+  selected_because: Purposive coverage of event types, exposures and contrasting outcomes.
+  eligible_as_population_probability_sample: false
+  calibrated_forecast: false
+  model_updated: false
+sources:
+- id: event-primary
+  publisher: WHO
+  url: https://www.who.int/news-room/speeches/item/who-director-general-s-opening-remarks-at-the-media-briefing-on-covid-19---11-march-2020
+  published_at: '2020-03-11'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: official_event
+  verification_scope: Pandemic characterization, not a claim that one announcement
+    caused the later session.
+  verified: true
+- id: policy-primary
+  publisher: Federal Reserve
+  url: https://www.federalreserve.gov/newsevents/pressreleases/monetary20200315a.htm
+  published_at: '2020-03-15'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: official_event
+  verification_scope: Emergency policy response and acknowledged disruption.
+  verified: true
+- id: market-report
+  publisher: Reuters
+  url: https://www.investing.com/news/stock-market-news/another-black-monday-as-coronavirus-response-upends-wall-street-2111230
+  published_at: '2020-03-16'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: secondary_market_report
+  verification_scope: Closing index and sector changes.
+  verified: true
+- id: delta-results
+  publisher: Delta Air Lines
+  url: https://ir.delta.com/news/news-details/2021/Delta-Air-Lines-Announces-December-Quarter-and-Full-Year-2020-Financial-Results/default.aspx
+  published_at: '2021-01-14'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: company_results
+  verification_scope: Later full-year GAAP results; not known on 16/03/2020.
+  verified: true

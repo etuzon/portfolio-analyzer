@@ -1,0 +1,85 @@
+schema_version: 1
+id: brexit-result-2016-06-24-exposures
+event_ids:
+- brexit-result-2016-06-24
+event_family_id: brexit
+title: Brexit referendum result and European repricing
+recorded_at: '2026-10-27T18:19:55.917196+00:00'
+status: reported_mechanisms_unvalidated_forecast
+observed_symbols:
+- STOXX600
+- SX7P
+- ^FTSE
+- FRES.L
+case_ids:
+- stoxx600-brexit-result-2016-06-24
+- sx7p-brexit-result-2016-06-24
+- ftse100-brexit-result-2016-06-24
+- fres-brexit-result-2016-06-24
+scope_limits:
+- Selected historical observations, not a representative cohort or causal estimate.
+- Related event families and same-event observations are correlated.
+- Local-currency returns across exchanges are not synchronized USD portfolio returns.
+- Later results and retrospective reviews must be excluded from event-time backtests.
+trigger_conditions:
+- The UK vote to leave the EU accompanied losses in European banks and gains in gold
+  producers.
+- Verify surprise, company exposure, horizon, policy response and offsets before applying
+  the analogy.
+reason_to_exposure:
+- id: cross-border-finance
+  affected_type: UK and European banks and domestic-demand businesses
+  transmission: Trade, financial-access and growth uncertainty can raise risk premiums
+    and weaken lending expectations.
+  price_direction_if_channel_dominates: down
+  offsets:
+  - Central-bank liquidity
+  - Different domestic exposures
+  - Currency translation
+  future_return_pct: null
+  future_probability_pct: null
+  evidence_status: reported_mechanism_not_identified_causal_effect
+- id: gold-exposure
+  affected_type: Gold producers
+  transmission: Safe-haven demand and currency changes can support gold-linked equity
+    valuations.
+  price_direction_if_channel_dominates: up
+  offsets:
+  - Production costs
+  - Hedges
+  - Gold-price reversal
+  future_return_pct: null
+  future_probability_pct: null
+  evidence_status: reported_mechanism_not_identified_causal_effect
+regional_transmission:
+- origin: GB
+  destination: EU
+  channel: Financial integration and policy uncertainty
+  status: observed_cross_market_repricing_not_uniform_company_loss
+competing_explanations:
+- Prior positioning for a Remain outcome
+- Policy reassurance
+- FX and local-currency composition
+unquantified:
+  future_probability_pct: null
+  expected_future_stock_return_pct: null
+  event_attributable_revenue_change_pct: null
+  event_attributable_net_income_change_pct: null
+sources:
+- id: event-primary
+  publisher: Bank of England
+  url: https://www.bankofengland.co.uk/news/2016/june/statement-from-the-governor-of-the-boe-following-the-eu-referendum-result
+  published_at: '2016-06-24'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: official_event
+  verification_scope: Result, adjustment uncertainty and policy response; the vote
+    preceded legal exit.
+  verified: true
+- id: market-report
+  publisher: Reuters
+  url: https://www.business-standard.com/article/reuters/banks-plunge-as-brexit-vote-sends-european-shares-reeling-116062401411_1.html
+  published_at: '2016-06-24'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: secondary_market_report
+  verification_scope: Closing European index, bank-sector and gold-producer moves.
+  verified: true

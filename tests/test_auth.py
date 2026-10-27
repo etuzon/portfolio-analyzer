@@ -49,6 +49,7 @@ def test_event_workflow_is_authenticated_and_available_through_assistant(tmp_pat
     path = "/api/assistant/workflows/world-event-impact"
     assert client.get(path).status_code == 401
     assert client.get(path + "/cases").status_code == 401
+    assert client.get(path + "/events").status_code == 401
 
     session = _login(client)
     _change_password(client, session, "admin", "Workflow-Test-Password-2026!")
@@ -80,6 +81,11 @@ def test_event_workflow_is_authenticated_and_available_through_assistant(tmp_pat
 
     event_id = record["case"]["event_id"]
     cohort = client.get(path + "/cases", params={"event_id": event_id}).json()
+    cursor = cohort["next_offset"]
+    while cursor is not None:
+        page = client.get(path + "/cases", params={"event_id": event_id, "offset": cursor}).json()
+        cohort["items"].extend(page["items"])
+        cursor = page["next_offset"]
     assert cohort["distinct_event_count"] == 1
     symbols = {item["case"]["symbol"] for item in cohort["items"]}
     assert {"BBD", "XP", "STNE", "NU", "ITUB", "PBR", "ABEV", "VALE", "SUZ"} <= symbols
@@ -98,6 +104,13 @@ def test_event_workflow_is_authenticated_and_available_through_assistant(tmp_pat
         assert item["learning_status"]["eligible_as_population_probability_sample"] is False
     suz = next(item for item in cohort["items"] if item["case"]["symbol"] == "SUZ")
     assert suz["case"]["verified_outcomes"][0]["change_pct"] > 0
+
+    event_index = client.get(path + "/events").json()
+    assert event_index["count"] >= 9
+    assert event_index["case_count"] >= 37
+    assert client.get("/api/assistant/read-tools/get_event_impact_events").json() == event_index
+    assert client.get(path + "/cases", params={"limit": 6}).status_code == 422
+    assert client.get(path + "/cases", params={"offset": -1}).status_code == 422
 
 
 def test_existing_database_is_migrated_with_hashed_default_admin(tmp_path):

@@ -1,0 +1,129 @@
+schema_version: 1
+workflow_id: world-event-impact
+workflow_version: 1.0.0
+recorded_at: '2026-10-27T18:19:55.917196+00:00'
+case:
+  id: nikkei225-japan-earthquake-fukushima-2011-03
+  event_id: japan-earthquake-fukushima-2011-03
+  event_category: environmental
+  event_summary: Earthquake damage, power disruption and nuclear escalation accompanied
+    Japanese equity losses.
+  origin_regions:
+  - JP
+  event_occurred_at: '2011-03-11'
+  first_public_at: null
+  information_cutoff: '2026-10-27T18:19:55.917196+00:00'
+  symbol: ^N225
+  exchange: null
+  currency: JPY
+  user_reported_move_pct: null
+  verified_outcomes:
+  - id: nikkei225-japan-earthquake-fukushima-2011-03-return
+    metric: index_return
+    record_kind: observed
+    baseline_value: null
+    end_value: null
+    unit: percent_return
+    currency: JPY
+    baseline_period: null
+    end_period: null
+    baseline_published_at: null
+    end_published_at: null
+    window_start: '2011-03-14'
+    window_end: '2011-03-15'
+    horizon: previous_regular_session_close_to_named_session_close
+    adjustment_basis: Source report; adjusted price levels and corporate actions not
+      independently audited.
+    change_pct: -10.55
+    absolute_change: null
+    benchmark: null
+    benchmark_return_pct: null
+    excess_return_pp: null
+    method: source_reported_close_to_close
+    source_ids:
+    - event-primary
+    missing_reason: Price levels not transcribed; do not back-solve or invent a baseline.
+    measurement_basis: source_reported_percentage_not_recomputed
+    reported_precision: as_reported_rounded_percentage
+    evidence_note: null
+  regional_effects:
+  - origin_region: JP
+    destination_region: JPY_quoted_market
+    company_or_sector: ^N225
+    channel: physical-power-disruption
+    mechanism: Physical damage, outages and nuclear liability can disrupt production
+      and increase expected losses.
+    direction: down
+    exposure_pct: null
+    exposure_basis: null
+    lag: null
+    mitigating_factors:
+    - Backup power
+    - Supply-chain alternatives
+    - Insurance and government support
+    reversal_conditions: []
+    source_ids:
+    - event-primary
+    - event-primary
+    linked_probability_ids: []
+    linked_metric_ids: []
+    evidence_status: reported_channel_not_a_causal_forecast
+  source_ids:
+  - event-primary
+  - event-primary
+  competing_explanations:
+  - Sequential earthquake, tsunami and nuclear developments
+  - Fiscal-year-end selling
+  - Emergency policy response
+  causal_support: Historical association with a reported mechanism; no causal percentage
+    is identified.
+  missing_data:
+  - Representative comparable-event cohort and chronological validation
+  - Event-attributable price, revenue and profit decomposition
+  review_status: sourced_retrospective_observation_not_forecast
+  company_name: Nikkei 225
+  instrument_type: broad_market_index
+  symbol_is_research_identifier: false
+  pattern_ids:
+  - japan-earthquake-fukushima-2011-03-exposures
+  channel_ids:
+  - physical-power-disruption
+  instrument_identity_note: Historical instrument identifier; exchange venue not transcribed.
+    Verify identity before live provider or security matching. RESEARCH-prefixed symbols
+    are non-tradable sector identifiers.
+probabilities: []
+probability_status:
+  status: insufficient_evidence
+  estimate_pct: null
+  missing_reason: Selected retrospective examples are not a validated probability
+    cohort.
+event_attributable_changes:
+  revenue_change_pct: null
+  net_income_change_pct: null
+  causal_contribution_pct_by_driver: null
+learning_status:
+  record_type: retrospective_case
+  event_cluster_id: japan-earthquake-fukushima-2011-03
+  event_family_id: tohoku-earthquake-2011
+  selected_because: Purposive coverage of event types, exposures and contrasting outcomes.
+  eligible_as_population_probability_sample: false
+  calibrated_forecast: false
+  model_updated: false
+sources:
+- id: event-primary
+  publisher: Nikkei Indexes
+  url: https://indexes.nikkei.co.jp/70th/adayintokyomarket-article.html
+  published_at: null
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: index_provider_retrospective
+  verification_scope: Retrospective index-provider chronology and 15/03/2011 decline;
+    publication date not supplied.
+  verified: true
+- id: market-report
+  publisher: Reuters
+  url: https://m.investing.com/news/forex-news/japan-markets-after-quake%2C-topix-suffers-biggest-drop-in-2-years-201295?ampMode=1
+  published_at: '2011-03-14'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: secondary_market_report
+  verification_scope: Closing TEPCO and Kajima changes in the 14/03/2011 session.
+  verified: true

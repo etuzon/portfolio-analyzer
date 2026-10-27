@@ -1,0 +1,102 @@
+schema_version: 1
+id: covid-global-selloff-2020-03-16-exposures
+event_ids:
+- covid-global-selloff-2020-03-16
+event_family_id: covid19-pandemic
+title: Pandemic disruption and emergency-policy repricing
+recorded_at: '2026-10-27T18:19:55.917196+00:00'
+status: reported_mechanisms_unvalidated_forecast
+observed_symbols:
+- ^GSPC
+- ^IXIC
+- RESEARCH:SP500_REAL_ESTATE
+- RESEARCH:SP500_CONSUMER_STAPLES
+- DAL
+case_ids:
+- spx-covid-global-selloff-2020-03-16
+- ixic-covid-global-selloff-2020-03-16
+- sp500-real-estate-covid-global-selloff-2020-03-16
+- sp500-staples-covid-global-selloff-2020-03-16
+- dal-financials-covid-global-selloff-2020-03-16
+scope_limits:
+- Selected historical observations, not a representative cohort or causal estimate.
+- Related event families and same-event observations are correlated.
+- Local-currency returns across exchanges are not synchronized USD portfolio returns.
+- Later results and retrospective reviews must be excluded from event-time backtests.
+trigger_conditions:
+- Pandemic disruption and recession concerns accompanied a broad US selloff on 16/03/2020.
+- Verify surprise, company exposure, horizon, policy response and offsets before applying
+  the analogy.
+reason_to_exposure:
+- id: demand-liquidity
+  affected_type: Broad equities and contact-dependent businesses
+  transmission: Disrupted activity and liquidity concerns can reduce expected cash
+    flows and valuations.
+  price_direction_if_channel_dominates: down
+  offsets:
+  - Fiscal and monetary support
+  - Company liquidity
+  - Remote delivery
+  future_return_pct: null
+  future_probability_pct: null
+  evidence_status: reported_mechanism_not_identified_causal_effect
+- id: contact-travel
+  affected_type: Airlines, lodging and travel services
+  transmission: Mobility restrictions and reduced passenger demand can cut revenue
+    while fixed costs remain.
+  price_direction_if_channel_dominates: down
+  offsets:
+  - Capacity reductions
+  - Lower fuel expense
+  - Government support
+  future_return_pct: null
+  future_probability_pct: null
+  evidence_status: reported_mechanism_not_identified_causal_effect
+regional_transmission:
+- origin: CN
+  destination: GLOBAL
+  channel: Pandemic spread, mobility and demand
+  status: documented_global_disruption_company_effects_vary
+competing_explanations:
+- Emergency Fed action on 15/03/2020
+- Shutdown and recession news
+- Oil-price and funding-market stress
+unquantified:
+  future_probability_pct: null
+  expected_future_stock_return_pct: null
+  event_attributable_revenue_change_pct: null
+  event_attributable_net_income_change_pct: null
+sources:
+- id: event-primary
+  publisher: WHO
+  url: https://www.who.int/news-room/speeches/item/who-director-general-s-opening-remarks-at-the-media-briefing-on-covid-19---11-march-2020
+  published_at: '2020-03-11'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: official_event
+  verification_scope: Pandemic characterization, not a claim that one announcement
+    caused the later session.
+  verified: true
+- id: policy-primary
+  publisher: Federal Reserve
+  url: https://www.federalreserve.gov/newsevents/pressreleases/monetary20200315a.htm
+  published_at: '2020-03-15'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: official_event
+  verification_scope: Emergency policy response and acknowledged disruption.
+  verified: true
+- id: market-report
+  publisher: Reuters
+  url: https://www.investing.com/news/stock-market-news/another-black-monday-as-coronavirus-response-upends-wall-street-2111230
+  published_at: '2020-03-16'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: secondary_market_report
+  verification_scope: Closing index and sector changes.
+  verified: true
+- id: delta-results
+  publisher: Delta Air Lines
+  url: https://ir.delta.com/news/news-details/2021/Delta-Air-Lines-Announces-December-Quarter-and-Full-Year-2020-Financial-Results/default.aspx
+  published_at: '2021-01-14'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: company_results
+  verification_scope: Later full-year GAAP results; not known on 16/03/2020.
+  verified: true

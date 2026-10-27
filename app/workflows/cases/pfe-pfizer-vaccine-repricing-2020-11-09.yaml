@@ -1,0 +1,131 @@
+schema_version: 1
+workflow_id: world-event-impact
+workflow_version: 1.0.0
+recorded_at: '2026-10-27T18:19:55.917196+00:00'
+case:
+  id: pfe-pfizer-vaccine-repricing-2020-11-09
+  event_id: pfizer-vaccine-repricing-2020-11-09
+  event_category: health
+  event_summary: Positive interim vaccine results accompanied reopening-sector gains
+    and remote-work-stock losses.
+  origin_regions:
+  - US
+  - DE
+  - GLOBAL
+  event_occurred_at: '2020-11-09'
+  first_public_at: null
+  information_cutoff: '2026-10-27T18:19:55.917196+00:00'
+  symbol: PFE
+  exchange: null
+  currency: USD
+  user_reported_move_pct: null
+  verified_outcomes:
+  - id: pfe-pfizer-vaccine-repricing-2020-11-09-return
+    metric: stock_return
+    record_kind: observed
+    baseline_value: null
+    end_value: null
+    unit: percent_return
+    currency: USD
+    baseline_period: null
+    end_period: null
+    baseline_published_at: null
+    end_published_at: null
+    window_start: '2020-11-06'
+    window_end: '2020-11-09'
+    horizon: previous_regular_session_close_to_named_session_close
+    adjustment_basis: Source report; adjusted price levels and corporate actions not
+      independently audited.
+    change_pct: 7.7
+    absolute_change: null
+    benchmark: null
+    benchmark_return_pct: null
+    excess_return_pp: null
+    method: source_reported_close_to_close
+    source_ids:
+    - market-report
+    missing_reason: Price levels not transcribed; do not back-solve or invent a baseline.
+    measurement_basis: source_reported_percentage_not_recomputed
+    reported_precision: as_reported_rounded_percentage
+    evidence_note: null
+  regional_effects:
+  - origin_region: US
+    destination_region: USD_quoted_market
+    company_or_sector: PFE
+    channel: vaccine-commercialization
+    mechanism: Successful interim results can improve commercialization expectations
+      before approval.
+    direction: up
+    exposure_pct: null
+    exposure_basis: null
+    lag: null
+    mitigating_factors:
+    - Safety and approval risks
+    - Manufacturing limits
+    - Competition
+    reversal_conditions: []
+    source_ids:
+    - event-primary
+    - market-report
+    linked_probability_ids: []
+    linked_metric_ids: []
+    evidence_status: reported_channel_not_a_causal_forecast
+  source_ids:
+  - event-primary
+  - market-report
+  competing_explanations:
+  - US election outcome and policy expectations
+  - Ongoing infection trends
+  - Interim results were not deployment or approval
+  causal_support: Historical association with a reported mechanism; no causal percentage
+    is identified.
+  missing_data:
+  - Representative comparable-event cohort and chronological validation
+  - Event-attributable price, revenue and profit decomposition
+  review_status: sourced_retrospective_observation_not_forecast
+  company_name: Pfizer
+  instrument_type: ordinary_share
+  symbol_is_research_identifier: false
+  pattern_ids:
+  - pfizer-vaccine-repricing-2020-11-09-exposures
+  channel_ids:
+  - vaccine-commercialization
+  instrument_identity_note: Historical instrument identifier; exchange venue not transcribed.
+    Verify identity before live provider or security matching. RESEARCH-prefixed symbols
+    are non-tradable sector identifiers.
+probabilities: []
+probability_status:
+  status: insufficient_evidence
+  estimate_pct: null
+  missing_reason: Selected retrospective examples are not a validated probability
+    cohort.
+event_attributable_changes:
+  revenue_change_pct: null
+  net_income_change_pct: null
+  causal_contribution_pct_by_driver: null
+learning_status:
+  record_type: retrospective_case
+  event_cluster_id: pfizer-vaccine-repricing-2020-11-09
+  event_family_id: covid19-pandemic
+  selected_because: Purposive coverage of event types, exposures and contrasting outcomes.
+  eligible_as_population_probability_sample: false
+  calibrated_forecast: false
+  model_updated: false
+sources:
+- id: event-primary
+  publisher: Pfizer and BioNTech
+  url: https://www.pfizer.com/news/press-release/press-release-detail/pfizer-and-biontech-announce-vaccine-candidate-against
+  published_at: '2020-11-09'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: official_event
+  verification_scope: Interim trial announcement; not final regulatory approval or
+    an equity probability.
+  verified: true
+- id: market-report
+  publisher: ABC News
+  url: https://abcnews.com/Business/dow-surges-1500-points-vaccinea-hopes/story?id=74104964
+  published_at: '2020-11-09'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: secondary_market_report
+  verification_scope: End-of-day report; some returns rounded.
+  verified: true

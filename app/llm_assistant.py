@@ -77,6 +77,7 @@ class PortfolioAssistant:
                 " For world-event impacts, historical stock-move explanations or event-related probabilities, "
                 "first use get_event_impact_workflow when available and follow its evidence and validation gates. "
                 "Use get_event_impact_cases when available to check saved historical examples for the relevant ticker; "
+                "use get_event_impact_events to discover event IDs and follow case next_offset pagination without treating a page as a complete sample. "
                 "respect each case's evidence limits and do not turn an observed decline into a probability. "
                 "Never invent probabilities or price, revenue or net-income effects. Unsupported values are unknown. "
                 "Separate historical frequency from validated forecasts, and evidence confidence from outcome probability. "

@@ -1,0 +1,82 @@
+schema_version: 1
+id: saudi-oil-facility-attack-2019-09-14-exposures
+event_ids:
+- saudi-oil-facility-attack-2019-09-14
+event_family_id: abqaiq-khurais-2019
+title: Oil-facility attack and global input-cost transmission
+recorded_at: '2026-10-27T18:19:55.917196+00:00'
+status: reported_mechanisms_unvalidated_forecast
+observed_symbols:
+- SPNY
+- APA
+- AAL
+case_ids:
+- energy-sector-saudi-oil-facility-attack-2019-09-14
+- apa-saudi-oil-facility-attack-2019-09-14
+- aal-saudi-oil-facility-attack-2019-09-14
+scope_limits:
+- Selected historical observations, not a representative cohort or causal estimate.
+- Related event families and same-event observations are correlated.
+- Local-currency returns across exchanges are not synchronized USD portfolio returns.
+- Later results and retrospective reviews must be excluded from event-time backtests.
+trigger_conditions:
+- Saudi production disruption accompanied gains in US energy equities and losses in
+  airlines.
+- Verify surprise, company exposure, horizon, policy response and offsets before applying
+  the analogy.
+reason_to_exposure:
+- id: producer-price
+  affected_type: Oil producers outside the damaged facilities
+  transmission: A supply disruption can lift realized-price expectations for producers
+    with available output.
+  price_direction_if_channel_dominates: up
+  offsets:
+  - Restored supply
+  - Hedges
+  - Demand response
+  - Production constraints
+  future_return_pct: null
+  future_probability_pct: null
+  evidence_status: reported_mechanism_not_identified_causal_effect
+- id: fuel-cost
+  affected_type: Airlines and other fuel-intensive businesses
+  transmission: Higher fuel prices can pressure margins unless hedged or passed through.
+  price_direction_if_channel_dominates: down
+  offsets:
+  - Fuel hedges
+  - Surcharges
+  - Lower other costs
+  future_return_pct: null
+  future_probability_pct: null
+  evidence_status: reported_mechanism_not_identified_causal_effect
+regional_transmission:
+- origin: SA
+  destination: US
+  channel: Global oil prices to producer revenue and airline fuel costs
+  status: reported_opposite_equity_responses_financial_magnitudes_unknown
+competing_explanations:
+- Existing energy-sector positioning
+- Restoration and inventory expectations
+- Company-specific costs
+unquantified:
+  future_probability_pct: null
+  expected_future_stock_return_pct: null
+  event_attributable_revenue_change_pct: null
+  event_attributable_net_income_change_pct: null
+sources:
+- id: event-primary
+  publisher: Saudi Aramco
+  url: https://www.aramco.com/en/news-media/news/2019/incidents-at-abqaiq-and-khurais
+  published_at: '2019-09-14'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: official_event
+  verification_scope: Confirmed facility attack and temporary production suspension.
+  verified: true
+- id: market-report
+  publisher: Reuters
+  url: https://uk.investing.com/news/stock-market-news/beleaguered-us-energy-shares-soar-after-attacks-on-saudi-facilities-1963509
+  published_at: '2019-09-16'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: secondary_market_report
+  verification_scope: End-of-day energy-sector, producer and airline returns.
+  verified: true

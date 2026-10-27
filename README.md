@@ -80,6 +80,16 @@ through `get_event_impact_cases` or authenticated
 The Brazil election example includes BBD and eight comparison stocks, with
 aligned USD closing returns, EWZ/SPY context and filing-backed exposure channels.
 Pass `event_id=brazil-presidential-runoff-2026-10-25` to retrieve the full group.
+Details are paginated (default and maximum `limit=5`); continue with `next_offset`
+until it is null. `count` is the page size and `total_count` is the filtered total.
+Use `get_event_impact_events` or authenticated
+`GET /api/assistant/workflows/world-event-impact/events` for the compact inventory.
+The library now also covers eight historical event groups: pandemic disruption,
+vaccine reopening, Brexit, Japan's earthquake/nuclear crisis, Saudi oil-facility
+attacks, Russia's invasion and sanctions, US banking stress, and AI-efficiency
+repricing. See the [historical event inventory](research/world-events/historical-event-library.md)
+for sessions, observed percentages and sources. Related episodes share an event
+family; they are not assumed independent.
 Responses include related `event_patterns` from `app/workflows/patterns/`:
 reason → business exposure → transmission → possible effect, with offsets and
 missing estimates. `distinct_event_count` counts event IDs, not independent
@@ -104,8 +114,9 @@ probabilities. Validation includes uncertainty, dependence and chronological
 holdout checks; the interval method references the
 [NIST statistical handbook](https://itl.nist.gov/div898/handbook/prc/section2/prc241.htm).
 
-This release supplies a workflow and blank records, not automated news ingestion,
-a persistent case library, a probability calculator or a trained learning model.
+This release supplies a workflow, blank records and a versioned read-only case
+library. It does not provide automated news ingestion, assistant case-writing,
+a probability calculator or a trained learning model.
 The read-only assistant cannot save research cases through this tool. Its limited
 chat context is not durable learning. Later implementation can consume these
 versioned records without treating unverified examples as established outcomes.

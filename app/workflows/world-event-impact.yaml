@@ -4,11 +4,13 @@ version: 1.0.0
 purpose: Evidence-backed analysis of world events, regional transmission, stock returns, revenue and net income.
 capabilities:
   template_available: true
+  curated_event_index_available: true
+  curated_case_read_access: true
   automatic_event_monitoring: false
   historical_case_storage: false
   trained_probability_model: false
   automatic_probability_calculation: false
-  note: This is a research workflow and blank record contract. It does not train a model or persist cases. Assistant chat history is limited context, not a research database.
+  note: The app reads versioned curated examples and this blank record contract. It cannot write research cases or train a model through the assistant. Chat history is limited context, not a research database.
 
 rules:
   - Never invent events, sources, exposures, historical cases, probabilities, effect sizes or model accuracy.
@@ -21,6 +23,8 @@ rules:
   - Use only information available at the forecast cutoff. Keep later explanations and outcomes separate.
   - A set selected because stocks rose or fell cannot establish population probabilities. Obtain a defined comparison universe including neutral outcomes and failures.
   - Several companies hit by one event are correlated observations, not independent event trials.
+  - Distinct event IDs can belong to one event family. Neither the number of stocks nor event IDs proves independence or calibrates a forecast.
+  - Source-reported percentages may lack transcribed price levels. Preserve source precision and session dates; never invent baselines by back-solving.
   - Financial figures, stock moves and event attribution are distinct. A stock move alone does not prove a change in profit or revenue or its cause.
   - Do not transfer an effect between regions or companies without evidence of the transmission path and relevant exposure.
   - Never multiply marginal probabilities or add overlapping effects as though they were independent.
@@ -113,6 +117,7 @@ templates:
   historical_case:
     id: null
     event_id: null # Shared ID clusters companies exposed to the same event.
+    event_family_id: null # Related episodes may remain statistically dependent.
     event_category: null # political, economic, environmental, regulatory, health, technology, other
     event_summary: null
     origin_regions: []
@@ -168,6 +173,8 @@ templates:
     benchmark_return_pct: null
     excess_return_pp: null
     method: null
+    measurement_basis: null # computed_from_prices, source_reported_percentage_not_recomputed, reported_financial_statement_comparison
+    reported_precision: null
     source_ids: []
     missing_reason: not_yet_supplied
   probability:

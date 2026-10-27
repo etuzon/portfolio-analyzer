@@ -1,0 +1,83 @@
+schema_version: 1
+id: japan-earthquake-fukushima-2011-03-exposures
+event_ids:
+- japan-earthquake-fukushima-2011-03
+event_family_id: tohoku-earthquake-2011
+title: Tohoku earthquake, tsunami and nuclear escalation
+recorded_at: '2026-10-27T18:19:55.917196+00:00'
+status: reported_mechanisms_unvalidated_forecast
+observed_symbols:
+- ^N225
+- 9501.T
+- 1812.T
+case_ids:
+- nikkei225-japan-earthquake-fukushima-2011-03
+- tepco-japan-earthquake-fukushima-2011-03
+- kajima-japan-earthquake-fukushima-2011-03
+scope_limits:
+- Selected historical observations, not a representative cohort or causal estimate.
+- Related event families and same-event observations are correlated.
+- Local-currency returns across exchanges are not synchronized USD portfolio returns.
+- Later results and retrospective reviews must be excluded from event-time backtests.
+trigger_conditions:
+- Earthquake damage, power disruption and nuclear escalation accompanied Japanese
+  equity losses.
+- Verify surprise, company exposure, horizon, policy response and offsets before applying
+  the analogy.
+reason_to_exposure:
+- id: physical-power-disruption
+  affected_type: Domestic equities, utilities, manufacturers and insurers
+  transmission: Physical damage, outages and nuclear liability can disrupt production
+    and increase expected losses.
+  price_direction_if_channel_dominates: down
+  offsets:
+  - Backup power
+  - Supply-chain alternatives
+  - Insurance and government support
+  future_return_pct: null
+  future_probability_pct: null
+  evidence_status: reported_mechanism_not_identified_causal_effect
+- id: reconstruction-demand
+  affected_type: Construction and rebuilding suppliers
+  transmission: Expected rebuilding orders can support construction shares; contract
+    timing, capacity and margins remain uncertain.
+  price_direction_if_channel_dominates: up
+  offsets:
+  - Procurement delays
+  - Capacity constraints
+  - Labor and material costs
+  future_return_pct: null
+  future_probability_pct: null
+  evidence_status: reported_mechanism_not_identified_causal_effect
+regional_transmission:
+- origin: JP
+  destination: GLOBAL_supply_chains
+  channel: Production and component dependencies
+  status: mechanism_to_investigate_no_foreign_stock_return_assigned
+competing_explanations:
+- Sequential earthquake, tsunami and nuclear developments
+- Fiscal-year-end selling
+- Emergency policy response
+unquantified:
+  future_probability_pct: null
+  expected_future_stock_return_pct: null
+  event_attributable_revenue_change_pct: null
+  event_attributable_net_income_change_pct: null
+sources:
+- id: event-primary
+  publisher: Nikkei Indexes
+  url: https://indexes.nikkei.co.jp/70th/adayintokyomarket-article.html
+  published_at: null
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: index_provider_retrospective
+  verification_scope: Retrospective index-provider chronology and 15/03/2011 decline;
+    publication date not supplied.
+  verified: true
+- id: market-report
+  publisher: Reuters
+  url: https://m.investing.com/news/forex-news/japan-markets-after-quake%2C-topix-suffers-biggest-drop-in-2-years-201295?ampMode=1
+  published_at: '2011-03-14'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: secondary_market_report
+  verification_scope: Closing TEPCO and Kajima changes in the 14/03/2011 session.
+  verified: true

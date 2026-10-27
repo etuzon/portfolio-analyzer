@@ -1,0 +1,150 @@
+schema_version: 1
+workflow_id: world-event-impact
+workflow_version: 1.0.0
+recorded_at: '2026-10-27T18:19:55.917196+00:00'
+case:
+  id: stoxx600-russia-invasion-sanctions-2022-02-24
+  event_id: russia-invasion-sanctions-2022-02-24
+  event_category: geopolitical
+  event_summary: Invasion and sanctions accompanied Russian and European losses, while
+    US equities reversed early losses.
+  origin_regions:
+  - RU
+  - UA
+  - EU
+  - US
+  event_occurred_at: '2022-02-24'
+  first_public_at: null
+  information_cutoff: '2026-10-27T18:19:55.917196+00:00'
+  symbol: STOXX600
+  exchange: null
+  currency: EUR
+  user_reported_move_pct: null
+  verified_outcomes:
+  - id: stoxx600-russia-invasion-sanctions-2022-02-24-return
+    metric: index_return
+    record_kind: observed
+    baseline_value: null
+    end_value: null
+    unit: percent_return
+    currency: EUR
+    baseline_period: null
+    end_period: null
+    baseline_published_at: null
+    end_published_at: null
+    window_start: '2022-02-23'
+    window_end: '2022-02-24'
+    horizon: previous_regular_session_close_to_named_session_close
+    adjustment_basis: Source report; adjusted price levels and corporate actions not
+      independently audited.
+    change_pct: -3.28
+    absolute_change: null
+    benchmark: null
+    benchmark_return_pct: null
+    excess_return_pp: null
+    method: source_reported_close_to_close
+    source_ids:
+    - europe-report
+    missing_reason: Price levels not transcribed; do not back-solve or invent a baseline.
+    measurement_basis: source_reported_percentage_not_recomputed
+    reported_precision: as_reported_rounded_percentage
+    evidence_note: null
+  regional_effects:
+  - origin_region: RU
+    destination_region: EUR_quoted_market
+    company_or_sector: STOXX600
+    channel: regional-risk
+    mechanism: Conflict proximity, input costs and uncertainty can raise required
+      returns.
+    direction: down
+    exposure_pct: null
+    exposure_basis: null
+    lag: null
+    mitigating_factors:
+    - Hedges
+    - Alternative supplies
+    - Policy support
+    reversal_conditions: []
+    source_ids:
+    - event-primary
+    - europe-report
+    linked_probability_ids: []
+    linked_metric_ids: []
+    evidence_status: reported_channel_not_a_causal_forecast
+  source_ids:
+  - event-primary
+  - europe-report
+  competing_explanations:
+  - Sanctions announced during the day
+  - Different exchange closing times
+  - Commodity and rate expectations
+  - Earlier escalation and sanctions on 22/02/2022
+  causal_support: Historical association with a reported mechanism; no causal percentage
+    is identified.
+  missing_data:
+  - Representative comparable-event cohort and chronological validation
+  - Event-attributable price, revenue and profit decomposition
+  review_status: sourced_retrospective_observation_not_forecast
+  company_name: STOXX Europe 600
+  instrument_type: broad_market_index
+  symbol_is_research_identifier: false
+  pattern_ids:
+  - russia-invasion-sanctions-2022-02-24-exposures
+  channel_ids:
+  - regional-risk
+  instrument_identity_note: Historical instrument identifier; exchange venue not transcribed.
+    Verify identity before live provider or security matching. RESEARCH-prefixed symbols
+    are non-tradable sector identifiers.
+probabilities: []
+probability_status:
+  status: insufficient_evidence
+  estimate_pct: null
+  missing_reason: Selected retrospective examples are not a validated probability
+    cohort.
+event_attributable_changes:
+  revenue_change_pct: null
+  net_income_change_pct: null
+  causal_contribution_pct_by_driver: null
+learning_status:
+  record_type: retrospective_case
+  event_cluster_id: russia-invasion-sanctions-2022-02-24
+  event_family_id: russia-ukraine-war-2022
+  selected_because: Purposive coverage of event types, exposures and contrasting outcomes.
+  eligible_as_population_probability_sample: false
+  calibrated_forecast: false
+  model_updated: false
+sources:
+- id: event-primary
+  publisher: US Treasury
+  url: https://home.treasury.gov/news/press-releases/jy0608
+  published_at: '2022-02-24'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: official_event
+  verification_scope: Sanctions and financial restrictions announced in response to
+    the invasion.
+  verified: true
+- id: market-report
+  publisher: Reuters
+  url: https://www.marketscreener.com/news/latest/Russia-s-rouble-hits-record-low-as-Ukraine-attack-prompts-more-Western-sanctions-39576219/
+  published_at: '2022-02-24'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: secondary_market_report
+  verification_scope: MOEX regular close; additional-session figures are separate.
+  verified: true
+- id: europe-report
+  publisher: Anadolu Agency
+  url: https://www.aa.com.tr/en/economy/global-markets-in-red-with-rising-risks-amid-russian-intervention-in-ukraine/2513882
+  published_at: '2022-02-25'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: secondary_market_report
+  verification_scope: European local closing changes; its broad headline is not used
+    to infer the US closing direction.
+  verified: true
+- id: us-report
+  publisher: Morgan Stanley
+  url: https://www.morganstanley.com/campaigns/wealth-management/move-report/move-report2022feb24/
+  published_at: '2022-02-24'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: market_participant_commentary
+  verification_scope: US closing gain and intraday reversal.
+  verified: true

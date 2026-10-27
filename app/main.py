@@ -16,11 +16,11 @@ from functools import lru_cache
 from pathlib import Path, PurePosixPath
 from threading import RLock, Thread
 import time
-from typing import Any
+from typing import Annotated, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -210,10 +210,15 @@ def _viewer_request_is_read_only(request: Request) -> bool:
 
 
 ASSISTANT_READ_TOOLS: dict[str, dict[str, Any]] = {
+    "get_event_impact_events": {
+        "path": "/api/assistant/workflows/world-event-impact/events",
+        "description": "List curated historical event groups, their dates, affected instruments and observed changes. Use this index to find relevant event IDs, then page through get_event_impact_cases for sources and exposure maps. Distinct events are not necessarily independent trials.",
+        "parameters": {"type": "object", "properties": {}},
+    },
     "get_event_impact_cases": {
         "path": "/api/assistant/workflows/world-event-impact/cases",
-        "description": "Read curated historical world-event cases and related reason-to-exposure patterns, optionally filtered by ticker and/or shared event ID. Cases sharing an event are correlated observations, not independent trials or calibrated forecasts.",
-        "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}, "event_id": {"type": "string"}}},
+        "description": "Read a page of sourced historical world-event cases and exposure patterns. Filter by ticker and/or event ID from get_event_impact_events. Follow next_offset until null; a partial page is not the whole event. Shared events and event families are correlated, not independent trials or calibrated forecasts.",
+        "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}, "event_id": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 5}, "offset": {"type": "integer", "minimum": 0}}},
     },
     "get_event_impact_workflow": {
         "path": "/api/assistant/workflows/world-event-impact",
@@ -278,8 +283,10 @@ ASSISTANT_READ_TOOLS: dict[str, dict[str, Any]] = {
 
 
 def _assistant_tool_result(name: str, arguments: dict[str, Any]) -> Any:
+    if name == "get_event_impact_events":
+        return event_impact_events()
     if name == "get_event_impact_cases":
-        return event_impact_cases(str(arguments.get("symbol") or ""), str(arguments.get("event_id") or ""))
+        return event_impact_cases(str(arguments.get("symbol") or ""), str(arguments.get("event_id") or ""), int(arguments.get("limit", 5)), int(arguments.get("offset", 0)))
     if name == "get_event_impact_workflow":
         return event_impact_workflow()
     if name == "get_portfolio_summary":
@@ -2714,24 +2721,62 @@ def event_impact_workflow():
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
+def _event_impact_records():
+    root = Path(__file__).parent / "workflows"
+    return [yaml.safe_load(path.read_text(encoding="utf-8")) for path in sorted((root / "cases").glob("*.yaml"))]
+
+
+@app.get("/api/assistant/workflows/world-event-impact/events")
+def event_impact_events():
+    """Compact discovery index; observations are never promoted to forecasts."""
+    groups = {}
+    for record in _event_impact_records():
+        case = record["case"]
+        event_id = case["event_id"]
+        group = groups.setdefault(event_id, {
+            "event_id": event_id, "event_category": case["event_category"],
+            "event_summary": case["event_summary"], "origin_regions": case["origin_regions"],
+            "event_occurred_at": case["event_occurred_at"], "case_ids": [],
+            "symbols": [], "event_family_id": record.get("learning_status", {}).get("event_family_id", event_id),
+            "observations": [],
+        })
+        group["case_ids"].append(case["id"])
+        if case["symbol"] not in group["symbols"]:
+            group["symbols"].append(case["symbol"])
+        for outcome in case["verified_outcomes"]:
+            group["observations"].append({
+                "symbol": case["symbol"], "metric": outcome["metric"],
+                "change_pct": outcome.get("change_pct"), "currency": outcome.get("currency"),
+                "window_end": outcome.get("window_end") or outcome.get("end_period"),
+                "measurement_basis": outcome.get("measurement_basis") or outcome.get("method"),
+                "source_case_id": case["id"],
+            })
+    items = sorted(groups.values(), key=lambda item: (item["event_occurred_at"] or "", item["event_id"]), reverse=True)
+    return {"items": items, "count": len(items), "case_count": sum(len(item["case_ids"]) for item in items), "calibrated_probability_model": False, "note": "Selected historical examples. Event counts and related event families are not independent-trial counts; request case details for evidence and limitations."}
+
+
 @app.get("/api/assistant/workflows/world-event-impact/cases")
-def event_impact_cases(symbol: str = "", event_id: str = ""):
+def event_impact_cases(symbol: str = "", event_id: str = "", limit: Annotated[int, Query(ge=1, le=5)] = 5, offset: Annotated[int, Query(ge=0)] = 0):
     """Read bundled research records without touching portfolio runtime data."""
     symbol = symbol.strip().upper()
     event_id = event_id.strip()
+    limit, offset = min(max(limit, 1), 5), max(offset, 0)
     root = Path(__file__).parent / "workflows" / "cases"
     items = []
-    for path in sorted(root.glob("*.yaml")):
-        record = yaml.safe_load(path.read_text(encoding="utf-8"))
+    for record in _event_impact_records():
         if (not symbol or record["case"]["symbol"].upper() == symbol) and (not event_id or record["case"]["event_id"] == event_id):
             items.append(record)
+    matched_event_ids = {item["case"]["event_id"] for item in items}
+    total_count = len(items)
+    items = items[offset:offset + limit]
     event_ids = {item["case"]["event_id"] for item in items}
     patterns = []
     for path in sorted((root.parent / "patterns").glob("*.yaml")):
         pattern = yaml.safe_load(path.read_text(encoding="utf-8"))
         if event_ids.intersection(pattern["event_ids"]):
             patterns.append(pattern)
-    return {"items": items, "count": len(items), "event_patterns": patterns, "distinct_event_count": len(event_ids), "record_type": "curated_retrospective_cases", "calibrated_probability_model": False}
+    next_offset = offset + len(items) if offset + len(items) < total_count else None
+    return {"items": items, "count": len(items), "total_count": total_count, "offset": offset, "next_offset": next_offset, "event_patterns": patterns, "distinct_event_count": len(matched_event_ids), "record_type": "curated_retrospective_cases", "calibrated_probability_model": False}
 
 
 @app.get("/api/assistant/read-tools/{tool_name}")

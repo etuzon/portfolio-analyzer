@@ -1,0 +1,140 @@
+schema_version: 1
+workflow_id: world-event-impact
+workflow_version: 1.0.0
+recorded_at: '2026-10-27T18:19:55.917196+00:00'
+case:
+  id: commerzbank-svb-bank-contagion-2023-03-13
+  event_id: svb-bank-contagion-2023-03-13
+  event_category: financial
+  event_summary: US bank failures and deposit uncertainty accompanied US regional-bank
+    and European-bank losses.
+  origin_regions:
+  - US
+  - EU
+  event_occurred_at: '2023-03-10'
+  first_public_at: null
+  information_cutoff: '2026-10-27T18:19:55.917196+00:00'
+  symbol: CBK.DE
+  exchange: null
+  currency: EUR
+  user_reported_move_pct: null
+  verified_outcomes:
+  - id: commerzbank-svb-bank-contagion-2023-03-13-return
+    metric: stock_return
+    record_kind: observed
+    baseline_value: null
+    end_value: null
+    unit: percent_return
+    currency: EUR
+    baseline_period: null
+    end_period: null
+    baseline_published_at: null
+    end_published_at: null
+    window_start: '2023-03-10'
+    window_end: '2023-03-13'
+    horizon: previous_regular_session_close_to_named_session_close
+    adjustment_basis: Source report; adjusted price levels and corporate actions not
+      independently audited.
+    change_pct: -12.7
+    absolute_change: null
+    benchmark: null
+    benchmark_return_pct: null
+    excess_return_pp: null
+    method: source_reported_close_to_close
+    source_ids:
+    - market-report
+    missing_reason: Price levels not transcribed; do not back-solve or invent a baseline.
+    measurement_basis: source_reported_percentage_not_recomputed
+    reported_precision: as_reported_rounded_percentage
+    evidence_note: null
+  regional_effects:
+  - origin_region: US
+    destination_region: EUR_quoted_market
+    company_or_sector: CBK.DE
+    channel: bank-sector-contagion
+    mechanism: Investors can reprice liquidity and confidence risk across banking
+      markets.
+    direction: down
+    exposure_pct: null
+    exposure_basis: null
+    lag: null
+    mitigating_factors:
+    - Different balance sheets
+    - Local safeguards
+    - Capital and liquidity buffers
+    reversal_conditions: []
+    source_ids:
+    - event-primary
+    - market-report
+    linked_probability_ids: []
+    linked_metric_ids: []
+    evidence_status: reported_channel_not_a_causal_forecast
+  source_ids:
+  - event-primary
+  - market-report
+  competing_explanations:
+  - Signature Bank closure on 12/03/2023
+  - Emergency guarantees and funding measures
+  - Idiosyncratic bank exposures
+  causal_support: Historical association with a reported mechanism; no causal percentage
+    is identified.
+  missing_data:
+  - Representative comparable-event cohort and chronological validation
+  - Event-attributable price, revenue and profit decomposition
+  review_status: sourced_retrospective_observation_not_forecast
+  company_name: Commerzbank
+  instrument_type: ordinary_share
+  symbol_is_research_identifier: false
+  pattern_ids:
+  - svb-bank-contagion-2023-03-13-exposures
+  channel_ids:
+  - bank-sector-contagion
+  instrument_identity_note: Historical instrument identifier; exchange venue not transcribed.
+    Verify identity before live provider or security matching. RESEARCH-prefixed symbols
+    are non-tradable sector identifiers.
+probabilities: []
+probability_status:
+  status: insufficient_evidence
+  estimate_pct: null
+  missing_reason: Selected retrospective examples are not a validated probability
+    cohort.
+event_attributable_changes:
+  revenue_change_pct: null
+  net_income_change_pct: null
+  causal_contribution_pct_by_driver: null
+learning_status:
+  record_type: retrospective_case
+  event_cluster_id: svb-bank-contagion-2023-03-13
+  event_family_id: us-banking-stress-2023
+  selected_because: Purposive coverage of event types, exposures and contrasting outcomes.
+  eligible_as_population_probability_sample: false
+  calibrated_forecast: false
+  model_updated: false
+sources:
+- id: event-primary
+  publisher: FDIC
+  url: https://www.fdic.gov/news/press-releases/2023/pr23019.html
+  published_at: '2023-03-13'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: official_event
+  verification_scope: SVB closure and deposit-transfer response; deposit protection
+    did not protect shareholders.
+  verified: true
+- id: fdic-review
+  publisher: FDIC
+  url: https://www.fdic.gov/news/speeches/2023/spmay1523.html
+  published_at: '2023-05-15'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: regulatory_retrospective
+  verification_scope: Retrospective First Republic stock decline and deposit outflows;
+    unavailable at the March event.
+  verified: true
+- id: market-report
+  publisher: Reuters via KOHA
+  url: https://www.koha.net/en/bote/bideni-premton-stabilitet-me-gjithe-falimentimin-e-dy-bankave
+  published_at: '2023-03-13'
+  retrieved_at: '2026-10-27T18:19:55.917196+00:00'
+  evidence_kind: secondary_market_report
+  verification_scope: European bank closing changes only; US intraday extremes in
+    the article are not closing returns.
+  verified: true
