@@ -23,12 +23,14 @@ const state = {
   securityExposureTarget: null,
   localTransactions: [],
   localEvents: [],
+  eventDividendSettings: null,
   focusedEventId: "",
   localPrices: [],
   equityCompQuotes: {},
   priceFocus: null,
   securityDetail: null,
   positionTransactionsDetail: null,
+  positionTransactionSaving: false,
   editingPositionTransactionId: "",
   securityChartPeriod: "1y",
   securityChartMode: "line",
@@ -1508,6 +1510,7 @@ function applyLanguage() {
   if (state.companyOutlook) renderCompanyOutlook(state.companyOutlook);
   if (state.items?.length) renderRows(state.items);
   if (state.positionTransactionsDetail) syncPositionTransactionLimit();
+  if (state.eventDividendSettings) renderEvents();
   refreshReportFilterOptions();
   applyAutoDirection();
   window.PortfolioI18n?.applyToDocument(state.language);
@@ -5595,7 +5598,7 @@ function clearPositionTransactionForm(message = "") {
   setDateField("positionTransactionDate", todayString());
   $("savePositionTransaction").textContent = "Save";
   $("cancelPositionTransactionEdit").hidden = true;
-  $("positionTransactionStatus").textContent = message;
+  $("positionTransactionStatus").textContent = t(message);
   syncPositionTransactionLimit();
 }
 
@@ -5659,7 +5662,7 @@ function refreshPositionTransactionDetail(positionQuantity) {
 
 async function savePositionTransaction() {
   const detail = state.positionTransactionsDetail;
-  if (!detail || !canWrite()) return;
+  if (!detail || !canWrite() || state.positionTransactionSaving) return;
   const values = validatePositionTransactionForm();
   const editing = positionTransactionEditingRow();
   const action = editing && !["BUY", "SELL", "SHORT"].includes(String(editing.action || "").toUpperCase())
@@ -5679,22 +5682,39 @@ async function savePositionTransaction() {
     allow_manual: true,
     comments: valueOf("positionTransactionComments"),
   };
-  $("positionTransactionStatus").textContent = editing ? "Updating transaction…" : "Saving transaction…";
+  state.positionTransactionSaving = true;
+  $("savePositionTransaction").disabled = true;
+  $("positionTransactionStatus").textContent = t(editing ? "Updating transaction…" : "Saving transaction…");
   const path = editing ? `/api/local/securities/${encodeURIComponent(editing.id)}` : "/api/local/securities";
-  const result = await api(path, { method: editing ? "PUT" : "POST", body: JSON.stringify(payload) });
-  await loadPortfolio({ refresh: true });
-  if (result.position_closed) {
-    closeModal($("positionTransactionsModal"));
-    state.positionTransactionsDetail = null;
-    clearPositionTransactionForm();
-    $("positionClosedTitle").textContent = `${detail.symbol} position closed`;
-    $("positionClosedMessage").textContent = `${detail.symbol} reached 0 units and was removed from the portfolio.`;
-    openModal("positionClosedModal");
-    return;
+  let result;
+  try {
+    result = await api(path, { method: editing ? "PUT" : "POST", body: JSON.stringify(payload) });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(t("Could not confirm the save. Check transaction history before trying again."));
+    }
+    throw error;
+  } finally {
+    state.positionTransactionSaving = false;
+    $("savePositionTransaction").disabled = !canWrite();
   }
-  refreshPositionTransactionDetail(result.position_quantity);
-  clearPositionTransactionForm(editing ? "Transaction updated" : "Transaction saved");
-  renderPositionTransactionHistory();
+  state.localTransactions = [result, ...state.localTransactions.filter((tx) => tx.id !== result.id)];
+  const message = t(editing ? "Transaction updated successfully." : "Transaction added successfully.")
+    + (result.position_closed ? ` ${t("Position closed. No units remain.")}` : "");
+  if (state.positionTransactionsDetail === detail) {
+    detail.quantity = Number(result.position_quantity);
+    clearPositionTransactionForm(message);
+    renderPositionTransactionHistory();
+  }
+  // The saved transaction is already confirmed; analytics must not delay or undo its feedback.
+  loadPortfolio().then(() => {
+    if (state.positionTransactionsDetail !== detail) return;
+    refreshPositionTransactionDetail(result.position_quantity);
+    renderPositionTransactionHistory();
+  }).catch(() => {
+    if (state.positionTransactionsDetail !== detail) return;
+    $("positionTransactionStatus").textContent = `${message} ${t("Dashboard refresh failed. Your transaction is saved; refresh the dashboard to update totals.")}`;
+  });
 }
 
 function renderPositionTransactionHistory() {
@@ -5704,9 +5724,10 @@ function renderPositionTransactionHistory() {
   const transactions = state.localTransactions
     .filter((tx) => positionActions.has(String(tx.action || "").toUpperCase()))
     .filter((tx) => transactionMatchesPosition(tx, detail))
-    .sort((a, b) => String(b.trade_date || "").localeCompare(String(a.trade_date || "")));
-  $("positionTransactionsTitle").textContent = `${detail.symbol} buy / sell history`;
-  $("positionTransactionsSubtitle").textContent = [detail.account, `${fmt(detail.quantity, 3)} units`, detail.average ? `Avg buy ${money(detail.average, detail.currency, 2)}` : ""].filter(Boolean).join(" · ");
+    .sort((a, b) => String(b.trade_date || "").localeCompare(String(a.trade_date || ""))
+      || String(b.created_at || "").localeCompare(String(a.created_at || "")));
+  $("positionTransactionsTitle").textContent = t(`${detail.symbol} buy / sell history`);
+  $("positionTransactionsSubtitle").textContent = [detail.account, `${fmt(detail.quantity, 3)} ${t("units")}`, detail.average ? `${t("Avg buy")} ${money(detail.average, detail.currency, 2)}` : ""].filter(Boolean).join(" · ");
   $("positionTransactionsRows").innerHTML = transactions.length ? transactions.map((tx) => {
     const displayAction = positionTransactionDisplayAction(tx);
     const sourceLabel = String(tx.source || "").toLowerCase().endsWith("_import") ? "Imported" : cleanSourceLabel(tx.source || "Manual");
@@ -7353,30 +7374,45 @@ async function saveSecurity() {
 async function loadEvents() {
   const data = await api("/api/local/events");
   state.localEvents = data.items || [];
-  const settings = data.dividends || {};
-  const status = $("eventsStatus");
-  if (status) {
-    status.textContent = `Dividend scan starts ${formatDate(settings.start_date || "")} · tax ${pct(Number(settings.tax_rate || 0) * 100)} · next ${settings.next_run ? formatDate(String(settings.next_run).slice(0, 10)) : "not scheduled"}`;
-  }
-  const list = $("eventsList");
-  if (!list) return;
-  list.innerHTML = state.localEvents.length ? state.localEvents.map((event) => `
-    <div class="stack-item management-item event-item ${state.focusedEventId === event.id ? "focused-event" : ""}" data-event-id="${esc(event.id)}">
-      <b>${esc(event.type)} ${esc(event.symbol || "")}</b>
-      <span>${esc(formatDate(event.event_date))} · ${esc(event.status)} · Net ${money(event.net_amount || 0, event.currency || state.baseCurrency, 2)}</span>
-      ${event.transaction_id ? `<button class="secondary compact-button" type="button" data-edit-security="${esc(event.transaction_id)}">Edit transaction</button>` : ""}
-      <div class="sub">${esc(event.account_label || event.account_db_id || "")} · Gross ${money(event.gross_amount || 0, event.currency || state.baseCurrency, 2)} · Tax ${money(event.tax_amount || 0, event.currency || state.baseCurrency, 2)} · ${esc(event.source_key || "")}</div>
-    </div>
-  `).join("") : '<div class="empty">No events yet</div>';
+  state.eventDividendSettings = data.dividends || {};
+  renderEvents();
   renderAlarms();
   focusEventRow();
 }
 
+function renderEvents() {
+  const settings = state.eventDividendSettings || {};
+  const status = $("eventsStatus");
+  if (status) {
+    status.textContent = `${t("Dividend scan starts")} ${formatDate(settings.start_date || "")} · ${t("Tax")} ${pct(Number(settings.tax_rate || 0) * 100)} · ${t("Next scan")}: ${settings.next_run ? formatDate(String(settings.next_run).slice(0, 10)) : t("Not scheduled")}`;
+  }
+  const list = $("eventsList");
+  if (!list) return;
+  list.innerHTML = state.localEvents.length ? state.localEvents.map((event) => {
+    const currency = event.currency || state.baseCurrency;
+    const details = event.details || {};
+    const statusLabel = { processed: "Payment recorded", pending: "Pending", failed: "Failed", skipped: "Skipped" }[event.status] || "Status unavailable";
+    const account = event.account_label && event.account_label !== event.account_db_id ? event.account_label : t("Account unavailable");
+    const facts = [account];
+    if (Number(details.shares) > 0) facts.push(`${t("Shares")}: ${fmt(Number(details.shares), 3)}`);
+    if (Number(details.gross_per_share) > 0) facts.push(`${t("Dividend per share")}: ${money(Number(details.gross_per_share), currency, 4)}`);
+    facts.push(`${t("Gross")}: ${money(event.gross_amount || 0, currency, 2)}`, `${t("Tax")}: ${money(event.tax_amount || 0, currency, 2)}`);
+    return `
+    <div class="stack-item management-item event-item ${state.focusedEventId === event.id ? "focused-event" : ""}" data-event-id="${esc(event.id)}">
+      <b>${esc(t(event.type === "DIVIDEND" ? "Dividend" : "Event"))} ${esc(event.symbol || "")}</b>
+      <span>${esc(formatDate(event.event_date))} · ${esc(t(statusLabel))} · ${t("Net")}: ${money(event.net_amount || 0, currency, 2)}</span>
+      ${event.transaction_id ? `<button class="secondary compact-button" type="button" data-edit-security="${esc(event.transaction_id)}">${t("Edit transaction")}</button>` : ""}
+      <div class="sub">${esc(facts.join(" · "))}</div>
+    </div>
+  `;
+  }).join("") : `<div class="empty">${t("No events yet")}</div>`;
+}
+
 async function runDividendEvents() {
-  $("eventsStatus").textContent = "Scanning dividends";
+  $("eventsStatus").textContent = t("Scanning dividends");
   const result = await api("/api/local/events/dividends/run", { method: "POST", body: "{}" });
   state.localEvents = result.items || [];
-  $("eventsStatus").textContent = `Checked ${result.checked} holdings · ${result.processed} processed · ${result.pending} pending · ${result.skipped} skipped`;
+  $("eventsStatus").textContent = t(`Checked ${result.checked} holdings · ${result.processed} processed · ${result.pending} pending · ${result.skipped} skipped`);
   await Promise.all([loadEvents(), loadLocalSecurities(), loadPortfolio({ refresh: true })]);
 }
 
@@ -12324,7 +12360,7 @@ $("employeeWizardBackToVesting").addEventListener("click", () => {
 $("saveEmployeeOptionGrant").addEventListener("click", () => saveEmployeeOptionGrant().catch((error) => { $("employeeOptionWizardStatus").textContent = `Error: ${error.message}`; }));
 $("saveEmployeeListing").addEventListener("click", () => saveEmployeeListing().catch((error) => { $("employeeListingStatus").textContent = `Error: ${error.message}`; }));
 $("saveEmployeeExercise").addEventListener("click", () => saveEmployeeExercise().catch((error) => { $("employeeExerciseStatus").textContent = `Error: ${error.message}`; }));
-$("savePositionTransaction").addEventListener("click", () => savePositionTransaction().catch((error) => { $("positionTransactionStatus").textContent = `Error: ${error.message}`; }));
+$("savePositionTransaction").addEventListener("click", () => savePositionTransaction().catch((error) => { $("positionTransactionStatus").textContent = `${t("Error")}: ${t(error.message)}`; }));
 $("positionTransactionAction").addEventListener("change", syncPositionTransactionLimit);
 $("runDividendEvents").addEventListener("click", () => runDividendEvents().catch((error) => { $("eventsStatus").textContent = `Error: ${error.message}`; }));
 $("saveAlarmSettings").addEventListener("click", saveVestingAlertSettings);
