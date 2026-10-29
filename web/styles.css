@@ -4916,6 +4916,24 @@ tbody tr:hover {
   min-width: 64px;
 }
 
+.holding-transaction-actions button[data-position-action="BUY"] {
+  color: #6ee787;
+  border-color: #36834b;
+  background: #152a1b;
+}
+
+.holding-transaction-actions button[data-position-action="SELL"],
+.holding-transaction-actions button[data-position-action="SHORT"] {
+  color: #ff6875;
+  border-color: #963e48;
+  background: #30191e;
+}
+
+.holding-transaction-actions button:hover:not(:disabled),
+.holding-transaction-actions button:focus-visible {
+  border-color: currentColor;
+}
+
 .security-symbols {
   display: flex;
   align-items: center;
