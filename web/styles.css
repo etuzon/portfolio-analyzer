@@ -6405,6 +6405,23 @@ tbody tr:hover {
   margin-top: 10px;
 }
 
+.finance-report-table table {
+  table-layout: auto;
+  min-width: 1040px;
+}
+
+.finance-report-table td {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.finance-report-table [title],
+.finance-report-summary [title] {
+  cursor: help;
+}
+
 .company-outlook-panel {
   display: grid;
   gap: 16px;

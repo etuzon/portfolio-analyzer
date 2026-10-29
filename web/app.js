@@ -1508,6 +1508,7 @@ function applyLanguage() {
   renderMacroScenario();
   if (state.alertData) renderAlerts(state.alertData);
   if (state.companyOutlook) renderCompanyOutlook(state.companyOutlook);
+  if (state.financeReport) renderFinanceReport(state.financeReport);
   if (state.items?.length) renderRows(state.items);
   if (state.positionTransactionsDetail) syncPositionTransactionLimit();
   if (state.eventDividendSettings) renderEvents();
@@ -7831,13 +7832,48 @@ function renderAccountTrend(trend) {
     <div class="report-trend-legend">${legend}</div>`;
 }
 
+function financeReportMetricTooltip(metric, row, previous) {
+  const definitions = {
+    "Years": "Number of annual financial reports available for this company.",
+    "Fiscal date": "The fiscal year-end date of this annual report; it is not the filing date or today's date.",
+    "Latest revenue": "Total revenue reported for the latest available fiscal year.",
+    "Revenue": "Total revenue reported for this fiscal year.",
+    "Revenue growth": "Change in annual revenue compared with the previous available annual report.",
+    "Net income": "Annual net income after expenses and taxes, as reported by the company.",
+    "Net income growth": "Change in annual net income compared with the previous available annual report.",
+    "Net margin": "Annual net income divided by annual revenue, multiplied by 100. Both amounts are from the same fiscal year.",
+    "Free cash flow": "Annual operating cash flow minus capital expenditures from the same fiscal year.",
+    "Long-term debt": "Long-term debt reported at fiscal year-end. Total debt or net debt may be used when long-term debt is unavailable.",
+    "Debt": "Long-term debt reported at fiscal year-end. Total debt or net debt may be used when long-term debt is unavailable.",
+  };
+  const parts = [t(definitions[metric] || metric)];
+  if (metric === "Years") return parts[0];
+  if (!row) return parts[0];
+  if (row.fiscal_date) parts.push(t("Fiscal year ending {date}.").replace("{date}", formatDate(row.fiscal_date)));
+  if (["Revenue growth", "Net income growth"].includes(metric)) {
+    const comparisonDate = row.comparison_fiscal_date || previous?.fiscal_date;
+    if (!comparisonDate) return [...parts, t("No earlier annual report is available for comparison.")].join(" ");
+    parts.push(t("Compares fiscal years ending {previous} and {current}; these may not be calendar years.")
+      .replace("{previous}", formatDate(comparisonDate)).replace("{current}", formatDate(row.fiscal_date)));
+    const field = metric === "Revenue growth" ? "revenue" : "net_income";
+    const prior = row[`previous_${field}`] ?? previous?.[field];
+    if (prior != null && row[field] != null) {
+      parts.push(t("Previous amount: {previous}. Current amount: {current}.")
+        .replace("{previous}", fmt(prior, 0)).replace("{current}", fmt(row[field], 0)));
+    }
+    parts.push(t(prior === 0 ? "Growth is unavailable because the previous amount is zero."
+      : "Formula: (current amount − previous amount) / absolute previous amount × 100."));
+  }
+  return parts.join(" ");
+}
+
 function renderFinanceReport(report) {
   state.financeReport = report;
   const profile = report.profile || {};
   const summary = report.summary || {};
   const reports = report.reports || [];
-  const company = profile.name || report.symbol || "Company";
-  $("financeReportStatus").textContent = `${company} · ${providerStatusHint(report.provider_status || {}) || "Online data loaded"}`;
+  const company = profile.name || report.symbol || t("Company");
+  $("financeReportStatus").textContent = `${company} · ${t(providerStatusHint(report.provider_status || {}) || "Online data loaded")}`;
   $("financeReportSummary").innerHTML = [
     ["Years", summary.years || 0],
     ["Latest revenue", fmt(summary.latest_revenue, 0)],
@@ -7846,36 +7882,27 @@ function renderFinanceReport(report) {
     ["Net margin", pct(summary.latest_net_margin_percent)],
     ["Free cash flow", fmt(summary.latest_free_cash_flow, 0)],
     ["Long-term debt", fmt(summary.latest_long_term_debt, 0)],
-  ].map(([label, value]) => `<div class="stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`).join("");
+  ].map(([label, value]) => `<div class="stat" tabindex="0" title="${esc(financeReportMetricTooltip(label, reports[0], reports[1]))}"><b>${esc(value)}</b><span>${esc(t(label))}</span></div>`).join("");
   if (!reports.length) {
-    $("financeReportTable").innerHTML = '<div class="empty">No annual online finance report data found for this symbol</div>';
+    $("financeReportTable").innerHTML = `<div class="empty">${t("No annual online finance report data found for this symbol")}</div>`;
     return;
   }
   $("financeReportTable").innerHTML = `
     <table class="holdings-table compact-report-table">
       <thead>
         <tr>
-          <th>Fiscal date</th>
-          <th>Revenue</th>
-          <th>Revenue growth</th>
-          <th>Net income</th>
-          <th>Net income growth</th>
-          <th>Net margin</th>
-          <th>Free cash flow</th>
-          <th>Debt</th>
+          ${["Fiscal date", "Revenue", "Revenue growth", "Net income", "Net income growth", "Net margin", "Free cash flow", "Debt"].map((label) => `<th class="finance-metric-label" title="${esc(financeReportMetricTooltip(label, reports[0], reports[1]))}">${esc(t(label))}</th>`).join("")}
         </tr>
       </thead>
       <tbody>
-        ${reports.map((row) => `
+        ${reports.map((row, index) => `
           <tr>
-            <td data-label="Fiscal date">${esc(formatDate(row.fiscal_date))}</td>
-            <td data-label="Revenue">${fmt(row.revenue, 0)}</td>
-            <td data-label="Revenue growth">${pct(row.revenue_growth_percent)}</td>
-            <td data-label="Net income">${fmt(row.net_income, 0)}</td>
-            <td data-label="Net income growth">${pct(row.net_income_growth_percent)}</td>
-            <td data-label="Net margin">${pct(row.net_margin_percent)}</td>
-            <td data-label="Free cash flow">${fmt(row.free_cash_flow, 0)}</td>
-            <td data-label="Debt">${fmt(row.long_term_debt, 0)}</td>
+            ${[
+              ["Fiscal date", formatDate(row.fiscal_date)], ["Revenue", fmt(row.revenue, 0)],
+              ["Revenue growth", pct(row.revenue_growth_percent)], ["Net income", fmt(row.net_income, 0)],
+              ["Net income growth", pct(row.net_income_growth_percent)], ["Net margin", pct(row.net_margin_percent)],
+              ["Free cash flow", fmt(row.free_cash_flow, 0)], ["Debt", fmt(row.long_term_debt, 0)],
+            ].map(([label, value]) => `<td tabindex="0" data-label="${esc(t(label))}" title="${esc(financeReportMetricTooltip(label, row, reports[index + 1]))}">${esc(value)}</td>`).join("")}
           </tr>
         `).join("")}
       </tbody>
@@ -8134,10 +8161,10 @@ async function loadFinanceReport() {
   const symbol = cleanSecuritySymbol(valueOf("financeReportSymbol"));
   $("financeReportSymbol").value = symbol;
   if (!symbol) {
-    $("financeReportStatus").textContent = "Enter a ticker symbol";
+    $("financeReportStatus").textContent = t("Enter a ticker symbol");
     return;
   }
-  $("financeReportStatus").textContent = "Fetching online finance report";
+  $("financeReportStatus").textContent = t("Fetching online finance report");
   const report = await api(`/api/finance-reports/${encodeURIComponent(symbol)}`);
   renderFinanceReport(report);
 }

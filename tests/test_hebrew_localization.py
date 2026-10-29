@@ -159,6 +159,76 @@ def test_hebrew_is_the_default_document_language_and_direction():
     assert 'window.PortfolioI18n?.applyToDocument(state.language)' in script
 
 
+def test_finance_report_localizes_summary_source_and_mobile_labels():
+    source = (ROOT / "web/app.js").read_text()
+    functions = []
+    for name in ("renderFinanceReport", "providerStatusHint", "financeReportMetricTooltip"):
+        start = source.index(f"function {name}(")
+        end = re.search(r"\n(?:async )?function ", source[start + 1:])
+        functions.append(source[start:start + 1 + end.start()])
+    script = "const window = {};\n" + (ROOT / "web/i18n.js").read_text() + "\n".join(functions) + """
+      const assert = require('node:assert/strict');
+      const state = {language: 'he'};
+      const nodes = {};
+      const $ = (id) => nodes[id] ||= {};
+      const t = (text) => window.PortfolioI18n.translate(text, state.language);
+      const esc = (text) => String(text);
+      const fmt = (value) => String(value ?? '∅');
+      const pct = (value) => `${value ?? '∅'}%`;
+      const formatDate = (value) => value ? value.split('-').reverse().join('/') : '—';
+      const providerDisplayName = () => 'SEC';
+      const report = {symbol: 'CSCO', profile: {name: 'CISCO SYSTEMS, INC.'},
+        summary: {years: 6, latest_revenue: 56654000000, latest_long_term_debt: 1750000000},
+        reports: [{fiscal_date: '2026-07-31', revenue: 56654000000}],
+        provider_status: {sec_company_facts: 'ok'}};
+      for (const language of ['he', 'en', 'he']) {
+        state.language = language;
+        renderFinanceReport(report);
+        const summary = nodes.financeReportSummary.innerHTML;
+        const table = nodes.financeReportTable.innerHTML;
+        assert.ok(summary.includes('56654000000'));
+        assert.ok(table.includes('31/07/2026'));
+        if (language === 'he') {
+          assert.ok(summary.includes('שנות דיווח'));
+          assert.ok(summary.includes('הכנסות בדוח האחרון'));
+          assert.ok(summary.includes('חוב לטווח ארוך'));
+          assert.ok(!/[A-Za-z]/u.test(summary.replace(/<[^>]+>/gu, '')));
+          assert.ok(!/[A-Za-z]/u.test(table.replace(/<[^>]+>/gu, '')));
+          assert.ok(table.includes('data-label="הכנסות"'));
+          assert.equal(nodes.financeReportStatus.textContent, 'CISCO SYSTEMS, INC. · נתונים מאת SEC');
+        } else {
+          assert.ok(summary.includes('Years') && summary.includes('Latest revenue'));
+          assert.ok(!/[א-ת]/u.test(summary + table + nodes.financeReportStatus.textContent));
+        }
+      }
+      renderFinanceReport({...report, reports: [], provider_status: {}});
+      assert.ok(nodes.financeReportTable.innerHTML.includes('לא נמצאו דוחות כספיים שנתיים'));
+      assert.ok(nodes.financeReportStatus.textContent.includes('הנתונים המקוונים נטענו'));
+      for (const status of ['stale', 'missing API key', 'error', 'missing']) {
+        renderFinanceReport({...report, provider_status: {sec_company_facts: status}});
+        assert.ok(!/[A-Za-z]/u.test(nodes.financeReportStatus.textContent.replace(report.profile.name, '').replaceAll('SEC', '')));
+      }
+      const growth = {fiscal_date: '2025-07-26', comparison_fiscal_date: '2024-07-27', previous_net_income: 10320, net_income: 10180};
+      let tooltip = financeReportMetricTooltip('Net income growth', growth, {fiscal_date: '2020-01-01'});
+      assert.ok(tooltip.includes('26/07/2025') && tooltip.includes('27/07/2024'));
+      assert.ok(!tooltip.includes('2020'));
+      assert.ok(tooltip.includes('10320') && tooltip.includes('10180'));
+      assert.ok(tooltip.includes('נוסחה:'));
+      assert.ok(!/[A-Za-z]/u.test(tooltip));
+      assert.ok(financeReportMetricTooltip('Net income growth', {fiscal_date: '2024-07-27'}).includes('אין דוח שנתי מוקדם יותר'));
+      assert.ok(financeReportMetricTooltip('Net income growth', {...growth, previous_net_income: 0}).includes('הסכום הקודם הוא אפס'));
+      renderFinanceReport({...report, reports: [growth]});
+      assert.ok(nodes.financeReportTable.innerHTML.includes('title="השינוי ברווח הנקי השנתי'));
+      assert.ok(nodes.financeReportTable.innerHTML.includes('27/07/2024'));
+      state.language = 'en';
+      tooltip = financeReportMetricTooltip('Net income growth', growth);
+      assert.ok(tooltip.includes('26/07/2025') && tooltip.includes('27/07/2024'));
+      assert.ok(tooltip.includes('previous available annual report'));
+      assert.ok(!/[א-ת]/u.test(tooltip));
+    """
+    subprocess.run(["node"], input=script, check=True, capture_output=True, text=True)
+
+
 def test_initial_page_stays_blank_and_white_until_localization_is_ready():
     html = (ROOT / "web/index.html").read_text()
     script = (ROOT / "web/app.js").read_text()

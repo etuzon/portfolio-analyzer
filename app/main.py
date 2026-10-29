@@ -658,6 +658,9 @@ def _annual_report_rows(fundamentals: dict[str, Any], limit: int, as_of: date | 
     rows.sort(key=lambda item: item["fiscal_date"])
     previous: dict[str, Any] | None = None
     for row in rows:
+        row["comparison_fiscal_date"] = previous.get("fiscal_date") if previous else None
+        row["previous_revenue"] = previous.get("revenue") if previous else None
+        row["previous_net_income"] = previous.get("net_income") if previous else None
         row["revenue_growth_percent"] = _percent_change(row.get("revenue"), previous.get("revenue") if previous else None)
         row["net_income_growth_percent"] = _percent_change(row.get("net_income"), previous.get("net_income") if previous else None)
         previous = row

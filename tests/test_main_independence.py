@@ -606,8 +606,27 @@ def test_finance_report_normalizes_online_fundamentals(monkeypatch):
     assert result["reports"][0]["fiscal_date"] == "2026-07-31"
     assert result["reports"][0]["revenue_growth_percent"] == 25
     assert result["reports"][0]["net_income_growth_percent"] == 50
+    assert result["reports"][0]["comparison_fiscal_date"] == "2025-07-31"
+    assert result["reports"][0]["previous_net_income"] == 100
+    assert result["reports"][0]["previous_revenue"] == 1000
     assert result["reports"][0]["net_margin_percent"] == 12
     assert result["summary"]["years"] == 2
+
+
+def test_report_growth_keeps_actual_comparison_when_prior_row_is_outside_display_limit():
+    fundamentals = {"income_statement": {"annualReports": [
+        {"fiscalDateEnding": "2022-06-25", "filingDate": "2022-08-01", "totalRevenue": 100, "netIncome": -50},
+        {"fiscalDateEnding": "2024-06-29", "filingDate": "2024-08-01", "totalRevenue": 0, "netIncome": -25},
+        {"fiscalDateEnding": "2025-06-28", "filingDate": "2025-08-01", "totalRevenue": 200, "netIncome": 50},
+    ]}}
+    latest = main._annual_report_rows(fundamentals, 1)[0]
+    assert latest["comparison_fiscal_date"] == "2024-06-29"
+    assert latest["previous_net_income"] == -25
+    assert latest["net_income_growth_percent"] == 300
+    assert latest["revenue_growth_percent"] is None
+    historical = main._annual_report_rows(fundamentals, 1, date(2024, 12, 31))[0]
+    assert historical["comparison_fiscal_date"] == "2022-06-25"
+    assert historical["net_income_growth_percent"] == 50
 
 
 def test_finance_report_backtest_cutoff_uses_filing_date(monkeypatch):
