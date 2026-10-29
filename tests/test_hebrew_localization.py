@@ -2,9 +2,114 @@ from html.parser import HTMLParser
 import json
 from pathlib import Path
 import re
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_alert_progress_and_run_history_follow_active_language():
+    source = (ROOT / "web/app.js").read_text()
+    functions = []
+    for name in ("t", "locale", "fmt", "alertRunStatusText", "alertRunProgressText", "renderAlerts", "alertRunIsActive", "scheduleAlertRefresh"):
+        start = source.index(f"function {name}(")
+        end = source.index("\nfunction ", start + 1)
+        functions.append(source[start:end])
+    translations = source[source.index("const TRANSLATIONS ="):source.index("function locale(")]
+    script = "const window = {};\n" + (ROOT / "web/i18n.js").read_text() + translations
+    script += "\n".join(functions) + """
+      const state = {language: 'he', alertConditions: [1]};
+      window.setTimeout = () => 1;
+      const nodes = {};
+      const $ = (id) => nodes[id] ||= {};
+      const esc = (text) => String(text);
+      const formatDateTime = () => '29/10/2026, 21:47';
+      const renderAlertConditions = () => {};
+      const phases = ['starting', 'loading_saved_data', 'loading_rule_data', 'evaluating', 'unknown'];
+      const output = [];
+      for (const language of ['he', 'en', 'he']) {
+        state.language = language;
+        renderAlerts({rules: [], active_signals: [], runs: [{
+          status: 'running', progress: {phase: 'loading_rule_data', completed: 20, total: 27}
+        }]});
+        output.push({
+          progress: phases.map((phase) => alertRunProgressText({phase, completed: 20, total: 27})),
+          withoutTotal: alertRunProgressText({phase: 'starting'}),
+          history: nodes.alertRunHistory.innerHTML,
+          legacyKey: t('appName')
+        });
+      }
+      process.stdout.write(JSON.stringify(output));
+    """
+    result = subprocess.run(["node"], input=script, check=True, capture_output=True, text=True)
+    hebrew, english, switched_back = json.loads(result.stdout)
+
+    assert hebrew["progress"] == [
+        "מתחיל… 20/27", "טוען את נתוני התיק השמורים… 20/27",
+        "טוען נתונים לכלל… 20/27", "מחשב את תוצאת הכלל… 20/27", "רץ… 20/27",
+    ]
+    assert hebrew["withoutTotal"] == "מתחיל…"
+    assert "טוען נתונים לכלל… 20/27" in hebrew["history"]
+    assert "מניות שנבדקו" in hebrew["history"]
+    assert not re.search(r">[^<]*[A-Za-z][^<]*<", hebrew["history"])
+    assert english["progress"] == [
+        "Starting… 20/27", "Loading saved portfolio data… 20/27",
+        "Loading rule data… 20/27", "Evaluating rule… 20/27", "Running… 20/27",
+    ]
+    assert "Loading rule data… 20/27" in english["history"]
+    assert "stocks checked" in english["history"]
+    assert not re.search(r"[א-ת]", english["history"])
+    assert hebrew == switched_back
+    assert hebrew["legacyKey"] != "appName"
+    assert english["legacyKey"] != "appName"
+
+
+def test_company_outlook_localizes_mermaid_labels_missing_data_and_report_copy():
+    source = (ROOT / "web/app.js").read_text()
+    functions = []
+    for name in ("t", "companyOutlookDiagramSource", "renderCompanyOutlook", "renderCompanyOutlookDiagramFallback"):
+        start = source.index(f"function {name}(")
+        end = re.search(r"\n(?:async )?function ", source[start + 1:])
+        functions.append(source[start:start + 1 + end.start()])
+    translations = source[source.index("const TRANSLATIONS ="):source.index("function locale(")]
+    script = "const window = {};\n" + (ROOT / "web/i18n.js").read_text() + translations
+    script += "\n".join(functions) + """
+      const assert = require('node:assert/strict');
+      const state = {language: 'he'};
+      const nodes = {};
+      const $ = (id) => nodes[id] ||= {};
+      const esc = (text) => String(text);
+      const fmt = (value) => String(value ?? '∅');
+      const pct = (value) => `${value}%`;
+      const formatDate = () => '31/12/2025';
+      let diagramSource;
+      const renderCompanyOutlookDiagram = (outlook) => {diagramSource = companyOutlookDiagramSource(outlook.mermaid);};
+      const outlook = {symbol: 'BRKR', score: 9, rank: 1, label: 'Weak', confidence: 'Low',
+        peer_source: 'No peer source available', industry: {health: 'Not available', score: 0},
+        simple_words: 'BRKR scores 9/100. It ranks 1 out of 1 companies using available annual report numbers. The Laboratory Analytical Instruments outlook looks not available. Cash-flow and balance-sheet measures are included when filed; missing statement evidence lowers confidence. Confidence: Low.',
+        missing: ['same-industry peer reports', 'related-industry reports'],
+        companies: [{symbol: 'BRKR', name: 'BRUKER CORP', industry: 'Laboratory Analytical Instruments'}],
+        graph: {nodes: [{id: 'industry', label: 'Unclassified industry'}], edges: []},
+        mermaid: 'flowchart LR\\n T["BRKR<br/>Revenue growth: 2.1%<br/>Net margin: -0.3%<br/>Score: 9"] -->|"competes in"| I["Unclassified industry<br/>Median revenue growth: n/a<br/>Health: Pressure"]'
+      };
+      renderCompanyOutlook(outlook);
+      assert.ok(diagramSource.includes('שיעור רווח נקי: -0.3%'));
+      assert.ok(diagramSource.includes('פועלת בענף'));
+      assert.ok(diagramSource.includes('חציון צמיחת ההכנסות: לא זמין'));
+      assert.ok(!diagramSource.includes('Pressure'));
+      assert.ok(nodes.companyOutlookTable.innerHTML.includes('<th>שיעור רווח נקי</th>'));
+      assert.ok(nodes.companyOutlookWords.innerHTML.includes('דוחות של מתחרות מאותו ענף'));
+      assert.ok(!/[A-Za-z]/u.test(nodes.companyOutlookWords.innerHTML.replace(/<[^>]+>/gu, '').replaceAll('BRKR', '')));
+      assert.ok(!/[A-Za-z]/u.test(nodes.companyOutlookStatus.textContent.replaceAll('BRKR', '')));
+      assert.ok(renderCompanyOutlookDiagramFallback(outlook).includes('ענף שלא סווג'));
+      state.language = 'en';
+      renderCompanyOutlook(outlook);
+      assert.equal(diagramSource, outlook.mermaid);
+      for (const id of ['companyOutlookTable', 'companyOutlookWords', 'companyOutlookSummary']) {
+        assert.ok(!/[א-ת]/u.test(nodes[id].innerHTML));
+      }
+    """
+    subprocess.run(["node"], input=script, check=True, capture_output=True, text=True)
 
 
 class _VisibleEnglishParser(HTMLParser):

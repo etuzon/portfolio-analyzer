@@ -4,6 +4,7 @@ import csv
 import json
 import sqlite3
 import time
+import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -1309,12 +1310,59 @@ class SecCompanyFactsProvider(MarketDataProvider):
         profile = {"name": ticker.get("title")}
         cik = ticker.get("cik")
         if cik:
+            try:
+                metadata = self._company_submissions(cik)
+            except (httpx.HTTPError, ValueError):
+                metadata = {}
+            profile.update({key: value for key, value in {
+                "industry": metadata.get("sicDescription"),
+                "sic": metadata.get("sic"),
+                "exchange": next(iter(metadata.get("exchanges") or []), None),
+                "profile_source": f"https://data.sec.gov/submissions/CIK{cik}.json",
+            }.items() if value})
             facts = self._company_facts(cik)
             us_gaap = facts.get("facts", {}).get("dei", {})
             shares = _sec_latest_fact(us_gaap, ["EntityCommonStockSharesOutstanding"], ["shares"])
             if shares is not None:
                 profile["shares_outstanding"] = shares
         return profile
+
+    def _company_submissions(self, cik: str) -> dict[str, Any]:
+        cache_key = f"sec:submissions:{cik}"
+        cached = self.cache.get(cache_key)
+        if isinstance(cached, dict):
+            return cached
+        with httpx.Client(timeout=20, follow_redirects=True, headers=self._headers()) as client:
+            response = client.get(f"https://data.sec.gov/submissions/CIK{cik}.json")
+            response.raise_for_status()
+            data = response.json()
+        self.cache.set(cache_key, data)
+        return data
+
+    def market_screener(self, criteria: dict[str, Any]) -> list[dict[str, Any]]:
+        sic = str(criteria.get("sic") or "")
+        if not sic.isdigit() or len(sic) != 4:
+            return []
+        cache_key = f"sec:industry-cohort:{sic}"
+        rows = self.cache.get(cache_key)
+        if rows is None:
+            with httpx.Client(timeout=20, follow_redirects=True, headers=self._headers()) as client:
+                response = client.get("https://www.sec.gov/cgi-bin/browse-edgar", params={
+                    "action": "getcompany", "SIC": sic, "owner": "exclude", "count": 100, "output": "atom",
+                })
+                response.raise_for_status()
+            root = ET.fromstring(response.content)
+            ciks = {node.text.zfill(10) for node in root.findall(".//{*}company-info/{*}cik") if node.text}
+            # Resolve only exchange-listed tickers; private filers are not peers.
+            self._ticker_row(str(criteria.get("exclude_symbol") or ""))
+            tickers = self.cache.get("sec:company-tickers") or {}
+            rows = [{"symbol": item["ticker"], "name": item.get("title"),
+                     "industry": criteria.get("industry"), "sic": sic}
+                    for item in (tickers.values() if isinstance(tickers, dict) else tickers)
+                    if str(item.get("cik_str") or "").zfill(10) in ciks]
+            self.cache.set(cache_key, rows)
+        excluded = str(criteria.get("exclude_symbol") or "").upper()
+        return [row for row in rows if row["symbol"] != excluded][:int(criteria.get("limit") or 6)]
 
     def _company_facts(self, cik: str) -> dict[str, Any]:
         cache_key = f"sec:companyfacts:{cik}"

@@ -308,7 +308,8 @@ function locale() {
 }
 
 function t(key) {
-  return TRANSLATIONS[state.language]?.[key] || TRANSLATIONS.en[key] || key;
+  const text = TRANSLATIONS[state.language]?.[key] || TRANSLATIONS.en[key] || key;
+  return window.PortfolioI18n?.translate(text, state.language) || text;
 }
 
 const ALERT_METRIC_LOCALIZATIONS = {
@@ -672,6 +673,7 @@ const WRITE_DATA_ACTIONS = new Set([
   "data-remove-banner", "data-run-alert", "data-schedule-pension-scenario", "data-toggle-alert", "data-use-manual-security",
   "data-user-enabled", "data-delete-user",
   "data-remove-exposure-currency",
+  "data-position-action",
 ]);
 
 function currentUser() {
@@ -1502,6 +1504,10 @@ function applyLanguage() {
   bindNavAccordion();
   renderCurrentUser();
   renderMacroScenario();
+  if (state.alertData) renderAlerts(state.alertData);
+  if (state.companyOutlook) renderCompanyOutlook(state.companyOutlook);
+  if (state.items?.length) renderRows(state.items);
+  if (state.positionTransactionsDetail) syncPositionTransactionLimit();
   refreshReportFilterOptions();
   applyAutoDirection();
   window.PortfolioI18n?.applyToDocument(state.language);
@@ -3098,7 +3104,7 @@ function renderRows(items) {
       : 0;
     return `<tr>
       <td data-label="Security"><div class="security-cell"><div class="security-symbols">${companyLogoHtml(h)}<button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}<span class="ux-tooltip security-meta-tooltip" tabindex="0" role="note" aria-label="Security details" title="${esc(marketLine)}" data-tooltip="${esc(marketLine)}">i</span></div><div class="security-name">${esc(companyLine)}</div>${industryLine}${exposureLine}</div></td>
-      <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(accountMeta)}</div></td>
+      <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(accountMeta)}</div>${holdingTransactionActionsHtml(h)}</td>
       <td data-label="Risk">${riskBadge(rowRisk)}</td>
       <td data-label="Value / P&L"><div class="value-cell">
         <strong>${money(h.market_value, h.currency)}</strong>
@@ -5496,6 +5502,38 @@ function transactionMatchesPosition(tx, detail) {
     && (!detail.accountId || String(tx.account_db_id || "") === String(detail.accountId));
 }
 
+function holdingTransactionActions(quantity) {
+  const current = Number(quantity);
+  if (!Number.isFinite(current)) return [];
+  if (current > 0) return ["BUY", "SELL"];
+  if (current < 0) return ["SHORT", "BUY"];
+  return ["BUY"];
+}
+
+function holdingTransactionActionLabel(action, quantity) {
+  return t(action === "BUY" ? (Number(quantity) < 0 ? "Buy to cover" : "Buy")
+    : action === "SHORT" ? "Add short" : "Sell");
+}
+
+function holdingTransactionActionsHtml(holding) {
+  if (!canWrite() || !holding.account_id) return "";
+  const quantity = Number(holding.quantity);
+  const average = quantity ? Math.abs(Number(holding.cost_basis || 0) / quantity) : 0;
+  const attributes = {
+    symbol: holding.symbol, market: holdingMarketKey(holding), accountId: holding.account_id,
+    account: cleanSourceLabel(holding.account || ""), currency: holding.currency || state.baseCurrency,
+    quantity, average, asset: holding.asset_class || "EQUITY", location: holding.country || holding.location || "",
+  };
+  const context = Object.entries(attributes).map(([key, value]) => {
+    const name = key.replace(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
+    return `data-position-history-${name}="${esc(value)}"`;
+  }).join(" ");
+  return `<div class="row-actions holding-transaction-actions">${holdingTransactionActions(quantity).map((action) => {
+    const label = holdingTransactionActionLabel(action, quantity);
+    return `<button class="secondary compact-button" type="button" data-position-action="${action}" ${context} aria-label="${esc(`${label} · ${holding.symbol} · ${attributes.account}`)}">${esc(label)}</button>`;
+  }).join("")}</div>`;
+}
+
 function positionTransactionDisplayAction(tx) {
   const importedAction = String(tx?.comments || "").match(/^Imported source (BUY|SELL|SHORT|ADD|REMOVE)\b/i)?.[1];
   return String(importedAction || tx?.action || "").toUpperCase();
@@ -5522,6 +5560,13 @@ function syncPositionTransactionLimit() {
   if (!input || !limit || !detail) return;
   const action = valueOf("positionTransactionAction");
   const current = Number(detail.quantity || 0);
+  const actionSelect = $("positionTransactionAction");
+  const allowed = holdingTransactionActions(current);
+  [...actionSelect.options].forEach((option) => {
+    option.disabled = !state.editingPositionTransactionId && !allowed.includes(option.value);
+    option.hidden = option.disabled;
+    option.textContent = holdingTransactionActionLabel(option.value, current);
+  });
   const available = positionTransactionAvailableQuantity(action);
   input.removeAttribute("max");
   if (Number.isFinite(available)) input.max = String(available);
@@ -5582,6 +5627,9 @@ function validatePositionTransactionForm() {
   if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("Units must be greater than zero");
   if (!Number.isFinite(price) || price < 0) throw new Error("Unit price cannot be negative");
   if (!tradeDate) throw new Error(`Date must use ${DATE_PLACEHOLDER}`);
+  if (!state.editingPositionTransactionId && !holdingTransactionActions(state.positionTransactionsDetail?.quantity).includes(action)) {
+    throw new Error(t("This action is unavailable for the current position"));
+  }
   const available = positionTransactionAvailableQuantity(action);
   if (action === "SELL" && available <= 0) throw new Error("There are no long units available to sell");
   if (Number.isFinite(available) && quantity > available + 1e-9) {
@@ -5611,7 +5659,7 @@ function refreshPositionTransactionDetail(positionQuantity) {
 
 async function savePositionTransaction() {
   const detail = state.positionTransactionsDetail;
-  if (!detail) return;
+  if (!detail || !canWrite()) return;
   const values = validatePositionTransactionForm();
   const editing = positionTransactionEditingRow();
   const action = editing && !["BUY", "SELL", "SHORT"].includes(String(editing.action || "").toUpperCase())
@@ -5666,7 +5714,7 @@ function renderPositionTransactionHistory() {
     const actionClass = ["BUY", "ADD"].includes(displayAction) ? "positive" : "negative";
     return `<tr>
       <td>${esc(formatDate(tx.trade_date))}</td>
-      <td><span class="transaction-action ${actionClass}">${esc(displayAction)}</span></td>
+      <td><span class="transaction-action ${actionClass}">${esc(t({ BUY: "Buy", SELL: "Sell", SHORT: "Short", ADD: "Add", REMOVE: "Remove" }[displayAction] || displayAction))}</span></td>
       <td>${fmt(tx.quantity, 4)}</td>
       <td>${money(tx.price, tx.currency || detail.currency, 4)}</td>
       <td>${money(amount, tx.currency || detail.currency, 2)}</td>
@@ -5677,7 +5725,10 @@ function renderPositionTransactionHistory() {
   }).join("") : '<tr><td colspan="8" class="empty-cell">No buy or sell transactions found for this position</td></tr>';
 }
 
-async function openPositionTransactionHistory(dataset) {
+async function openPositionTransactionHistory(dataset, returnFocus) {
+  const requestedAction = dataset.positionAction;
+  if (requestedAction && (!canWrite() || !dataset.positionHistoryAccountId
+    || !holdingTransactionActions(dataset.positionHistoryQuantity).includes(requestedAction))) return;
   state.positionTransactionsDetail = {
     symbol: cleanSecuritySymbol(dataset.positionHistorySymbol),
     market: String(dataset.positionHistoryMarket || "MANUAL").toUpperCase(),
@@ -5689,8 +5740,13 @@ async function openPositionTransactionHistory(dataset) {
     assetClass: dataset.positionHistoryAsset || "EQUITY",
     location: dataset.positionHistoryLocation || "",
   };
-  openModal("positionTransactionsModal");
+  openModal("positionTransactionsModal", returnFocus);
   clearPositionTransactionForm();
+  if (requestedAction) {
+    $("positionTransactionAction").value = requestedAction;
+    syncPositionTransactionLimit();
+    $("positionTransactionQuantity").focus();
+  }
   $("positionTransactionsRows").innerHTML = '<tr><td colspan="8" class="empty-cell">Loading transaction history…</td></tr>';
   const data = await api("/api/local/securities");
   state.localTransactions = data.items || [];
@@ -7837,6 +7893,18 @@ async function loadCompanyOutlookHistory(symbol = "") {
 
 let companyOutlookDiagramSequence = 0;
 
+function companyOutlookDiagramSource(source) {
+  // Translate labels before Mermaid turns them into SVG foreignObject content.
+  return String(source || "").replace(/"([^"\n]*)"/gu, (_match, label) => {
+    const localized = label.split("<br/>").map((line) => {
+      const separator = line.indexOf(": ");
+      return separator < 0 ? t(line)
+        : `${t(line.slice(0, separator))}: ${t(line.slice(separator + 2))}`;
+    }).join("<br/>");
+    return `"${localized.replace(/"/gu, "'")}"`;
+  });
+}
+
 function renderCompanyOutlookDiagramFallback(outlook) {
   const graph = outlook.graph || {};
   const nodes = graph.nodes || [];
@@ -7845,10 +7913,10 @@ function renderCompanyOutlookDiagramFallback(outlook) {
   return `
     <div class="outlook-map-fallback">
       <div class="outlook-map-nodes">
-        ${nodes.map((node) => `<span class="outlook-map-node ${esc(node.type || "")}">${esc(node.label || node.id)}</span>`).join("")}
+        ${nodes.map((node) => `<span class="outlook-map-node ${esc(node.type || "")}">${esc(t(node.label || node.id))}</span>`).join("")}
       </div>
       <div class="outlook-map-relations">
-        ${edges.length ? edges.map((edge) => `<span><b>${esc(labels[edge.from] || edge.from)}</b> → ${esc(edge.label || "related to")} → <b>${esc(labels[edge.to] || edge.to)}</b></span>`).join("") : "<span>No report-backed relationships were available.</span>"}
+        ${edges.length ? edges.map((edge) => `<span><b>${esc(t(labels[edge.from] || edge.from))}</b> → ${esc(t(edge.label || "related to"))} → <b>${esc(t(labels[edge.to] || edge.to))}</b></span>`).join("") : `<span>${t("No report-backed relationships were available.")}</span>`}
       </div>
     </div>
   `;
@@ -7856,6 +7924,8 @@ function renderCompanyOutlookDiagramFallback(outlook) {
 
 async function renderCompanyOutlookDiagram(outlook) {
   const diagram = $("companyOutlookDiagram");
+  const language = state.language;
+  const sequence = ++companyOutlookDiagramSequence;
   diagram.innerHTML = "";
   if (!outlook.mermaid) {
     diagram.innerHTML = renderCompanyOutlookDiagramFallback(outlook);
@@ -7867,11 +7937,12 @@ async function renderCompanyOutlookDiagram(outlook) {
   }
   try {
     window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "dark" });
-    companyOutlookDiagramSequence += 1;
-    const rendered = await window.mermaid.render(`companyOutlookMap${companyOutlookDiagramSequence}`, outlook.mermaid);
+    const rendered = await window.mermaid.render(`companyOutlookMap${sequence}`, companyOutlookDiagramSource(outlook.mermaid));
+    if (sequence !== companyOutlookDiagramSequence || language !== state.language) return;
     diagram.innerHTML = rendered.svg;
     rendered.bindFunctions?.(diagram);
   } catch (error) {
+    if (sequence !== companyOutlookDiagramSequence || language !== state.language) return;
     diagram.innerHTML = renderCompanyOutlookDiagramFallback(outlook);
     $("companyOutlookStatus").textContent = "Analysis loaded · Relationship map shown as a list";
     appWarn("company_outlook.diagram_fallback", { message: error?.message || "Diagram render failed" });
@@ -7884,7 +7955,7 @@ function renderCompanyOutlook(outlook) {
   $("companyOutlookResults").hidden = false;
   const industry = outlook.industry || {};
   const components = outlook.score_components || {};
-  $("companyOutlookStatus").textContent = `${outlook.symbol} · ${outlook.label || "Mixed"} · ${outlook.confidence || "Low"} confidence · ${outlook.peer_source || ""}`;
+  $("companyOutlookStatus").textContent = `${outlook.symbol} · ${t(outlook.label || "Mixed")} · ${t("Confidence")}: ${t(outlook.confidence || "Low")} · ${t(outlook.peer_source || "")}`;
   $("companyOutlookSummary").innerHTML = [
     ["Final score", `${fmt(outlook.score, 0)}/100`],
     ["Peer rank", `${outlook.rank || 1}/${(outlook.companies || []).length || 1}`],
@@ -7892,19 +7963,19 @@ function renderCompanyOutlook(outlook) {
     ["Industry score", `${fmt(industry.score, 0)}/25`],
     ["Company signals", `${fmt(components.company_fundamentals, 0)}/45`],
     ["Related effect", `${fmt(components.related_industry_effect, 0)}/15`],
-  ].map(([label, value]) => `<div class="stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`).join("");
+  ].map(([label, value]) => `<div class="stat"><b>${esc(t(value))}</b><span>${esc(t(label))}</span></div>`).join("");
   $("companyOutlookWords").innerHTML = `
-    <p>${esc(outlook.simple_words || "")}</p>
-    ${outlook.missing?.length ? `<div class="sub">Missing or limited: ${esc(outlook.missing.join(", "))}</div>` : ""}
+    <p>${esc(t(outlook.simple_words || ""))}</p>
+    ${outlook.missing?.length ? `<div class="sub">${t("Missing or limited")}: ${esc(outlook.missing.map((item) => t(item)).join(", "))}</div>` : ""}
   `;
   const companies = outlook.companies || [];
   $("companyOutlookTable").innerHTML = companies.length ? `
     <table class="holdings-table compact-report-table outlook-table">
-      <thead><tr><th>Company</th><th>Industry</th><th>Fiscal date</th><th>Revenue growth</th><th>Operating margin</th><th>Net margin</th><th>FCF margin</th><th>Current ratio</th><th>Score</th></tr></thead>
+      <thead><tr>${["Company", "Industry", "Fiscal date", "Revenue growth", "Operating margin", "Net margin", "FCF margin", "Current ratio", "Score"].map((label) => `<th>${esc(t(label))}</th>`).join("")}</tr></thead>
       <tbody>${companies.map((company) => `
         <tr>
           <td data-label="Company"><b>${esc(company.symbol)}</b><div class="sub">${esc(company.name || "")}</div></td>
-          <td data-label="Industry">${esc(company.industry || "Not available")}</td>
+          <td data-label="Industry">${esc(t(company.industry || "Not available"))}</td>
           <td data-label="Fiscal date">${esc(formatDate(company.fiscal_date))}</td>
           <td data-label="Revenue growth">${pct(company.revenue_growth_percent)}</td>
           <td data-label="Operating margin">${pct(company.operating_margin_percent)}</td>
@@ -10019,6 +10090,7 @@ function alertRunProgressText(progress) {
 }
 
 function renderAlerts(data) {
+  const wasRunning = alertRunIsActive(state.alertData);
   state.alertData = data;
   state.alertOptions = data.options || state.alertOptions;
   if (!state.alertConditions.length) resetAlertForm();
@@ -10086,10 +10158,33 @@ function renderAlerts(data) {
       <div class="signal-run-stats"><span><b>${fmt(run.evaluated_symbols || 0, 0)}</b> ${t("stocks checked")}</span><span><b>${fmt(run.matched_signals || 0, 0)}</b> ${t("matches")}</span><span><b>${fmt(providerErrors, 0)}</b> ${t("data errors")}</span></div>
     </article>`;
   }).join("") : '<div class="empty signal-empty">No run history yet.</div>';
-  if (state.alertRefreshTimer) clearTimeout(state.alertRefreshTimer);
-  if (rules.some((rule) => rule.last_status === "Running")) {
-    state.alertRefreshTimer = window.setTimeout(() => loadAlerts().catch(() => {}), 1500);
+  if (wasRunning && !alertRunIsActive(data)) {
+    const latestRun = runs[0];
+    $("alertStatus").textContent = latestRun?.status === "failed" ? t("Rule check failed.") : t("Rule check finished.");
+  } else if ($("alertStatus").textContent === t("Connection interrupted. Retrying run updates…")) {
+    $("alertStatus").textContent = alertRunIsActive(data) ? t("Running your saved portfolio rule…") : "";
   }
+  scheduleAlertRefresh();
+}
+
+function alertRunIsActive(data) {
+  return (data?.rules || []).some((rule) => String(rule.last_status).toLowerCase() === "running")
+    || (data?.runs || []).some((run) => run.status === "running");
+}
+
+function scheduleAlertRefresh() {
+  if (state.alertRefreshTimer) clearTimeout(state.alertRefreshTimer);
+  state.alertRefreshTimer = null;
+  if (!alertRunIsActive(state.alertData)) return;
+  state.alertRefreshTimer = window.setTimeout(async () => {
+    state.alertRefreshTimer = null;
+    try {
+      await loadAlerts();
+    } catch {
+      $("alertStatus").textContent = t("Connection interrupted. Retrying run updates…");
+      scheduleAlertRefresh();
+    }
+  }, 1500);
 }
 
 async function loadAlerts() {
@@ -11546,7 +11641,7 @@ document.addEventListener("click", (event) => {
 
   const positionHistoryButton = event.target.closest("[data-position-history-symbol]");
   if (positionHistoryButton) {
-    openPositionTransactionHistory(positionHistoryButton.dataset).catch((error) => {
+    openPositionTransactionHistory(positionHistoryButton.dataset, positionHistoryButton).catch((error) => {
       $("positionTransactionsRows").innerHTML = `<tr><td colspan="8" class="empty-cell">Error: ${esc(error.message)}</td></tr>`;
     });
   }

@@ -953,7 +953,10 @@ def _company_outlook_payload(symbol: str, request: dict[str, Any] | None = None)
     screener_status: dict[str, str] = {}
     peer_source = "explicit industry cohort" if peer_symbols and manual_industry else "explicit" if peer_symbols else ""
     if not peer_symbols and target["industry"]:
-        candidates, screener_status = hub().market_screener({"industry": target["industry"], "limit": 8})
+        criteria = {"industry": target["industry"], "limit": 8}
+        if target_report.get("profile", {}).get("sic"):
+            criteria.update({"sic": target_report["profile"]["sic"], "exclude_symbol": target_symbol})
+        candidates, screener_status = hub().market_screener(criteria)
         peer_symbols = [
             item_symbol for item_symbol in _symbol_list([item.get("symbol") for item in candidates], 6)
             if item_symbol != target_symbol
@@ -978,7 +981,8 @@ def _company_outlook_payload(symbol: str, request: dict[str, Any] | None = None)
         + _relative_points(median_margin, 0, 5, 20)
         + (2 if len(score_peers) >= 3 else 0)
     )
-    industry_health = "Pressure" if industry_score < 9 else "Stable" if industry_score < 15 else "Supportive"
+    has_peer_metrics = any(value is not None for value in (median_revenue_growth, median_income_growth, median_margin))
+    industry_health = ("Pressure" if industry_score < 9 else "Stable" if industry_score < 15 else "Supportive") if has_peer_metrics else "Not available"
     industry = {
         "name": industry_name,
         "source": industry_source,

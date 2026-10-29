@@ -4907,6 +4907,15 @@ tbody tr:hover {
   min-width: 0;
 }
 
+.holding-transaction-actions {
+  flex-wrap: wrap;
+  margin-block-start: 8px;
+}
+
+.holding-transaction-actions button {
+  min-width: 64px;
+}
+
 .security-symbols {
   display: flex;
   align-items: center;

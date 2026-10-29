@@ -770,6 +770,33 @@ def test_company_outlook_compares_peer_reports_saves_prediction_and_has_no_feedb
     assert len(store.list_company_report_predictions("ACME")) == 1
 
 
+def test_outlook_discovers_sec_industry_peers_and_marks_missing_industry_metrics(monkeypatch):
+    class Hub:
+        def fundamentals(self, symbol):
+            return {
+                "profile": {"name": symbol, "industry": "Laboratory Analytical Instruments", "sic": "3826"},
+                "income_statement": {"annualReports": [
+                    {"fiscalDateEnding": "2024-12-31", "totalRevenue": 100, "netIncome": 10},
+                    {"fiscalDateEnding": "2025-12-31", "totalRevenue": 110, "netIncome": 12},
+                ]},
+            }, {"sec_company_facts": "ok"}
+
+        def market_screener(self, criteria):
+            assert criteria == {"industry": "Laboratory Analytical Instruments", "sic": "3826", "exclude_symbol": "BRKR", "limit": 8}
+            return [{"symbol": "A"}], {"sec_company_facts": "ok"}
+
+    monkeypatch.setattr(main, "hub", lambda: Hub())
+    result = main._company_outlook_payload("BRKR", {"save_prediction": False})
+    assert result["industry"]["peer_count"] == 1
+    assert result["companies"][1]["symbol"] == "A"
+    assert "same-industry peer reports" not in result["missing"]
+
+    monkeypatch.setattr(Hub, "market_screener", lambda self, criteria: ([], {"sec_company_facts": "missing"}))
+    result = main._company_outlook_payload("BRKR", {"save_prediction": False})
+    assert result["industry"]["health"] == "Not available"
+    assert "same-industry peer reports" in result["missing"]
+
+
 def test_market_screener_filters_latest_annual_profit_and_yields(monkeypatch):
     reports = {
         "GOOD": {

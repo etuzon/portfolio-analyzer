@@ -9,6 +9,58 @@ from app import providers
 from app.providers import FmpProvider, MarketDataHub, NasdaqQuoteProvider, SecCompanyFactsProvider, SqliteCache, YahooChartProvider
 
 
+def test_sec_profile_and_industry_peers_use_cached_official_metadata(monkeypatch, tmp_path):
+    cache = SqliteCache(tmp_path / "cache.sqlite3", ttl_hours=24)
+    cache.set("sec:company-tickers", {
+        "0": {"ticker": "BRKR", "title": "BRUKER CORP", "cik_str": 1109354},
+        "1": {"ticker": "A", "title": "AGILENT", "cik_str": 1090872},
+        "2": {"ticker": "OTHER", "title": "OTHER", "cik_str": 99},
+    })
+    cache.set("sec:companyfacts:0001109354", {})
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        if "/submissions/" in request.url.path:
+            return httpx.Response(200, json={"sic": "3826", "sicDescription": "Laboratory Analytical Instruments", "exchanges": ["Nasdaq"]})
+        assert request.url.params["SIC"] == "3826"
+        return httpx.Response(200, text='''<feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><content><company-info><cik>1109354</cik></company-info></content></entry>
+          <entry><content><company-info><cik>1090872</cik></company-info></content></entry>
+          <entry><content><company-info><cik>9999</cik></company-info></content></entry>
+        </feed>''')
+
+    client = httpx.Client
+    monkeypatch.setattr(providers.httpx, "Client", lambda **kwargs: client(transport=httpx.MockTransport(respond), **kwargs))
+    provider = SecCompanyFactsProvider({}, cache)
+    profile = provider.profile("BRKR")
+    assert profile["industry"] == "Laboratory Analytical Instruments"
+    assert profile["sic"] == "3826"
+    assert profile["exchange"] == "Nasdaq"
+    criteria = {"industry": profile["industry"], "sic": profile["sic"], "exclude_symbol": "BRKR", "limit": 6}
+    peers = provider.market_screener(criteria)
+    assert [row["symbol"] for row in peers] == ["A"]
+    assert provider.profile("BRKR") == profile
+    assert provider.market_screener(criteria) == peers
+    assert len(calls) == 2
+
+
+def test_sec_metadata_outage_preserves_financial_statements(monkeypatch, tmp_path):
+    provider = SecCompanyFactsProvider({}, SqliteCache(tmp_path / "cache.sqlite3", ttl_hours=24))
+    monkeypatch.setattr(provider, "_ticker_row", lambda symbol: {"cik": "0001109354", "title": "BRUKER CORP"})
+    monkeypatch.setattr(provider, "_company_facts", lambda cik: {"facts": {"us-gaap": {
+        "Revenues": {"units": {"USD": [{"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "end": "2025-12-31", "val": 1000}]}}
+    }}})
+
+    def unavailable(cik):
+        raise httpx.ConnectError("metadata temporarily unavailable")
+
+    monkeypatch.setattr(provider, "_company_submissions", unavailable)
+    report = provider.fundamentals("BRKR")
+    assert report["profile"]["name"] == "BRUKER CORP"
+    assert report["income_statement"]["annualReports"][0]["totalRevenue"] == 1000
+
+
 def test_sqlite_cache_round_trips_and_reports_limit(tmp_path):
     cache = SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1)
     cache.set("quote:AAPL", {"symbol": "AAPL", "price": 200})
@@ -467,6 +519,7 @@ def test_yahoo_normalizes_tase_agorot_prices_and_dividends_to_ils(monkeypatch, t
 
 def test_sec_company_facts_maps_net_income_revenue_and_shares(monkeypatch, tmp_path):
     provider = SecCompanyFactsProvider({}, SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1))
+    monkeypatch.setattr(provider, "_company_submissions", lambda cik: {})
 
     monkeypatch.setattr(provider, "_ticker_row", lambda symbol: {"cik": "0000000001", "title": "Example Corp"})
     monkeypatch.setattr(
@@ -515,6 +568,7 @@ def test_sec_company_facts_maps_net_income_revenue_and_shares(monkeypatch, tmp_p
 
 def test_sec_company_facts_maps_investment_company_income_as_revenue(monkeypatch, tmp_path):
     provider = SecCompanyFactsProvider({}, SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1))
+    monkeypatch.setattr(provider, "_company_submissions", lambda cik: {})
     monkeypatch.setattr(provider, "_ticker_row", lambda symbol: {"cik": "0000000001", "title": "Investment Corp"})
     monkeypatch.setattr(
         provider,
@@ -554,6 +608,7 @@ def test_sec_company_facts_derives_financial_revenue_from_net_interest_and_other
     other_income,
 ):
     provider = SecCompanyFactsProvider({}, SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1))
+    monkeypatch.setattr(provider, "_company_submissions", lambda cik: {})
     monkeypatch.setattr(provider, "_ticker_row", lambda symbol: {"cik": "0000000001", "title": "Financial Corp"})
     monkeypatch.setattr(
         provider,
@@ -588,6 +643,7 @@ def test_sec_company_facts_derives_financial_revenue_from_net_interest_and_other
 
 def test_sec_company_facts_prefers_reported_revenue_over_financial_components(monkeypatch, tmp_path):
     provider = SecCompanyFactsProvider({}, SqliteCache(tmp_path / "market-cache.sqlite3", ttl_hours=24, max_mb=1))
+    monkeypatch.setattr(provider, "_company_submissions", lambda cik: {})
     monkeypatch.setattr(provider, "_ticker_row", lambda symbol: {"cik": "0000000001", "title": "Example Corp"})
     monkeypatch.setattr(
         provider,
@@ -617,6 +673,7 @@ def test_sec_company_facts_prefers_reported_revenue_over_financial_components(mo
 
 def test_sec_company_facts_as_of_uses_filing_available_at_historical_cutoff(monkeypatch, tmp_path):
     provider = SecCompanyFactsProvider({}, SqliteCache(tmp_path / "cache.sqlite3", ttl_hours=24))
+    monkeypatch.setattr(provider, "_company_submissions", lambda cik: {})
     monkeypatch.setattr(provider, "_ticker_row", lambda symbol: {"ticker": symbol, "cik": "0000000001", "title": "Example"})
     monkeypatch.setattr(
         provider,
