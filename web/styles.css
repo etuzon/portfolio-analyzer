@@ -6493,6 +6493,24 @@ tbody tr:hover {
   white-space: nowrap;
 }
 
+@media (min-width: 761px) {
+  .outlook-primary-form {
+    grid-template-rows: auto minmax(40px, auto) auto;
+    row-gap: 6px;
+  }
+
+  .outlook-primary-form > .field {
+    grid-row: 1 / span 3;
+    grid-template-rows: subgrid;
+  }
+
+  .outlook-primary-form > .outlook-primary-action {
+    grid-column: 3;
+    grid-row: 2;
+    align-self: stretch;
+  }
+}
+
 .outlook-primary-action.is-working::before,
 #runCompanyOutlookBacktest.is-working::before {
   content: "";
