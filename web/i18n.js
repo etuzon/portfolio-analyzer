@@ -46,6 +46,8 @@
     "Peer rank": "דירוג בין המתחרות",
     "Industry score": "ציון הענף",
     "Company signals": "מדדי החברה",
+    "Company fundamentals score, out of 45. Compares growth, profitability, cash flow and balance-sheet metrics with the peer group. The final score out of 100 is shown above.": "ציון מדדי החברה, מתוך 45. משווה צמיחה, רווחיות, תזרים מזומנים ומדדי מאזן לקבוצת המתחרות. הציון הסופי מתוך 100 מוצג למעלה.",
+    "Computer Communications Equipment": "ציוד תקשורת מחשבים",
     "Related effect": "השפעת ענפים קשורים",
     "Health": "מצב הענף",
     "Median revenue growth": "חציון צמיחת ההכנסות",

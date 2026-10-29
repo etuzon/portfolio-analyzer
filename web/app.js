@@ -8032,9 +8032,10 @@ function renderCompanyOutlook(outlook) {
     ${outlook.missing?.length ? `<div class="sub">${t("Missing or limited")}: ${esc(outlook.missing.map((item) => t(item)).join(", "))}</div>` : ""}
   `;
   const companies = outlook.companies || [];
+  const fundamentalsTooltip = t("Company fundamentals score, out of 45. Compares growth, profitability, cash flow and balance-sheet metrics with the peer group. The final score out of 100 is shown above.");
   $("companyOutlookTable").innerHTML = companies.length ? `
     <table class="holdings-table compact-report-table outlook-table">
-      <thead><tr>${["Company", "Industry", "Fiscal date", "Revenue growth", "Operating margin", "Net margin", "FCF margin", "Current ratio", "Score"].map((label) => `<th>${esc(t(label))}</th>`).join("")}</tr></thead>
+      <thead><tr>${["Company", "Industry", "Fiscal date", "Revenue growth", "Operating margin", "Net margin", "FCF margin", "Current ratio", "Company signals"].map((label) => `<th${label === "Company signals" ? ` title="${esc(fundamentalsTooltip)}"` : ""}>${esc(t(label))}</th>`).join("")}</tr></thead>
       <tbody>${companies.map((company) => `
         <tr>
           <td data-label="Company"><b>${esc(company.symbol)}</b><div class="sub">${esc(company.name || "")}</div></td>
@@ -8045,7 +8046,7 @@ function renderCompanyOutlook(outlook) {
           <td data-label="Net margin">${pct(company.net_margin_percent)}</td>
           <td data-label="FCF margin">${pct(company.free_cash_flow_margin_percent)}</td>
           <td data-label="Current ratio">${fmt(company.current_ratio, 2)}</td>
-          <td data-label="Score">${company.symbol === outlook.symbol ? `${fmt(outlook.score, 0)}/100` : `${fmt(company.score, 0)}/32`}</td>
+          <td data-label="${esc(t("Company signals"))}" title="${esc(fundamentalsTooltip)}">${fmt(company.symbol === outlook.symbol ? components.company_fundamentals ?? company.score : company.score, 0)}/45</td>
         </tr>
       `).join("")}</tbody>
     </table>

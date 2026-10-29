@@ -108,6 +108,20 @@ def test_company_outlook_localizes_mermaid_labels_missing_data_and_report_copy()
       for (const id of ['companyOutlookTable', 'companyOutlookWords', 'companyOutlookSummary']) {
         assert.ok(!/[א-ת]/u.test(nodes[id].innerHTML));
       }
+      for (const language of ['he', 'en']) {
+        state.language = language;
+        renderCompanyOutlook({...outlook, score: 43, score_components: {company_fundamentals: 16}, companies: [
+          {symbol: 'BRKR', score: 16, industry: 'Computer Communications Equipment'},
+          {symbol: 'PEER', score: 33, industry: 'Computer Communications Equipment'},
+        ]});
+        const table = nodes.companyOutlookTable.innerHTML;
+        assert.ok(table.includes('16/45') && table.includes('33/45'));
+        assert.ok(!table.includes('/32') && !table.includes('/100'));
+        assert.ok(nodes.companyOutlookSummary.innerHTML.includes('43/100'));
+        assert.ok(table.includes(language === 'he' ? 'מדדי החברה' : 'Company signals'));
+        assert.ok(table.includes(language === 'he' ? 'מתוך 45' : 'out of 45'));
+        if (language === 'he') assert.ok(!table.includes('Computer Communications Equipment'));
+      }
     """
     subprocess.run(["node"], input=script, check=True, capture_output=True, text=True)
 
