@@ -4429,6 +4429,28 @@ def market_screener(criteria: dict[str, Any]):
 @app.get("/api/alerts")
 def list_alerts():
     rules = alert_store.list_rules()
+    if any(rule.get("signal") == "sell" and rule.get("last_matches") for rule in rules):
+        # Saved matches can outlive a sale, deletion or import. Resolve sell
+        # eligibility from the local ledger, independently of analytics caches
+        # and provider availability; historical runs remain unchanged.
+        held_symbols = {
+            analysis.holding.symbol.strip().upper()
+            for analysis in local_store.holdings()
+            if abs(analysis.holding.quantity) > 1e-9
+            and str(analysis.holding.account_type).upper() != "ESOP"
+            and str(analysis.holding.asset_class).upper() not in {"RSU", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"}
+        }
+        for rule in rules:
+            if rule.get("signal") != "sell":
+                continue
+            previous_matches = rule.get("last_matches") or []
+            rule["last_matches"] = [
+                match for match in previous_matches
+                if isinstance(match, dict) and str(match.get("symbol") or "").strip().upper() in held_symbols
+            ]
+            if len(rule["last_matches"]) != len(previous_matches):
+                count = len(rule["last_matches"])
+                rule["last_status"] = f"{count} match{'es' if count != 1 else ''}" if count else "No matches"
     runs = alert_store.list_runs()
     job = scheduler.get_job(ALERT_JOB_ID) if scheduler else None
     active_signals = [match for rule in rules if rule.get("enabled", True) for match in rule.get("last_matches") or [] if isinstance(match, dict)]

@@ -5,7 +5,65 @@ import pytest
 
 from app import main
 from app.alerts import AlertStore, alert_rule_options
+from app.local_portfolio import LocalPortfolioStore
 from app.models import Holding, SymbolAnalysis, Trend
+
+
+@pytest.mark.parametrize("change", ["partial_sale", "full_sale", "delete_purchase", "other_account"])
+def test_saved_sell_signals_follow_current_holdings_after_reload(tmp_path, monkeypatch, change):
+    portfolio_path = tmp_path / "portfolio.sqlite3"
+    portfolio = LocalPortfolioStore(portfolio_path)
+    account = portfolio.save_account({
+        "type": "Investment", "location": "USA", "currency": "USD",
+        "username": "Owner", "account_id": "A1",
+        "persons": [{"name": "Test Owner", "birth_date": "01/01/1990"}],
+    })
+    purchase = {
+        "account_db_id": account["id"], "action": "BUY", "symbol": "BRKR",
+        "stock_market": "NASDAQ", "asset_class": "EQUITY", "quantity": 10,
+        "price_input": 50, "trade_date": "2026-01-01", "allow_manual": True,
+    }
+    bought = portfolio.add_transaction(purchase)
+    alerts_path = tmp_path / "alerts.json"
+    alerts = AlertStore(alerts_path)
+    sell = alerts.add_rule({
+        "name": "Sell", "signal": "sell",
+        "conditions": [{"metric": "current_ratio", "operator": "<", "value": 1}],
+    })
+    alerts.evaluate([{"symbol": "BRKR", "current_ratio": 0.5}])
+    history = alerts.list_runs()
+    monkeypatch.setattr(main, "local_store", portfolio)
+    monkeypatch.setattr(main, "alert_store", alerts)
+    monkeypatch.setattr(main, "scheduler", None)
+    monkeypatch.setattr(main, "hub", lambda: pytest.fail("listing saved alerts must not call providers"))
+    assert [signal["symbol"] for signal in main.list_alerts()["active_signals"]] == ["BRKR"]
+
+    if change == "delete_purchase":
+        portfolio.delete_transaction(bought["id"])
+    else:
+        if change == "other_account":
+            other = portfolio.save_account({
+                "type": "Investment", "location": "USA", "currency": "USD",
+                "username": "Owner", "account_id": "A2",
+                "persons": [{"name": "Test Owner", "birth_date": "01/01/1990"}],
+            })
+            portfolio.add_transaction({**purchase, "account_db_id": other["id"]})
+        portfolio.add_transaction({
+            **purchase, "action": "SELL", "trade_date": "2026-02-01",
+            "quantity": 5 if change == "partial_sale" else 10,
+        })
+
+    # Reload both persisted sources without rerunning any rules or clearing analytics.
+    monkeypatch.setattr(main, "local_store", LocalPortfolioStore(portfolio_path))
+    monkeypatch.setattr(main, "alert_store", AlertStore(alerts_path))
+    expected = ["BRKR"] if change in {"partial_sale", "other_account"} else []
+    for _ in range(2):
+        response = main.list_alerts()
+        assert [signal["symbol"] for signal in response["active_signals"]] == expected
+        saved_sell = next(rule for rule in response["rules"] if rule["id"] == sell["id"])
+        assert [signal["symbol"] for signal in saved_sell["last_matches"]] == expected
+        assert saved_sell["last_status"] == ("1 match" if expected else "No matches")
+        assert response["runs"] == history
 
 
 def test_alert_store_matches_all_conditions_and_persists_run_history(tmp_path):
