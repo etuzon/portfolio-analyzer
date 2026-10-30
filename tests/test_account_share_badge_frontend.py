@@ -25,7 +25,8 @@ for (const language of ['en', 'he']) {
   const label = language === 'he' ? 'חלק מסך החשבונות' : 'Share of total accounts';
   for (const [share, dash] of [[46.2, '46.2 53.8'], [0, '0 100'], [100, '100 0']]) {
     const html = accountShareBadge(share);
-    assert.ok(html.includes(label));
+    assert.ok(html.includes(`aria-label="${label}"`));
+    assert.ok(!html.includes(`>${label}<`), 'share label stays available to assistive technology without visible copy');
     assert.ok(html.includes(`>${share}%</bdi>`));
     assert.ok(html.includes(`stroke-dasharray="${dash}"`));
     assert.match(html, /<svg[^>]*aria-hidden="true"[^>]*focusable="false"/);

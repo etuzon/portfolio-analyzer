@@ -2437,7 +2437,7 @@ function accountShareBadge(share) {
   const chart = chartAvailable
     ? `<svg class="account-share-ring" viewBox="0 0 28 28" aria-hidden="true" focusable="false"><circle class="account-share-ring-track" cx="14" cy="14" r="11"/><circle class="account-share-ring-value" cx="14" cy="14" r="11" pathLength="100" stroke-dasharray="${share} ${100 - share}"/></svg>`
     : `<span class="account-share-ring-placeholder" aria-hidden="true">${available ? "!" : "—"}</span>`;
-  return `<span class="account-risk-portfolio-share" title="${esc(optionLabel(help) + chartHelp)}">${chart}<span class="account-share-copy"><span>${esc(label)}</span><bdi dir="auto">${esc(value)}</bdi></span></span>`;
+  return `<span class="account-risk-portfolio-share" role="group" aria-label="${esc(label)}" title="${esc(optionLabel(help) + chartHelp)}">${chart}<bdi dir="auto">${esc(value)}</bdi></span>`;
 }
 
 function accountCashBalance(account) {
