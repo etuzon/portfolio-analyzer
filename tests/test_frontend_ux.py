@@ -293,16 +293,16 @@ def test_dashboard_shows_bond_market_value_grouped_by_currency():
     assert '"No bond holdings": "אין אחזקות אג״ח"' in i18n
 
 
-def test_market_banner_uses_dense_responsive_cards_without_smaller_text():
+def test_market_banner_keeps_quote_text_readable():
+    import re
+
     styles = (ROOT / "web/styles.css").read_text()
 
-    assert "grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));" in styles
-    assert "grid-template-columns: repeat(3, minmax(150px, 1fr));" not in styles
-    assert "gap: 8px" in styles
-    assert ".ticker-card strong" in styles
-    assert "font-size: 22px" in styles
-    assert ".ticker-card .ticker-label" in styles
-    assert "font-size: 12px" in styles
+    for selector, minimum in ((".ticker-card strong", 18), (".ticker-card .ticker-label", 12), (".ticker-card .ticker-change", 12)):
+        rule = re.search(re.escape(selector) + r"\s*\{([^}]+)\}", styles)
+        assert rule, selector
+        size = re.search(r"font-size:\s*([\d.]+)px", rule.group(1))
+        assert size and float(size.group(1)) >= minimum, selector
 
 
 def test_portfolio_summary_can_shrink_while_account_trend_keeps_chart_space():

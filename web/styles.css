@@ -692,38 +692,54 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
 }
 
 .ticker-panel {
-  padding: 14px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px;
   margin-bottom: 12px;
 }
 
+.ticker-panel > .section-head { display: contents; }
+.ticker-panel .section-head > div { flex: 0 1 240px; }
+.ticker-panel .section-head > button { order: 2; flex-shrink: 0; }
+
 .ticker-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  min-width: 0;
+  order: 1;
   gap: 8px;
-  margin-top: 12px;
 }
+
+html[dir="rtl"] .ticker-row { justify-content: flex-end; }
 
 .ticker-card {
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr);
-  gap: 6px;
-  column-gap: 10px;
-  align-content: start;
+  grid-template-columns: 28px minmax(0, 1fr);
+  column-gap: 8px;
+  align-content: center;
   align-items: center;
-  min-height: 92px;
-  padding: 12px;
+  min-height: 56px;
+  min-width: 190px;
+  padding: 8px 10px;
   border: 1px solid #2a2c31;
   border-radius: 7px;
   background: var(--ux-panel-soft);
 }
 
 .ticker-body {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 12px;
+  row-gap: 4px;
   min-width: 0;
-  gap: 5px;
 }
 
 .ticker-card .ticker-label {
+  flex-basis: 100%;
+  overflow-wrap: anywhere;
   color: #aeb4bd;
   font-size: 12px;
   font-weight: 600;
@@ -733,7 +749,9 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
   display: flex;
   align-items: baseline;
   gap: 5px;
-  font-size: 22px;
+  font-size: 18px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
   line-height: 1;
 }
 
@@ -747,6 +765,21 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
   width: fit-content;
   font-size: 12px;
   font-weight: 800;
+  white-space: nowrap;
+}
+
+.ticker-card .ticker-meta { flex-basis: 100%; }
+.ticker-panel .instrument-icon { width: 28px; height: 28px; border-radius: 6px; box-shadow: none; }
+.ticker-panel .instrument-icon svg { width: 22px; height: 22px; }
+.ticker-panel .currency-icon b { font-size: 16px; }
+.ticker-panel .currency-icon small { font-size: 7px; }
+
+@media (max-width: 760px) {
+  .ticker-panel { display: block; padding: 10px; }
+  .ticker-panel > .section-head { display: flex; flex-direction: row; align-items: center; gap: 8px; }
+  .ticker-panel .section-head > div { flex: 1; min-width: 0; }
+  .ticker-row { margin-top: 8px; }
+  .ticker-card { flex: 1 1 220px; min-width: 0; }
 }
 
 .ticker-card small {
