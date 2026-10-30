@@ -639,31 +639,297 @@ async function api(path, options = {}) {
   }
 }
 
-async function askPortfolioAssistant() {
-  const prompt = valueOf("assistantPrompt").trim();
-  if (!prompt) {
-    $("assistantStatus").textContent = "Enter a question first.";
-    return;
+function assistantUi() {
+  const owner = currentUser()?.id || "";
+  if (!state.assistant || state.assistant.owner !== owner) {
+    state.assistant = {
+      owner, chats: [], chat: null, enabled: null, tools: [], maxChats: 10,
+      loading: false, selecting: false, creating: false, sending: false, pendingPrompt: "", status: "", retry: "",
+      loadVersion: 0, selectVersion: 0, drafts: {}, settingsVersion: 0,
+    };
+    if ($("assistantPrompt")) $("assistantPrompt").value = "";
+    if ($("assistantLauncher")) $("assistantLauncher").value = "";
   }
-  $("assistantStatus").textContent = "Reading approved portfolio data…";
-  $("assistantAnswer").hidden = true;
-  const result = await api("/api/assistant/questions", {
-    method: "POST",
-    body: JSON.stringify({ prompt, language: state.language }),
-  });
-  $("assistantAnswer").textContent = result.answer;
-  $("assistantAnswer").hidden = false;
-  $("assistantStatus").textContent = result.tool_calls?.length
-    ? `Used ${result.tool_calls.length} read-only data request${result.tool_calls.length === 1 ? "" : "s"}.`
-    : "Answered without portfolio data.";
+  return state.assistant;
 }
 
-async function clearPortfolioAssistantContext() {
-  await api("/api/assistant/context/clear", { method: "POST", body: JSON.stringify({}) });
-  $("assistantPrompt").value = "";
-  $("assistantAnswer").hidden = true;
-  $("assistantStatus").textContent = "Context cleared. Your next question starts a new conversation.";
-  $("assistantPrompt").focus();
+function assistantText(template, values = {}) {
+  return Object.entries(values).reduce((text, [key, value]) => text.replaceAll(`{${key}}`, String(value)), t(template));
+}
+
+function assistantChatLabel(chat) {
+  return chat?.message_count || chat?.messages?.length ? String(chat.title || t("Untitled chat")) : t("New chat");
+}
+
+function assistantStatusText(ui) {
+  if (ui.sending) return t("Reading approved portfolio data…");
+  if (ui.loading) return t("Loading your chats…");
+  if (ui.status) return t(ui.status);
+  if (ui.enabled === false) return t("Connect the local Codex bridge or configure an AI provider. Saved chats are still available.");
+  return "";
+}
+
+function assistantToolLabel(name) {
+  const labels = {
+    get_event_impact_events: "Historical world events", get_event_impact_cases: "Event research cases",
+    get_event_impact_workflow: "Event research method", get_portfolio_summary: "Portfolio summary",
+    list_accounts: "Accounts", get_portfolio_report: "Portfolio report", get_account_trends: "Account trends",
+    get_finance_report: "Company reports", get_securities: "Security transactions", get_manual_securities: "Manual securities",
+    get_security_risk_profiles: "Security risk profiles", get_security_history: "Security price history",
+    get_prices: "Recorded prices", get_events: "Portfolio events", get_funds: "Pensions and funds",
+    get_fund_history: "Fund amount history", get_account_snapshots: "Account value history",
+    get_employee_options: "Employee stock options", get_equity_transitions: "Equity compensation history",
+    get_fx_rates: "Exchange rates", get_market_banner: "Market quotes", get_alerts: "Portfolio signals",
+    get_company_outlook_scorecard: "Company outlook scorecard", get_company_outlook_predictions: "Saved company predictions",
+    run_portfolio_screener: "Portfolio screening", run_market_screener: "Market screening", simulate_pension: "Pension projection",
+    get_trade_history: "Trade history", get_market_quote: "Stock quote", get_stock_dividends: "Dividend history",
+    list_people: "Account owners", list_brokers: "Brokers",
+  };
+  return t(labels[name] || "Approved data endpoint");
+}
+
+function renderAssistantChat() {
+  if (!$("assistantChatList")) return;
+  const ui = assistantUi();
+  const busy = ui.loading || ui.sending;
+  $("assistantHistoryCount").textContent = assistantText("{count} of {max} saved chats", { count: fmt(ui.chats.length, 0), max: fmt(ui.maxChats, 0) });
+  $("assistantChatList").innerHTML = ui.chats.length ? ui.chats.map((chat) => `
+    <button class="assistant-chat-item${chat.id === ui.chat?.id ? " active" : ""}" type="button" data-assistant-chat="${esc(chat.id)}"${chat.id === ui.chat?.id ? ' aria-current="true"' : ""}${busy ? " disabled" : ""}>
+      <span class="assistant-chat-name" dir="auto" data-i18n-skip>${esc(assistantChatLabel(chat))}</span>
+      <time datetime="${esc(chat.updated_at || "")}">${esc(chat.updated_at ? formatDateTime(chat.updated_at) : "")}</time>
+    </button>`).join("") : `<p class="assistant-empty">${esc(t(ui.loading ? "Loading your chats…" : "No saved chats yet."))}</p>`;
+  const title = $("assistantChatTitle");
+  title.textContent = assistantChatLabel(ui.chat);
+  title.setAttribute("data-i18n-skip", "");
+  const messages = [...(ui.chat?.messages || [])];
+  if (ui.sending && ui.pendingPrompt) messages.push({ role: "user", content: ui.pendingPrompt });
+  $("assistantMessages").innerHTML = messages.length ? messages.map((message) => `
+    <article class="assistant-message assistant-message-${message.role === "user" ? "user" : "answer"}">
+      <div class="assistant-message-meta"><b>${esc(t(message.role === "user" ? "You" : "Portfolio assistant"))}</b>${message.created_at ? `<time datetime="${esc(message.created_at)}">${esc(formatDateTime(message.created_at))}</time>` : ""}</div>
+      <div class="assistant-message-content" dir="auto" data-i18n-skip>${esc(message.content || "")}</div>
+    </article>`).join("") : `<div class="assistant-empty"><p>${esc(t("Ask a question about your portfolio."))}</p><p>${esc(t("Answers use approved app data. If the data is missing, the assistant will say so."))}</p></div>`;
+  $("assistantMessages").setAttribute("aria-busy", String(ui.sending || ui.loading));
+  $("assistantStatus").textContent = assistantStatusText(ui);
+  $("newAssistantChat").disabled = busy;
+  $("assistantPrompt").disabled = ui.sending || ui.selecting;
+  $("askAssistant").disabled = busy || ui.enabled !== true;
+  $("askAssistant").textContent = t(ui.sending ? "Sending…" : "Send");
+  $("retryAssistant").hidden = !ui.retry || busy;
+  $("assistantReadTools").innerHTML = ui.tools.length ? ui.tools.filter((tool) => (tool.method || "GET") === "GET").map((tool) => `<li><span>${esc(assistantToolLabel(tool.name))}</span><code dir="ltr" data-i18n-skip>GET ${esc(tool.path)}</code></li>`).join("") : `<li>${esc(t("The approved endpoint list is unavailable."))}</li>`;
+}
+
+function saveAssistantDraft() {
+  const ui = assistantUi();
+  ui.drafts[ui.chat?.id || "new"] = $("assistantPrompt").value;
+}
+
+function assistantFailure(error, fallback) {
+  return /not configured/i.test(String(error?.message || ""))
+    ? "Connect the local Codex bridge or configure an AI provider. Saved chats are still available."
+    : /limit|read limit/i.test(String(error?.message || ""))
+      ? "The request reached its read limit. Try a narrower question."
+      : fallback;
+}
+
+async function selectAssistantChat(chatId, { preserveDraft = false } = {}) {
+  const ui = assistantUi();
+  if (ui.sending) return;
+  if (!preserveDraft) saveAssistantDraft();
+  const version = ++ui.selectVersion;
+  ui.loading = true;
+  ui.selecting = !preserveDraft;
+  if (!preserveDraft) { ui.retry = ""; ui.status = ""; }
+  renderAssistantChat();
+  try {
+    const chat = await api(`/api/assistant/chats/${encodeURIComponent(chatId)}`);
+    if (assistantUi() !== ui || version !== ui.selectVersion) return;
+    ui.chat = chat;
+    if (!preserveDraft) $("assistantPrompt").value = ui.drafts[chat.id] || "";
+    ui.loading = false;
+    ui.selecting = false;
+    renderAssistantChat();
+    $("assistantMessages").scrollTop = $("assistantMessages").scrollHeight;
+  } catch {
+    if (assistantUi() !== ui || version !== ui.selectVersion) return;
+    ui.loading = false;
+    ui.selecting = false;
+    ui.status = "Could not load this chat. Retry to refresh your saved chats.";
+    ui.retry = "load";
+    renderAssistantChat();
+  }
+}
+
+async function loadAssistantChats() {
+  const ui = assistantUi();
+  if (ui.sending || ui.creating) { renderAssistantChat(); return; }
+  const version = ++ui.loadVersion;
+  ++ui.selectVersion;
+  ui.selecting = false;
+  ui.loading = true;
+  ui.status = "";
+  ui.retry = "";
+  renderAssistantChat();
+  const results = await Promise.allSettled([api("/api/assistant/chats"), api("/api/assistant/status")]);
+  if (assistantUi() !== ui || version !== ui.loadVersion) return;
+  const [history, service] = results;
+  if (service.status === "fulfilled") {
+    ui.enabled = Boolean(service.value.enabled);
+    ui.tools = service.value.tools || [];
+  } else {
+    ui.enabled = null;
+    ui.status = "Could not check the assistant connection. Retry to reconnect.";
+    ui.retry = "load";
+  }
+  ui.loading = false;
+  if (history.status !== "fulfilled") {
+    ui.status = "Could not load your chats. Retry to reconnect.";
+    ui.retry = "load";
+    renderAssistantChat();
+    return;
+  }
+  ui.chats = history.value.chats || [];
+  ui.maxChats = history.value.max_chats || 10;
+  if (ui.chat && !ui.chats.some((chat) => chat.id === ui.chat.id)) ui.chat = null;
+  const selected = ui.chat?.id || ui.chats[0]?.id;
+  renderAssistantChat();
+  if (selected) await selectAssistantChat(selected, { preserveDraft: true });
+}
+
+async function newAssistantChat() {
+  const ui = assistantUi();
+  if (ui.loading || ui.sending) return;
+  saveAssistantDraft();
+  ++ui.loadVersion;
+  ++ui.selectVersion;
+  ui.loading = true;
+  ui.creating = true;
+  ui.status = "";
+  ui.retry = "";
+  renderAssistantChat();
+  try {
+    const data = await api("/api/assistant/chats", { method: "POST", body: JSON.stringify({}) });
+    if (assistantUi() !== ui) return;
+    ui.chat = data.chat;
+    ui.chats = data.chats || [];
+    ui.maxChats = data.max_chats || ui.maxChats;
+    $("assistantPrompt").value = "";
+    ui.loading = false;
+    ui.creating = false;
+    renderAssistantChat();
+    $("assistantPrompt").focus();
+  } catch {
+    if (assistantUi() !== ui) return;
+    ui.loading = false;
+    ui.creating = false;
+    ui.status = "Could not start a new chat. Your current chat is unchanged. Try again.";
+    renderAssistantChat();
+  }
+}
+
+async function askPortfolioAssistant() {
+  const ui = assistantUi();
+  if (ui.sending || ui.loading || ui.enabled !== true) return;
+  const prompt = $("assistantPrompt").value.trim();
+  if (!prompt) {
+    ui.status = "Enter a question first.";
+    renderAssistantChat();
+    $("assistantPrompt").focus();
+    return;
+  }
+  ++ui.loadVersion;
+  ++ui.selectVersion;
+  ui.sending = true;
+  ui.pendingPrompt = prompt;
+  ui.status = "";
+  ui.retry = "";
+  renderAssistantChat();
+  $("assistantMessages").scrollTop = $("assistantMessages").scrollHeight;
+  try {
+    const result = await api("/api/assistant/questions", {
+      method: "POST", body: JSON.stringify({ prompt, language: state.language, ...(ui.chat?.id ? { chat_id: ui.chat.id } : {}) }),
+    });
+    if (assistantUi() !== ui) return;
+    delete ui.drafts[ui.chat?.id || "new"];
+    ui.chat = result.chat;
+    ui.chats = result.chats || [];
+    ui.maxChats = result.max_chats || ui.maxChats;
+    $("assistantPrompt").value = "";
+    ui.status = "Answer saved in this chat.";
+  } catch (error) {
+    if (assistantUi() !== ui) return;
+    ui.status = assistantFailure(error, "Could not send your question. Your draft is kept. Retry when ready.");
+    ui.retry = "send";
+  } finally {
+    if (assistantUi() === ui) {
+      ui.sending = false;
+      ui.pendingPrompt = "";
+      renderAssistantChat();
+      $("assistantMessages").scrollTop = $("assistantMessages").scrollHeight;
+      if (!$("assistantModal").hidden) $("assistantPrompt").focus();
+    }
+  }
+}
+
+function openAssistantFromLauncher(event) {
+  if (event?.isComposing || !$("assistantLauncher").value) return;
+  const draft = $("assistantLauncher").value;
+  const ui = assistantUi();
+  if (ui.sending) return;
+  $("assistantLauncher").value = "";
+  $("assistantPrompt").value = [$("assistantPrompt").value, draft].filter(Boolean).join(" ");
+  saveAssistantDraft();
+  openModal("assistantModal", $("assistantLauncher"));
+  requestAnimationFrame(() => {
+    $("assistantPrompt").focus();
+    $("assistantPrompt").setSelectionRange($("assistantPrompt").value.length, $("assistantPrompt").value.length);
+  });
+}
+
+async function loadAssistantSettings() {
+  const ui = assistantUi();
+  const version = ++ui.settingsVersion;
+  $("saveAssistantSettings").disabled = true;
+  $("assistantSettingsStatus").textContent = t("Loading chat settings…");
+  try {
+    const data = await api("/api/settings/assistant");
+    if (assistantUi() !== ui || version !== ui.settingsVersion) return;
+    ui.maxChats = data.max_chats || 10;
+    $("assistantMaxChats").value = ui.maxChats;
+    $("assistantSettingsStatus").textContent = "";
+  } catch {
+    if (assistantUi() !== ui || version !== ui.settingsVersion) return;
+    $("assistantSettingsStatus").textContent = t("Could not load chat settings. Reopen this section to retry.");
+  } finally {
+    if (assistantUi() === ui && version === ui.settingsVersion) $("saveAssistantSettings").disabled = false;
+  }
+}
+
+async function saveAssistantSettings() {
+  const ui = assistantUi();
+  const maxChats = Number($("assistantMaxChats").value);
+  if (!Number.isInteger(maxChats) || maxChats < 1 || maxChats > 100) {
+    $("assistantSettingsStatus").textContent = t("Enter a whole number from 1 to 100.");
+    return;
+  }
+  $("saveAssistantSettings").disabled = true;
+  $("assistantSettingsStatus").textContent = t("Saving chat settings…");
+  try {
+    const data = await api("/api/settings/assistant", { method: "PUT", body: JSON.stringify({ max_chats: maxChats }) });
+    if (assistantUi() !== ui) return;
+    ui.maxChats = data.max_chats;
+    ui.chats = data.chats || ui.chats;
+    if (ui.chat && !ui.chats.some((chat) => chat.id === ui.chat.id)) {
+      ui.chat = null;
+      $("assistantPrompt").value = "";
+    }
+    $("assistantSettingsStatus").textContent = t("Chat settings saved. Older chats beyond the limit have been removed.");
+    renderAssistantChat();
+  } catch {
+    if (assistantUi() !== ui) return;
+    $("assistantSettingsStatus").textContent = t("Could not save chat settings. Your saved limit is unchanged. Try again.");
+  } finally {
+    if (assistantUi() === ui) $("saveAssistantSettings").disabled = false;
+  }
 }
 
 const WRITE_CONTROL_IDS = new Set([
@@ -765,6 +1031,7 @@ function renderCurrentUser() {
   }
   if ($("currentUserRole")) $("currentUserRole").textContent = user ? optionLabel(user.role) : "";
   applyRolePermissions();
+  renderAssistantChat();
 }
 
 function setAuthenticatedSession(payload) {
@@ -1540,6 +1807,7 @@ function applyLanguage() {
   renderAlarms();
   renderMacroScenario();
   if (state.alertData) renderAlerts(state.alertData);
+  renderAssistantChat();
   if (state.companyOutlook) renderCompanyOutlook(state.companyOutlook);
   if (state.financeReport) renderFinanceReport(state.financeReport);
   if (state.activeReport) renderReportSummary(state.activeReport);
@@ -11478,7 +11746,7 @@ async function loadCacheStatus() {
   renderApiAccessSettings();
 }
 
-const SETTINGS_SECTIONS = new Set(["display", "security", "table", "api", "data", "backup", "system"]);
+const SETTINGS_SECTIONS = new Set(["display", "security", "table", "assistant", "api", "data", "backup", "system"]);
 
 function setSettingsSection(requestedSection = "display", { focus = false } = {}) {
   const allowedSection = requestedSection !== "api" || canAdmin();
@@ -11496,6 +11764,7 @@ function setSettingsSection(requestedSection = "display", { focus = false } = {}
   if (section === "api" || section === "backup" || section === "system") {
     loadCacheStatus().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; });
   }
+  if (section === "assistant") loadAssistantSettings();
   if (focus) requestAnimationFrame(() => document.querySelector(`[data-settings-section="${section}"]`)?.focus());
 }
 
@@ -12039,6 +12308,10 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
   if (returnFocus instanceof HTMLElement) modalReturnFocus.set(id, returnFocus);
   modal.hidden = false;
   mountModalHomeLink(modal);
+  if (id === "assistantModal") {
+    loadAssistantChats();
+    requestAnimationFrame(() => $("assistantPrompt")?.focus());
+  }
   if (id === "accountsModal") {
     setAccountsTab("existing");
     Promise.all([loadBrokers(), loadFamilyMembers(), loadLocalAccounts()]);
@@ -12115,6 +12388,7 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
 
 function closeModal(modal) {
   if (!modal) return;
+  if (modal.id === "assistantModal") saveAssistantDraft();
   if (modal.id === "familyMemberModal") {
     if (state.familyMemberSaving) return;
     $("familyModal").inert = false;
@@ -13038,12 +13312,32 @@ $("refresh").addEventListener("click", () => {
   loadPortfolio({ refresh: true }).catch((error) => { $("status").textContent = `Error: ${error.message}`; });
   loadBanner().catch(() => {});
 });
-$("askAssistant").addEventListener("click", () => askPortfolioAssistant().catch((error) => {
-  $("assistantStatus").textContent = `Error: ${error.message}`;
-}));
-$("clearAssistantContext").addEventListener("click", () => clearPortfolioAssistantContext().catch((error) => {
-  $("assistantStatus").textContent = `Error: ${error.message}`;
-}));
+$("assistantComposer").addEventListener("submit", (event) => {
+  event.preventDefault();
+  askPortfolioAssistant();
+});
+$("assistantPrompt").addEventListener("input", saveAssistantDraft);
+$("assistantPrompt").addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229) {
+    event.preventDefault();
+    askPortfolioAssistant();
+  }
+});
+$("assistantLauncher").addEventListener("input", openAssistantFromLauncher);
+$("assistantLauncher").addEventListener("compositionend", openAssistantFromLauncher);
+$("newAssistantChat").addEventListener("click", newAssistantChat);
+$("assistantChatList").addEventListener("click", (event) => {
+  const chatId = event.target.closest("[data-assistant-chat]")?.dataset.assistantChat;
+  if (chatId) selectAssistantChat(chatId);
+});
+$("retryAssistant").addEventListener("click", () => {
+  if (assistantUi().retry === "send") askPortfolioAssistant();
+  else loadAssistantChats();
+});
+$("assistantSettingsForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  saveAssistantSettings();
+});
 $("apply").addEventListener("click", applyFilter);
 $("saveAlert").addEventListener("click", saveAlert);
 $("runAlerts").addEventListener("click", runAlerts);

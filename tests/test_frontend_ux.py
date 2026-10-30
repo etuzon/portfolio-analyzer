@@ -519,9 +519,9 @@ def test_settings_menu_is_keyboard_named_and_responsive():
 
     settings = html.split('id="settingsModal"', 1)[1].split('id="backupScheduleModal"', 1)[0]
     assert '<nav class="settings-menu" aria-label="Settings sections">' in settings
-    assert settings.count('data-settings-section=') == 7
-    assert settings.count('aria-controls="settingsPanel') == 7
-    assert settings.count('aria-labelledby="settingsNav') == 7
+    assert settings.count('data-settings-section=') == 8
+    assert settings.count('aria-controls="settingsPanel') == 8
+    assert settings.count('aria-labelledby="settingsNav') == 8
     assert 'summary aria-label="About portfolio data import and export"' in settings
     assert 'summary aria-label="About full backup and restore"' in settings
     assert 'id="settingsStatus" class="status-line" role="status" aria-live="polite"' in settings

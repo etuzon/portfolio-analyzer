@@ -45,16 +45,21 @@ alerts:
   notification:
     channels: ["dashboard"]
 
-# Optional OpenAI-compatible service for the in-app, read-only portfolio assistant.
-# Keep the real key in config.yaml or LLM_API_KEY; it is never sent to browsers or the model.
-# The assistant may invoke only the read-only tools advertised at /api/assistant/read-tools.
+# Chat can use the locally signed-in Codex CLI without an API key.
+# Run ./scripts/start-codex-bridge.sh on the host before starting Docker.
+# Alternatively set provider: openai and configure an API-compatible service.
+# The model may request only allowlisted GET routes; it never accesses the DB.
 llm:
-  enabled: false
+  enabled: true
+  provider: "local_codex"
+  codex_socket: "/run/portfolio-codex/bridge.sock"
+  # Used only by provider: openai. Never sent to browsers or model prompts.
   base_url: "https://api.openai.com/v1"
   api_key: "${LLM_API_KEY}"
   model: ""
   # none, minimal, low, medium, high, xhigh, or max. Provider/model support varies.
   reasoning_effort: "medium"
+  # Hard ceiling: 6 model exchanges per message, including the final answer.
   max_tool_loops: 6
   # Saved user/assistant messages included with the next question; 0 disables context.
   max_context_messages: 12

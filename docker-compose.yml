@@ -8,11 +8,15 @@ services:
       - ./config.yaml:/app/config.yaml
       - ./data:/app/data
       - ./certs:/app/certs
+      # Contains only a Unix socket, never Codex credentials or portfolio files.
+      - ${PORTFOLIO_CODEX_DIR:-/tmp/portfolio-codex}:/run/portfolio-codex:ro
     environment:
       CONFIG_PATH: /app/config.yaml
       DATA_DIR: /app/data
       ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
       FMP_API_KEY: ${FMP_API_KEY:-}
+      PORTFOLIO_ASSISTANT_PROVIDER: ${PORTFOLIO_ASSISTANT_PROVIDER:-}
+      PORTFOLIO_CODEX_SOCKET: /run/portfolio-codex/bridge.sock
     networks:
       - default
       - external_import

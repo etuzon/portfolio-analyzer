@@ -64,13 +64,33 @@ Read tools expose access status, accounts, filtered reports, and account trends.
 
 ## Read-only LLM assistant
 
-The optional in-app assistant uses an OpenAI-compatible `POST /chat/completions` provider and can answer in the language of the question. Configure the `llm` section in private `config.yaml`; leave `enabled: false` until a provider URL, API key, and model are set. The key remains server-side and is never included in API responses or prompts.
+Type in the chat box above the dashboard to open the assistant. Chats are private to the signed-in application user and survive reloads. Use **New chat** to start a separate conversation. **Settings → Portfolio assistant** controls the number retained (default `10`, range `1–100`). Creating a chat or lowering the limit removes conversations with the oldest last message; opening a conversation does not make it newer. Failed questions keep the draft and do not replace prior messages. Existing single-conversation context migrates once.
 
-Set `llm.model` to the model identifier supported by your provider and `llm.reasoning_effort` to one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. The effort setting is forwarded as `reasoning_effort` in the provider request; choose a provider/model that supports it.
+The default provider is the locally signed-in **Codex CLI**, so no API key is required. On the host, run:
 
-The app saves each signed-in user's prompts and final answers locally as limited conversation context (`llm.max_context_messages`, default `12`). Tool payloads are not retained as context. `POST /api/assistant/context/clear` removes that user's saved context, so the next question starts a new conversation.
+```bash
+codex login
+./scripts/start-codex-bridge.sh
+docker compose up --build -d
+```
 
-For each question, the model receives only a fixed catalog at `GET /api/assistant/read-tools`. It can request application-owned read skills for portfolio/risk, accounts, securities, price history and technicals, funds, events, alerts, FX, market data, reports, and screeners. Read data uses `GET`; bounded read calculations use a catalogued `POST` endpoint with a JSON body. It cannot choose arbitrary REST paths and cannot invoke a write endpoint. `POST /api/assistant/questions` runs the model/tool exchange and enforces `llm.max_tool_loops` (default `6`) for that one user prompt; the next prompt starts a new bounded exchange.
+Codex must be signed in as the OS user starting the bridge. The release script starts the bridge when it finds a signed-in CLI. Restart the bridge after a host reboot. `PORTFOLIO_CODEX_DIR` changes its default socket directory `/tmp/portfolio-codex` for both the starter and Compose. For a local Uvicorn process, set `PORTFOLIO_CODEX_SOCKET=/tmp/portfolio-codex/bridge.sock`. If an older private config explicitly disables `llm`, set `provider: local_codex` and `enabled: true`, or use `PORTFOLIO_ASSISTANT_PROVIDER=local_codex`. Unavailable Codex sign-in, plan limits or bridge failures leave saved chats readable and return a recoverable send error.
+
+The bridge exposes only a local Unix socket. It receives conversation evidence and tool descriptions, with no application authentication headers or database connection configuration. Each model exchange is an ephemeral, structured-output Codex app-server turn with native tools, hooks, user MCP servers, connectors, shell, images, browser, skills and child agents disabled before startup. A restricted permission profile denies filesystem access outside minimal runtime files and an empty temporary workspace, and denies command network access. Temporary model state is removed after the response. The CLI manages its existing authentication; credentials are never copied into Docker. The model selects a named read or returns an answer; it cannot execute tools itself.
+
+The application validates that selection against the code-owned catalog at `GET /api/assistant/read-tools`, then makes an authenticated **GET** through the actual FastAPI REST routes using the requesting user's identity. Unknown tools/arguments, arbitrary URLs, path traversal, redirects and all write verbs are rejected. The agent has no database interface. Approved routes cover accounts, current holdings, transactions and trade history, reports, historical prices, fundamentals, dividends, quote/provider status, market screening, pensions, FX, events and alerts. The popup displays the allowlist. Chat/settings persistence is application-owned and is never exposed as an agent capability.
+
+Each question permits at most **six model exchanges including its final answer**, with at most one approved read per exchange. The last exchange has no tools. The next user message gets a new budget. Only the last `llm.max_context_messages` user/assistant messages (default `12`; `0` disables context) are passed as conversation context, while the complete saved conversation remains visible. Prompts require evidence, unknown-data disclosure, per-currency amounts, `dd/mm/yyyy` dates, and answers in the active language. These instructions reduce guessing; independent simulations are still needed to evaluate real answers.
+
+An API-key provider remains optional: set `llm.provider: openai`, `enabled: true`, `base_url`, `api_key` and `model` in private `config.yaml`. It uses `POST /chat/completions`; credentials remain server-side. `llm.reasoning_effort` is forwarded to that provider. Model/provider compatibility must be configured explicitly.
+
+The controlled 30-conversation, three-question regression corpus is in `tests/test_assistant_qa_simulations.py`. To replay it against the real local Codex model using only synthetic portfolio/provider data, start the bridge and run:
+
+```bash
+PORTFOLIO_CODEX_SOCKET=/tmp/portfolio-codex/bridge.sock ./.venv/bin/python tests/assistant_real_replay.py
+```
+
+Transcripts and review flags are saved under `/tmp/portfolio-chat-qa`. The real replay is opt-in and is not run by pytest. Synthetic provider facts and real model behavior are reported separately; automated flags do not establish answer correctness.
 
 ## World-event research workflow
 

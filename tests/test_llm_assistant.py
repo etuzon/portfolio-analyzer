@@ -42,7 +42,7 @@ def test_assistant_receives_event_workflow_before_answering_without_evidence():
         return next(responses)
 
     assistant = PortfolioAssistant(_settings(), main.ASSISTANT_READ_TOOLS, caller=provider)
-    result = assistant.ask("How likely is a stock loss after this event?", "en", main._assistant_tool_result)
+    result = assistant.ask("How likely is a stock loss after this event?", "en", lambda _name, _args: main.event_impact_workflow())
     received = json.loads(messages_seen[-1][-1]["content"])
     assert received["workflow_id"] == "world-event-impact"
     assert set(received["probability_definitions"]) >= {
@@ -100,3 +100,31 @@ def test_assistant_includes_saved_user_and_answer_context_before_new_prompt():
         {"role": "assistant", "content": "It is moderate."},
         {"role": "user", "content": "What about that?"},
     ]
+
+
+def test_disabling_context_does_not_send_saved_messages():
+    received = []
+    assistant = PortfolioAssistant(
+        _settings(max_context_messages=0), CATALOG,
+        caller=lambda **kwargs: received.append(list(kwargs["messages"])) or {"choices": [{"message": {"role": "assistant", "content": "Unknown."}}]},
+    )
+    assistant.ask("New question", "en", lambda *_args: {}, [{"role": "user", "content": "Old private context"}])
+    assert [message["role"] for message in received[0]] == ["system", "user"]
+    assert "Old private context" not in json.dumps(received)
+
+
+def test_sixth_exchange_answers_without_more_tools():
+    requests = []
+    def caller(**kwargs):
+        requests.append(kwargs["tools"])
+        message = {"role": "assistant", "content": "The available evidence is complete."} if not kwargs["tools"] else {
+            "role": "assistant", "tool_calls": [{"id": str(len(requests)), "function": {"name": "get_report", "arguments": "{}"}}],
+        }
+        return {"choices": [{"message": message}]}
+    assistant = PortfolioAssistant(_settings(max_tool_loops=99), CATALOG, caller=caller)
+    reads = []
+    result = assistant.ask("Read the evidence", "en", lambda name, arguments: reads.append(name) or {"verified": True})
+    assert result["model_requests"] == len(requests) == 6
+    assert len(reads) == 5
+    assert requests[-1] == []
+    assert result["answer"] == "The available evidence is complete."

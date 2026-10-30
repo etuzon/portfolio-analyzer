@@ -72,12 +72,12 @@ def test_later_company_results_are_not_daily_event_returns_or_hindsight_forecast
 def test_assistant_can_page_through_all_evidence_without_tool_payload_truncation():
     from app import main
 
-    index = main._assistant_tool_result("get_event_impact_events", {})
+    index = main.event_impact_events()
     assert len(json.dumps(index, ensure_ascii=False, default=str)) < 80_000
     seen = []
     offset = 0
     while offset is not None:
-        page = main._assistant_tool_result("get_event_impact_cases", {"offset": offset})
+        page = main.event_impact_cases(limit=5, offset=offset)
         assert len(json.dumps(page, ensure_ascii=False, default=str)) < 80_000
         assert page["offset"] == offset
         assert page["count"] <= 5

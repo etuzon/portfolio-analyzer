@@ -817,6 +817,12 @@ class LocalPortfolioStore:
 
     def change_token(self) -> str:
         data = self.export_data()["data"]
+        # Chat history/retention is user interface state, not financial input.
+        # Saving a reply must not invalidate analytics and refetch market data.
+        data["app_preferences"] = [
+            row for row in data.get("app_preferences", [])
+            if not str(row.get("key") or "").startswith(("assistant_chats:", "assistant_context:"))
+        ]
         encoded = json.dumps(data, sort_keys=True, default=str).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
 

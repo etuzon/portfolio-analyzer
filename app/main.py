@@ -20,15 +20,19 @@ from typing import Annotated, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from apscheduler.triggers.cron import CronTrigger
+import anyio
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 from mcp.server.transport_security import TransportSecuritySettings
 import yaml
 
 from . import __version__
 from .alerts import ALERT_JOB_ID, AlertStore, alert_rule_options, start_scheduler
+from .assistant_chats import AssistantChats, ChatError
+from .assistant_rest import AssistantRestGateway
 from .auth import API_ACCESS_MODES, AUTH_ROLES, PASSWORD_MIN_LENGTH, SESSION_COOKIE_NAME, AuthStore
 from .config import data_dir, load_config
 from .company_logos import CompanyLogoService
@@ -95,6 +99,7 @@ config = load_config()
 alert_store = AlertStore()
 local_store = LocalPortfolioStore()
 auth_store = AuthStore(local_store.path)
+assistant_chats = AssistantChats(lambda key, default: local_store.get_preference(key, default), lambda key, value: local_store.set_preference(key, value))
 scheduler = None
 _mcp_session_context = None
 BACKUP_JOB_ID = "local-data-backup"
@@ -165,7 +170,6 @@ INDUSTRY_CATALOG = (
 INDUSTRY_ALIASES = {"Major Banks": "Banks"}
 CLIENT_STATE_PREF_KEY = "client_state"
 BACKUP_SETTINGS_PREF_KEY = "backup_settings"
-ASSISTANT_CONTEXT_PREF_PREFIX = "assistant_context:"
 _portfolio_cache_lock = RLock()
 _portfolio_cache: dict[str, Any] | None = None
 _portfolio_refresh_in_progress = False
@@ -182,6 +186,7 @@ AUTH_LOGIN_WINDOW_SECONDS = 300
 VIEWER_READ_ONLY_POST_PATHS = {
     "/api/assistant/questions",
     "/api/assistant/context/clear",
+    "/api/assistant/chats",
     "/api/screener",
     "/api/banner/resolve",
     "/api/local/backups/inspect",
@@ -207,9 +212,10 @@ def _auth_error(status_code: int, code: str, message: str, headers: dict[str, st
 def _viewer_request_is_read_only(request: Request) -> bool:
     if request.method in {"GET", "HEAD", "OPTIONS"}:
         return True
+    if request.method == "PUT" and request.url.path == "/api/settings/assistant":
+        return True  # Per-user chat retention, never portfolio or integration settings.
     return request.method == "POST" and (
         request.url.path in VIEWER_READ_ONLY_POST_PATHS
-        or request.url.path.startswith("/api/assistant/read-tools/")
     )
 
 
@@ -230,15 +236,15 @@ ASSISTANT_READ_TOOLS: dict[str, dict[str, Any]] = {
         "parameters": {"type": "object", "properties": {}},
     },
     "get_portfolio_summary": {
-        "path": "/api/portfolio", "description": "Get the current portfolio dashboard summary and holdings.",
-        "parameters": {"type": "object", "properties": {}},
+        "path": "/api/assistant/portfolio-summary", "description": "Preferred complete inventory for which stocks or quantities an account currently holds, including positions with missing market data. Filter by symbol, listing or account_id and follow next_offset. Values are in each holding's currency; do not add different currencies.",
+        "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}, "stock_market": {"type": "string"}, "account_id": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}, "offset": {"type": "integer", "minimum": 0}}},
     },
     "list_accounts": {
         "path": "/api/local/accounts", "description": "List local portfolio accounts and their status.",
         "parameters": {"type": "object", "properties": {}},
     },
     "get_portfolio_report": {
-        "path": "/api/local/reports", "description": "Get an account, person, type, or location filtered portfolio report.",
+        "path": "/api/local/reports", "description": "Get an account, person, type, or location filtered report. Use account_details with their currencies. Report-wide totals add native amounts and are NOT FX-converted; never present mixed-currency totals as one monetary value.",
         "parameters": {"type": "object", "properties": {key: {"type": "string"} for key in ("account_id", "account_type", "location", "person_id", "person_name")}},
     },
     "get_account_trends": {
@@ -249,7 +255,7 @@ ASSISTANT_READ_TOOLS: dict[str, dict[str, Any]] = {
         "path": "/api/finance-reports/{symbol}", "description": "Get a public fundamentals report for one ticker symbol.",
         "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 20}}, "required": ["symbol"]},
     },
-    "get_securities": {"path": "/api/local/securities", "description": "List recorded portfolio security transactions and positions.", "parameters": {"type": "object", "properties": {}}},
+    "get_securities": {"path": "/api/local/securities", "description": "Read the actual transaction ledger: BUY, SELL, DIVIDEND and other recorded actions, quantities, amounts and trade dates. Use this or get_trade_history to establish whether a transaction or cash income was recorded. This is distinct from scheduled/discovered events.", "parameters": {"type": "object", "properties": {}}},
     "get_manual_securities": {"path": "/api/local/manual-securities", "description": "List manually defined securities, including private holdings.", "parameters": {"type": "object", "properties": {}}},
     "get_security_risk_profiles": {"path": "/api/local/security-exposure-profiles", "description": "Get saved economic exposure, industry, geography, and currency profiles used in risk analysis.", "parameters": {"type": "object", "properties": {}}},
     "get_security_history": {
@@ -257,7 +263,7 @@ ASSISTANT_READ_TOOLS: dict[str, dict[str, Any]] = {
         "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}, "stock_market": {"type": "string"}, "period": {"type": "string", "enum": ["1m", "6m", "1y", "3y", "5y"]}, "date_from": {"type": "string"}, "level_periods": {"type": "string"}}, "required": ["symbol"]},
     },
     "get_prices": {"path": "/api/local/prices", "description": "List locally stored historical prices.", "parameters": {"type": "object", "properties": {}}},
-    "get_events": {"path": "/api/local/events", "description": "List portfolio events, including dividend and income events.", "parameters": {"type": "object", "properties": {}}},
+    "get_events": {"path": "/api/local/events", "description": "Read scheduled/discovered portfolio event records and processing status. This is NOT the transaction ledger: an empty event list does not establish that a dividend, trade or other cash transaction was not recorded. Check get_securities/get_trade_history for transaction questions.", "parameters": {"type": "object", "properties": {}}},
     "get_funds": {"path": "/api/local/funds", "description": "List pension, provident, and savings fund records.", "parameters": {"type": "object", "properties": {}}},
     "get_fund_history": {"path": "/api/local/funds/{fund_id}/amount-history", "description": "Get amount history for one pension, provident, or savings fund.", "parameters": {"type": "object", "properties": {"fund_id": {"type": "string"}}, "required": ["fund_id"]}},
     "get_account_snapshots": {
@@ -272,111 +278,49 @@ ASSISTANT_READ_TOOLS: dict[str, dict[str, Any]] = {
     "get_company_outlook_scorecard": {"path": "/api/company-outlook/scorecard", "description": "Get the company-outlook prediction scorecard.", "parameters": {"type": "object", "properties": {}}},
     "get_company_outlook_predictions": {"path": "/api/company-outlook/predictions", "description": "List saved company-outlook predictions, optionally for a symbol.", "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}}}},
     "run_portfolio_screener": {
-        "method": "POST", "path": "/api/screener", "description": "Run a read-only screen over the current portfolio holdings.",
-        "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "account": {"type": "string"}, "assetClass": {"type": "string"}, "currency": {"type": "string"}, "sector": {"type": "string"}, "includeMissing": {"type": "boolean"}}},
+        "path": "/api/assistant/portfolio-screen", "description": "Read a filtered stock screen, not complete account inventory. Use get_portfolio_summary for holdings questions. account accepts an exact account ID or label substring; account_id is exact. Missing market data is included unless includeMissing=false explicitly excludes it. No screen matches does not establish no holdings.",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "account": {"type": "string"}, "account_id": {"type": "string"}, "assetClass": {"type": "string"}, "currency": {"type": "string"}, "sector": {"type": "string"}, "includeMissing": {"type": "boolean"}}},
     },
     "run_market_screener": {
-        "method": "POST", "path": "/api/market/screener", "description": "Run a read-only market screener. This may use configured market-data providers.",
+        "path": "/api/assistant/market-screen", "description": "Read market stock candidates with optional valuation, income and growth filters. Coverage depends on configured providers; missing values are unknown, not zero.",
         "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "sector": {"type": "string"}, "industry": {"type": "string"}, "country": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}, "sortBy": {"type": "string"}, "includeMissing": {"type": "boolean"}}},
     },
     "simulate_pension": {
-        "method": "POST", "path": "/api/local/pension-simulate", "description": "Run a read-only pension projection using supplied scenario inputs.",
+        "path": "/api/assistant/pension-projection", "description": "Read a hypothetical pension projection from supplied inputs; this does not save a scenario or change records.",
         "parameters": {"type": "object", "properties": {"person_id": {"type": "string"}, "retire_age": {"type": "number"}, "monthly_salary": {"type": "number"}, "current_savings": {"type": "number"}, "monthly_deposit": {"type": "number"}, "annual_return": {"type": "number"}}},
+    },
+    "get_trade_history": {
+        "path": "/api/local/trade-history", "description": "Read actual ledger buy/sell episodes, dividend and other cash income, realized/unrealized profit and available holding durations. Use query to filter a stock; status is all, open or closed. Unlike scheduled events, these are recorded transactions. Missing purchase history is unknown.",
+        "parameters": {"type": "object", "properties": {key: {"type": "string"} for key in ("account_id", "account_type", "location", "person_id", "person_name", "status", "query", "as_of_date")}},
+    },
+    "get_market_quote": {
+        "path": "/api/assistant/market-quote", "description": "Read a quote for an explicit provider ticker (including exchange suffix where needed), with provider status and timestamps. Request time is not proof of quote freshness.",
+        "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}}, "required": ["symbol"]},
+    },
+    "get_stock_dividends": {
+        "path": "/api/assistant/stock-dividends", "description": "Read provider dividend history for an explicit listed ticker. Amounts and payment/ex dates are per record; missing history is unknown.",
+        "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}}, "required": ["symbol"]},
+    },
+    "list_people": {
+        "path": "/api/local/family-members", "description": "Read account owners and their IDs when a person-filtered question needs them.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+    "list_brokers": {
+        "path": "/api/local/brokers", "description": "Read configured brokers and management companies.",
+        "parameters": {"type": "object", "properties": {}},
     },
 }
 
-
-def _assistant_tool_result(name: str, arguments: dict[str, Any]) -> Any:
-    if name == "get_event_impact_events":
-        return event_impact_events()
-    if name == "get_event_impact_cases":
-        return event_impact_cases(str(arguments.get("symbol") or ""), str(arguments.get("event_id") or ""), int(arguments.get("limit", 5)), int(arguments.get("offset", 0)))
-    if name == "get_event_impact_workflow":
-        return event_impact_workflow()
-    if name == "get_portfolio_summary":
-        return portfolio_payload(force_refresh=False, defer_enrichment=True)
-    if name == "list_accounts":
-        return {"items": local_store.list_accounts(), "status": local_store.status()}
-    if name == "get_portfolio_report":
-        return local_store.reports({key: str(arguments.get(key) or "") for key in ("account_id", "account_type", "location", "person_id", "person_name")})
-    if name == "get_account_trends":
-        from_date = _clamped_history_start(str(arguments.get("date_from") or ""))
-        to_date = _parse_query_date(str(arguments.get("date_to") or "")) or date.today()
-        return local_store.account_trends({
-            **{key: str(arguments.get(key) or "") for key in ("account_id", "account_type", "location", "person_id", "person_name")},
-            "from": from_date.isoformat(), "to": max(from_date, to_date).isoformat(),
-        })
-    if name == "get_finance_report":
-        return _finance_report_payload(str(arguments.get("symbol") or ""), min(max(int(arguments.get("limit") or 6), 1), 20))
-    if name == "get_securities":
-        return {"items": local_store.list_transactions()}
-    if name == "get_manual_securities":
-        return {"items": local_store.list_manual_securities()}
-    if name == "get_security_risk_profiles":
-        return {"items": local_store.list_security_exposure_profiles()}
-    if name == "get_security_history":
-        return security_history(**{key: str(arguments[key]) for key in ("symbol", "stock_market", "period", "date_from", "level_periods") if arguments.get(key) is not None})
-    if name == "get_prices":
-        return {"items": local_store.list_prices()}
-    if name == "get_events":
-        return {"items": local_store.list_events(), "dividends": dividend_status()}
-    if name == "get_funds":
-        return {"items": local_store.list_funds()}
-    if name == "get_fund_history":
-        fund_id = str(arguments.get("fund_id") or "")
-        fund = next((item for item in local_store.list_funds() if item["id"] == fund_id), None)
-        if not fund:
-            raise ValueError("Fund record not found")
-        return {"fund": fund, "items": local_store.list_fund_amount_history(fund_id)}
-    if name == "get_account_snapshots":
-        from_date = _clamped_history_start(str(arguments.get("date_from") or ""))
-        to_date = _parse_query_date(str(arguments.get("date_to") or "")) or date.today()
-        return {"items": local_store.list_account_snapshots({
-            **{key: str(arguments.get(key) or "") for key in ("account_id", "account_type", "location", "person_id", "person_name")},
-            "from": from_date.isoformat(), "to": max(from_date, to_date).isoformat(),
-        })}
-    if name == "get_employee_options":
-        return {"items": local_store.list_employee_option_grants()}
-    if name == "get_equity_transitions":
-        return {"items": local_store.list_equity_transitions()}
-    if name == "get_fx_rates":
-        return fx()
-    if name == "get_market_banner":
-        return banner()
-    if name == "get_alerts":
-        return list_alerts()
-    if name == "get_company_outlook_scorecard":
-        return local_store.company_report_scorecard()
-    if name == "get_company_outlook_predictions":
-        symbol = str(arguments.get("symbol") or "")
-        return {"items": local_store.list_company_report_predictions(symbol), "scorecard": local_store.company_report_scorecard()}
-    if name == "run_portfolio_screener":
-        criteria = arguments or {}
-        results = screen(analyze_all(), criteria)
-        return {"count": len(results), "items": [to_dict(item) for item in results]}
-    if name == "run_market_screener":
-        return market_screener(arguments or {})
-    if name == "simulate_pension":
-        return local_store.simulate_pension(arguments or {})
-    raise ValueError("Unknown assistant read tool")
-
-
-def _assistant_context_key(request: Request) -> str:
-    return f"{ASSISTANT_CONTEXT_PREF_PREFIX}{request.state.auth_user['id']}"
-
-
-def _assistant_context(request: Request, max_messages: int) -> list[dict[str, str]]:
-    stored = local_store.get_preference(_assistant_context_key(request), [])
-    if not isinstance(stored, list) or max_messages <= 0:
-        return []
-    context: list[dict[str, str]] = []
-    for item in stored[-max_messages:]:
-        if not isinstance(item, dict) or item.get("role") not in {"user", "assistant"}:
-            continue
-        content = str(item.get("content") or "").strip()
-        if content:
-            context.append({"role": str(item["role"]), "content": content[:8_000]})
-    return context
+# The catalog is code-owned. Neither users nor model arguments can add routes.
+ASSISTANT_READ_TOOLS["run_market_screener"]["parameters"]["properties"].update({
+    key: {"type": "number"} for key in (
+        "marketCapMoreThan", "marketCapLowerThan", "dividendYieldMoreThan", "dividendYieldLowerThan",
+        "annualNetIncomeMoreThan", "profitMarketCapMoreThan", "profitMarketCapLowerThan",
+        "priceEarningsLowerThan", "revenueGrowthMoreThan", "netIncomeGrowthMoreThan",
+        "netMarginMoreThan", "freeCashFlowMoreThan", "freeCashFlowYieldMoreThan",
+        "debtRevenueLowerThan", "currentRatioMoreThan", "priceMoreThan", "priceLowerThan",
+    )
+})
 
 
 @app.middleware("http")
@@ -2941,53 +2885,106 @@ def event_impact_cases(symbol: str = "", event_id: str = "", limit: Annotated[in
     return {"items": items, "count": len(items), "total_count": total_count, "offset": offset, "next_offset": next_offset, "event_patterns": patterns, "distinct_event_count": len(matched_event_ids), "record_type": "curated_retrospective_cases", "calibrated_probability_model": False}
 
 
+def _assistant_gateway(request: Request) -> AssistantRestGateway:
+    return AssistantRestGateway(app, ASSISTANT_READ_TOOLS, dict(request.headers))
+
+
 @app.get("/api/assistant/read-tools/{tool_name}")
-def assistant_read_tool(tool_name: str, request: Request):
-    """Execute one allow-listed, read-only REST skill for an authenticated caller."""
+async def assistant_read_tool(tool_name: str, request: Request):
+    """Proxy one approved GET through the same user's REST authorization."""
     if tool_name not in ASSISTANT_READ_TOOLS:
         raise HTTPException(status_code=404, detail="Assistant read tool not found")
-    if ASSISTANT_READ_TOOLS[tool_name].get("method", "GET") != "GET":
-        raise HTTPException(status_code=405, detail="This read tool requires POST with a JSON body")
+    arguments = dict(request.query_params)
+    properties = ASSISTANT_READ_TOOLS[tool_name].get("parameters", {}).get("properties", {})
     try:
-        return _assistant_tool_result(tool_name, dict(request.query_params))
+        for key, value in arguments.items():
+            kind = properties.get(key, {}).get("type")
+            if kind == "integer":
+                arguments[key] = int(value)
+            elif kind == "number":
+                arguments[key] = float(value)
+            elif kind == "boolean":
+                if value.lower() not in {"true", "false"}:
+                    raise ValueError("Invalid boolean argument")
+                arguments[key] = value.lower() == "true"
+        return await _assistant_gateway(request).read(tool_name, arguments)
     except (ValueError, TypeError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail="The approved read request is invalid or unavailable.") from exc
 
 
-@app.post("/api/assistant/read-tools/{tool_name}")
-def assistant_read_tool_post(tool_name: str, payload: dict[str, Any]):
-    """Run an allow-listed read computation that requires criteria in its JSON body."""
-    if tool_name not in ASSISTANT_READ_TOOLS:
-        raise HTTPException(status_code=404, detail="Assistant read tool not found")
-    if ASSISTANT_READ_TOOLS[tool_name].get("method", "GET") != "POST":
-        raise HTTPException(status_code=405, detail="This read tool requires GET query parameters")
+@app.get("/api/assistant/chats")
+def list_assistant_chats(request: Request):
+    return assistant_chats.list(request.state.auth_user["id"])
+
+
+@app.get("/api/assistant/chats/{chat_id}")
+def get_assistant_chat(chat_id: str, request: Request):
     try:
-        return _assistant_tool_result(tool_name, payload or {})
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return assistant_chats.get(request.state.auth_user["id"], chat_id)
+    except ChatError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@app.post("/api/assistant/chats")
+def create_assistant_chat(request: Request):
+    try:
+        return assistant_chats.create(request.state.auth_user["id"])
+    except ChatError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+@app.get("/api/settings/assistant")
+def assistant_chat_settings(request: Request):
+    return {"max_chats": assistant_chats.list(request.state.auth_user["id"])["max_chats"]}
+
+
+@app.put("/api/settings/assistant")
+def save_assistant_chat_settings(payload: dict[str, Any], request: Request):
+    try:
+        if set(payload) != {"max_chats"}:
+            raise ChatError("Only the saved chat limit can be changed here.")
+        return assistant_chats.settings(request.state.auth_user["id"], payload.get("max_chats"))
+    except ChatError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @app.post("/api/assistant/questions")
-def assistant_question(payload: dict[str, Any], request: Request):
-    """Run one bounded LLM/tool interaction. It has no write capability."""
+async def assistant_question(payload: dict[str, Any], request: Request):
+    """Persist chat metadata in the app; give the LLM only a GET-only gateway."""
     assistant = PortfolioAssistant(assistant_settings(config.raw), ASSISTANT_READ_TOOLS)
+    if not assistant.status()["enabled"]:
+        raise HTTPException(status_code=503, detail="The portfolio assistant is not configured.")
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 8_000:
+        raise HTTPException(status_code=400, detail="Ask a question between 1 and 8000 characters.")
+    chat_id = payload.get("chat_id")
+    if chat_id is not None and (not isinstance(chat_id, str) or len(chat_id) > 80):
+        raise HTTPException(status_code=400, detail="Invalid chat identifier.")
+    user_id = request.state.auth_user["id"]
+    begun = False
     try:
-        context = _assistant_context(request, assistant.settings["max_context_messages"])
-        result = assistant.ask(payload.get("prompt", ""), payload.get("language", ""), _assistant_tool_result, context)
-        updated_context = [*context, {"role": "user", "content": str(payload.get("prompt") or "").strip()}, {"role": "assistant", "content": result["answer"]}]
-        retained_context = updated_context[-assistant.settings["max_context_messages"]:] if assistant.settings["max_context_messages"] else []
-        local_store.set_preference(_assistant_context_key(request), retained_context)
-        return {**result, "context_messages": len(retained_context)}
+        chat = await run_in_threadpool(assistant_chats.begin, user_id, chat_id)
+        begun = True
+        gateway = _assistant_gateway(request)
+        def read_tool(name, arguments):
+            return anyio.from_thread.run(gateway.read, name, arguments)
+        result = await run_in_threadpool(assistant.ask, prompt.strip(), payload.get("language", ""), read_tool, chat["messages"])
+        saved = await run_in_threadpool(assistant_chats.finish, user_id, chat["id"], prompt.strip(), result)
+        return {**result, **saved, "context_messages": min(len(saved["chat"]["messages"]), assistant.settings["max_context_messages"])}
+    except ChatError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except AssistantError as exc:
         status = 503 if "not configured" in str(exc) or "unavailable" in str(exc) else 400
         raise HTTPException(status_code=status, detail=str(exc)) from exc
+    finally:
+        if begun:
+            assistant_chats.end(user_id)
 
 
 @app.post("/api/assistant/context/clear")
 def clear_assistant_context(request: Request):
-    """Forget the signed-in user's saved assistant conversation context."""
-    local_store.set_preference(_assistant_context_key(request), [])
-    return {"cleared": True, "context_messages": 0}
+    """Compatibility action: begin a new chat while retaining prior conversations."""
+    return {**create_assistant_chat(request), "cleared": True, "context_messages": 0}
 
 
 @app.get("/api/portfolio")
@@ -2996,6 +2993,68 @@ def portfolio(refresh: bool = False):
     # dashboard loads remain non-blocking and are refreshed by the client when
     # the background worker completes.
     return portfolio_payload(force_refresh=refresh, defer_enrichment=True)
+
+
+@app.get("/api/assistant/portfolio-summary")
+def assistant_portfolio_summary(
+    symbol: str = "", stock_market: str = "", account_id: str = "",
+    limit: Annotated[int, Query(ge=1, le=50)] = 25,
+    offset: Annotated[int, Query(ge=0)] = 0,
+):
+    """Compact current holdings and saved evidence, with explicit pagination."""
+    payload = portfolio_payload(force_refresh=False, defer_enrichment=True)
+    items = []
+    for item in payload.get("items", []):
+        holding = item.get("holding") or {}
+        if symbol and str(holding.get("symbol") or "").upper() != symbol.strip().upper():
+            continue
+        if stock_market and str(holding.get("stock_market") or "").upper() != stock_market.strip().upper():
+            continue
+        if account_id and holding.get("account_id") != account_id:
+            continue
+        summary = {key: item.get(key) for key in ("market_cap", "industry", "missing", "provider_status", "refresh_state", "price_ranges", "moving_averages", "volume")}
+        summary["holding"] = holding
+        for key in ("income_trend", "profit_trend", "dividend_trend", "profit_market_cap_trend"):
+            summary[key] = {k: v for k, v in (item.get(key) or {}).items() if k != "series"}
+        items.append(summary)
+    selected = items[offset:offset + limit]
+    return {
+        "items": selected, "count": len(selected), "total_count": len(items),
+        "next_offset": offset + len(selected) if offset + len(selected) < len(items) else None,
+        "status": payload.get("status", {}), "refresh_pending": payload.get("refresh_pending", False),
+        "note": "Amounts use each holding's stated currency. Never sum different currencies. Saved market evidence may be stale or pending; missing values are unknown.",
+    }
+
+
+@app.get("/api/assistant/market-quote")
+def assistant_market_quote(symbol: Annotated[str, Query(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_^.=-]+$")]):
+    symbol = symbol.upper()
+    quote, status = hub().quote(symbol)
+    return {"symbol": symbol, "quote": quote, "status": status, "requested_at": datetime.now(timezone.utc).isoformat(), "note": "Request time is not quote time. Use provider timestamps and status; when absent, freshness is unknown."}
+
+
+@app.get("/api/assistant/stock-dividends")
+def assistant_stock_dividends(symbol: Annotated[str, Query(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_^.=-]+$")]):
+    symbol = symbol.upper()
+    rows, status = hub().dividends(symbol)
+    return {"symbol": symbol, "items": rows, "status": status, "note": "No records means unavailable history unless the provider explicitly establishes no dividends."}
+
+
+@app.get("/api/assistant/portfolio-screen")
+def assistant_portfolio_screen(query: str = "", account: str = "", account_id: str = "", assetClass: str = "", currency: str = "", sector: str = "", includeMissing: bool = True):
+    criteria = {"query": query, "account": account, "assetClass": assetClass, "currency": currency, "sector": sector, "includeMissing": includeMissing}
+    analyses = analyze_all()
+    exact_id = account_id or (account if any(item.holding.account_id == account for item in analyses) else "")
+    if exact_id:
+        analyses = [item for item in analyses if item.holding.account_id == exact_id]
+        criteria["account"] = ""
+    matches = screen(analyses, criteria)
+    return {"count": len(matches), "items": [to_dict(item) for item in matches], "note": "Filtered screening results are not complete account inventory. Missing-data rows are included unless explicitly excluded. Use portfolio-summary to establish all current holdings."}
+
+
+@app.get("/api/assistant/pension-projection")
+def assistant_pension_projection(person_id: str = "", retire_age: float = 67, monthly_salary: float = 0, current_savings: float = 0, monthly_deposit: float = 0, annual_return: float = 0):
+    return local_store.simulate_pension({"person_id": person_id, "retire_age": retire_age, "monthly_salary": monthly_salary, "current_savings": current_savings, "monthly_deposit": monthly_deposit, "annual_return": annual_return})
 
 
 @app.post("/api/screener")
@@ -4424,6 +4483,29 @@ def market_screener(criteria: dict[str, Any]):
             "latest_annual_reports": needs_financials,
         },
     }
+
+
+@app.get("/api/assistant/market-screen")
+def assistant_market_screen(request: Request):
+    """GET equivalent of the existing read-only market calculation."""
+    from .assistant_rest import validate_arguments
+    arguments = dict(request.query_params)
+    properties = ASSISTANT_READ_TOOLS["run_market_screener"]["parameters"]["properties"]
+    try:
+        for key, value in arguments.items():
+            kind = properties.get(key, {}).get("type")
+            if kind == "number":
+                arguments[key] = float(value)
+            elif kind == "integer":
+                arguments[key] = int(value)
+            elif kind == "boolean":
+                if value.lower() not in {"true", "false"}:
+                    raise ValueError("Invalid boolean argument")
+                arguments[key] = value.lower() == "true"
+        validate_arguments(arguments, ASSISTANT_READ_TOOLS["run_market_screener"]["parameters"])
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid market screen criteria.") from exc
+    return market_screener(arguments)
 
 
 @app.get("/api/alerts")

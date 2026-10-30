@@ -140,6 +140,13 @@
 
       <main class="workspace">
 
+        <section class="assistant-launcher" aria-label="Portfolio chat">
+          <label for="assistantLauncher" class="assistant-launcher-label">Ask your portfolio</label>
+          <input id="assistantLauncher" type="text" maxlength="8000" autocomplete="off" placeholder="Type a question to open chat…" aria-haspopup="dialog" aria-controls="assistantModal" />
+          <span class="assistant-readonly">Read only</span>
+          <button id="openAssistant" class="secondary compact-button" type="button" data-modal="assistantModal">Open chat</button>
+        </section>
+
         <div id="readOnlyNotice" class="info-strip read-only-notice" role="status" hidden>Viewer access is read-only. You can inspect and filter data, but changes are disabled.</div>
 
         <section class="ticker-panel">
@@ -266,16 +273,29 @@
 
     <div id="assistantModal" class="modal" hidden>
       <div class="modal-backdrop" data-close></div>
-      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="assistantTitle">
+      <section class="modal-card wide assistant-card" role="dialog" aria-modal="true" aria-labelledby="assistantTitle" aria-describedby="assistantReadOnlyNotice">
         <div class="section-head">
           <div><p class="eyebrow">Read-only AI</p><h2 id="assistantTitle">Ask about your portfolio</h2></div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
-        <p class="info-strip">Ask in any language. The assistant can only read approved portfolio data and cannot change anything.</p>
-        <label class="field"><span>Your question</span><textarea id="assistantPrompt" rows="4" maxlength="8000" placeholder="For example: What are my largest holdings?"></textarea></label>
-        <div class="form-actions"><button id="askAssistant" type="button">Ask</button><button id="clearAssistantContext" class="secondary" type="button">Clear context</button></div>
-        <p id="assistantStatus" class="status-line" role="status" aria-live="polite"></p>
-        <article id="assistantAnswer" class="info-strip" dir="auto" hidden></article>
+        <p id="assistantReadOnlyNotice" class="assistant-notice">Read only. The assistant reads approved app data and cannot change your portfolio. Missing information is stated explicitly.</p>
+        <div class="assistant-layout">
+          <aside class="assistant-history" aria-labelledby="assistantHistoryTitle">
+            <div class="assistant-history-head"><h3 id="assistantHistoryTitle">Your chats</h3><button id="newAssistantChat" class="secondary compact-button" type="button">New chat</button></div>
+            <p id="assistantHistoryCount" class="assistant-muted"></p>
+            <nav id="assistantChatList" class="assistant-chat-list" aria-label="Saved chats"></nav>
+          </aside>
+          <div class="assistant-conversation">
+            <h3 id="assistantChatTitle" class="assistant-chat-title">New chat</h3>
+            <div id="assistantMessages" class="assistant-messages" role="log" aria-label="Chat messages" aria-live="polite" aria-relevant="additions text" tabindex="0"></div>
+            <form id="assistantComposer" class="assistant-composer">
+              <label class="field"><span>Your question</span><textarea id="assistantPrompt" rows="3" maxlength="8000" placeholder="For example: What are my largest holdings?" aria-describedby="assistantComposerHelp" dir="auto"></textarea></label>
+              <div class="assistant-composer-actions"><p id="assistantComposerHelp" class="assistant-muted">Enter to send. Shift + Enter for a new line.</p><button id="askAssistant" type="submit">Send</button></div>
+            </form>
+            <div class="assistant-status-row"><p id="assistantStatus" class="status-line" role="status" aria-live="polite"></p><button id="retryAssistant" class="secondary compact-button" type="button" hidden>Retry</button></div>
+          </div>
+        </div>
+        <details class="assistant-permissions"><summary>Approved read-only REST endpoints</summary><ul id="assistantReadTools"></ul></details>
       </section>
     </div>
 
@@ -2180,6 +2200,7 @@
             <button id="settingsNavDisplay" class="settings-menu-button active" type="button" data-settings-section="display" aria-controls="settingsPanelDisplay" aria-current="page">Display and language</button>
             <button id="settingsNavSecurity" class="settings-menu-button" type="button" data-settings-section="security" aria-controls="settingsPanelSecurity">Account security</button>
             <button id="settingsNavTable" class="settings-menu-button" type="button" data-settings-section="table" aria-controls="settingsPanelTable">Table settings</button>
+            <button id="settingsNavAssistant" class="settings-menu-button" type="button" data-settings-section="assistant" aria-controls="settingsPanelAssistant">Portfolio chat</button>
             <button id="settingsNavApi" class="settings-menu-button" type="button" data-settings-section="api" aria-controls="settingsPanelApi" data-admin-only hidden>REST API &amp; MCP</button>
             <div class="settings-menu-entry">
               <button id="settingsNavData" class="settings-menu-button" type="button" data-settings-section="data" aria-controls="settingsPanelData">Portfolio data import and export</button>
@@ -2220,6 +2241,16 @@
                 <label class="field"><span data-i18n="tableMaPeriod">Table MA period</span><select id="tableMaPeriod"><option value="7">MA 7</option><option value="15">MA 15</option><option value="30">MA 30</option></select></label>
                 <button id="saveTableSettings" type="button" data-i18n="saveTableSettings">Save table settings</button>
               </div>
+            </section>
+
+            <section id="settingsPanelAssistant" class="settings-section settings-panel" data-settings-panel="assistant" aria-labelledby="settingsNavAssistant" hidden>
+              <div class="settings-section-title"><h3>Portfolio chat</h3></div>
+              <p class="settings-section-description">Keep up to this many chats for your user. When the limit is exceeded, the chat with the oldest last message is removed. Opening a chat does not make it newer. Lowering the limit removes older chats immediately.</p>
+              <form id="assistantSettingsForm" class="management-form settings-form">
+                <label class="field"><span>Maximum saved chats</span><input id="assistantMaxChats" type="number" min="1" max="100" step="1" value="10" inputmode="numeric" required /></label>
+                <button id="saveAssistantSettings" type="submit">Save chat settings</button>
+              </form>
+              <p id="assistantSettingsStatus" class="status-line" role="status" aria-live="polite"></p>
             </section>
 
             <section id="settingsPanelApi" class="settings-section settings-panel" data-settings-panel="api" aria-labelledby="settingsNavApi" hidden>
