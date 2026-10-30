@@ -721,7 +721,8 @@ html[dir="rtl"] .ticker-row { justify-content: flex-end; }
   align-content: center;
   align-items: center;
   min-height: 56px;
-  min-width: 190px;
+  flex: 0 0 auto;
+  max-width: 100%;
   padding: 8px 10px;
   border: 1px solid #2a2c31;
   border-radius: 7px;
@@ -729,16 +730,18 @@ html[dir="rtl"] .ticker-row { justify-content: flex-end; }
 }
 
 .ticker-body {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  column-gap: 12px;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
   row-gap: 4px;
   min-width: 0;
 }
 
 .ticker-card .ticker-label {
-  flex-basis: 100%;
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
   overflow-wrap: anywhere;
   color: #aeb4bd;
   font-size: 12px;
@@ -746,6 +749,8 @@ html[dir="rtl"] .ticker-row { justify-content: flex-end; }
 }
 
 .ticker-card strong {
+  grid-column: 1;
+  grid-row: 1 / span 2;
   display: flex;
   align-items: baseline;
   gap: 5px;
@@ -762,13 +767,16 @@ html[dir="rtl"] .ticker-row { justify-content: flex-end; }
 }
 
 .ticker-card .ticker-change {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
   width: fit-content;
   font-size: 12px;
   font-weight: 800;
   white-space: nowrap;
 }
 
-.ticker-card .ticker-meta { flex-basis: 100%; }
+.ticker-card .ticker-meta { grid-column: 1 / -1; }
 .ticker-panel .instrument-icon { width: 28px; height: 28px; border-radius: 6px; box-shadow: none; }
 .ticker-panel .instrument-icon svg { width: 22px; height: 22px; }
 .ticker-panel .currency-icon b { font-size: 16px; }
