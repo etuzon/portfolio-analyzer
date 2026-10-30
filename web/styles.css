@@ -6360,14 +6360,12 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 }
 
 .trade-history-section {
-  margin-block: 22px;
-  padding-block: 8px 18px;
-  border-bottom: 1px solid var(--ux-stroke);
+  margin: 0;
 }
 
 .trade-history-controls {
   display: grid;
-  grid-template-columns: minmax(170px, 220px) minmax(220px, 1fr) max-content;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: end;
   gap: 12px;
   margin: 14px 0;
@@ -6376,8 +6374,30 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 .trade-history-controls input,
 .trade-history-controls select {
   width: 100%;
-  min-width: 160px;
+  min-width: 0;
 }
+
+.trade-history-controls .field { min-width: 0; }
+
+.position-sort-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+}
+
+.position-sort-button:hover { color: var(--ux-text, #fff); background: transparent; }
+.position-sort-button:focus-visible { outline: 2px solid #55b9e7; outline-offset: 4px; }
+
+#tradeHistoryTable .empty button { display: block; margin: 12px auto 0; }
 
 .trade-history-table-wrap {
   max-height: 560px;
@@ -6456,7 +6476,7 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 
 @media (max-width: 900px) {
   .trade-history-controls {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .trade-history-controls .field {
@@ -6484,6 +6504,10 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
   .report-grid.trade-history-detail-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+@media (max-width: 600px) {
+  .position-account-filter, .position-search-filter { grid-column: 1 / -1; }
 }
 
 .report-section-heading {

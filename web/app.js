@@ -14,6 +14,8 @@ const state = {
   tradeHistory: null,
   tradeHistoryLoading: false,
   tradeHistoryPage: 1,
+  positionsAccounts: [],
+  positionsPeople: [],
   fxRates: {},
   coreFxRates: {},
   bannerFxRates: {},
@@ -201,6 +203,7 @@ const TRANSLATIONS = {
     brokers: "Brokers",
     employeeOptions: "Employee Stock Options",
     securities: "Securities",
+    positions: "Positions",
     prices: "Prices",
     events: "Events",
     people: "People",
@@ -262,6 +265,7 @@ const TRANSLATIONS = {
     brokers: "ברוקרים",
     employeeOptions: "אופציות עובדים",
     securities: "ניירות ערך",
+    positions: "פוזיציות",
     prices: "מחירים",
     events: "אירועים",
     people: "אנשים",
@@ -1071,6 +1075,7 @@ function ensureHierarchicalNav() {
         <button class="nav-item" type="button" data-modal="brokersModal">${esc(t("brokers"))}</button>
         <button class="nav-item" type="button" data-modal="securitiesModal" data-securities-workflow="employee-options">${esc(t("employeeOptions"))}</button>
         <button class="nav-item" type="button" data-modal="securitiesModal">${esc(t("securities"))}</button>
+        <button class="nav-item" type="button" data-modal="positionsModal">${esc(t("positions"))}</button>
         <button class="nav-item" type="button" data-modal="pricesModal">${esc(t("prices"))}</button>
         <button class="nav-item" type="button" data-modal="eventsModal">${esc(t("events"))}</button>
       </div>
@@ -1508,7 +1513,7 @@ function applyLanguage() {
   if (state.financeReport) renderFinanceReport(state.financeReport);
   if (state.activeReport) renderReportSummary(state.activeReport);
   if (state.activeReportTrend) renderAccountTrend(state.activeReportTrend);
-  if (state.tradeHistory || state.tradeHistoryLoading) renderTradeHistory();
+  if (state.tradeHistory || state.tradeHistoryLoading) { refreshPositionFilterOptions(); renderTradeHistory(); }
   if (state.tradeHistoryDetail) renderTradeHistoryDetails(state.tradeHistoryDetail);
   if (state.items?.length) renderRows(state.items);
   if (state.positionTransactionsDetail) syncPositionTransactionLimit();
@@ -5711,7 +5716,7 @@ async function savePositionTransaction() {
   }
   // The saved transaction is already confirmed; analytics must not delay or undo its feedback.
   loadPortfolio().then(() => {
-    if (state.activeReportFilters && !$("reportsModal")?.hidden) loadTradeHistory(state.activeReportFilters);
+    if (!$("positionsModal")?.hidden) loadTradeHistory();
     if (state.positionTransactionsDetail !== detail) return;
     refreshPositionTransactionDetail(result.position_quantity);
     renderPositionTransactionHistory();
@@ -7695,28 +7700,118 @@ function tradeHistorySourceLabel(source) {
   return t("Recorded locally");
 }
 
+function positionAccountMatchesScope(account) {
+  const type = valueOf("positionAccountType");
+  const personId = valueOf("positionPerson");
+  if (type && account.type !== type) return false;
+  if (!personId) return true;
+  const member = (state.positionsPeople || []).find((person) => person.id === personId);
+  const normalize = (name) => String(name || "").trim().replace(/\s+/g, " ").toLocaleLowerCase();
+  const name = member ? normalize(memberLabel(member)) : "";
+  return (account.persons || []).some((person) => String(person.member_id || "") === personId
+    || (!person.member_id && name && normalize(person.name) === name));
+}
+
+function positionAccountMatchesFilters(accountId) {
+  const selected = valueOf("positionAccount");
+  if (selected && accountId !== selected) return false;
+  if (!valueOf("positionAccountType") && !valueOf("positionPerson")) return true;
+  const account = (state.positionsAccounts || []).find((row) => row.id === accountId);
+  return Boolean(account && positionAccountMatchesScope(account));
+}
+
+function refreshPositionAccountSelect() {
+  const select = $("positionAccount");
+  const current = select.value;
+  select.innerHTML = `<option value="">${esc(t("All matching accounts"))}</option>`
+    + (state.positionsAccounts || []).filter(positionAccountMatchesScope).map(accountOptionHtml).join("");
+  if ([...select.options].some((option) => option.value === current)) select.value = current;
+  select.title = select.selectedOptions?.[0]?.textContent || "";
+}
+
+function refreshPositionFilterOptions() {
+  const populate = (id, options, all) => {
+    const select = $(id), current = select.value;
+    select.innerHTML = `<option value="">${esc(t(all))}</option>` + options.map(([value, label]) => `<option value="${esc(value)}">${esc(label)}</option>`).join("");
+    if ([...select.options].some((option) => option.value === current)) select.value = current;
+  };
+  populate("positionPerson", (state.positionsPeople || []).map((person) => [person.id, memberLabel(person)]), "All people");
+  const types = [...new Set(["Investment", ...(state.positionsAccounts || []).map((account) => account.type)])].filter(Boolean);
+  populate("positionAccountType", types.map((type) => [type, optionLabel(type)]), "All account categories");
+  refreshPositionAccountSelect();
+}
+
+function positionMonetarySort(key = valueOf("positionSort")) {
+  return ["total_profit", "profit_per_day", "profit_per_year"].includes(key);
+}
+
 function filteredTradeHistoryItems() {
   const status = valueOf("tradeHistoryPositionStatus") || "all";
   const query = valueOf("tradeHistorySearch").toLocaleLowerCase();
-  return (state.tradeHistory?.items || []).filter((item) => (
-    (status === "all" || item.status === status)
+  const key = valueOf("positionSort") || "opened_date";
+  const direction = valueOf("positionSortDirection") === "asc" ? 1 : -1;
+  const numeric = ["duration_days", "total_profit", "profit_per_day", "profit_per_year"].includes(key);
+  const rows = (state.tradeHistory?.items || []).filter((item) => (
+    positionAccountMatchesFilters(item.account_id)
+    && (status === "all" || item.status === status)
     && (!query || [item.symbol, item.name, item.account_label, item.stock_market,
       formatDate(item.opened_date || ""), formatDate(item.closed_date || "")]
       .some((part) => String(part || "").toLocaleLowerCase().includes(query)))
   ));
+  return rows.sort((a, b) => {
+    const valid = (value) => value !== null && value !== undefined && value !== "" && (!numeric || Number.isFinite(Number(value)));
+    const av = a[key], bv = b[key];
+    if (valid(av) !== valid(bv)) return valid(av) ? -1 : 1;
+    if (positionMonetarySort(key) && a.currency !== b.currency) return String(a.currency || "").localeCompare(String(b.currency || ""));
+    const order = !valid(av) ? 0 : numeric ? Number(av) - Number(bv) : String(av).localeCompare(String(bv), locale());
+    return order * direction || String(a.symbol || "").localeCompare(String(b.symbol || ""), locale()) || String(a.id || "").localeCompare(String(b.id || ""));
+  });
 }
 
-async function loadTradeHistory(filters = state.activeReportFilters) {
-  if (!filters) return;
+function updatePositionFilters({ scopeChanged = false } = {}) {
+  if (scopeChanged) refreshPositionAccountSelect();
+  state.tradeHistoryPage = 1;
+  renderTradeHistory();
+  $("tradeHistoryTable").scrollTop = 0;
+}
+
+function resetPositionFilters() {
+  $("positionPerson").value = "";
+  $("positionAccountType").value = "Investment";
+  $("positionAccount").value = "";
+  $("tradeHistoryPositionStatus").value = "all";
+  $("tradeHistorySearch").value = "";
+  $("positionSort").value = "opened_date";
+  $("positionSortDirection").value = "desc";
+  updatePositionFilters({ scopeChanged: true });
+}
+
+function setPositionColumnSort(key) {
+  const select = $("positionSort");
+  if (![...select.options].some((option) => option.value === key)) return;
+  $("positionSortDirection").value = select.value === key
+    ? (valueOf("positionSortDirection") === "asc" ? "desc" : "asc")
+    : (["symbol", "account_label"].includes(key) ? "asc" : "desc");
+  select.value = key;
+  updatePositionFilters();
+  $("tradeHistoryTable").querySelector(`[data-position-sort="${key}"]`)?.focus({ preventScroll: true });
+}
+
+async function loadTradeHistory() {
   const version = (state.tradeHistoryRequestVersion || 0) + 1;
   state.tradeHistoryRequestVersion = version;
   state.tradeHistoryLoading = true;
   state.tradeHistoryError = false;
   renderTradeHistory();
   try {
-    const data = await api(`/api/local/trade-history?${reportQueryParams(filters)}`);
+    const [data, accounts, people] = await Promise.all([
+      api("/api/local/trade-history"), api("/api/local/accounts"), api("/api/local/family-members"),
+    ]);
     if (version !== state.tradeHistoryRequestVersion) return;
     state.tradeHistory = data;
+    state.positionsAccounts = accounts.items || [];
+    state.positionsPeople = people.items || [];
+    refreshPositionFilterOptions();
     state.tradeHistoryPage = 1;
   } catch (_error) {
     if (version !== state.tradeHistoryRequestVersion) return;
@@ -7736,6 +7831,7 @@ function renderTradeHistory() {
   const unallocated = $("tradeHistoryUnallocated");
   $("retryTradeHistory").hidden = !state.tradeHistoryError;
   $("exportTradeHistoryCsv").disabled = true;
+  $("positionSortNote").hidden = !positionMonetarySort();
   if (state.tradeHistoryLoading) {
     status.textContent = t("Loading recorded trade history…");
     table.innerHTML = "";
@@ -7758,8 +7854,15 @@ function renderTradeHistory() {
   $("exportTradeHistoryCsv").disabled = !rows.length;
   status.textContent = `${rows.length} ${t("Holding periods")} · ${t("As of")} ${formatDate(data.as_of_date)} · ${t("Saved local prices")}`;
   const headers = ["Security / account", "Position status", "Opened / closed", "Total P/L", "P/L per day", "P/L per year", "Actions"];
+  const sortKeys = ["symbol", "", "", "total_profit", "profit_per_day", "profit_per_year", ""];
+  const sortKey = valueOf("positionSort"), ascending = valueOf("positionSortDirection") === "asc";
+  const heading = (header, index) => {
+    const key = sortKeys[index], active = key && key === sortKey;
+    const nextDirection = active ? (ascending ? "Descending" : "Ascending") : key === "symbol" ? "Ascending" : "Descending";
+    return `<th scope="col"${active ? ` aria-sort="${ascending ? "ascending" : "descending"}"` : ""}>${key ? `<button class="position-sort-button" type="button" data-position-sort="${key}" aria-label="${esc(`${t("Sort by")} ${t(header)} · ${t(nextDirection)}`)}">${esc(t(header))}<span aria-hidden="true">${active ? (ascending ? "↑" : "↓") : "↕"}</span></button>` : esc(t(header))}</th>`;
+  };
   const cell = (label, content, extra = "") => `<td data-label="${esc(t(label))}"${extra}>${content}</td>`;
-  table.innerHTML = rows.length ? `<table class="holdings-table compact-report-table trade-history-table"><thead><tr>${headers.map((header) => `<th scope="col">${esc(t(header))}</th>`).join("")}</tr></thead><tbody>${rows.slice((page - 1) * pageSize, page * pageSize).map((row) => `<tr>
+  table.innerHTML = rows.length ? `<table class="holdings-table compact-report-table trade-history-table"><thead><tr>${headers.map(heading).join("")}</tr></thead><tbody>${rows.slice((page - 1) * pageSize, page * pageSize).map((row) => `<tr>
     ${cell("Security / account", `<b>${esc(row.symbol)}</b>${row.name && row.name !== row.symbol ? `<small>${esc(row.name)}</small>` : ""}<small>${esc(row.account_label)}</small><small>${esc(currencyDisplayLabel(row.currency))} · ${esc(row.stock_market)}</small>`)}
     ${cell("Position status", `<span class="badge ${row.status === "closed" ? "ok" : "partial"}">${esc(t(row.status === "closed" ? "Closed position" : "Open position"))}</span>${row.issues?.length ? `<small title="${esc(row.issues.map(tradeHistoryIssueText).join(" · "))}">${esc(t("Limited data"))} · ${row.issues.length}</small>` : ""}`)}
     ${cell("Opened / closed", `<span>${esc(t("Opened"))}: ${esc(row.opened_date ? formatDate(row.opened_date) : t("Not available"))}</span><small>${esc(t("Closed"))}: ${esc(row.closed_date ? formatDate(row.closed_date) : t(row.status === "open" ? "Still open" : "Not available"))}</small><small>${esc(t("Days held"))}: ${esc(row.duration_days ?? t("Not available"))}</small>`)}
@@ -7767,10 +7870,10 @@ function renderTradeHistory() {
     ${["profit_per_day", "profit_per_year"].map((key, index) => cell(headers[index + 4], esc(tradeHistoryAmount(row[key], row.currency)), ` class="${row[key] > 0 ? "positive" : row[key] < 0 ? "negative" : ""}"`)).join("")}
     ${cell("Actions", `<button class="secondary compact-button" type="button" data-trade-history-details="${esc(row.id)}" aria-label="${esc(t("Position history details"))}: ${esc(row.symbol)} · ${esc(row.account_label)}">${esc(t("Details"))}</button>`)}
   </tr>`).join("")}</tbody></table>${pages > 1 ? `<div class="trade-history-pagination"><button type="button" class="secondary compact-button" data-trade-history-page="-1"${page === 1 ? " disabled" : ""}>${esc(t("Previous"))}</button><span>${esc(t("Page"))} ${page} / ${pages}</span><button type="button" class="secondary compact-button" data-trade-history-page="1"${page === pages ? " disabled" : ""}>${esc(t("Next"))}</button></div>` : ""}`
-    : `<div class="empty">${esc(t(data.items?.length ? "No positions match these history filters" : "No recorded position history is available"))}</div>`;
+    : `<div class="empty">${esc(t(data.items?.length ? "No positions match these history filters" : "No recorded position history is available"))}${data.items?.length ? `<button class="secondary compact-button" type="button" data-reset-position-filters>${esc(t("Reset filters"))}</button>` : ""}</div>`;
   const query = valueOf("tradeHistorySearch").toLocaleLowerCase();
-  const entries = (data.unallocated_transactions || []).filter((entry) => !query || String(entry.symbol || "").toLocaleLowerCase().includes(query));
-  const reportIssues = [...new Set(data.issues || [])];
+  const entries = (data.unallocated_transactions || []).filter((entry) => positionAccountMatchesFilters(entry.account_id) && (!query || String(entry.symbol || "").toLocaleLowerCase().includes(query)));
+  const reportIssues = [...new Set(entries.flatMap((entry) => entry.issues || []))];
   unallocated.innerHTML = reportIssues.length || entries.length ? `<details class="trade-history-data-note"><summary>${esc(t("History data notes"))}${entries.length ? ` · ${entries.length} ${esc(t("Unallocated activities"))}` : ""}</summary>${reportIssues.map((issue) => `<p class="section-note">${esc(tradeHistoryIssueText(issue))}</p>`).join("")}${entries.map((entry) => `<p class="section-note"><b>${esc(entry.symbol)}</b> · ${esc(entry.trade_date ? formatDate(entry.trade_date) : t("Not available"))} · ${esc(tradeHistoryActionLabel(entry.action))} · ${esc(tradeHistoryAmount(Number.isFinite(entry.quantity) && Number.isFinite(entry.price) ? entry.quantity * entry.price : null, entry.currency))}</p>`).join("")}</details>` : "";
 }
 
@@ -7779,8 +7882,8 @@ function openTradeHistoryDetails(id, trigger) {
   if (!row) return;
   state.tradeHistoryDetail = row;
   renderTradeHistoryDetails(row);
-  $("reportsModal").inert = true;
-  $("reportsModal").setAttribute("aria-hidden", "true");
+  $("positionsModal").inert = true;
+  $("positionsModal").setAttribute("aria-hidden", "true");
   openModal("tradeHistoryDetailModal", trigger, { focusId: "tradeHistoryDetailTitle" });
 }
 
@@ -8460,7 +8563,6 @@ async function loadReports() {
     renderReportSummary(report);
     renderAccountTrend(trend);
     renderHistorySnapshots();
-    loadTradeHistory(filters);
     $("reportsExportStatus").textContent = report.accounts
       ? `Report ready · ${report.accounts} accounts included`
       : "No accounts match these filters";
@@ -11672,6 +11774,10 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
       .then(loadReports)
       .catch((error) => { $("reportsExportStatus").textContent = `Error: ${error.message}`; });
   }
+  if (id === "positionsModal") {
+    loadTradeHistory();
+    requestAnimationFrame(() => $("tradeHistoryTitle").focus());
+  }
   if (id === "researchModal") {
     setResearchSection(state.researchSection);
     loadCompanyOutlookHistory().catch((error) => { $("companyOutlookStatus").textContent = `Error: ${error.message}`; });
@@ -11706,8 +11812,8 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
 function closeModal(modal) {
   if (!modal) return;
   if (modal.id === "tradeHistoryDetailModal") {
-    $("reportsModal").inert = false;
-    $("reportsModal").removeAttribute("aria-hidden");
+    $("positionsModal").inert = false;
+    $("positionsModal").removeAttribute("aria-hidden");
   }
   modal.hidden = true;
   modal.querySelector(".modal-home-link")?.remove();
@@ -11784,6 +11890,15 @@ document.addEventListener("click", (event) => {
   const tradeDetail = event.target.closest("[data-trade-history-details]");
   if (tradeDetail) {
     openTradeHistoryDetails(tradeDetail.dataset.tradeHistoryDetails, tradeDetail);
+    return;
+  }
+  const positionSort = event.target.closest("[data-position-sort]");
+  if (positionSort) {
+    setPositionColumnSort(positionSort.dataset.positionSort);
+    return;
+  }
+  if (event.target.closest("[data-reset-position-filters]")) {
+    resetPositionFilters();
     return;
   }
   const tradePage = event.target.closest("[data-trade-history-page]");
@@ -12694,9 +12809,15 @@ $("accountTrendChart").addEventListener("click", (event) => {
   if (state.activeReportTrend) renderAccountTrend(state.activeReportTrend);
   $("accountTrendChart").querySelector(`[data-report-metric="${metric}"]`)?.focus();
 });
-$("tradeHistoryPositionStatus").addEventListener("change", () => { state.tradeHistoryPage = 1; renderTradeHistory(); });
-$("tradeHistorySearch").addEventListener("input", () => { state.tradeHistoryPage = 1; renderTradeHistory(); });
-$("retryTradeHistory").addEventListener("click", () => loadTradeHistory(state.activeReportFilters));
+$("positionPerson").addEventListener("change", () => updatePositionFilters({ scopeChanged: true }));
+$("positionAccountType").addEventListener("change", () => updatePositionFilters({ scopeChanged: true }));
+$("positionAccount").addEventListener("change", () => { $("positionAccount").title = $("positionAccount").selectedOptions?.[0]?.textContent || ""; updatePositionFilters(); });
+$("tradeHistoryPositionStatus").addEventListener("change", () => updatePositionFilters());
+$("tradeHistorySearch").addEventListener("input", () => updatePositionFilters());
+$("positionSort").addEventListener("change", () => updatePositionFilters());
+$("positionSortDirection").addEventListener("change", () => updatePositionFilters());
+$("resetPositionFilters").addEventListener("click", resetPositionFilters);
+$("retryTradeHistory").addEventListener("click", loadTradeHistory);
 $("exportTradeHistoryCsv").addEventListener("click", exportTradeHistoryCsv);
 $("exportReportsPdf").addEventListener("click", () => exportReportsPdf().catch((error) => { $("reportsExportStatus").textContent = `Error: ${error.message}`; }));
 ["reportPerson", "reportAccountType", "reportAccount", "reportLocation", "reportFrom", "reportTo"].forEach((id) => {

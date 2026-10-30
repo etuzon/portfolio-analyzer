@@ -70,6 +70,7 @@
               <button class="nav-item" type="button" data-modal="brokersModal">Brokers</button>
               <button class="nav-item" type="button" data-modal="securitiesModal" data-securities-workflow="employee-options">Employee Stock Options</button>
               <button class="nav-item" type="button" data-modal="securitiesModal">Securities</button>
+              <button class="nav-item" type="button" data-modal="positionsModal">Positions</button>
               <button class="nav-item" type="button" data-modal="pricesModal">Prices</button>
               <button class="nav-item" type="button" data-modal="eventsModal">Events</button>
             </div>
@@ -1348,22 +1349,6 @@
         <div id="reportsSummary" class="report-grid report-balance-grid"></div>
         <p id="reportValuationNote" class="section-note" role="status"></p>
         <div id="reportRetirementSummary" class="report-retirement-summary"></div>
-        <section class="trade-history-section" aria-labelledby="tradeHistoryTitle">
-          <div class="section-head report-section-heading">
-            <div><h3 id="tradeHistoryTitle">Buy / sell history</h3><p class="section-note">Includes recorded positions that are fully sold. Closing and reopening a position creates a separate holding period.</p></div>
-            <button id="exportTradeHistoryCsv" class="secondary compact-button" type="button" disabled>Download history CSV</button>
-          </div>
-          <div class="trade-history-controls">
-            <label class="field"><span>Position status</span><select id="tradeHistoryPositionStatus"><option value="all">All positions</option><option value="open">Open positions</option><option value="closed">Closed positions</option></select></label>
-            <label class="field"><span>Search history</span><input id="tradeHistorySearch" type="search" placeholder="Symbol, name or account" /></label>
-            <button id="retryTradeHistory" class="secondary compact-button" type="button" hidden>Retry</button>
-          </div>
-          <p class="section-note">Annualized monetary P/L = total P/L ÷ calendar days held × 365. Each position uses its own currency.</p>
-          <p class="section-note">P/L uses average cost and includes allocated recorded income and fees. Unrecorded costs and taxes are excluded.</p>
-          <p id="tradeHistoryStatus" class="status-line" role="status" aria-live="polite"></p>
-          <div id="tradeHistoryTable" class="table-wrap trade-history-table-wrap"></div>
-          <div id="tradeHistoryUnallocated"></div>
-        </section>
         <section class="report-history-section" aria-labelledby="reportHistoryTitle">
           <div class="report-section-heading"><h3 id="reportHistoryTitle">Account history</h3><p class="section-note">Balance changes can include deposits and withdrawals; they are not investment returns. Historical amounts use current exchange rates.</p></div>
           <div class="report-history-controls report-screen-only">
@@ -1411,6 +1396,34 @@
           <div id="historyList" class="stack management-list"></div>
           </div>
         </details>
+      </section>
+    </div>
+
+    <div id="positionsModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide positions-card" role="dialog" aria-modal="true" aria-labelledby="tradeHistoryTitle">
+        <div class="trade-history-section">
+          <div class="section-head">
+            <div><h2 id="tradeHistoryTitle" tabindex="-1" data-modal-initial-focus>Positions</h2><p class="section-note">Includes recorded positions that are fully sold. Closing and reopening a position creates a separate holding period.</p></div>
+            <div class="settings-actions"><button id="exportTradeHistoryCsv" class="secondary compact-button" type="button" disabled>Download history CSV</button><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+          </div>
+          <div class="trade-history-controls" aria-label="Position filters">
+            <label class="field"><span>People</span><select id="positionPerson"><option value="">All people</option></select></label>
+            <label class="field"><span>Account type</span><select id="positionAccountType"><option value="">All account categories</option><option value="Investment" selected>Investment</option></select></label>
+            <label class="field position-account-filter"><span>Account name</span><select id="positionAccount"><option value="">All matching accounts</option></select></label>
+            <label class="field"><span>Position status</span><select id="tradeHistoryPositionStatus"><option value="all">All positions</option><option value="open">Open positions</option><option value="closed">Closed positions</option></select></label>
+            <label class="field position-search-filter"><span>Search history</span><input id="tradeHistorySearch" type="search" placeholder="Symbol, name or account" /></label>
+            <label class="field"><span>Sort by</span><select id="positionSort"><option value="opened_date">Opened date</option><option value="closed_date">Closed date</option><option value="symbol">Security</option><option value="account_label">Account name</option><option value="duration_days">Days held</option><option value="total_profit">Total P/L</option><option value="profit_per_day">P/L per day</option><option value="profit_per_year">P/L per year</option></select></label>
+            <label class="field"><span>Sort direction</span><select id="positionSortDirection"><option value="desc">Descending</option><option value="asc">Ascending</option></select></label>
+            <div class="settings-actions"><button id="resetPositionFilters" class="secondary compact-button" type="button">Reset filters</button><button id="retryTradeHistory" class="secondary compact-button" type="button" hidden>Retry</button></div>
+          </div>
+          <p id="positionSortNote" class="section-note" hidden>Monetary sorting groups positions by currency; amounts are not converted.</p>
+          <p class="section-note">Annualized monetary P/L = total P/L ÷ calendar days held × 365. Each position uses its own currency.</p>
+          <p class="section-note">P/L uses average cost and includes allocated recorded income and fees. Unrecorded costs and taxes are excluded.</p>
+          <p id="tradeHistoryStatus" class="status-line" role="status" aria-live="polite"></p>
+          <div id="tradeHistoryTable" class="table-wrap trade-history-table-wrap"></div>
+          <div id="tradeHistoryUnallocated"></div>
+        </div>
       </section>
     </div>
 

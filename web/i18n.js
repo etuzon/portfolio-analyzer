@@ -2,6 +2,17 @@
   "use strict";
 
   const HEBREW_TEXT = Object.freeze({
+    "Positions": "פוזיציות",
+    "Position filters": "סינון פוזיציות",
+    "Account name": "שם חשבון",
+    "Sort by": "מיון לפי",
+    "Sort direction": "כיוון המיון",
+    "Ascending": "סדר עולה",
+    "Descending": "סדר יורד",
+    "Reset filters": "איפוס מסננים",
+    "Opened date": "תאריך פתיחה",
+    "Closed date": "תאריך סגירה",
+    "Monetary sorting groups positions by currency; amounts are not converted.": "מיון כספי מקבץ פוזיציות לפי מטבע; הסכומים אינם מומרים.",
     "Automatic dividend": "דיבידנד שנרשם אוטומטית",
     "Option exercise": "מימוש אופציה",
     "Recorded locally": "רשומה מקומית",
