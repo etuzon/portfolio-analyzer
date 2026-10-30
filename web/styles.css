@@ -5919,11 +5919,15 @@ tbody tr:hover {
   font-variant-numeric: tabular-nums;
 }
 
+#alarmsList { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+
 .alarm-item {
+  min-width: 0;
+  overflow-wrap: anywhere;
   width: 100%;
   display: grid;
   gap: 5px;
-  text-align: left;
+  text-align: start;
   justify-items: start;
   padding: 12px;
   border-radius: 7px;

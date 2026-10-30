@@ -92,6 +92,9 @@ const state = {
   alertConditions: [],
   editingAlertId: "",
   vestingAlertDays: 30,
+  vestingNoticeSaved: false,
+  clearedAlarmCount: 0,
+  alarmsLoadFailed: false,
   dismissedAlarmIds: [],
   activePensionScenarioIndex: null,
   localOptions: {
@@ -1370,7 +1373,7 @@ function saveVestingAlertSettings() {
   state.vestingAlertDays = normalizedVestingAlertDays(valueOf("vestingAlertDays"));
   localStorage.setItem(VESTING_ALERT_SETTINGS_STORAGE_KEY, JSON.stringify({ leadDays: state.vestingAlertDays }));
   $("vestingAlertDays").value = String(state.vestingAlertDays);
-  $("alarmSettingsStatus").textContent = `Vesting alerts will appear ${state.vestingAlertDays} day${state.vestingAlertDays === 1 ? "" : "s"} before vesting.`;
+  state.vestingNoticeSaved = true;
   scheduleClientStateSync();
   renderAlarms();
 }
@@ -1524,6 +1527,7 @@ function applyLanguage() {
   ensureHierarchicalNav();
   bindNavAccordion();
   renderCurrentUser();
+  renderAlarms();
   renderMacroScenario();
   if (state.alertData) renderAlerts(state.alertData);
   if (state.companyOutlook) renderCompanyOutlook(state.companyOutlook);
@@ -7455,6 +7459,7 @@ async function loadEvents() {
   const data = await api("/api/local/events");
   state.localEvents = data.items || [];
   state.eventDividendSettings = data.dividends || {};
+  state.alarmsLoadFailed = false;
   renderEvents();
   renderAlarms();
   focusEventRow();
@@ -7507,31 +7512,52 @@ function eventDaysFromToday(eventDate) {
   return Math.round((eventUtc - todayUtc) / 86400000);
 }
 
+function alarmText(template, values = {}) {
+  return t(template).replace(/\{(\w+)\}/gu, (placeholder, key) => Object.hasOwn(values, key) ? String(values[key]) : placeholder);
+}
+
+function alarmValue(value) {
+  return `\u2066${value}\u2069`;
+}
+
+function alarmDueText(days, date) {
+  if (days === 0) return t("today");
+  if (days === 1) return t("in 1 day");
+  if (days > 1) return alarmText("in {days} days", { days: fmt(days, 0) });
+  return alarmText("on {date}", { date: alarmValue(formatDate(date)) });
+}
+
 function dividendAlarmMessage(event) {
   const details = event.details || {};
   const currency = event.currency || state.baseCurrency;
   const perShare = Number(details.gross_per_share || 0);
   const shares = Number(details.shares || 0);
-  const perShareText = perShare > 0 ? `${money(perShare, currency, 4)} per share` : "per-share amount not available";
-  const shareText = shares > 0 ? `${fmt(shares, 3)} shares` : "shares not available";
-  const netText = money(event.net_amount || 0, currency, 2);
-  const grossText = money(event.gross_amount || 0, currency, 2);
-  const taxText = money(event.tax_amount || 0, currency, 2);
+  const perShareText = perShare > 0 ? alarmText("{amount} per share", { amount: alarmValue(money(perShare, currency, 4)) }) : t("per-share amount not available");
+  const shareText = shares > 0 ? alarmText(shares === 1 ? "{count} share" : "{count} shares", { count: alarmValue(fmt(shares, 3)) }) : t("shares not available");
+  const values = {
+    symbol: alarmValue(event.symbol),
+    perShare: perShareText,
+    shares: shareText,
+    net: alarmValue(money(event.net_amount || 0, currency, 2)),
+    gross: alarmValue(money(event.gross_amount || 0, currency, 2)),
+    tax: alarmValue(money(event.tax_amount || 0, currency, 2)),
+    date: alarmValue(formatDate(event.event_date)),
+  };
   const days = eventDaysFromToday(event.event_date);
   if (event.status === "pending") {
-    const dueText = days > 0 ? `in ${days} day${days === 1 ? "" : "s"}` : `on ${formatDate(event.event_date)}`;
+    values.due = alarmDueText(days, event.event_date);
     return {
       tone: "future",
-      title: `${event.symbol} dividend is expected ${dueText}`,
-      body: `Expected ${perShareText}. Estimated net total ${netText} after ${taxText} tax for ${shareText}.`,
-      meta: `Payment date ${formatDate(event.event_date)} · Gross ${grossText}`,
+      title: alarmText("{symbol} dividend is expected {due}", values),
+      body: alarmText("Expected {perShare}. Estimated net total {net} after {tax} tax for {shares}.", values),
+      meta: alarmText("Payment date {date} · Gross {gross}", values),
     };
   }
   return {
     tone: "paid",
-    title: `${event.symbol} dividend was paid`,
-    body: `Added ${netText} to cash from ${perShareText} for ${shareText}.`,
-    meta: `Paid ${formatDate(event.event_date)} · Gross ${grossText} · Tax ${taxText}`,
+    title: alarmText("{symbol} dividend was paid", values),
+    body: alarmText("Added {net} to cash from {perShare} for {shares}.", values),
+    meta: alarmText("Paid {date} · Gross {gross} · Tax {tax}", values),
   };
 }
 
@@ -7556,18 +7582,20 @@ function vestingAlarms() {
     .map((lot) => ({ lot, days: eventDaysFromToday(lot.vestDate) }))
     .filter(({ days }) => days >= 0 && days <= leadDays)
     .map(({ lot, days }) => {
-      const unit = lot.kind === "rsu" ? "RSU" : "stock option";
       const singular = Number(lot.quantity) === 1;
-      const quantityLabel = `${fmt(lot.quantity, 2)} ${unit}${singular ? "" : "s"}`;
-      const dueText = days === 0 ? "today" : `in ${days} day${days === 1 ? "" : "s"}`;
+      const values = { symbol: alarmValue(lot.symbol), quantity: alarmValue(fmt(lot.quantity, 2)), due: alarmDueText(days, lot.vestDate), date: alarmValue(formatDate(lot.vestDate)), days: leadDays };
+      const title = lot.kind === "rsu" ? "{symbol} RSU vesting {due}" : "{symbol} stock option vesting {due}";
+      const body = lot.kind === "rsu"
+        ? singular ? "{quantity} RSU is scheduled to vest." : "{quantity} RSUs are scheduled to vest."
+        : singular ? "{quantity} stock option is scheduled to vest." : "{quantity} stock options are scheduled to vest.";
       return {
         kind: "vesting",
         tone: "vesting",
         transactionId: lot.transactionId,
         trancheSequence: lot.trancheSequence,
-        title: `${lot.symbol} ${unit}${singular ? " vests" : "s vest"} ${dueText}`,
-        body: `${quantityLabel} ${singular ? "is" : "are"} scheduled to vest.`,
-        meta: `Vest Date: ${formatDate(lot.vestDate)} · ${leadDays}-day notice window`,
+        title: alarmText(title, values),
+        body: alarmText(body, values),
+        meta: alarmText("Vest Date: {date} · {days}-day notice window", values),
         sortDate: lot.vestDate,
       };
     })
@@ -7598,9 +7626,9 @@ function clearAlarms() {
   const alarms = [...vesting, ...dividends];
   if (!alarms.length) return;
   state.dismissedAlarmIds = [...state.dismissedAlarmIds, ...alarms.map(alarmDismissalId)];
+  state.clearedAlarmCount = alarms.length;
   saveAlarmDismissals();
   renderAlarms();
-  $("alarmsStatus").textContent = `${alarms.length} alarm${alarms.length === 1 ? "" : "s"} cleared. New alarms will still appear.`;
 }
 
 function renderAlarms() {
@@ -7616,24 +7644,31 @@ function renderAlarms() {
   if (status) {
     const future = dividends.filter((alarm) => alarm.event.status === "pending").length;
     const paid = dividends.filter((alarm) => alarm.event.status === "processed").length;
-    status.textContent = alarms.length
-      ? `${vesting.length} upcoming vesting alarm${vesting.length === 1 ? "" : "s"} · ${future} future dividend${future === 1 ? "" : "s"} · ${paid} paid dividend${paid === 1 ? "" : "s"}`
-      : "No vesting or dividend alarms in the current notice window.";
+    status.textContent = state.alarmsLoadFailed ? t("Could not update alarms. Reopen Alerts to retry.") : alarms.length ? [
+      alarmText(vesting.length === 1 ? "{count} upcoming vesting alarm" : "{count} upcoming vesting alarms", { count: vesting.length }),
+      alarmText(future === 1 ? "{count} future dividend" : "{count} future dividends", { count: future }),
+      alarmText(paid === 1 ? "{count} paid dividend" : "{count} paid dividends", { count: paid }),
+    ].join(" · ") : state.clearedAlarmCount
+      ? alarmText(state.clearedAlarmCount === 1 ? "{count} alarm cleared. New alarms will still appear." : "{count} alarms cleared. New alarms will still appear.", { count: state.clearedAlarmCount })
+      : t("No vesting or dividend alarms in the current notice window.");
   }
   if ($("vestingAlertDays")) $("vestingAlertDays").value = String(state.vestingAlertDays);
-  if ($("alarmSettingsStatus") && !$("alarmSettingsStatus").textContent) {
-    $("alarmSettingsStatus").textContent = `Showing vest dates up to ${state.vestingAlertDays} day${state.vestingAlertDays === 1 ? "" : "s"} in advance.`;
+  if ($("alarmSettingsStatus")) {
+    const notice = state.vestingNoticeSaved
+      ? state.vestingAlertDays === 1 ? "Vesting alerts will appear {days} day before vesting." : "Vesting alerts will appear {days} days before vesting."
+      : state.vestingAlertDays === 1 ? "Showing vest dates up to {days} day in advance." : "Showing vest dates up to {days} days in advance.";
+    $("alarmSettingsStatus").textContent = alarmText(notice, { days: state.vestingAlertDays });
   }
   const list = $("alarmsList");
   if (!list) return;
   list.innerHTML = alarms.length ? alarms.map((alarm) => `
     <button class="alarm-item ${esc(alarm.tone)}" type="button" ${alarm.kind === "vesting" ? `data-open-vesting-alarm="${esc(alarm.transactionId)}"` : `data-open-dividend-alarm="${esc(alarm.event.id)}"`}>
-      <span class="alarm-kind">${alarm.kind === "vesting" ? "Upcoming vesting" : alarm.tone === "future" ? "Future dividend" : "Dividend paid"}</span>
+      <span class="alarm-kind">${esc(t(alarm.kind === "vesting" ? "Upcoming vesting" : alarm.tone === "future" ? "Future dividend" : "Dividend paid"))}</span>
       <b>${esc(alarm.title)}</b>
       <span>${esc(alarm.body)}</span>
       <small>${esc(alarm.meta)}</small>
     </button>
-  `).join("") : '<div class="empty">No vesting or dividend alarms</div>';
+  `).join("") : `<div class="empty">${esc(t("No vesting or dividend alarms"))}</div>`;
 }
 
 function focusEventRow() {
@@ -11895,8 +11930,9 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
     loadEvents().catch((error) => { $("eventsStatus").textContent = `Error: ${error.message}`; });
   }
   if (id === "alarmsModal") {
+    state.alarmsLoadFailed = false;
     renderAlarms();
-    loadEvents().catch((error) => { $("alarmsStatus").textContent = `Error: ${error.message}`; });
+    loadEvents().catch(() => { state.alarmsLoadFailed = true; renderAlarms(); });
   }
   if (id === "reportsModal") {
     Promise.all([loadLocalAccounts(), loadFamilyMembers()])
