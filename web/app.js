@@ -648,8 +648,9 @@ function assistantUi() {
   const owner = currentUser()?.id || "";
   if (!state.assistant || state.assistant.owner !== owner) {
     state.assistant = {
-      owner, chats: [], chat: null, enabled: null, tools: [], maxChats: 10,
+      owner, chats: [], chat: null, enabled: null, maxChats: 10,
       loading: false, selecting: false, creating: false, sending: false, pendingPrompt: "", status: "", requestId: "", retry: "",
+      deleteChatId: "", deleting: false,
       loadVersion: 0, selectVersion: 0, drafts: {}, settingsVersion: 0,
     };
     if ($("assistantPrompt")) $("assistantPrompt").value = "";
@@ -695,6 +696,16 @@ function assistantMessageMetadata(message) {
   return `<p class="assistant-message-outcome"><span>${esc(t("Unsupported request"))}</span>${reference ? `<span>${esc(assistantText("Reference: {id}", { id: `\u2066${reference}\u2069` }))}</span>` : ""}</p>`;
 }
 
+function assistantMessageHtml(message) {
+  const text = assistantMessageText(message);
+  if (message.role === "user" || message.support_status === "unsupported" || !window.PortfolioAssistantFormat) return esc(text);
+  return window.PortfolioAssistantFormat.render(text, {
+    tableLabel: t("Answer table. Scroll horizontally to see all columns."),
+    codeLabel: t("Code block. Scroll to read all code."), columnLabel: t("Column {count}"),
+    tones: { positive: t("Positive"), negative: t("Negative"), warning: t("Warning"), info: t("Information"), muted: t("Note") },
+  });
+}
+
 function assistantStatusText(ui) {
   if (ui.sending) return t("Reading approved portfolio data…");
   if (ui.loading) return t("Loading your chats…");
@@ -706,35 +717,22 @@ function assistantStatusText(ui) {
   return "";
 }
 
-function assistantToolLabel(name) {
-  const labels = {
-    get_event_impact_events: "Historical world events", get_event_impact_cases: "Event research cases",
-    get_event_impact_workflow: "Event research method", get_portfolio_summary: "Portfolio summary",
-    list_accounts: "Accounts", get_portfolio_report: "Portfolio report", get_account_trends: "Account trends",
-    get_finance_report: "Company reports", get_securities: "Security transactions", get_manual_securities: "Manual securities",
-    get_security_risk_profiles: "Security risk profiles", get_security_history: "Security price history",
-    get_prices: "Recorded prices", get_events: "Portfolio events", get_funds: "Pensions and funds",
-    get_fund_history: "Fund amount history", get_account_snapshots: "Account value history",
-    get_employee_options: "Employee stock options", get_equity_transitions: "Equity compensation history",
-    get_fx_rates: "Exchange rates", get_market_banner: "Market quotes", get_alerts: "Portfolio signals",
-    get_company_outlook_scorecard: "Company outlook scorecard", get_company_outlook_predictions: "Saved company predictions",
-    run_portfolio_screener: "Portfolio screening", run_market_screener: "Market screening", simulate_pension: "Pension projection",
-    get_trade_history: "Trade history", get_market_quote: "Stock quote", get_stock_dividends: "Dividend history",
-    list_people: "Account owners", list_brokers: "Brokers",
-  };
-  return t(labels[name] || "Approved data endpoint");
-}
-
 function renderAssistantChat() {
   if (!$("assistantChatList")) return;
   const ui = assistantUi();
-  const busy = ui.loading || ui.sending;
+  const busy = ui.loading || ui.sending || ui.creating || ui.deleting;
   $("assistantHistoryCount").textContent = assistantText("{count} of {max} saved chats", { count: fmt(ui.chats.length, 0), max: fmt(ui.maxChats, 0) });
   $("assistantChatList").innerHTML = ui.chats.length ? ui.chats.map((chat) => `
-    <button class="assistant-chat-item${chat.id === ui.chat?.id ? " active" : ""}" type="button" data-assistant-chat="${esc(chat.id)}"${chat.id === ui.chat?.id ? ' aria-current="true"' : ""}${busy ? " disabled" : ""}>
+    <div class="assistant-chat-row"><button class="assistant-chat-item${chat.id === ui.chat?.id ? " active" : ""}" type="button" data-assistant-chat="${esc(chat.id)}"${chat.id === ui.chat?.id ? ' aria-current="true"' : ""}${busy ? " disabled" : ""}>
       <span class="assistant-chat-name" dir="auto" data-i18n-skip>${esc(assistantChatLabel(chat))}</span>
       <time datetime="${esc(chat.updated_at || "")}">${esc(chat.updated_at ? formatDateTime(chat.updated_at) : "")}</time>
-    </button>`).join("") : `<p class="assistant-empty">${esc(t(ui.loading ? "Loading your chats…" : "No saved chats yet."))}</p>`;
+    </button><button class="secondary assistant-chat-delete" type="button" data-delete-assistant-chat="${esc(chat.id)}" aria-label="${esc(assistantText("Delete chat: {title}", { title: assistantChatLabel(chat) }))}" title="${esc(t("Delete chat"))}"${busy ? " disabled" : ""}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7"/></svg></button></div>`).join("") : `<p class="assistant-empty">${esc(t(ui.loading ? "Loading your chats…" : "No saved chats yet."))}</p>`;
+  const deleteTarget = ui.chats.find((chat) => chat.id === ui.deleteChatId);
+  $("assistantDeleteConfirm").hidden = !deleteTarget;
+  $("assistantDeleteChatName").textContent = deleteTarget ? assistantChatLabel(deleteTarget) : "";
+  $("confirmAssistantDelete").disabled = busy;
+  $("cancelAssistantDelete").disabled = busy;
+  $("confirmAssistantDelete").textContent = t(ui.deleting ? "Deleting chat…" : "Delete chat");
   const title = $("assistantChatTitle");
   title.textContent = assistantChatLabel(ui.chat);
   title.setAttribute("data-i18n-skip", "");
@@ -743,22 +741,87 @@ function renderAssistantChat() {
   $("assistantMessages").innerHTML = messages.length ? messages.map((message) => `
     <article class="assistant-message assistant-message-${message.role === "user" ? "user" : "answer"}">
       <div class="assistant-message-meta"><b dir="auto"${message.role === "user" ? " data-i18n-skip" : ""}>${esc(message.role === "user" ? assistantUserName() : t("Portfolio assistant"))}</b>${message.created_at ? `<time datetime="${esc(message.created_at)}">${esc(formatDateTime(message.created_at))}</time>` : ""}</div>
-      <div class="assistant-message-content" dir="auto" data-i18n-skip>${esc(assistantMessageText(message))}</div>
+      <div class="assistant-message-content${message.role === "user" ? " assistant-message-plain" : " assistant-message-rich"}" dir="auto" data-i18n-skip>${assistantMessageHtml(message)}</div>
       ${assistantMessageMetadata(message)}
     </article>`).join("") : `<div class="assistant-empty"><p>${esc(t("Ask a question about your portfolio."))}</p><p>${esc(t("Answers use approved app data. If the data is missing, the assistant will say so."))}</p></div>`;
   $("assistantMessages").setAttribute("aria-busy", String(ui.sending || ui.loading));
   $("assistantStatus").textContent = assistantStatusText(ui);
   $("newAssistantChat").disabled = busy;
-  $("assistantPrompt").disabled = ui.sending || ui.selecting;
+  $("assistantPrompt").disabled = ui.sending || ui.selecting || ui.deleting;
   $("askAssistant").disabled = busy || ui.enabled !== true;
   $("askAssistant").textContent = t(ui.sending ? "Sending…" : "Send");
   $("retryAssistant").hidden = !ui.retry || busy;
-  $("assistantReadTools").innerHTML = ui.tools.length ? ui.tools.filter((tool) => (tool.method || "GET") === "GET").map((tool) => `<li><span>${esc(assistantToolLabel(tool.name))}</span><code dir="ltr" data-i18n-skip>GET ${esc(tool.path)}</code></li>`).join("") : `<li>${esc(t("The approved endpoint list is unavailable."))}</li>`;
 }
 
 function saveAssistantDraft() {
   const ui = assistantUi();
   ui.drafts[ui.chat?.id || "new"] = $("assistantPrompt").value;
+}
+
+function requestAssistantChatDeletion(chatId) {
+  const ui = assistantUi();
+  if (ui.loading || ui.sending || ui.creating || ui.deleting || !ui.chats.some((chat) => chat.id === chatId)) return;
+  saveAssistantDraft();
+  ui.deleteChatId = chatId;
+  ui.status = "";
+  ui.requestId = "";
+  ui.retry = "";
+  renderAssistantChat();
+  $("cancelAssistantDelete").focus();
+}
+
+function cancelAssistantChatDeletion() {
+  const ui = assistantUi();
+  if (ui.deleting) return;
+  const chatId = ui.deleteChatId;
+  ui.deleteChatId = "";
+  ui.status = "";
+  ui.requestId = "";
+  renderAssistantChat();
+  const buttons = $("assistantChatList").querySelectorAll?.("[data-delete-assistant-chat]") || [];
+  [...buttons].find((button) => button.dataset.deleteAssistantChat === chatId)?.focus();
+}
+
+async function deleteAssistantChat() {
+  const ui = assistantUi();
+  const chatId = ui.deleteChatId;
+  if (!chatId || ui.loading || ui.sending || ui.creating || ui.deleting) return;
+  saveAssistantDraft();
+  const deletingCurrent = ui.chat?.id === chatId;
+  ++ui.loadVersion;
+  ++ui.selectVersion;
+  ui.deleting = true;
+  ui.status = "Deleting chat…";
+  ui.requestId = "";
+  ui.retry = "";
+  renderAssistantChat();
+  try {
+    const data = await api(`/api/assistant/chats/${encodeURIComponent(chatId)}`, { method: "DELETE" });
+    if (assistantUi() !== ui) return;
+    if (data.deleted !== true || data.chat_id !== chatId || !Array.isArray(data.chats)) throw new Error("Invalid chat deletion response");
+    ui.chats = data.chats;
+    ui.maxChats = data.max_chats || ui.maxChats;
+    delete ui.drafts[chatId];
+    ui.deleteChatId = "";
+    ui.deleting = false;
+    ui.status = "Chat deleted.";
+    if (deletingCurrent) {
+      ui.chat = null;
+      const nextId = ui.chats[0]?.id;
+      $("assistantPrompt").value = nextId ? ui.drafts[nextId] || "" : "";
+      renderAssistantChat();
+      if (nextId) await selectAssistantChat(nextId, { preserveDraft: true });
+      if (!$("assistantModal").hidden) $("assistantPrompt").focus();
+    }
+  } catch (error) {
+    if (assistantUi() !== ui) return;
+    setAssistantFailure(ui, error, "Could not delete this chat. Your chat and draft are unchanged. Try again.");
+  } finally {
+    if (assistantUi() === ui) {
+      ui.deleting = false;
+      renderAssistantChat();
+    }
+  }
 }
 
 function assistantFailure(error, fallback) {
@@ -787,12 +850,12 @@ function setAssistantFailure(ui, error, fallback) {
 
 async function selectAssistantChat(chatId, { preserveDraft = false } = {}) {
   const ui = assistantUi();
-  if (ui.sending) return;
+  if (ui.sending || ui.deleting || ui.creating) return;
   if (!preserveDraft) saveAssistantDraft();
   const version = ++ui.selectVersion;
   ui.loading = true;
   ui.selecting = !preserveDraft;
-  if (!preserveDraft) { ui.retry = ""; ui.status = ""; ui.requestId = ""; }
+  if (!preserveDraft) { ui.retry = ""; ui.status = ""; ui.requestId = ""; ui.deleteChatId = ""; }
   renderAssistantChat();
   try {
     const chat = await api(`/api/assistant/chats/${encodeURIComponent(chatId)}`);
@@ -815,13 +878,14 @@ async function selectAssistantChat(chatId, { preserveDraft = false } = {}) {
 
 async function loadAssistantChats() {
   const ui = assistantUi();
-  if (ui.sending || ui.creating) { renderAssistantChat(); return; }
+  if (ui.sending || ui.creating || ui.deleting) { renderAssistantChat(); return; }
   const version = ++ui.loadVersion;
   ++ui.selectVersion;
   ui.selecting = false;
   ui.loading = true;
   ui.status = "";
   ui.requestId = "";
+  ui.deleteChatId = "";
   ui.retry = "";
   renderAssistantChat();
   const results = await Promise.allSettled([api("/api/assistant/chats"), api("/api/assistant/status")]);
@@ -829,7 +893,6 @@ async function loadAssistantChats() {
   const [history, service] = results;
   if (service.status === "fulfilled") {
     ui.enabled = Boolean(service.value.enabled);
-    ui.tools = service.value.tools || [];
   } else {
     ui.enabled = null;
     setAssistantFailure(ui, service.reason, "Could not check the assistant connection. Retry to reconnect.");
@@ -852,7 +915,7 @@ async function loadAssistantChats() {
 
 async function newAssistantChat() {
   const ui = assistantUi();
-  if (ui.loading || ui.sending) return;
+  if (ui.loading || ui.sending || ui.deleting) return;
   saveAssistantDraft();
   ++ui.loadVersion;
   ++ui.selectVersion;
@@ -860,6 +923,7 @@ async function newAssistantChat() {
   ui.creating = true;
   ui.status = "";
   ui.requestId = "";
+  ui.deleteChatId = "";
   ui.retry = "";
   renderAssistantChat();
   try {
@@ -884,7 +948,7 @@ async function newAssistantChat() {
 
 async function askPortfolioAssistant() {
   const ui = assistantUi();
-  if (ui.sending || ui.loading || ui.enabled !== true) return;
+  if (ui.sending || ui.loading || ui.creating || ui.deleting || ui.enabled !== true) return;
   const prompt = $("assistantPrompt").value.trim();
   if (!prompt) {
     ui.status = "Enter a question first.";
@@ -899,6 +963,7 @@ async function askPortfolioAssistant() {
   ui.pendingPrompt = prompt;
   ui.status = "";
   ui.requestId = "";
+  ui.deleteChatId = "";
   ui.retry = "";
   renderAssistantChat();
   $("assistantMessages").scrollTop = $("assistantMessages").scrollHeight;
@@ -932,7 +997,7 @@ function openAssistantFromLauncher(event) {
   if (event?.isComposing || !$("assistantLauncher").value) return;
   const draft = $("assistantLauncher").value;
   const ui = assistantUi();
-  if (ui.sending) return;
+  if (ui.sending || ui.deleting) return;
   $("assistantLauncher").value = "";
   $("assistantPrompt").value = [$("assistantPrompt").value, draft].filter(Boolean).join(" ");
   saveAssistantDraft();
@@ -2320,6 +2385,46 @@ function groupByAccount(items) {
   return Object.values(groups).map((group) => ({ ...group, currencies: [...group.currencies] }));
 }
 
+function checkedAccountShareAmount(value, currency) {
+  if (!["number", "string"].includes(typeof value) || String(value).trim() === "") return null;
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return null;
+  if (amount === 0) return 0;
+  const base = String(state.baseCurrency || "").trim().toUpperCase();
+  const source = String(currency || "").trim().toUpperCase();
+  if (!base || !source) return null;
+  if (source === base) return amount;
+  const validRate = (raw) => ["number", "string"].includes(typeof raw) && String(raw).trim() !== "" && Number.isFinite(Number(raw)) && Number(raw) > 0;
+  const direct = state.fxRates?.[`${source}/${base}`];
+  const reverse = state.fxRates?.[`${base}/${source}`];
+  const converted = validRate(direct) ? amount * Number(direct) : validRate(reverse) ? amount / Number(reverse) : null;
+  return converted !== null && Number.isFinite(converted) ? converted : null;
+}
+
+function accountShareSnapshot() {
+  const unavailable = () => ({ available: false, total: null, shares: new Map() });
+  const items = portfolioItems(state.items || []);
+  const accounts = portfolioAccounts();
+  // Validate every contribution before aggregation, including amounts that
+  // offset each other. Never inherit normalizedAmount's missing-FX fallback.
+  if (items.some((item) => checkedAccountShareAmount(item.holding.market_value, item.holding.currency) === null)
+    || accounts.some((account) => checkedAccountShareAmount(accountCashBalance(account), account.currency) === null)) return unavailable();
+  const groups = groupByAccount(items);
+  const values = groups.map((group) => {
+    const amounts = Object.entries(group.localValues || {}).map(([currency, value]) => checkedAccountShareAmount(value, currency));
+    return amounts.some((value) => value === null) ? null : amounts.reduce((total, value) => total + value, 0);
+  });
+  if (values.some((value) => value === null || !Number.isFinite(value))) return unavailable();
+  const total = values.reduce((value, amount) => value + amount, 0);
+  if (!Number.isFinite(total) || total <= 0) return unavailable();
+  const percentages = values.map((value) => value / total * 100);
+  if (percentages.some((value) => !Number.isFinite(value))) return unavailable();
+  const shares = new Map();
+  groups.forEach((group, index) => shares.set(String(group.account), percentages[index]));
+  groups.forEach((group, index) => { if (group.accountId) shares.set(String(group.accountId), percentages[index]); });
+  return { available: true, total, shares };
+}
+
 function accountCashBalance(account) {
   if (!account) return 0;
   const transactions = state.localTransactions.filter((tx) => String(tx.account_db_id || "") === String(account.id || ""));
@@ -2831,8 +2936,8 @@ function holdingMarketKey(h) {
   return h.platform || h.stock_market || h.data_source || "MANUAL";
 }
 
-function stockMarketDisplay(h, marketKey = "") {
-  const candidate = h.stock_market && !isProviderName(h.stock_market) ? h.stock_market : (!isProviderName(marketKey) ? marketKey : "");
+function stockMarketDisplay(h, marketKey = "", exchange = "") {
+  const candidate = [h.stock_market, exchange, marketKey].find((value) => String(value || "").trim() && !isProviderName(value));
   return candidate ? cleanSourceLabel(candidate).toUpperCase() : optionLabel("Not available");
 }
 
@@ -3320,15 +3425,22 @@ function renderPortfolioValueDashboard(items) {
       return `<span class="account-chip" title="${esc(title)}"><b>${esc(account.account)}</b><span class="account-chip-values"><strong>${money(account.value, state.baseCurrency, 0)}</strong>${localLine}</span>${riskBadge(accountRisk, true)}</span>`;
     })
     .join("");
+  const accountShares = accountShareSnapshot();
   const accountRiskAllocationsHtml = state.riskSnapshot.accounts
     .sort((left, right) => right.value - left.value)
     .map((entry) => {
       const allocation = entry.allocation;
       if (!allocation?.total) return "";
+      const share = accountShares.shares.get(String(entry.key)) ?? accountShares.shares.get(cleanSourceLabel(entry.key));
+      const shareText = Number.isFinite(share) ? `${fmt(share, 1)}%` : optionLabel("Not available");
+      const shareHelp = Number.isFinite(share)
+        ? "Account net value divided by all primary account net values, including signed cash, in the dashboard currency. Filters do not change this percentage."
+        : "Account shares require valid net amounts and exchange rates, and a positive total net value.";
       const segments = allocation.bands.map((band) => `<span class="account-risk-segment account-risk-${band.key}" style="--risk-allocation:${band.percent}%" title="${esc(`${optionLabel(band.label)}: ${fmt(band.percent, 1)}%`)}"></span>`).join("");
       const labels = allocation.bands.map((band) => `<span class="account-risk-allocation-label"><i class="account-risk-dot account-risk-${band.key}"></i>${esc(optionLabel(band.label))} <b>${esc(fmt(band.percent, 1))}%</b></span>`).join("");
       return `<article class="account-risk-allocation-card" title="${esc(optionLabel("Allocation is based on each holding's asset-risk category. Cash and money-market holdings are No risk only in the base currency; foreign-currency exposure is Low risk."))}">
         <div class="account-risk-allocation-heading"><b>${esc(entry.account)}</b>${riskBadge(entry.risk, true)}</div>
+        <p class="account-risk-portfolio-share" title="${esc(optionLabel(shareHelp))}"><span>${esc(optionLabel("Share of total accounts"))}</span><b>${esc(shareText)}</b></p>
         <div class="account-risk-allocation-bar" role="img" aria-label="${esc(`${entry.account}: ${allocation.bands.map((band) => `${optionLabel(band.label)} ${fmt(band.percent, 1)}%`).join(", ")}`)}">${segments}</div>
         <div class="account-risk-allocation-labels">${labels}</div>
         <small>${esc(optionLabel("Total"))}: <b>${esc(fmt(sum(allocation.bands.map((band) => band.percent)), 1))}%</b></small>
@@ -3568,7 +3680,7 @@ function renderRows(items) {
     const movingAverage = item.moving_averages[maPeriod] || {};
     const sr = item.support_resistance["1y"] || {};
     const marketKey = holdingMarketKey(h);
-    const market = stockMarketDisplay(h, marketKey);
+    const market = stockMarketDisplay(h, marketKey, item.exchange);
     const provider = dataProviderDisplay(item, h, marketKey);
     const securityName = String(h.name || "").trim();
     const companyLine = securityName || String(h.symbol || "").trim();
@@ -6406,7 +6518,7 @@ async function openSecurityDetail(dataset) {
     symbol,
     secondary_symbol: h.secondary_symbol || "",
     market_key: marketKey,
-    stock_market: dataset.securityDetailStockMarket || stockMarketDisplay(h, marketKey),
+    stock_market: dataset.securityDetailStockMarket || stockMarketDisplay(h, marketKey, item?.exchange),
     data_provider: dataset.securityDetailProvider || dataProviderDisplay(item || {}, h, marketKey),
     asset_class: dataset.securityDetailAsset || h.asset_class || "EQUITY",
     currency: dataset.securityDetailCurrency || h.currency || "USD",
@@ -11150,7 +11262,7 @@ async function openAlertSignalChart(symbol, button) {
   await openSecurityDetail({
     securityDetailSymbol: normalized,
     securityDetailMarketKey: holdingMarketKey(holding),
-    securityDetailStockMarket: stockMarketDisplay(holding, holdingMarketKey(holding)),
+    securityDetailStockMarket: stockMarketDisplay(holding, holdingMarketKey(holding), item?.exchange),
     securityDetailProvider: dataProviderDisplay(item || {}, holding, holdingMarketKey(holding)),
     securityDetailAsset: holding.asset_class || "EQUITY",
     securityDetailCurrency: holding.currency || "USD",
@@ -13468,9 +13580,13 @@ $("assistantLauncher").addEventListener("input", openAssistantFromLauncher);
 $("assistantLauncher").addEventListener("compositionend", openAssistantFromLauncher);
 $("newAssistantChat").addEventListener("click", newAssistantChat);
 $("assistantChatList").addEventListener("click", (event) => {
+  const deleteId = event.target.closest("[data-delete-assistant-chat]")?.dataset.deleteAssistantChat;
+  if (deleteId) { requestAssistantChatDeletion(deleteId); return; }
   const chatId = event.target.closest("[data-assistant-chat]")?.dataset.assistantChat;
   if (chatId) selectAssistantChat(chatId);
 });
+$("confirmAssistantDelete").addEventListener("click", deleteAssistantChat);
+$("cancelAssistantDelete").addEventListener("click", cancelAssistantChatDeletion);
 $("retryAssistant").addEventListener("click", () => {
   if (assistantUi().retry === "send") askPortfolioAssistant();
   else loadAssistantChats();

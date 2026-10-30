@@ -78,6 +78,15 @@ class AssistantChats:
         with self.lock:
             return self._find(self._load(user_id), chat_id)
 
+    def delete(self, user_id: str, chat_id: str) -> dict[str, Any]:
+        with self.lock:
+            self._ensure_idle(user_id)
+            data = self._load(user_id)
+            self._find(data, chat_id)
+            data["chats"] = [item for item in data["chats"] if item["id"] != chat_id]
+            self.write(self._key(user_id), data)
+            return {"deleted": True, "chat_id": chat_id, **self._summary(data)}
+
     def _ensure_idle(self, user_id: str) -> None:
         if user_id in self.pending:
             raise ChatError("A question is already running. Wait for its answer.", 409)

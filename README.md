@@ -62,9 +62,19 @@ Read tools expose access status, accounts, filtered reports, and account trends.
 
 `DELETE /api/auth/token` revokes the bearer token used for that request, including an MCP token when REST is off. Tokens are stored only as SHA-256 hashes and are also revoked when the user is disabled, changes their password, or an Admin turns the relevant service off. Users with a temporary password must complete the dashboard password-change flow before creating a token.
 
+## Dashboard account values
+
+Account risk cards show each account's share of the full primary portfolio's net account value (holdings plus signed cash), converted to the dashboard base currency. Holdings filters do not change those shares. Separately managed employee equity is excluded from this primary portfolio scope. A missing conversion or a nonpositive total shows an unavailable value.
+
+Security tooltips distinguish the exchange from the data provider. Saved profile exchange metadata remains available during initial loading and refresh without changing stored holding identities.
+
 ## Read-only LLM assistant
 
 Type in the chat box in the main menu to open the assistant. Chats are private to the signed-in application user and survive reloads. Use **New chat** to start a separate conversation. **Settings → Portfolio assistant** controls the number retained (default `10`, range `1–100`). Creating a chat or lowering the limit removes conversations with the oldest last message; opening a conversation does not make it newer. Failed questions keep the draft and do not replace prior messages. Existing single-conversation context migrates once.
+
+Use the delete action beside a conversation and confirm to remove that saved chat. Deleting another conversation preserves the current draft. Chat diagnostics follow the separate logging retention settings.
+
+Assistant answers support headings, lists, emphasis, tables, code blocks, and semantic colors. JSON code blocks are indented without rounding number tokens. Tables scroll within the message on small screens. Rendering escapes raw HTML and does not load model-supplied links, images, styles, or scripts; user messages remain plain text. Oversized formatting falls back to escaped text without dropping content.
 
 The default provider is the locally signed-in **Codex CLI**, so no API key is required. On the host, run:
 
@@ -78,7 +88,7 @@ Codex must be signed in as the OS user starting the bridge. The release script s
 
 The bridge exposes only a local Unix socket. It receives conversation evidence and tool descriptions, with no application authentication headers or database connection configuration. Each model exchange is an ephemeral, structured-output Codex app-server turn with native tools, hooks, user MCP servers, connectors, shell, images, browser, skills and child agents disabled before startup. A restricted permission profile denies filesystem access outside minimal runtime files and an empty temporary workspace, and denies command network access. Temporary model state is removed after the response. The CLI manages its existing authentication; credentials are never copied into Docker. The model selects a named read or returns an answer; it cannot execute tools itself.
 
-The application validates that selection against the code-owned catalog at `GET /api/assistant/read-tools`, then makes an authenticated **GET** through the actual FastAPI REST routes using the requesting user's identity. Unknown tools/arguments, arbitrary URLs, path traversal, redirects and all write verbs are rejected. The agent has no database interface. Approved routes cover accounts, current holdings, transactions and trade history, reports, historical prices, fundamentals, dividends, quote/provider status, market screening, pensions, FX, events and alerts. The popup displays the allowlist. Chat/settings persistence is application-owned and is never exposed as an agent capability.
+The application validates that selection against the code-owned catalog at `GET /api/assistant/read-tools`, then makes an authenticated **GET** through the actual FastAPI REST routes using the requesting user's identity. Unknown tools/arguments, arbitrary URLs, path traversal, redirects and all write verbs are rejected. The agent has no database interface. Approved routes cover accounts, current holdings, transactions and trade history, reports, historical prices, fundamentals, dividends, quote/provider status, market screening, pensions, FX, events and alerts. The catalog is enforced internally rather than displayed in the chat popup. Chat/settings persistence and user-initiated conversation deletion are application-owned and are never exposed as agent capabilities.
 
 Each question permits at most **six model exchanges including its final answer**, with at most one approved read per exchange. The last exchange has no tools. The next user message gets a new budget. Only the last `llm.max_context_messages` user/assistant messages (default `12`; `0` disables context) are passed as conversation context, while the complete saved conversation remains visible. Prompts require evidence, unknown-data disclosure, per-currency amounts, `dd/mm/yyyy` dates, and answers in the active language. These instructions reduce guessing; independent simulations are still needed to evaluate real answers.
 

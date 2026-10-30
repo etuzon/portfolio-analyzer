@@ -128,6 +128,7 @@ def codex_completion(messages: list[dict[str, Any]], tools: list[dict[str, Any]]
         "If allowed_read_tools is empty you MUST answer now using existing evidence or clearly state what is unknown. "
         "Never guess or invent data, tools, actions or current news. Never combine different currencies. "
         "Respect the user's language. Format dates dd/mm/yyyy. Never show source footers, citations, tool names or REST paths in answers. "
+        "Format answers with readable Markdown and tables for multi-row comparisons; retain explicit currencies and units. Semantic colors may use :positive[text], :negative[text], :warning[text], :info[text], :muted[text] only. Never HTML/CSS/scripts or color-based guesses. "
         "Set support_status=unsupported when an approved capability does not exist for the request (writes, direct database/files or unavailable live news); use answered for supported questions with unknown/missing data or clarification. "
         "Do not search the computer, load skills, read instructions or call any native tool."
     )

@@ -188,7 +188,7 @@
           <div id="analyticsBoard" class="analytics-board"></div>
         </section>
 
-        <section class="tool-panel">
+        <section class="tool-panel holdings-panel">
           <div class="section-head">
             <div>
               <p class="eyebrow">Portfolio screener</p>
@@ -197,7 +197,7 @@
             <span id="count" class="count"></span>
           </div>
 
-          <div class="toolbar">
+          <div class="toolbar holdings-filter-toolbar">
             <input id="query" placeholder="Symbol or name" />
             <select id="account">
               <option value="">Any account</option>
@@ -276,6 +276,10 @@
           <div><h2 id="assistantTitle">Ask about your portfolio</h2></div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
+        <div id="assistantDeleteConfirm" class="assistant-delete-confirm" role="group" aria-labelledby="assistantDeleteQuestion" hidden>
+          <div><p id="assistantDeleteQuestion">Delete this saved chat and its messages?</p><p id="assistantDeleteChatName" dir="auto" data-i18n-skip></p></div>
+          <div class="assistant-delete-actions"><button id="confirmAssistantDelete" class="secondary compact-button" type="button">Delete chat</button><button id="cancelAssistantDelete" class="secondary compact-button" type="button">Cancel</button></div>
+        </div>
         <div class="assistant-layout">
           <aside class="assistant-history" aria-labelledby="assistantHistoryTitle">
             <div class="assistant-history-head"><h3 id="assistantHistoryTitle">Your chats</h3><button id="newAssistantChat" class="secondary compact-button" type="button">New chat</button></div>
@@ -292,7 +296,6 @@
             <div class="assistant-status-row"><p id="assistantStatus" class="status-line" role="status" aria-live="polite"></p><button id="retryAssistant" class="secondary compact-button" type="button" hidden>Retry</button></div>
           </div>
         </div>
-        <details class="assistant-permissions"><summary>Approved REST endpoints</summary><ul id="assistantReadTools"></ul></details>
       </section>
     </div>
 
@@ -2394,6 +2397,7 @@
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <script src="/i18n.js?v=1.2.7"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
+  <script src="/assistant-format.js?v=1"></script>
   <script src="/app.js?v=0.9.8"></script>
   </body>
 </html>

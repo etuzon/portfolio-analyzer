@@ -46,12 +46,12 @@ let api;
 """
     function_names = (
         "assistantUi", "assistantText", "assistantChatLabel", "assistantUserName", "assistantReferenceId",
-        "assistantAnswerText", "assistantMessageText", "assistantMessageMetadata", "assistantStatusText", "assistantToolLabel",
-        "renderAssistantChat", "saveAssistantDraft", "assistantFailure", "setAssistantFailure", "selectAssistantChat",
+        "assistantAnswerText", "assistantMessageText", "assistantMessageMetadata", "assistantMessageHtml", "assistantStatusText",
+        "renderAssistantChat", "saveAssistantDraft", "requestAssistantChatDeletion", "cancelAssistantChatDeletion", "deleteAssistantChat", "assistantFailure", "setAssistantFailure", "selectAssistantChat",
         "loadAssistantChats", "newAssistantChat", "askPortfolioAssistant", "openAssistantFromLauncher",
         "loadAssistantSettings", "saveAssistantSettings", "loggingSettingsUi", "renderLoggingSettings", "loadLoggingSettings", "saveLoggingSettings",
     )
-    code = "const window = {};\n" + (ROOT / "web/i18n.js").read_text() + base
+    code = "const window = {};\n" + (ROOT / "web/i18n.js").read_text() + (ROOT / "web/assistant-format.js").read_text() + base
     code += _functions(*function_names) + "\n(async () => {\nassistantUi();\n" + script
     code += "\n})().catch(error => {console.error(error); process.exitCode = 1;});"
     result = subprocess.run(["node"], input=code, text=True, capture_output=True)
@@ -76,7 +76,7 @@ assert.equal(assistantUi().drafts.new, 'א');
 """)
 
 
-def test_history_reopens_with_draft_and_safely_renders_localized_roles_and_tools():
+def test_history_reopens_with_draft_and_safely_renders_localized_roles():
     _run("""
 const a = chat('a', '<img src=x onerror=alert(1)>');
 api = async path => {
@@ -94,12 +94,10 @@ assert.equal($('askAssistant').disabled, false);
 assert.ok($('assistantMessages').innerHTML.includes('&lt;img'));
 assert.ok(!$('assistantMessages').innerHTML.includes('<img'));
 assert.ok($('assistantChatList').innerHTML.includes('aria-current="true"'));
-assert.ok($('assistantReadTools').innerHTML.includes('GET /api/portfolio'));
 assert.ok($('assistantMessages').innerHTML.includes('data-i18n-skip'));
 state.language = 'he'; renderAssistantChat();
 assert.ok($('assistantMessages').innerHTML.includes('עוזר התיק'));
 assert.ok($('assistantHistoryCount').textContent.includes('שיחות שמורות'));
-assert.ok($('assistantReadTools').innerHTML.includes('סיכום התיק'));
 assert.equal($('askAssistant').textContent, 'שליחה');
 assert.ok($('assistantMessages').innerHTML.includes('Saved answer'), 'conversation content must not be translated by the UI');
 state.language = 'en'; renderAssistantChat();
@@ -332,3 +330,96 @@ const fetch=async()=>({ok:false,status:503,statusText:'Unavailable',json:async()
 """
     result = subprocess.run(["node"], input=code, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_delete_confirmation_cancel_and_failure_preserve_current_chat_and_draft():
+    _run("""
+const ui=assistantUi();ui.enabled=true;ui.chat=chat('current');ui.chats=[summary(ui.chat),summary(chat('other'))];
+$('assistantPrompt').value='Keep this draft';
+let rejectRequest;
+api=(path,options)=>{requests.push({path,options});return new Promise((_resolve,reject)=>{rejectRequest=reject;});};
+requestAssistantChatDeletion('other');
+assert.equal(ui.chat.id,'current');assert.equal(ui.deleteChatId,'other');assert.equal(requests.length,0);
+assert.equal($('assistantDeleteConfirm').hidden,false);assert.ok($('cancelAssistantDelete').focused);
+cancelAssistantChatDeletion();assert.equal(ui.deleteChatId,'');assert.equal($('assistantPrompt').value,'Keep this draft');
+requestAssistantChatDeletion('current');const pending=deleteAssistantChat();await deleteAssistantChat();
+assert.equal(requests.length,1);assert.equal(requests[0].options.method,'DELETE');
+assert.equal(ui.chats.length,2);assert.equal(ui.chat.id,'current');assert.ok(ui.deleting);
+assert.ok($('assistantPrompt').disabled&&$('confirmAssistantDelete').disabled);
+const busy=new Error('already running');busy.code='assistant_busy';rejectRequest(busy);await pending;
+assert.equal(ui.chats.length,2);assert.equal(ui.chat.id,'current');assert.equal($('assistantPrompt').value,'Keep this draft');
+assert.ok(!ui.deleting);assert.equal(ui.deleteChatId,'current');
+state.language='he';renderAssistantChat();assert.ok($('assistantStatus').textContent.includes('בקשת שיחה כבר מתבצעת'));
+ui.sending=true;cancelAssistantChatDeletion();requestAssistantChatDeletion('other');assert.equal(ui.deleteChatId,'');
+""")
+
+
+def test_delete_other_chat_preserves_selection_and_current_draft_until_success():
+    _run("""
+const ui=assistantUi();ui.chat=chat('current');ui.chats=[summary(ui.chat),summary(chat('other'))];ui.drafts.other='Old draft';
+$('assistantPrompt').value='Unsent current message';
+api=async(path,options)=>{requests.push({path,options});return{deleted:true,chat_id:'other',chats:[summary(ui.chat)],max_chats:10};};
+requestAssistantChatDeletion('other');await deleteAssistantChat();
+assert.equal(ui.chat.id,'current');assert.equal($('assistantPrompt').value,'Unsent current message');
+assert.deepEqual(ui.chats.map(value=>value.id),['current']);assert.equal(ui.drafts.other,undefined);
+assert.equal(ui.deleteChatId,'');assert.equal(requests.length,1);assert.equal(ui.loading,false);
+""")
+
+
+def test_delete_current_chat_selects_next_with_its_draft_and_last_chat_returns_to_new_view():
+    _run("""
+const ui=assistantUi();ui.chat=chat('current');ui.chats=[summary(ui.chat),summary(chat('next'))];ui.drafts.next='Next draft';
+$('assistantPrompt').value='Deleted draft';
+api=async(path,options={})=>{
+ requests.push({path,options});
+ if(options.method==='DELETE')return{deleted:true,chat_id:ui.deleteChatId,chats:ui.deleteChatId==='current'?[summary(chat('next'))]:[],max_chats:10};
+ if(path==='/api/assistant/chats/next')return chat('next');
+ throw new Error('unexpected');
+};
+requestAssistantChatDeletion('current');await deleteAssistantChat();
+assert.equal(ui.chat.id,'next');assert.equal($('assistantPrompt').value,'Next draft');assert.equal(ui.drafts.current,undefined);
+assert.equal(requests[1].path,'/api/assistant/chats/next');
+requestAssistantChatDeletion('next');await deleteAssistantChat();
+assert.equal(ui.chat,null);assert.deepEqual(ui.chats,[]);assert.equal($('assistantPrompt').value,'');
+assert.equal($('assistantDeleteConfirm').hidden,true);assert.equal($('assistantChatTitle').textContent,'New chat');
+assert.equal(requests.length,3);
+""")
+
+
+def test_saved_and_new_answers_share_formatter_while_user_messages_stay_plain():
+    _run(r"""
+const ui=assistantUi();ui.enabled=true;
+ui.chat={id:'formatted',title:'Saved',messages:[{role:'user',content:'**My text** <img src=x>'},{role:'assistant',content:'# Saved answer\n\n| Value | Change |\n| --- | ---: |\n| $123.45 | :positive[+2%] |\nSources: GET /api/private'}]};
+renderAssistantChat();
+assert.ok($('assistantMessages').innerHTML.includes('<h4>Saved answer</h4>'));
+assert.ok($('assistantMessages').innerHTML.includes('<table>'));
+assert.ok($('assistantMessages').innerHTML.includes('**My text** &lt;img src=x&gt;'));
+assert.ok(!$('assistantMessages').innerHTML.includes('/api/private'));
+api=async()=>{const updated=JSON.parse(JSON.stringify(ui.chat));updated.messages.push({role:'assistant',content:'## New reply\n\n:negative[**-3.00%**]'});return{chat:updated,chats:[summary(updated)],max_chats:10};};
+$('assistantPrompt').value='New question';await askPortfolioAssistant();
+assert.ok($('assistantMessages').innerHTML.includes('<h5>New reply</h5>'));
+assert.ok($('assistantMessages').innerHTML.includes('assistant-tone-negative'));
+state.language='he';renderAssistantChat();assert.ok($('assistantMessages').innerHTML.includes('טבלת תשובה.'));
+""")
+
+
+def test_delete_row_click_does_not_also_select_the_chat_and_approval_footer_is_removed():
+    start = SOURCE.index('$("assistantChatList").addEventListener("click", (event) => {')
+    end = SOURCE.index('\n});', start) + len('\n});')
+    script = """
+const assert=require('node:assert/strict');let handler;const calls=[];
+const $=()=>({addEventListener:(_event,callback)=>{handler=callback;}});
+const requestAssistantChatDeletion=id=>calls.push(['delete',id]);const selectAssistantChat=id=>calls.push(['select',id]);
+""" + SOURCE[start:end] + """
+handler({target:{closest:selector=>selector==='[data-delete-assistant-chat]'?{dataset:{deleteAssistantChat:'a'}}:{dataset:{assistantChat:'a'}}}});
+assert.deepEqual(calls,[['delete','a']]);
+"""
+    result = subprocess.run(["node"], input=script, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    html = (ROOT / "web/index.html").read_text()
+    styles = (ROOT / "web/styles.css").read_text()
+    assert 'id="assistantReadTools"' not in html
+    assert 'assistant-permissions' not in html + styles
+    assert 'assistantToolLabel' not in SOURCE
+    assert 'window.confirm' not in SOURCE[SOURCE.index('function requestAssistantChatDeletion'):SOURCE.index('function assistantFailure')]
+    assert html.index('/assistant-format.js') < html.index('/app.js')

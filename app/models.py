@@ -71,3 +71,4 @@ class SymbolAnalysis:
     missing: list[str]
     market_cap: float | None = None
     technical_signals: dict[str, dict] = field(default_factory=dict)
+    exchange: str = ""

@@ -245,6 +245,8 @@ def _viewer_request_is_read_only(request: Request) -> bool:
         return True
     if request.method == "PUT" and request.url.path == "/api/settings/assistant":
         return True  # Per-user chat retention, never portfolio or integration settings.
+    if request.method == "DELETE" and request.url.path.startswith("/api/assistant/chats/"):
+        return bool(request.url.path.removeprefix("/api/assistant/chats/")) and "/" not in request.url.path.removeprefix("/api/assistant/chats/")
     return request.method == "POST" and (
         request.url.path in VIEWER_READ_ONLY_POST_PATHS
     )
@@ -2336,6 +2338,8 @@ def _serialized_portfolio_payload(analyses, cache_status: str) -> dict[str, Any]
             secondary_symbol=str(holding.get("secondary_symbol") or ""),
             stock_market=stock_market,
         ) if symbol else {}
+        if not item.get("exchange"):
+            item["exchange"] = str(cached_profile.get("exchange") or "").strip()
         if cached_profile.get("name") and (not holding.get("name") or str(holding.get("name")).upper() == symbol):
             holding["name"] = str(cached_profile["name"])
         if cached_profile.get("sector") and not holding.get("sector"):
@@ -2390,7 +2394,7 @@ def _portfolio_loading_state(payload: dict[str, Any], state: str) -> dict[str, A
         if completed:
             completed = json.loads(json.dumps(completed))
             for field in ("price_ranges", "moving_averages", "support_resistance", "volume", "technical_signals",
-                          "income_trend", "profit_trend", "dividend_trend", "profit_market_cap_trend", "market_cap", "industry", "missing", "provider_status"):
+                          "income_trend", "profit_trend", "dividend_trend", "profit_market_cap_trend", "market_cap", "industry", "exchange", "missing", "provider_status"):
                 if field in completed:
                     item[field] = completed[field]
             row_state = "failed" if completed.get("analytics_state") == "failed" else "ready"
@@ -2605,7 +2609,7 @@ def portfolio_payload(force_refresh: bool = False, defer_enrichment: bool = Fals
 def portfolio_cache_signature() -> str | None:
     if not hasattr(local_store, "change_token"):
         return None
-    return f"v7:{local_store.change_token()}"
+    return f"v8:{local_store.change_token()}"
 
 
 def read_portfolio_cache() -> dict[str, Any] | None:
@@ -2995,6 +2999,20 @@ def create_assistant_chat(request: Request):
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
+@app.delete("/api/assistant/chats/{chat_id}")
+def delete_assistant_chat(chat_id: str, request: Request):
+    user_id = request.state.auth_user["id"]
+    try:
+        result = assistant_chats.delete(user_id, chat_id)
+        _record_log("chat", "chat_deleted", user_id=user_id, chat_id=chat_id)
+        return result
+    except ChatError as exc:
+        _record_log("chat", "chat_delete_failed", user_id=user_id, chat_id=chat_id, error_type=type(exc).__name__, status=exc.status_code)
+        code = "assistant_busy" if exc.status_code == 409 else "assistant_chat_not_found"
+        request_id = getattr(request.state, "request_id", None) or str(uuid4())
+        raise HTTPException(status_code=exc.status_code, detail={"code": code, "request_id": request_id, "message": _chat_notice(code, request.headers.get("Accept-Language", "en"), request_id)}) from exc
+
+
 @app.get("/api/settings/assistant")
 def assistant_chat_settings(request: Request):
     return {"max_chats": assistant_chats.list(request.state.auth_user["id"])["max_chats"]}
@@ -3135,7 +3153,7 @@ def assistant_portfolio_summary(
             continue
         if account_id and holding.get("account_id") != account_id:
             continue
-        summary = {key: item.get(key) for key in ("market_cap", "industry", "missing", "provider_status", "refresh_state", "price_ranges", "moving_averages", "volume")}
+        summary = {key: item.get(key) for key in ("market_cap", "industry", "exchange", "missing", "provider_status", "refresh_state", "price_ranges", "moving_averages", "volume")}
         summary["holding"] = holding
         for key in ("income_trend", "profit_trend", "dividend_trend", "profit_market_cap_trend"):
             summary[key] = {k: v for k, v in (item.get(key) or {}).items() if k != "series"}

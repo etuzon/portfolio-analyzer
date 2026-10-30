@@ -46,8 +46,8 @@ def flags_for(case, index, response):
         flags.append("empty_answer")
     if re.search(r"\b\d{4}-\d{2}-\d{2}\b|\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}\b", answer):
         flags.append("review_date_format")
-    if result.get("tool_calls") and "/api/" not in answer:
-        flags.append("review_rest_source_missing")
+    if "/api/" in answer or re.search(r"(?im)^\s*(?:source|מקור)\s*:", answer):
+        flags.append("review_internal_source_exposed")
     if not 1 <= result.get("model_requests", 0) <= 6:
         flags.append("exchange_limit")
     for call in result.get("tool_calls", []):

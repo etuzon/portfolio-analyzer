@@ -14,6 +14,7 @@
   --ux-orange: #ffae18;
   --ux-blue: #21a7ff;
   --ux-indigo: #5f67ff;
+  --info-cursor: url("/assets/info-cursor.svg") 12 12, default;
   background: var(--ux-bg);
   color: var(--ux-text);
 }
@@ -601,6 +602,17 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
 
 .assistant-chat-item:hover { background: #22252c; }
 .assistant-chat-item.active { border-color: #6371ca; background: #21253a; }
+.assistant-chat-row { display: flex; align-items: stretch; gap: 5px; min-width: 0; }
+.assistant-chat-row .assistant-chat-item { flex: 1 1 auto; width: 0; }
+.assistant-chat-delete { flex: 0 0 29px; align-self: center; width: 29px; min-width: 29px; min-height: 32px; padding: 4px; color: #c8a2a8; }
+.assistant-chat-delete svg { display: block; width: 17px; height: 17px; margin: auto; }
+.assistant-chat-delete:hover { border-color: #8b515b; color: #ffc2cb; }
+.assistant-delete-confirm { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid #63434b; border-radius: 8px; background: #241c21; }
+.assistant-delete-confirm > div:first-child { flex: 1 1 auto; min-width: 0; }
+.assistant-delete-confirm p { margin: 0; font-size: 11px; line-height: 1.5; }
+#assistantDeleteChatName { margin-top: 3px; color: #c0a7ae; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+.assistant-delete-actions { display: flex; flex: 0 0 auto; gap: 7px; }
+#confirmAssistantDelete { color: #ffd3da; border-color: #79515a; }
 .assistant-chat-item time { color: var(--ux-muted); font-size: 9px; font-weight: 400; }
 .assistant-chat-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
 
@@ -623,6 +635,50 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
 .assistant-message-meta b { min-width: 0; overflow-wrap: anywhere; }
 .assistant-message-meta time { margin-inline-start: auto; font-size: 9px; }
 .assistant-message-content { color: #eef1fa; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; font-size: 12px; }
+.assistant-message-rich { white-space: normal; }
+.assistant-message-rich > :first-child { margin-top: 0; }
+.assistant-message-rich > :last-child { margin-bottom: 0; }
+.assistant-message-rich p { margin: 0 0 10px; }
+.assistant-message-rich h4,
+.assistant-message-rich h5,
+.assistant-message-rich h6 { margin: 16px 0 8px; color: #f6f8ff; font-size: 13px; line-height: 1.5; }
+.assistant-message-rich h4 { font-size: 14px; }
+.assistant-message-rich ul,
+.assistant-message-rich ol { margin: 8px 0 12px; padding-inline-start: 24px; }
+.assistant-message-rich li { padding-inline-start: 2px; margin-bottom: 5px; }
+.assistant-message-rich li > p { margin: 0 0 5px; }
+.assistant-message-rich li > ul,
+.assistant-message-rich li > ol { margin: 5px 0; }
+.assistant-message-rich blockquote { margin: 10px 0; padding: 8px 12px; border-inline-start: 3px solid #737fc1; border-radius: 0 6px 6px 0; background: #1b1e2a; color: #c6cee4; }
+.assistant-message-rich blockquote > :last-child { margin-bottom: 0; }
+.assistant-message-rich hr { border: 0; border-top: 1px solid #3a3e4b; margin: 16px 0; }
+.assistant-message-rich strong { color: #fff; font-weight: 750; }
+.assistant-message-rich code { padding: 1px 4px; border: 1px solid #343a4b; border-radius: 4px; background: #202535; color: #d0daf7; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .93em; white-space: pre-wrap; }
+.assistant-code-block { min-width: 0; margin: 12px 0; border: 1px solid #353b4c; border-radius: 7px; background: #0b0e14; overflow: hidden; }
+.assistant-code-language { display: block; padding: 5px 10px; border-bottom: 1px solid #303646; color: #aebbd6; background: #171c27; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 10px; }
+.assistant-code-block pre { max-width: 100%; max-height: 320px; margin: 0; padding: 12px; overflow: auto; overscroll-behavior: contain; white-space: pre; tab-size: 2; line-height: 1.6; }
+.assistant-code-block pre code { padding: 0; border: 0; border-radius: 0; background: none; color: #d5e1ff; white-space: inherit; overflow-wrap: normal; }
+.assistant-table-wrap { max-width: 100%; margin: 12px 0; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; border: 1px solid #384053; border-radius: 7px; background: #111621; }
+.assistant-table-wrap table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 11px; line-height: 1.6; }
+.assistant-table-wrap th,
+.assistant-table-wrap td { min-width: 88px; max-width: 320px; padding: 9px 12px; border-bottom: 1px solid #2c3342; text-align: start; vertical-align: top; overflow-wrap: normal; }
+.assistant-table-wrap th { background: #20283a; color: #e9efff; font-weight: 700; }
+.assistant-table-wrap tbody tr:nth-child(even) { background: #151b28; }
+.assistant-table-wrap tbody tr:last-child td { border-bottom: 0; }
+.assistant-table-wrap .assistant-align-left { text-align: left; }
+.assistant-table-wrap .assistant-align-right { text-align: right; }
+.assistant-table-wrap .assistant-align-center { text-align: center; }
+html[dir="rtl"] .assistant-table-wrap table { direction: rtl; }
+.assistant-table-wrap:focus-visible,
+.assistant-code-block pre:focus-visible { outline: 2px solid #a2afff; outline-offset: -2px; }
+.assistant-tone { font-weight: 650; }
+.assistant-tone-positive { color: #85dfb4; }
+.assistant-tone-negative { color: #ff9da9; }
+.assistant-tone-warning { color: #ffd083; }
+.assistant-tone-info { color: #9accff; }
+.assistant-tone-muted { color: #aeb8ca; font-weight: 400; }
+.assistant-message-rich .assistant-tone strong,
+.assistant-message-rich .assistant-tone code { color: inherit; }
 .assistant-message-outcome { display: flex; flex-direction: column; gap: 5px; margin: 10px 0 0; padding-top: 9px; border-top: 1px solid #49402f; color: #d9c192; font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
 .assistant-composer { flex: 0 0 auto; border-top: 1px solid var(--ux-stroke); padding-top: 10px; }
 .assistant-composer textarea { width: 100%; min-height: 64px; max-height: 160px; resize: vertical; padding: 10px 12px; border: 1px solid #394052; border-radius: 8px; background: #0e1015; color: #eef1fa; font: inherit; font-size: 12px; line-height: 1.5; }
@@ -634,11 +690,6 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
 .assistant-status-row { min-height: 20px; flex: 0 0 auto; }
 .assistant-status-row .status-line { flex: 1 1 0; min-width: 0; margin: 0; font-size: 10px; overflow-wrap: anywhere; }
 .assistant-status-row button { flex: 0 0 auto; }
-.assistant-permissions { flex: 0 0 auto; min-height: 20px; font-size: 10px; color: var(--ux-muted); }
-.assistant-permissions summary { cursor: pointer; }
-.assistant-permissions ul { max-height: 110px; overflow: auto; padding: 8px 14px; margin: 4px 0 0; border: 1px solid var(--ux-stroke); border-radius: 6px; list-style: none; }
-.assistant-permissions li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 14px; padding: 4px 0; }
-.assistant-permissions code { font-size: 10px; color: #b4c8ea; overflow-wrap: anywhere; }
 #assistantMaxChats { min-width: 120px; width: 140px; }
 #assistantSettingsForm { grid-template-columns: minmax(140px, 220px) auto; justify-content: start; align-items: end; }
 #assistantSettingsForm button { width: auto; }
@@ -662,6 +713,9 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
   .assistant-history .assistant-muted { margin: 4px 0; }
   .assistant-chat-list { flex-direction: row; max-height: 66px; }
   .assistant-chat-item { width: 155px; padding: 7px 9px; }
+  .assistant-chat-row { flex: 0 0 190px; }
+  .assistant-delete-confirm { flex-wrap: wrap; padding: 8px 10px; }
+  .assistant-delete-confirm > div:first-child { flex-basis: 100%; }
   .assistant-message { padding: 10px; }
   .assistant-message-content { font-size: 11px; }
   .assistant-composer textarea { max-height: 110px; }
@@ -1376,7 +1430,7 @@ textarea.muted-control {
   font-style: normal;
   font-weight: 850;
   line-height: 1;
-  cursor: help;
+  cursor: var(--info-cursor);
 }
 
 .ux-tooltip::after {
@@ -3269,7 +3323,7 @@ textarea.muted-control {
 }
 
 .vesting-tooltip-cell {
-  cursor: help;
+  cursor: var(--info-cursor);
   text-decoration: underline;
   text-decoration-style: dotted;
   text-underline-offset: 3px;
@@ -3469,6 +3523,10 @@ textarea.muted-control {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.account-risk-portfolio-share { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 7px 0 0; color: #aeb9ca; font-size: 10px; line-height: 1.45; }
+.account-risk-portfolio-share > span { min-width: 0; }
+.account-risk-portfolio-share > b { min-width: 56px; color: #edf3ff; text-align: end; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 .account-risk-allocation-bar {
   display: flex;
@@ -3712,6 +3770,29 @@ textarea.muted-control {
 .toolbar {
   grid-template-columns: minmax(180px, 1.3fr) repeat(auto-fit, minmax(116px, 1fr));
   align-items: center;
+}
+
+.holdings-panel { container: holdings-filters / inline-size; }
+.holdings-filter-toolbar input:not([type="checkbox"]),
+.holdings-filter-toolbar select,
+.holdings-filter-toolbar button { min-height: 34px; padding-inline: 7px; font-size: 11px; }
+.holdings-filter-toolbar input[type="number"] { min-width: 112px; }
+.holdings-filter-toolbar #technicalDistancePct { min-width: 92px; }
+.holdings-filter-toolbar .check { gap: 4px; font-size: 11px; }
+.holdings-filter-toolbar .check input { flex: 0 0 14px; width: 14px; min-height: 14px; }
+
+@container holdings-filters (min-width: 1620px) {
+  .holdings-filter-toolbar {
+    grid-template-columns: minmax(140px, 1.25fr) minmax(112px, 1.05fr) minmax(88px, .8fr) minmax(100px, .9fr) minmax(116px, 1fr) minmax(104px, .95fr) minmax(88px, .8fr) repeat(2, minmax(112px, 1fr)) minmax(76px, .7fr) minmax(84px, .8fr) minmax(92px, .85fr) minmax(92px, .8fr) max-content minmax(58px, .6fr);
+    gap: 5px;
+  }
+}
+
+@media (max-width: 760px) {
+  .holdings-filter-toolbar input:not([type="checkbox"]),
+  .holdings-filter-toolbar select,
+  .holdings-filter-toolbar button { min-height: 38px; font-size: 12px; }
+  .holdings-filter-toolbar .check { font-size: 12px; }
 }
 
 .modal-toolbar {
@@ -4981,7 +5062,7 @@ textarea.muted-control {
   font-style: normal;
   font-weight: 850;
   line-height: 1;
-  cursor: help;
+  cursor: var(--info-cursor);
 }
 
 .connected-field {
@@ -7153,8 +7234,12 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 
 .finance-report-table [title],
 .finance-report-summary [title] {
-  cursor: help;
+  cursor: var(--info-cursor);
 }
+
+:where([title], [data-tooltip], .ux-tooltip) { cursor: var(--info-cursor); }
+:is(button, a, [role="button"]):is([title], [data-tooltip], .ux-tooltip),
+:is(button, a, [role="button"]) :is([title], [data-tooltip], .ux-tooltip) { cursor: pointer; }
 
 .company-outlook-panel {
   display: grid;

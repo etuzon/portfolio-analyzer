@@ -88,6 +88,7 @@ def analyze_holding(holding: Holding, hub: MarketDataHub) -> SymbolAnalysis:
         profit_market_cap_trend=profit_market_cap,
         industry=industry,
         missing=missing,
+        exchange=str(profile.get("exchange") or "").strip(),
         market_cap=market_cap,
         technical_signals=technical_signals(ma_metrics, level_metrics, volume),
     )

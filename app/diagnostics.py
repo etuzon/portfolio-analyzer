@@ -16,10 +16,10 @@ from contextvars import ContextVar
 
 COMPONENTS = ("application", "http", "portfolio", "market-data", "auth", "chat")
 TRACE_ID: ContextVar[str] = ContextVar("application_trace_id", default="")
-SENSITIVE = re.compile(r"password|passwd|passphrase|token|secret|credential|authorization|cookie|session|csrf|private[_-]?key|api[_-]?key|connection[_-]?string", re.I)
+SENSITIVE = re.compile(r"password|passwd|passphrase|token|secret|credential|authorization|cookie|session|csrf|private[_-]?key|api[\s_-]?key|connection[_-]?string|סיסמה|סיסמא|ססמה|טוקן|אסימון", re.I)
 _ASSIGNMENT = re.compile(r'''(?ix)
-    (\b[\w.-]*(?:password|passwd|passphrase|api[_-]?key|token|secret|credential|authorization|cookie|connection[_-]?string|session|csrf|private[_-]?key|סיסמה|סיסמא)[\w.-]*\b)
-    (["']?\s*(?:[:=]|\bis\b|היא)\s*)
+    (\b[\w.-]*(?:password|passwd|passphrase|api[\s_-]?key|token|secret|credential|authorization|cookie|connection[_-]?string|session|csrf|private[_-]?key|סיסמה|סיסמא|ססמה|טוקן|אסימון)[\w.-]*\b)
+    (["']?(?:\*{1,2}|_{1,2}|`)?\s*(?:[:=]|\bis\b|היא)\s*(?:\*{1,2}|_{1,2}|`)?\s*)
     (?:"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|[^\n;&]+)
 ''')
 
@@ -40,6 +40,62 @@ class Redactor:
             for item in value:
                 self._collect(item)
 
+    @staticmethod
+    def _tables(value: str) -> str:
+        def cells(line):
+            line = re.sub(r"^\s*(?:>\s*)+", "", line)
+            parts, current, ticks, index = [], "", 0, 0
+            while index < len(line):
+                char = line[index]
+                if char == "\\" and index + 1 < len(line):
+                    current += line[index:index + 2]
+                    index += 2
+                    continue
+                if char == "`":
+                    end = index + 1
+                    while end < len(line) and line[end] == "`":
+                        end += 1
+                    run = end - index
+                    ticks = run if not ticks else 0 if ticks == run else ticks
+                    current += line[index:end]
+                    index = end
+                    continue
+                if char == "|" and not ticks:
+                    parts.append(current)
+                    current = ""
+                else:
+                    current += char
+                index += 1
+            parts.append(current)
+            leading, trailing = line.lstrip().startswith("|"), line.rstrip().endswith("|")
+            if leading:
+                parts = parts[1:]
+            if trailing:
+                parts = parts[:-1]
+            return parts, leading, trailing
+        lines = value.split("\n")
+        protected = set()
+        for index, line in enumerate(lines):
+            if "|" not in line:
+                protected = set()
+                continue
+            parts, leading, trailing = cells(line)
+            if parts and all(re.fullmatch(r"\s*:?-{3,}:?\s*", part) for part in parts):
+                continue
+            next_parts = cells(lines[index + 1])[0] if index + 1 < len(lines) and "|" in lines[index + 1] else []
+            labels = {column for column, part in enumerate(parts) if SENSITIVE.search(part)}
+            if next_parts and all(re.fullmatch(r"\s*:?-{3,}:?\s*", part) for part in next_parts):
+                protected = labels
+                continue
+            hidden = protected if protected else {column + 1 for column in labels if column + 1 < len(parts)}
+            if hidden:
+                for column in hidden:
+                    if column < len(parts):
+                        parts[column] = " [REDACTED] "
+                quote = re.match(r"^\s*(?:>\s*)+", line)
+                lines[index] = (quote[0] if quote else "") + ("|" if leading else "") + "|".join(parts) + ("|" if trailing else "")
+        return "\n".join(lines)
+
     def text(self, value: str) -> str:
         from urllib.parse import unquote
         if value.lstrip().startswith(("{", "[")):
@@ -56,13 +112,15 @@ class Redactor:
                 # Short external-source credentials are valid too. Match them
                 # as standalone values so unrelated UUIDs remain searchable.
                 value = re.sub(r"(?<!\w)" + re.escape(secret) + r"(?!\w)", "[REDACTED]", value)
+        value = re.sub(r":(?:positive|negative|warning|info|muted)\[([^\]\n]+)\]", lambda match: match[1] if SENSITIVE.search(match[1]) else match[0], value)
+        value = self._tables(value)
         value = re.sub(r"([?&])([^=&\s]+)=([^&\s]+)", lambda match: match[1] + match[2] + "=[REDACTED]" if SENSITIVE.search(unquote(match[2])) else match[0], value)
         value = re.sub(r"(?im)\b(?:set-cookie|cookie)\s*:[^\n]*", "Cookie: [REDACTED]", value)
         value = re.sub(r"(?i)(https?://)[^\s/@]+@", r"\1[REDACTED]@", value)
         value = re.sub(r"-----BEGIN (?:[A-Z ]*PRIVATE KEY)-----.*?-----END (?:[A-Z ]*PRIVATE KEY)-----", "[REDACTED PRIVATE KEY]", value, flags=re.S)
         # Model arguments can contain JSON serialized inside a string, including
         # an additional escaped-quote layer. Scrub that representation too.
-        value = re.sub(r'''(?ix)(["\\]*\b[\w.-]*(?:password|passwd|passphrase|api[_-]?key|token|secret|credential|authorization|cookie|session|csrf|private[_-]?key)[\w.-]*["\\]*\s*:\s*["\\]*)([^"\\\n]+)''', r"\1[REDACTED]", value)
+        value = re.sub(r'''(?ix)(["\\]*\b[\w.-]*(?:password|passwd|passphrase|api[\s_-]?key|token|secret|credential|authorization|cookie|session|csrf|private[_-]?key|סיסמה|סיסמא|ססמה|טוקן|אסימון)[\w.-]*["\\]*\s*:\s*["\\]*)([^"\\\n]+)''', r"\1[REDACTED]", value)
         value = re.sub(r"(?i)\bBearer\s+[^\s,;\"']+", "Bearer [REDACTED]", value)
         value = re.sub(r"(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://[^\s\"']+", "[REDACTED CONNECTION]", value)
         value = re.sub(r"\b(?:sk-[A-Za-z0-9_-]{12,}|gh[pousr]_[A-Za-z0-9]{12,}|eyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,})\b", "[REDACTED]", value)
