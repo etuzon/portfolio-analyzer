@@ -168,6 +168,8 @@ ASSISTANT_CONTEXT_PREF_PREFIX = "assistant_context:"
 _portfolio_cache_lock = RLock()
 _portfolio_cache: dict[str, Any] | None = None
 _portfolio_refresh_in_progress = False
+_portfolio_cache_generation = 0
+_portfolio_refresh_failure: dict[str, Any] | None = None
 _alert_run_lock = RLock()
 _alert_runs_in_progress: set[str] = set()
 _full_restore_lock = RLock()
@@ -2264,10 +2266,10 @@ def analyze_all():
     return enriched_local_holdings()
 
 
-def enriched_local_holdings():
+def enriched_local_holdings(*, cached_only: bool = False):
     analyses = local_store.holdings()
     enriched = []
-    market_hub = hub()
+    market_hub = hub().cached_view() if cached_only else hub()
     for local_analysis in analyses:
         if local_analysis.holding.data_source == "MANUAL" and not local_analysis.holding.secondary_symbol:
             enriched.append(local_analysis)
@@ -2359,12 +2361,66 @@ def _serialized_portfolio_payload(analyses, cache_status: str) -> dict[str, Any]
     }
 
 
+def _portfolio_loading_state(payload: dict[str, Any], state: str) -> dict[str, Any]:
+    """Keep available evidence; pending/failure must never masquerade as absence."""
+    for item in payload.get("items", []):
+        holding = item.get("holding") or {}
+        if holding.get("data_source") == "MANUAL" and not holding.get("secondary_symbol"):
+            continue
+        item["analytics_state"] = state
+        for key in ("income_trend", "profit_trend", "dividend_trend", "profit_market_cap_trend"):
+            trend = item.get(key)
+            if trend and trend.get("state") in {"missing", "pending", "error"}:
+                trend["state"] = "pending" if state == "refreshing" else "error" if state == "failed" else "missing"
+                trend["message"] = "Loading financial data" if state == "refreshing" else "Financial data could not be updated" if state == "failed" else trend.get("message", "")
+        for values in (item.get("price_ranges") or {}).values():
+            if values.get("state") in {"missing", "pending", "error"}:
+                values["state"] = "pending" if state == "refreshing" else "error" if state == "failed" else "missing"
+                values["message"] = "Loading price history" if state == "refreshing" else "Price history could not be updated" if state == "failed" else values.get("message", "")
+        for values in (item.get("support_resistance") or {}).values():
+            if values.get("state") in {"missing", "pending", "error"}:
+                values["state"] = "pending" if state == "refreshing" else "error" if state == "failed" else "missing"
+    payload["refresh_state"] = state
+    payload["refresh_pending"] = state == "refreshing"
+    return payload
+
+
+def _portfolio_provider_failures(payload: dict[str, Any]) -> None:
+    failed = False
+    for item in payload.get("items", []):
+        statuses = item.get("provider_status") or {}
+        for group, fields in {"fundamentals": ("income_trend", "profit_trend", "profit_market_cap_trend"),
+                              "dividends": ("dividend_trend",), "profile": ("profit_market_cap_trend",), "prices": ()}.items():
+            values = [str(value) for key, value in statuses.items() if key.startswith(group + ".")]
+            unavailable = any(value.startswith("error:") or (value.startswith("stale (") and ";" in value) for value in values)
+            if unavailable and not any(value == "ok" for value in values):
+                failed = True
+                item["analytics_state"] = "failed"
+                for key in fields:
+                    trend = item.get(key)
+                    if trend and trend.get("state") == "missing":
+                        trend.update(state="error", message="Financial data could not be updated")
+                if group == "prices":
+                    for key in ("price_ranges", "support_resistance", "moving_averages"):
+                        for metric in (item.get(key) or {}).values():
+                            if metric.get("state") == "missing":
+                                metric.update(state="error", message="Price history could not be updated")
+    payload["refresh_state"] = "failed" if failed else "ready"
+    payload["refresh_pending"] = False
+
+
 def _refresh_portfolio_cache() -> None:
     """Refresh provider analytics off the request path."""
-    global _portfolio_cache, _portfolio_refresh_in_progress
+    global _portfolio_cache, _portfolio_refresh_in_progress, _portfolio_refresh_failure
+    with _portfolio_cache_lock:
+        generation = _portfolio_cache_generation
+    signature = None
     try:
         signature = portfolio_cache_signature()
         payload = _serialized_portfolio_payload(enriched_local_holdings(), "refreshed")
+        _portfolio_provider_failures(payload)
+        if signature != portfolio_cache_signature():
+            return
         if signature:
             cache_record = {
                 "signature": signature,
@@ -2372,20 +2428,31 @@ def _refresh_portfolio_cache() -> None:
                 "payload": payload,
             }
             with _portfolio_cache_lock:
+                if generation != _portfolio_cache_generation:
+                    return
                 _portfolio_cache = cache_record
                 write_portfolio_cache(cache_record)
+                _portfolio_refresh_failure = None
     except Exception as exc:
         logger.warning("Background portfolio analytics refresh failed: %s", exc.__class__.__name__)
+        with _portfolio_cache_lock:
+            if generation == _portfolio_cache_generation:
+                _portfolio_refresh_failure = {"signature": signature, "retry_at": time.time() + 30}
     finally:
         with _portfolio_cache_lock:
             _portfolio_refresh_in_progress = False
 
 
 def schedule_portfolio_refresh() -> bool:
-    global _portfolio_refresh_in_progress
+    global _portfolio_refresh_in_progress, _portfolio_refresh_failure
+    signature = portfolio_cache_signature()
     with _portfolio_cache_lock:
         if _portfolio_refresh_in_progress:
             return False
+        if (_portfolio_refresh_failure and _portfolio_refresh_failure.get("signature") == signature
+                and _portfolio_refresh_failure.get("retry_at", 0) > time.time()):
+            return False
+        _portfolio_refresh_failure = None
         _portfolio_refresh_in_progress = True
     Thread(target=_refresh_portfolio_cache, name="portfolio-analytics-refresh", daemon=True).start()
     return True
@@ -2410,10 +2477,11 @@ def configure_portfolio_refresh_job() -> None:
 
 
 def portfolio_payload(force_refresh: bool = False, defer_enrichment: bool = False) -> dict[str, Any]:
-    global _portfolio_cache
+    global _portfolio_cache, _portfolio_refresh_failure
     signature = portfolio_cache_signature()
     now = time.time()
     with _portfolio_cache_lock:
+        generation = _portfolio_cache_generation
         cached = _portfolio_cache or read_portfolio_cache()
         if (
             not force_refresh
@@ -2423,34 +2491,54 @@ def portfolio_payload(force_refresh: bool = False, defer_enrichment: bool = Fals
             and float(cached.get("expires_at") or 0) > now
         ):
             _portfolio_cache = cached
-            payload = cached.get("payload") or {}
+            payload = json.loads(json.dumps(cached.get("payload") or {}))
             payload["status"] = {**payload.get("status", {}), "portfolio_cache": "hit"}
+            if _portfolio_refresh_in_progress:
+                return _portfolio_loading_state(payload, "refreshing")
+            if _portfolio_refresh_failure and _portfolio_refresh_failure.get("signature") == signature:
+                return _portfolio_loading_state(payload, "failed")
+            payload.setdefault("refresh_state", "ready")
+            payload["refresh_pending"] = False
             return payload
 
     if defer_enrichment:
         if cached and signature and cached.get("signature") == signature:
-            payload = dict(cached.get("payload") or {})
+            payload = json.loads(json.dumps(cached.get("payload") or {}))
             payload["status"] = {**payload.get("status", {}), "portfolio_cache": "stale (refreshing in background)"}
         else:
-            payload = _serialized_portfolio_payload(local_store.holdings(), "local (refreshing in background)")
+            payload = _serialized_portfolio_payload(enriched_local_holdings(cached_only=True), "local (refreshing in background)")
         # Report the actual state rather than whether this particular request
         # started the worker.  A second client request can arrive while the
         # worker is already running and must still know to await its result.
+        if force_refresh:
+            with _portfolio_cache_lock:
+                _portfolio_refresh_failure = None
         refresh_started = schedule_portfolio_refresh()
         with _portfolio_cache_lock:
-            payload["refresh_pending"] = refresh_started or _portfolio_refresh_in_progress
-        return payload
+            pending = refresh_started or _portfolio_refresh_in_progress
+            failed = bool(_portfolio_refresh_failure and _portfolio_refresh_failure.get("signature") == signature)
+            # The existing worker may finish between scheduling and this lock.
+            # A terminal response must use its published result, not the older
+            # preview that was assembled while the worker was still running.
+            if not pending and not failed and _portfolio_cache and _portfolio_cache.get("signature") == signature:
+                completed = json.loads(json.dumps(_portfolio_cache.get("payload") or {}))
+                completed.setdefault("refresh_state", "ready")
+                completed["refresh_pending"] = False
+                return completed
+        return _portfolio_loading_state(payload, "refreshing" if pending else "failed" if failed else "ready")
 
     payload = _serialized_portfolio_payload(enriched_local_holdings(), "refreshed")
-    if signature:
+    _portfolio_provider_failures(payload)
+    if signature and signature == portfolio_cache_signature():
         cache_record = {
             "signature": signature,
             "expires_at": now + portfolio_cache_ttl_seconds(),
             "payload": payload,
         }
         with _portfolio_cache_lock:
-            _portfolio_cache = cache_record
-            write_portfolio_cache(cache_record)
+            if generation == _portfolio_cache_generation:
+                _portfolio_cache = cache_record
+                write_portfolio_cache(cache_record)
     return payload
 
 
@@ -2472,17 +2560,29 @@ def read_portfolio_cache() -> dict[str, Any] | None:
 
 
 def write_portfolio_cache(cache_record: dict[str, Any]) -> None:
-    portfolio_cache_path().write_text(json.dumps(cache_record, default=str))
+    path = portfolio_cache_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=path.name + ".", suffix=".tmp", delete=False) as stream:
+            temporary = Path(stream.name)
+            json.dump(cache_record, stream, default=str)
+        temporary.replace(path)
+    finally:
+        if temporary:
+            temporary.unlink(missing_ok=True)
 
 
 def clear_portfolio_cache() -> None:
-    global _portfolio_cache
+    global _portfolio_cache, _portfolio_cache_generation, _portfolio_refresh_failure
     with _portfolio_cache_lock:
         _portfolio_cache = None
-    try:
-        portfolio_cache_path().unlink()
-    except OSError:
-        pass
+        _portfolio_cache_generation += 1
+        _portfolio_refresh_failure = None
+        try:
+            portfolio_cache_path().unlink()
+        except OSError:
+            pass
 
 
 def _login_attempt_key(request: Request, username: Any) -> str:
@@ -2840,7 +2940,7 @@ def portfolio(refresh: bool = False):
     # A user-requested refresh is allowed to wait for enriched data.  Regular
     # dashboard loads remain non-blocking and are refreshed by the client when
     # the background worker completes.
-    return portfolio_payload(force_refresh=refresh, defer_enrichment=not refresh)
+    return portfolio_payload(force_refresh=refresh, defer_enrichment=True)
 
 
 @app.post("/api/screener")

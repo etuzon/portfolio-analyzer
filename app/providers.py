@@ -42,6 +42,10 @@ def _provider_symbol_candidates(
             symbols.append(symbol)
 
     market = str(stock_market or "").strip().upper().replace(" ", "")
+    if market in {"TASE", "TLV", "TELAVIV"} and provider_name in {"sec_company_facts", "nasdaq_quote", "stooq"}:
+        # These adapters resolve bare US listings; a matching ticker is not
+        # evidence for an Israeli security, even during a background refresh.
+        return []
     if provider_name != "yahoo_finance" or market not in {"TASE", "TLV", "TELAVIV"}:
         return symbols
 
@@ -309,13 +313,11 @@ class MarketDataHub:
         secondary_symbol: str = "",
         stock_market: str = "",
     ) -> dict[str, Any]:
-        merged: dict[str, Any] = {}
-        for provider in self.providers:
-            for provider_symbol in _provider_symbol_candidates(provider.name, symbol, secondary_symbol, stock_market):
-                saved = self.cache.get_security_snapshot(provider.name, provider_symbol, "profile")
-                if isinstance(saved, dict):
-                    merged.update({key: value for key, value in saved.items() if value not in (None, "")})
-        return merged
+        return self.cached_view().profile(symbol, secondary_symbol=secondary_symbol, stock_market=stock_market)[0]
+
+    def cached_view(self) -> CachedMarketDataHub:
+        """Read saved market evidence without invoking any provider or cache writes."""
+        return CachedMarketDataHub(self)
 
     def fx(self, pair: str) -> tuple[dict[str, Any], dict[str, str]]:
         status = {}
@@ -425,6 +427,55 @@ class MarketDataHub:
             or self.config.get("financial_modeling_prep", {}).get("api_key")
             or self.config.get("yahoo_finance", {}).get("enabled")
         )
+
+
+class CachedMarketDataHub:
+    """Provider-shaped, read-only view used for immediate dashboard analytics."""
+
+    def __init__(self, hub: MarketDataHub):
+        self.hub = hub
+
+    def _candidates(self, provider: Any, symbol: str, secondary_symbol: str, stock_market: str) -> list[str]:
+        candidates = _provider_symbol_candidates(provider.name, symbol, secondary_symbol, stock_market)
+        if stock_market.upper().replace(" ", "") in {"TASE", "TLV", "TELAVIV"}:
+            # Bare tickers in SEC/US caches cannot establish an Israeli listing.
+            return [value for value in candidates if value.endswith(".TA")] if provider.name == "yahoo_finance" else []
+        return candidates
+
+    def _snapshot(self, kind: str, symbol: str, secondary_symbol: str = "", stock_market: str = ""):
+        for provider in self.hub.providers:
+            for candidate in self._candidates(provider, symbol, secondary_symbol, stock_market):
+                saved = self.hub.cache.get_security_snapshot(provider.name, candidate, kind)
+                if saved:
+                    return saved, {provider.name: "cached"}
+        return ([] if kind == "dividends" else {}), {"cache": "pending"}
+
+    def fundamentals(self, symbol: str, **context):
+        return self._snapshot("fundamentals", symbol, **context)
+
+    def dividends(self, symbol: str, **context):
+        return self._snapshot("dividends", symbol, **context)
+
+    def profile(self, symbol: str, secondary_symbol: str = "", stock_market: str = ""):
+        merged, status = {}, {}
+        for provider in self.hub.providers:
+            for candidate in self._candidates(provider, symbol, secondary_symbol, stock_market):
+                saved = self.hub.cache.get_security_snapshot(provider.name, candidate, "profile")
+                if isinstance(saved, dict):
+                    merged.update({key: value for key, value in saved.items() if value not in (None, "")})
+                    status[provider.name] = "cached"
+        return merged, status or {"cache": "pending"}
+
+    def prices(self, symbol: str, from_date: date, to_date: date, secondary_symbol: str = "", stock_market: str = ""):
+        best, status = [], {}
+        for provider in self.hub.providers:
+            for candidate in self._candidates(provider, symbol, secondary_symbol, stock_market):
+                saved = self.hub.cache.get_prices(provider.name, candidate, from_date, to_date)
+                if _price_score(saved, from_date, to_date) > _price_score(best, from_date, to_date):
+                    best = saved
+                if saved:
+                    status[provider.name] = "cached"
+        return best, status or {"cache": "pending"}
 
 
 class SqliteCache:

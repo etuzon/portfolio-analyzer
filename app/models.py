@@ -3,7 +3,7 @@ from datetime import date
 from typing import Literal
 
 
-MetricState = Literal["ok", "stale", "partial", "missing", "error"]
+MetricState = Literal["ok", "stale", "partial", "pending", "missing", "error"]
 TrendDirection = Literal["up", "down", "flat", "missing"]
 
 

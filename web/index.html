@@ -128,7 +128,7 @@
         <header class="topbar">
           <div>
             <h1 id="dashboardTitle" tabindex="-1">Portfolio analyzer</h1>
-            <p id="status">Preparing dashboard</p>
+            <p id="status" role="status" aria-live="polite">Preparing dashboard</p>
           </div>
           <div class="topbar-actions">
             <div class="user-session" aria-label="Current user">
@@ -1412,8 +1412,9 @@
             <label class="field"><span>Account type</span><select id="positionAccountType"><option value="">All account categories</option><option value="Investment" selected>Investment</option></select></label>
             <label class="field position-account-filter"><span>Account name</span><select id="positionAccount"><option value="">All matching accounts</option></select></label>
             <label class="field"><span>Position status</span><select id="tradeHistoryPositionStatus"><option value="all">All positions</option><option value="open">Open positions</option><option value="closed">Closed positions</option></select></label>
+            <label class="field position-stock-filter"><span>Security</span><select id="positionStock"><option value="">All securities</option></select></label>
             <label class="field position-search-filter"><span>Search history</span><input id="tradeHistorySearch" type="search" placeholder="Symbol, name or account" /></label>
-            <label class="field"><span>Sort by</span><select id="positionSort"><option value="opened_date">Opened date</option><option value="closed_date">Closed date</option><option value="symbol">Security</option><option value="account_label">Account name</option><option value="duration_days">Days held</option><option value="total_profit">Total P/L</option><option value="profit_per_day">P/L per day</option><option value="profit_per_year">P/L per year</option></select></label>
+            <label class="field"><span>Sort by</span><select id="positionSort"><option value="opened_date">Opened date</option><option value="closed_date">Closed date</option><option value="symbol">Security</option><option value="name">Security name</option><option value="account_label">Account name</option><option value="currency">Currency</option><option value="stock_market">Market</option><option value="status">Position status</option><option value="duration_days">Days held</option><option value="total_profit">Total P/L</option><option value="realized_profit">Realized P/L</option><option value="unrealized_profit">Unrealized P/L</option><option value="profit_per_day">P/L per day</option><option value="profit_per_year">P/L per year</option></select></label>
             <label class="field"><span>Sort direction</span><select id="positionSortDirection"><option value="desc">Descending</option><option value="asc">Ascending</option></select></label>
             <div class="settings-actions"><button id="resetPositionFilters" class="secondary compact-button" type="button">Reset filters</button><button id="retryTradeHistory" class="secondary compact-button" type="button" hidden>Retry</button></div>
           </div>

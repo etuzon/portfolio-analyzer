@@ -765,6 +765,10 @@ function setAuthenticatedSession(payload) {
 }
 
 function showLogin(message = "") {
+  state.portfolioRefreshPending = false;
+  state.portfolioLoadVersion = (state.portfolioLoadVersion || 0) + 1;
+  clearTimeout(portfolioEnrichmentRetryTimer);
+  portfolioEnrichmentRetryTimer = null;
   state.auth = { user: null, csrfToken: "", forcedPasswordChange: false };
   state.authenticatedAppStarted = false;
   document.querySelectorAll(".modal").forEach((modal) => { modal.hidden = true; });
@@ -2452,12 +2456,18 @@ function seriesDate(trend, offset) {
 
 function formatMetricValue(value, kind, currency) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "Not available";
-  if (kind === "dividend") return `${money(value, currency, 2)} / share`;
+  if (kind === "dividend") return `${money(value, currency, 2)} / ${t("share")}`;
   if (kind === "percent") return pct(Number(value) * 100);
   return compactNumber(value);
 }
 
+function analyticsStateCell(label, state, message) {
+  const failed = state === "error";
+  return `<div class="metric-cell analytics-state-cell"><div class="metric-head"><span class="metric-name">${esc(t(label))}</span><span class="metric-pill ${failed ? "warn" : "neutral"}">${esc(t(failed ? "Update failed" : "Loading"))}</span></div><small>${esc(t(message))}</small></div>`;
+}
+
 function trendCell(trend, label, { kind = "number", currency = "USD", marketCap = null } = {}) {
+  if (["pending", "error"].includes(trend?.state)) return analyticsStateCell(label, trend.state, trend.state === "pending" ? "Loading financial data" : "Financial data could not be updated");
   if (!trend || trend.state === "missing") {
     const message = trend?.message || `Provider did not return enough ${label.toLowerCase()} history`;
     return `<div class="metric-cell missing-state" title="${esc(message)}">
@@ -2486,6 +2496,7 @@ function trendCell(trend, label, { kind = "number", currency = "USD", marketCap 
 }
 
 function rangeCell(range, currency) {
+  if (["pending", "error"].includes(range?.state)) return analyticsStateCell("Price range", range.state, range.state === "pending" ? "Loading price history" : "Price history could not be updated");
   if (range.state !== "ok" && range.state !== "partial") {
     return `<div class="metric-cell missing-state">
       <div class="metric-head">
@@ -2508,6 +2519,7 @@ function rangeCell(range, currency) {
 }
 
 function technicalsCell(sr, movingAverage, currency, maPeriod) {
+  if (["pending", "error"].includes(sr?.state)) return analyticsStateCell("Technicals", sr.state, sr.state === "pending" ? "Loading price history" : "Price history could not be updated");
   if (sr.state !== "ok") {
     return `<div class="metric-cell missing-state">
       <div class="metric-head">
@@ -2541,7 +2553,7 @@ function providerStatusHint(providerStatus) {
     .filter(([, value]) => String(value).toLowerCase() === "ok")
     .map(([key]) => providerDisplayName(key.split(".").pop())))];
   const staleProviders = [...new Set(entries
-    .filter(([, value]) => String(value).toLowerCase().includes("stale"))
+    .filter(([, value]) => String(value).toLowerCase().includes("stale") || value === "cached")
     .map(([key]) => providerDisplayName(key.split(".").pop())))];
   const failedProviders = [...new Set(entries
     .filter(([, value]) => String(value).toLowerCase().includes("error"))
@@ -2559,6 +2571,9 @@ function providerStatusHint(providerStatus) {
 }
 
 function statusCell(item) {
+  if (item.analytics_state === "refreshing" || item.analytics_state === "failed") {
+    return `<div class="status-cell status-cell-compact"><span class="badge ${item.analytics_state === "failed" ? "partial" : "neutral"}">${esc(t(item.analytics_state === "failed" ? "Update failed" : "Updating analytics"))}</span></div>`;
+  }
   const providerText = providerStatusText(item.provider_status);
   const providerHint = providerStatusHint(item.provider_status);
   const localizedMissing = item.missing.map(optionLabel);
@@ -3075,7 +3090,29 @@ function bindCompanyLogoImages(scope) {
   });
 }
 
+function preserveRenderedInteraction(root) {
+  if (!root) return () => {};
+  const active = root.contains(document.activeElement) ? document.activeElement : null;
+  const rowKey = active?.closest("[data-portfolio-position]")?.dataset.portfolioPosition;
+  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
+  const detailStates = [...root.querySelectorAll("details")].map((node) => ({ open: node.open, className: node.className, id: node.id }));
+  const tagName = active?.tagName, className = active?.className;
+  return () => {
+    [...root.querySelectorAll("details")].forEach((node, index) => {
+      const previous = detailStates[index];
+      if (previous && previous.id === node.id && previous.className === node.className) node.open = previous.open;
+    });
+    if (!active || active.isConnected) return;
+    const scope = rowKey ? [...root.querySelectorAll("[data-portfolio-position]")].find((node) => node.dataset.portfolioPosition === rowKey) : root;
+    const replacement = [...(scope?.querySelectorAll(tagName) || [])].find((node) => identity.length
+      ? identity.every(([name, value]) => node.getAttribute(name) === value)
+      : node.className === className);
+    replacement?.focus({ preventScroll: true });
+  };
+}
+
 function renderRows(items) {
+  const restoreInteraction = preserveRenderedInteraction($("rows"));
   $("count").textContent = `${items.length} shown`;
   $("rows").innerHTML = items.map((item) => {
     const h = item.holding;
@@ -3113,10 +3150,10 @@ function renderRows(items) {
     const averageBuyPrice = Math.abs(Number(h.quantity || 0)) > 0
       ? Math.abs(Number(h.cost_basis || 0) / Number(h.quantity || 0))
       : 0;
-    return `<tr>
+    return `<tr data-portfolio-position="${esc(JSON.stringify([h.account_id, h.symbol, marketKey, h.currency, h.asset_class]))}">
       <td data-label="Security"><div class="security-cell"><div class="security-symbols">${companyLogoHtml(h)}<button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}<span class="ux-tooltip security-meta-tooltip" tabindex="0" role="note" aria-label="Security details" title="${esc(marketLine)}" data-tooltip="${esc(marketLine)}">i</span></div><div class="security-name">${esc(companyLine)}</div>${industryLine}${exposureLine}</div></td>
       <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(accountMeta)}</div>${holdingTransactionActionsHtml(h)}</td>
-      <td data-label="Risk">${riskBadge(rowRisk)}</td>
+      <td class="holding-risk-cell" data-label="Risk">${riskBadge(rowRisk)}</td>
       <td data-label="Value / P&L"><div class="value-cell">
         <strong>${money(h.market_value, h.currency)}</strong>
         <button class="units-history-link" type="button" data-position-history-symbol="${esc(h.symbol)}" data-position-history-market="${esc(marketKey)}" data-position-history-account-id="${esc(h.account_id || "")}" data-position-history-account="${esc(cleanSourceLabel(h.account) || "")}" data-position-history-currency="${esc(h.currency || state.baseCurrency)}" data-position-history-quantity="${esc(h.quantity || 0)}" data-position-history-average="${esc(averageBuyPrice)}" data-position-history-asset="${esc(h.asset_class || "EQUITY")}" data-position-history-location="${esc(h.country || h.location || "")}" title="Open buy and sell history">${fmt(h.quantity, 3)} ${esc(optionLabel("units"))}</button>
@@ -3131,6 +3168,7 @@ function renderRows(items) {
     </tr>`;
   }).join("");
   bindCompanyLogoImages($("rows"));
+  restoreInteraction();
 }
 
 function chartPath(values, width, height, pad = 14) {
@@ -3939,12 +3977,16 @@ function renderCompleteness(items) {
     ["Profit trend", "profit", "#ffae18"],
     ["Dividend trend", "dividend", "#9b4dff"],
   ].map(([label, missingLabel]) => {
-    const ok = items.filter((item) => !item.missing.includes(missingLabel)).length;
+    const usable = (metric) => metric && ["ok", "partial", "stale"].includes(metric.state);
+    const ok = items.filter((item) => missingLabel === "price history"
+      ? Object.values(item.price_ranges || {}).some(usable)
+      : usable(item[missingLabel === "profit" ? "profit_trend" : "dividend_trend"])).length;
     return { label, ok, total, percent: total ? Math.round((ok / total) * 100) : 0 };
   });
   return `
     <div class="chart-card meters-card">
       <div class="chart-title">Provider data coverage</div>
+      ${items.some((item) => item.analytics_state === "refreshing") ? `<p class="section-note">${esc(t("Updating analytics in the background"))}</p>` : ""}
       <div class="coverage-list">
         ${metrics.map((metric, index) => `
           <div class="coverage-row" title="${esc(`${metric.ok} of ${metric.total} positions have ${metric.label.toLowerCase()} data`)}">
@@ -4434,6 +4476,7 @@ function restoreDashboardScrollPositions(board, positions) {
 function renderAnalytics(items) {
   const board = $("analyticsBoard");
   if (!board) return;
+  const restoreInteraction = preserveRenderedInteraction(board);
   // Background enrichment replaces dashboard markup. Keep a reader's place in
   // bounded lists so that the refresh is not perceived as a jump to the top.
   const scrollPositions = dashboardScrollPositions(board);
@@ -4441,6 +4484,7 @@ function renderAnalytics(items) {
   renderDashboardControls();
   if (!items.length && !(state.localFunds || []).length && state.dashboard.area !== "employee") {
     board.innerHTML = '<div class="empty">No portfolio data</div>';
+    restoreInteraction();
     return;
   }
   const assetGroups = assetMixGroups(items);
@@ -4467,6 +4511,7 @@ function renderAnalytics(items) {
   if (state.dashboard.edit) {
     board.innerHTML = renderDashboardEditor(renderers);
     restoreDashboardScrollPositions(board, scrollPositions);
+    restoreInteraction();
     return;
   }
   const visible = visibleDashboardWidgets();
@@ -4474,6 +4519,7 @@ function renderAnalytics(items) {
     ? visible.map((widget) => withDashboardToolbar(widget, renderers[widget.id]())).join("")
     : '<div class="empty">No dashboard cards in this area</div>';
   restoreDashboardScrollPositions(board, scrollPositions);
+  restoreInteraction();
 }
 
 function renderPortfolio(items) {
@@ -7729,6 +7775,29 @@ function refreshPositionAccountSelect() {
   select.title = select.selectedOptions?.[0]?.textContent || "";
 }
 
+function positionStockKey(row) {
+  const asset = ["STOCK", "RSU"].includes(row.asset_class) ? "EQUITY" : row.asset_class || "";
+  return JSON.stringify([row.symbol || "", row.stock_market || "", row.currency || "", asset, row.security_id || ""]);
+}
+
+function refreshPositionStockSelect() {
+  const select = $("positionStock"), current = select.value;
+  const securities = new Map();
+  (state.tradeHistory?.items || []).filter((row) => positionAccountMatchesFilters(row.account_id)).forEach((row) => {
+    const key = positionStockKey(row);
+    if (!securities.has(key)) securities.set(key, row);
+  });
+  const rows = [...securities.entries()].sort((a, b) => String(a[1].symbol).localeCompare(String(b[1].symbol), locale()) || a[0].localeCompare(b[0]));
+  const labels = rows.map(([, row]) => [row.symbol, row.name !== row.symbol ? row.name : "", row.stock_market, currencyDisplayLabel(row.currency), optionLabel(row.asset_class)].filter(Boolean).join(" · "));
+  select.innerHTML = `<option value="">${esc(t("All securities"))}</option>` + rows.map(([key, row], index) => {
+    const duplicate = labels.indexOf(labels[index]) !== labels.lastIndexOf(labels[index]);
+    const label = labels[index] + (duplicate ? ` · ${t("Instrument")}: ${row.security_id || t("Not available")}` : "");
+    return `<option value="${esc(key)}">${esc(label)}</option>`;
+  }).join("");
+  if ([...select.options].some((option) => option.value === current)) select.value = current;
+  select.title = select.selectedOptions?.[0]?.textContent || "";
+}
+
 function refreshPositionFilterOptions() {
   const populate = (id, options, all) => {
     const select = $(id), current = select.value;
@@ -7739,20 +7808,23 @@ function refreshPositionFilterOptions() {
   const types = [...new Set(["Investment", ...(state.positionsAccounts || []).map((account) => account.type)])].filter(Boolean);
   populate("positionAccountType", types.map((type) => [type, optionLabel(type)]), "All account categories");
   refreshPositionAccountSelect();
+  refreshPositionStockSelect();
 }
 
 function positionMonetarySort(key = valueOf("positionSort")) {
-  return ["total_profit", "profit_per_day", "profit_per_year"].includes(key);
+  return ["total_profit", "realized_profit", "unrealized_profit", "profit_per_day", "profit_per_year"].includes(key);
 }
 
 function filteredTradeHistoryItems() {
   const status = valueOf("tradeHistoryPositionStatus") || "all";
   const query = valueOf("tradeHistorySearch").toLocaleLowerCase();
+  const stock = valueOf("positionStock");
   const key = valueOf("positionSort") || "opened_date";
   const direction = valueOf("positionSortDirection") === "asc" ? 1 : -1;
-  const numeric = ["duration_days", "total_profit", "profit_per_day", "profit_per_year"].includes(key);
+  const numeric = ["duration_days", "total_profit", "realized_profit", "unrealized_profit", "profit_per_day", "profit_per_year"].includes(key);
   const rows = (state.tradeHistory?.items || []).filter((item) => (
     positionAccountMatchesFilters(item.account_id)
+    && (!stock || positionStockKey(item) === stock)
     && (status === "all" || item.status === status)
     && (!query || [item.symbol, item.name, item.account_label, item.stock_market,
       formatDate(item.opened_date || ""), formatDate(item.closed_date || "")]
@@ -7760,7 +7832,9 @@ function filteredTradeHistoryItems() {
   ));
   return rows.sort((a, b) => {
     const valid = (value) => value !== null && value !== undefined && value !== "" && (!numeric || Number.isFinite(Number(value)));
-    const av = a[key], bv = b[key];
+    const sortValue = (row) => key === "status" ? t(row.status === "closed" ? "Closed position" : "Open position")
+      : key === "currency" ? currencyDisplayLabel(row.currency) : row[key];
+    const av = sortValue(a), bv = sortValue(b);
     if (valid(av) !== valid(bv)) return valid(av) ? -1 : 1;
     if (positionMonetarySort(key) && a.currency !== b.currency) return String(a.currency || "").localeCompare(String(b.currency || ""));
     const order = !valid(av) ? 0 : numeric ? Number(av) - Number(bv) : String(av).localeCompare(String(bv), locale());
@@ -7768,8 +7842,9 @@ function filteredTradeHistoryItems() {
   });
 }
 
-function updatePositionFilters({ scopeChanged = false } = {}) {
+function updatePositionFilters({ scopeChanged = false, accountChanged = false } = {}) {
   if (scopeChanged) refreshPositionAccountSelect();
+  if (scopeChanged || accountChanged) refreshPositionStockSelect();
   state.tradeHistoryPage = 1;
   renderTradeHistory();
   $("tradeHistoryTable").scrollTop = 0;
@@ -7779,6 +7854,7 @@ function resetPositionFilters() {
   $("positionPerson").value = "";
   $("positionAccountType").value = "Investment";
   $("positionAccount").value = "";
+  $("positionStock").value = "";
   $("tradeHistoryPositionStatus").value = "all";
   $("tradeHistorySearch").value = "";
   $("positionSort").value = "opened_date";
@@ -7791,7 +7867,7 @@ function setPositionColumnSort(key) {
   if (![...select.options].some((option) => option.value === key)) return;
   $("positionSortDirection").value = select.value === key
     ? (valueOf("positionSortDirection") === "asc" ? "desc" : "asc")
-    : (["symbol", "account_label"].includes(key) ? "asc" : "desc");
+    : (["symbol", "name", "account_label", "currency", "stock_market", "status"].includes(key) ? "asc" : "desc");
   select.value = key;
   updatePositionFilters();
   $("tradeHistoryTable").querySelector(`[data-position-sort="${key}"]`)?.focus({ preventScroll: true });
@@ -7854,12 +7930,23 @@ function renderTradeHistory() {
   $("exportTradeHistoryCsv").disabled = !rows.length;
   status.textContent = `${rows.length} ${t("Holding periods")} · ${t("As of")} ${formatDate(data.as_of_date)} · ${t("Saved local prices")}`;
   const headers = ["Security / account", "Position status", "Opened / closed", "Total P/L", "P/L per day", "P/L per year", "Actions"];
-  const sortKeys = ["symbol", "", "", "total_profit", "profit_per_day", "profit_per_year", ""];
+  const sortFields = [
+    [["symbol", "Security"], ["name", "Security name"], ["account_label", "Account name"], ["currency", "Currency"], ["stock_market", "Market"]],
+    [["status", "Position status"]],
+    [["opened_date", "Opened"], ["closed_date", "Closed"], ["duration_days", "Days held"]],
+    [["total_profit", "Total P/L"], ["realized_profit", "Realized P/L"], ["unrealized_profit", "Unrealized P/L"]],
+    [["profit_per_day", "P/L per day"]], [["profit_per_year", "P/L per year"]], [],
+  ];
   const sortKey = valueOf("positionSort"), ascending = valueOf("positionSortDirection") === "asc";
   const heading = (header, index) => {
-    const key = sortKeys[index], active = key && key === sortKey;
-    const nextDirection = active ? (ascending ? "Descending" : "Ascending") : key === "symbol" ? "Ascending" : "Descending";
-    return `<th scope="col"${active ? ` aria-sort="${ascending ? "ascending" : "descending"}"` : ""}>${key ? `<button class="position-sort-button" type="button" data-position-sort="${key}" aria-label="${esc(`${t("Sort by")} ${t(header)} · ${t(nextDirection)}`)}">${esc(t(header))}<span aria-hidden="true">${active ? (ascending ? "↑" : "↓") : "↕"}</span></button>` : esc(t(header))}</th>`;
+    const fields = sortFields[index], active = fields.some(([key]) => key === sortKey);
+    const buttons = fields.map(([key, label]) => {
+      const selected = key === sortKey;
+      const text = ["symbol", "name", "account_label", "currency", "stock_market", "status"].includes(key);
+      const nextDirection = selected ? (ascending ? "Descending" : "Ascending") : text ? "Ascending" : "Descending";
+      return `<button class="position-sort-button${selected ? " active" : ""}" type="button" data-position-sort="${key}" aria-pressed="${selected}" aria-label="${esc(`${t("Sort by")} ${t(label)} · ${t(nextDirection)}`)}">${esc(t(label))}<span aria-hidden="true">${selected ? (ascending ? "↑" : "↓") : "↕"}</span></button>`;
+    }).join("");
+    return `<th scope="col"${active ? ` aria-sort="${ascending ? "ascending" : "descending"}"` : ""}>${fields.length > 1 ? `<span class="position-header-label">${esc(t(header))}</span>` : ""}${buttons ? `<div class="position-header-sorts">${buttons}</div>` : esc(t(header))}</th>`;
   };
   const cell = (label, content, extra = "") => `<td data-label="${esc(t(label))}"${extra}>${content}</td>`;
   table.innerHTML = rows.length ? `<table class="holdings-table compact-report-table trade-history-table"><thead><tr>${headers.map(heading).join("")}</tr></thead><tbody>${rows.slice((page - 1) * pageSize, page * pageSize).map((row) => `<tr>
@@ -7872,7 +7959,8 @@ function renderTradeHistory() {
   </tr>`).join("")}</tbody></table>${pages > 1 ? `<div class="trade-history-pagination"><button type="button" class="secondary compact-button" data-trade-history-page="-1"${page === 1 ? " disabled" : ""}>${esc(t("Previous"))}</button><span>${esc(t("Page"))} ${page} / ${pages}</span><button type="button" class="secondary compact-button" data-trade-history-page="1"${page === pages ? " disabled" : ""}>${esc(t("Next"))}</button></div>` : ""}`
     : `<div class="empty">${esc(t(data.items?.length ? "No positions match these history filters" : "No recorded position history is available"))}${data.items?.length ? `<button class="secondary compact-button" type="button" data-reset-position-filters>${esc(t("Reset filters"))}</button>` : ""}</div>`;
   const query = valueOf("tradeHistorySearch").toLocaleLowerCase();
-  const entries = (data.unallocated_transactions || []).filter((entry) => positionAccountMatchesFilters(entry.account_id) && (!query || String(entry.symbol || "").toLocaleLowerCase().includes(query)));
+  const selectedStock = valueOf("positionStock");
+  const entries = (data.unallocated_transactions || []).filter((entry) => positionAccountMatchesFilters(entry.account_id) && (!selectedStock || positionStockKey(entry) === selectedStock) && (!query || String(entry.symbol || "").toLocaleLowerCase().includes(query)));
   const reportIssues = [...new Set(entries.flatMap((entry) => entry.issues || []))];
   unallocated.innerHTML = reportIssues.length || entries.length ? `<details class="trade-history-data-note"><summary>${esc(t("History data notes"))}${entries.length ? ` · ${entries.length} ${esc(t("Unallocated activities"))}` : ""}</summary>${reportIssues.map((issue) => `<p class="section-note">${esc(tradeHistoryIssueText(issue))}</p>`).join("")}${entries.map((entry) => `<p class="section-note"><b>${esc(entry.symbol)}</b> · ${esc(entry.trade_date ? formatDate(entry.trade_date) : t("Not available"))} · ${esc(tradeHistoryActionLabel(entry.action))} · ${esc(tradeHistoryAmount(Number.isFinite(entry.quantity) && Number.isFinite(entry.price) ? entry.quantity * entry.price : null, entry.currency))}</p>`).join("")}</details>` : "";
 }
@@ -10121,9 +10209,19 @@ async function removeSecurityExposure() {
 
 let portfolioEnrichmentRetryTimer = null;
 const PORTFOLIO_ENRICHMENT_RETRY_MS = 1500;
-const MAX_PORTFOLIO_ENRICHMENT_RETRIES = 40;
 
 async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
+  const version = (state.portfolioLoadVersion || 0) + 1;
+  state.portfolioLoadVersion = version;
+  clearTimeout(portfolioEnrichmentRetryTimer);
+  portfolioEnrichmentRetryTimer = null;
+  const retry = () => {
+    portfolioEnrichmentRetryTimer = setTimeout(() => {
+      portfolioEnrichmentRetryTimer = null;
+      if (version !== state.portfolioLoadVersion) return;
+      loadPortfolio({ enrichmentRetry: enrichmentRetry + 1 }).catch(() => {});
+    }, Math.min(PORTFOLIO_ENRICHMENT_RETRY_MS * (1 + Math.floor(enrichmentRetry / 10)), 15000));
+  };
   $("status").textContent = refresh ? "Refreshing analytics" : "Preparing dashboard";
   setLoading(true, refresh ? "Refreshing portfolio analytics" : "Loading portfolio analytics");
   appLog("portfolio.load.start", { refresh });
@@ -10141,6 +10239,8 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
       api("/api/local/securities"),
       api("/api/local/security-industry-overrides"),
     ]);
+    if (version !== state.portfolioLoadVersion) return;
+    state.portfolioRefreshPending = Boolean(data.refresh_pending);
     setCoreFxRates(fxData);
     state.localAccounts = accountData.items || [];
     state.localTransactions = transactionData.items || [];
@@ -10155,13 +10255,14 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
       accounts: (trend.accounts || []).filter((entry) => !isEquityCompAccount(entry.account)),
     };
     populateOptions(allItems);
-    $("status").textContent = `${state.items.length} portfolio positions · ${Object.entries(data.status).map(([k, v]) => `${k}: ${v}`).join(", ")}`;
+    const refreshText = t(data.refresh_pending ? "Updating analytics in the background" : data.refresh_state === "failed" ? "Financial data could not be updated. Use Refresh to retry." : "Analytics updated");
+    $("status").textContent = `${state.items.length} ${t("portfolio positions")} · ${refreshText}`;
     renderPortfolio(state.items);
     if (!$("macroScenarioModal")?.hidden) renderMacroScenario();
     if (hasActivePortfolioFilter(state.portfolioFilterCriteria)) {
       const matches = filterPortfolioItems(state.allPortfolioItems, state.portfolioFilterCriteria);
       renderRows(matches);
-      $("status").textContent = `${matches.length} portfolio positions matched`;
+      $("status").textContent = `${matches.length} ${t("portfolio positions matched")} · ${refreshText}`;
     }
     appLog("portfolio.load.done", {
       count: state.items.length,
@@ -10175,17 +10276,14 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
         message: "Portfolio has no local position transactions. Use Accounts > Sync import to import positions.",
       });
     }
-    if (!refresh && data.refresh_pending && enrichmentRetry < MAX_PORTFOLIO_ENRICHMENT_RETRIES) {
-      clearTimeout(portfolioEnrichmentRetryTimer);
-      portfolioEnrichmentRetryTimer = setTimeout(() => {
-        loadPortfolio({ enrichmentRetry: enrichmentRetry + 1 }).catch((error) => {
-          appWarn("portfolio.enrichment.refresh_failed", { message: error.message });
-        });
-      }, PORTFOLIO_ENRICHMENT_RETRY_MS);
-    } else if (!data.refresh_pending) {
-      clearTimeout(portfolioEnrichmentRetryTimer);
-      portfolioEnrichmentRetryTimer = null;
+    if (data.refresh_pending) retry();
+  } catch (error) {
+    if (version !== state.portfolioLoadVersion) return;
+    if (version === state.portfolioLoadVersion && state.portfolioRefreshPending) {
+      $("status").textContent = t("Connection interrupted. Retrying the analytics update.");
+      retry();
     }
+    throw error;
   } finally {
     setLoading(false);
   }
@@ -12811,7 +12909,8 @@ $("accountTrendChart").addEventListener("click", (event) => {
 });
 $("positionPerson").addEventListener("change", () => updatePositionFilters({ scopeChanged: true }));
 $("positionAccountType").addEventListener("change", () => updatePositionFilters({ scopeChanged: true }));
-$("positionAccount").addEventListener("change", () => { $("positionAccount").title = $("positionAccount").selectedOptions?.[0]?.textContent || ""; updatePositionFilters(); });
+$("positionAccount").addEventListener("change", () => { $("positionAccount").title = $("positionAccount").selectedOptions?.[0]?.textContent || ""; updatePositionFilters({ accountChanged: true }); });
+$("positionStock").addEventListener("change", () => { $("positionStock").title = $("positionStock").selectedOptions?.[0]?.textContent || ""; updatePositionFilters(); });
 $("tradeHistoryPositionStatus").addEventListener("change", () => updatePositionFilters());
 $("tradeHistorySearch").addEventListener("input", () => updatePositionFilters());
 $("positionSort").addEventListener("change", () => updatePositionFilters());

@@ -128,7 +128,8 @@ def build_trade_history(
         ledger_incomplete = key in ambiguous_identities
 
         def orphan(tx: dict[str, Any], issue: str) -> None:
-            unallocated.append({**_safe_tx(tx), "account_id": account_id, "symbol": symbol, "stock_market": market, "issues": [issue]})
+            unallocated.append({**_safe_tx(tx), "account_id": account_id, "symbol": symbol, "stock_market": market,
+                                "asset_class": asset_class, "security_id": security_id, "issues": [issue]})
             report_issues.add(issue)
 
         def start(tx: dict[str, Any], side: str) -> dict[str, Any]:

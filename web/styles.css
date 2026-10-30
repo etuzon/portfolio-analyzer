@@ -4876,20 +4876,20 @@ td {
   line-height: 1.35;
 }
 
-.holdings-table td[data-label="Risk"] {
+.holdings-table td.holding-risk-cell {
   padding-inline-end: 16px;
 }
 
-.holdings-table td[data-label="Risk"] .risk-badge {
+.holdings-table td.holding-risk-cell .risk-badge {
   min-height: 30px;
   padding: 4px 9px;
 }
 
-.holdings-table td[data-label="Risk"] .risk-badge b {
+.holdings-table td.holding-risk-cell .risk-badge b {
   font-size: 14px;
 }
 
-.holdings-table td[data-label="Risk"] .risk-badge span {
+.holdings-table td.holding-risk-cell .risk-badge span {
   font-size: 12px;
 }
 
@@ -6385,7 +6385,8 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
   justify-content: space-between;
   gap: 6px;
   width: 100%;
-  padding: 2px 0;
+  min-height: 24px;
+  padding: 3px 4px;
   border: 0;
   border-radius: 3px;
   background: transparent;
@@ -6393,6 +6394,16 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
   font: inherit;
   text-align: start;
 }
+
+.position-header-label { display: block; margin-bottom: 5px; }
+.position-header-sorts { display: grid; gap: 3px; }
+.trade-history-table th:first-child .position-header-sorts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.position-sort-button.active { color: #71d1ff; background: #172b37; }
+.status-cell .badge.neutral { color: #71d1ff; background: #172b37; }
+.analytics-state-cell .metric-head { flex-wrap: wrap; justify-content: flex-start; }
+.analytics-state-cell .metric-name { flex: 1 0 100%; white-space: normal; overflow-wrap: normal; word-break: normal; }
+.analytics-state-cell .metric-pill { max-width: 100%; white-space: normal; }
+.position-sort-button span { flex: 0 0 auto; min-width: 12px; font-size: 13px; }
 
 .position-sort-button:hover { color: var(--ux-text, #fff); background: transparent; }
 .position-sort-button:focus-visible { outline: 2px solid #55b9e7; outline-offset: 4px; }
@@ -6507,7 +6518,7 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 }
 
 @media (max-width: 600px) {
-  .position-account-filter, .position-search-filter { grid-column: 1 / -1; }
+  .position-account-filter, .position-search-filter, .position-stock-filter { grid-column: 1 / -1; }
 }
 
 .report-section-heading {

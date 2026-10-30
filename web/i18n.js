@@ -2,6 +2,23 @@
   "use strict";
 
   const HEBREW_TEXT = Object.freeze({
+    "share": "מניה",
+    "cached": "נתונים שמורים",
+    "pending": "ממתין לעדכון",
+    "cache": "מטמון",
+    "Loading financial data": "טוען נתונים פיננסיים",
+    "Loading price history": "טוען היסטוריית מחירים",
+    "Financial data could not be updated": "לא ניתן לעדכן את הנתונים הפיננסיים",
+    "Price history could not be updated": "לא ניתן לעדכן את היסטוריית המחירים",
+    "Update failed": "העדכון נכשל",
+    "Updating analytics": "מעדכן נתוני ניתוח",
+    "Updating analytics in the background": "מעדכן נתוני ניתוח ברקע",
+    "Financial data could not be updated. Use Refresh to retry.": "לא ניתן לעדכן את הנתונים הפיננסיים. יש ללחוץ על רענון כדי לנסות שוב.",
+    "Connection interrupted. Retrying the analytics update.": "החיבור נותק. מנסה לעדכן שוב את נתוני הניתוח.",
+    "Analytics updated": "נתוני הניתוח מעודכנים",
+    "portfolio positions": "החזקות בתיק",
+    "portfolio positions matched": "החזקות בתיק תואמות",
+    "All securities": "כל ניירות הערך",
     "Positions": "פוזיציות",
     "Position filters": "סינון פוזיציות",
     "Account name": "שם חשבון",
@@ -2742,7 +2759,7 @@
     [/^(\d+)\s+\/\s+(\d+)\s+conditions$/u, (_match, met, total) => `${met} / ${total} תנאים`],
   ]);
 
-  const TRANSLATABLE_ATTRIBUTES = ["placeholder", "aria-label", "title", "alt", "data-tooltip"];
+  const TRANSLATABLE_ATTRIBUTES = ["placeholder", "aria-label", "title", "alt", "data-tooltip", "data-label"];
   const originalText = new WeakMap();
   const lastRenderedText = new WeakMap();
   const originalAttributes = new WeakMap();

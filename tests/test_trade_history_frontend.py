@@ -64,7 +64,7 @@ def test_operational_history_states_and_actions_are_localized():
         'Some history data is incomplete', 'Retry', 'Details', 'Limited data',
         'Buy', 'Sell', 'Add', 'Remove', 'Short', 'Dividend', 'Interest', 'Fee',
         'Positions', 'Position filters', 'Account name', 'Sort by', 'Sort direction',
-        'Ascending', 'Descending', 'Reset filters', 'Opened date', 'Closed date',
+        'Ascending', 'Descending', 'Reset filters', 'Opened date', 'Closed date', 'All securities',
     ]
     result = run('const window={};\n' + (ROOT / 'web/i18n.js').read_text() + '\nconst labels=' + json.dumps(labels) + ";process.stdout.write(JSON.stringify(labels.map(label=>window.PortfolioI18n.translate(label,'he'))));")
     assert all(re.search(r'[א-ת]', label) for label in result)
@@ -123,7 +123,7 @@ const state={positionsAccounts:[
  {id:'solo',account_id:'solo',account_label:'Alice account',symbol:'ZZZ',name:'Zeta',currency:'ILS',status:'closed',opened_date:'2026-02-01',closed_date:'2026-03-01',total_profit:50,duration_days:28},
  {id:'pension',account_id:'pension',account_label:'Pension',symbol:'FUND',currency:'ILS',status:'open',opened_date:null,total_profit:null,duration_days:null}]}};
 """
-POSITION_FUNCTIONS = functions('positionAccountMatchesScope','positionAccountMatchesFilters','positionMonetarySort','filteredTradeHistoryItems')
+POSITION_FUNCTIONS = functions('positionAccountMatchesScope','positionAccountMatchesFilters','positionMonetarySort','positionStockKey','filteredTradeHistoryItems')
 
 
 def test_position_filters_combine_account_type_people_name_and_status():
@@ -201,10 +201,64 @@ assert.ok(portfolio.indexOf('data-modal="securitiesModal">')<portfolio.indexOf('
     assert 'tradeHistoryTable' not in reports
     positions = html[html.index('<div id="positionsModal"'):html.index('<div id="tradeHistoryDetailModal"')]
     assert '<option value="Investment" selected>' in positions
-    for element in ['positionPerson', 'positionAccountType', 'positionAccount', 'positionSort', 'positionSortDirection']:
+    for element in ['positionPerson', 'positionAccountType', 'positionAccount', 'positionStock', 'positionSort', 'positionSortDirection']:
         assert f'id="{element}"' in positions
     assert 'loadTradeHistory' not in functions('loadReports')
     reset = functions('resetPositionFilters')
     assert '$("positionAccountType").value = "Investment"' in reset
     assert '$("positionsModal").inert = true' in functions('openTradeHistoryDetails')
     assert '$("reportsModal").inert = true' not in functions('openTradeHistoryDetails')
+
+
+def test_stock_filter_selects_exact_instrument_across_accounts_and_holding_periods():
+    run(POSITION_BASE + POSITION_FUNCTIONS + """
+nodes.positionStock={value:''};
+for(const row of state.tradeHistory.items.slice(0,2)) Object.assign(row,{stock_market:'NYSE',asset_class:'EQUITY',security_id:'abc'});
+const base=state.tradeHistory.items[0];
+state.tradeHistory.items.push({...base,id:'other-account',account_id:'solo'},
+ {...base,id:'other-market',stock_market:'TASE'}, {...base,id:'other-currency',currency:'ILS'},
+ {...base,id:'other-instrument',security_id:'abc-other'});
+nodes.positionStock.value=positionStockKey(base);
+assert.deepEqual(new Set(filteredTradeHistoryItems().map(r=>r.id)),new Set(['joint-old','joint-new','other-account']));
+nodes.positionAccount.value='joint';assert.equal(filteredTradeHistoryItems().length,2);
+nodes.tradeHistoryPositionStatus.value='closed';assert.equal(filteredTradeHistoryItems()[0].id,'joint-old');
+assert.equal(positionStockKey({...base,asset_class:'RSU'}),positionStockKey(base));
+assert.equal(positionStockKey({...base,asset_class:'STOCK'}),positionStockKey(base));
+nodes.tradeHistorySearch.value='does not exist';assert.equal(filteredTradeHistoryItems().length,0);
+""")
+
+
+def test_status_and_component_sorting_uses_visible_labels_and_numeric_values():
+    run(POSITION_BASE + POSITION_FUNCTIONS + """
+const t=label=>({'Closed position':'Z closed','Open position':'A open'}[label]||label);
+nodes.positionSort.value='status';nodes.positionSortDirection.value='asc';
+assert.equal(filteredTradeHistoryItems()[0].status,'open');
+nodes.positionSortDirection.value='desc';assert.equal(filteredTradeHistoryItems()[0].status,'closed');
+state.tradeHistory.items=Array.from({length:4},(_,i)=>({...state.tradeHistory.items[1],id:'row-'+i,
+ realized_profit:[0,12,-3,null][i],unrealized_profit:[0,12,-3,null][i]}));
+for(const key of ['realized_profit','unrealized_profit']){
+ nodes.positionSort.value=key;
+ nodes.positionSortDirection.value='asc';assert.deepEqual(filteredTradeHistoryItems().map(r=>r[key]),[-3,0,12,null]);
+ nodes.positionSortDirection.value='desc';assert.deepEqual(filteredTradeHistoryItems().map(r=>r[key]),[12,0,-3,null]);
+}
+""")
+
+
+def test_every_position_data_field_has_keyboard_sort_control_and_mobile_option():
+    run(POSITION_BASE + POSITION_FUNCTIONS + functions('renderTradeHistory') + """
+const t=value=>value;const esc=value=>String(value??'');const currencyDisplayLabel=value=>value;
+const tradeHistoryAmount=value=>value==null?'Not available':String(value);const tradeHistoryIssueText=value=>value;
+for(const id of ['tradeHistoryStatus','tradeHistoryTable','tradeHistoryUnallocated','retryTradeHistory','exportTradeHistoryCsv','positionSortNote'])nodes[id]={innerHTML:'',textContent:'',value:''};
+for(const key of ['symbol','name','account_label','currency','stock_market','status','opened_date','closed_date','duration_days','total_profit','realized_profit','unrealized_profit','profit_per_day','profit_per_year']){
+ nodes.positionSort.value=key;nodes.positionSortDirection.value='asc';renderTradeHistory();
+ const html=nodes.tradeHistoryTable.innerHTML;
+ assert.ok(html.includes('data-position-sort="'+key+'" aria-pressed="true"'),key+' has active keyboard button');
+ assert.equal((html.match(/aria-sort="ascending"/g)||[]).length,1,key+' marks exactly one active column');
+ const actions=html.match(/<th scope="col">Actions<\\/th>/);assert.ok(actions,'Actions has no sort control');
+}
+""")
+    html = (ROOT / 'web/index.html').read_text()
+    select = re.search(r'<select id="positionSort">(.*?)</select>', html).group(1)
+    for key in ['symbol', 'name', 'account_label', 'currency', 'stock_market', 'status', 'opened_date', 'closed_date',
+                'duration_days', 'total_profit', 'realized_profit', 'unrealized_profit', 'profit_per_day', 'profit_per_year']:
+        assert f'value="{key}"' in select

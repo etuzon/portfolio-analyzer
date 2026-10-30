@@ -30,6 +30,18 @@ def quote(store, price, day="2026-01-11", **extra):
                              "price_date": day, "currency": "USD", "location": "USA", **extra})
 
 
+def test_unallocated_activity_preserves_the_same_security_identity_as_positions():
+    base = {"account_db_id": "a", "symbol": "ABC", "stock_market": "NYSE", "currency": "USD",
+            "asset_class": "STOCK", "security_id": "instrument-a", "quantity": 1, "price": 10}
+    rows = [{**base, "id": "buy", "action": "BUY", "trade_date": "2026-01-01"},
+            {**base, "id": "sell", "action": "SELL", "trade_date": "2026-01-02"},
+            {**base, "id": "income", "action": "DIVIDEND", "trade_date": "2026-01-03"}]
+    report = build_trade_history(rows, {"a": {"label": "Account A"}}, [], "2026-01-04")
+    position, activity = report["items"][0], report["unallocated_transactions"][0]
+    for key in ["symbol", "stock_market", "currency", "asset_class", "security_id", "account_id"]:
+        assert activity[key] == position[key]
+
+
 def test_full_closure_and_reopening_retains_sold_security(ledger):
     store, account = ledger
     trade(store, account, "BUY", 10, 10, "2026-01-01")
