@@ -3513,20 +3513,29 @@ textarea.muted-control {
 
 .account-risk-allocation-heading {
   justify-content: space-between;
-  gap: 8px;
+  gap: 7px 10px;
+  flex-wrap: wrap;
   color: #e7edf7;
   font-size: 12px;
 }
 
 .account-risk-allocation-heading > b {
+  flex: 1 1 105px;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.account-risk-portfolio-share { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin: 7px 0 0; color: #aeb9ca; font-size: 10px; line-height: 1.45; }
-.account-risk-portfolio-share > span { min-width: 0; }
-.account-risk-portfolio-share > b { min-width: 56px; color: #edf3ff; text-align: end; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.account-risk-metrics { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
+.account-risk-portfolio-share { display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 7px; border: 1px solid #374658; border-radius: 7px; background: #1c2633; color: #aeb9ca; font-size: 10px; line-height: 1.35; }
+.account-share-copy { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 2px 5px; min-width: 0; }
+.account-share-copy > bdi { color: #edf3ff; font-size: 11px; font-weight: 800; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.account-risk-portfolio-share .account-share-ring, .account-share-ring-placeholder { flex: 0 0 28px; width: 28px; height: 28px; min-height: 0; }
+.account-share-ring { fill: none; stroke-width: 3; transform: rotate(-90deg); }
+.account-share-ring-track { stroke: #394657; }
+.account-share-ring-value { stroke: #79c8fa; }
+.account-share-ring-placeholder { display: grid; place-items: center; border: 3px solid #394657; border-radius: 50%; color: #aeb9ca; font-size: 11px; }
 
 .account-risk-allocation-bar {
   display: flex;
@@ -3568,16 +3577,8 @@ textarea.muted-control {
   white-space: nowrap;
 }
 
-.account-risk-allocation-label b,
-.account-risk-allocation-card > small b {
+.account-risk-allocation-label b {
   color: #e7edf7;
-}
-
-.account-risk-allocation-card > small {
-  display: block;
-  margin-top: 7px;
-  color: #8794aa;
-  font-size: 10px;
 }
 
 .summary {

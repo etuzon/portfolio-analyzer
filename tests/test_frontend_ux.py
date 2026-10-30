@@ -648,7 +648,6 @@ def test_each_account_has_a_value_weighted_four_band_risk_allocation_that_totals
     assert '{ key: "high", label: "High risk"' in script
     assert 'allocation: riskAllocationForItems(rows, { cash, cashCurrency: account?.currency })' in script
     assert 'optionLabel("Account risk allocation")' in script
-    assert 'optionLabel("Total")' in script
     assert '.account-risk-allocations-grid {' in styles
     assert '.account-risk-allocation-bar {' in styles
 

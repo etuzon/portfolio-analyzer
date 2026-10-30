@@ -2425,6 +2425,21 @@ function accountShareSnapshot() {
   return { available: true, total, shares };
 }
 
+function accountShareBadge(share) {
+  const available = Number.isFinite(share);
+  const chartAvailable = available && share >= 0 && share <= 100;
+  const label = optionLabel("Share of total accounts");
+  const value = available ? `${fmt(share, 1)}%` : optionLabel("Not available");
+  const help = available
+    ? "Account net value divided by all primary account net values, including signed cash, in the dashboard currency. Filters do not change this percentage."
+    : "Account shares require valid net amounts and exchange rates, and a positive total net value.";
+  const chartHelp = available && !chartAvailable ? ` ${optionLabel("The circular chart applies only to shares from 0% to 100%.")}` : "";
+  const chart = chartAvailable
+    ? `<svg class="account-share-ring" viewBox="0 0 28 28" aria-hidden="true" focusable="false"><circle class="account-share-ring-track" cx="14" cy="14" r="11"/><circle class="account-share-ring-value" cx="14" cy="14" r="11" pathLength="100" stroke-dasharray="${share} ${100 - share}"/></svg>`
+    : `<span class="account-share-ring-placeholder" aria-hidden="true">${available ? "!" : "—"}</span>`;
+  return `<span class="account-risk-portfolio-share" title="${esc(optionLabel(help) + chartHelp)}">${chart}<span class="account-share-copy"><span>${esc(label)}</span><bdi dir="auto">${esc(value)}</bdi></span></span>`;
+}
+
 function accountCashBalance(account) {
   if (!account) return 0;
   const transactions = state.localTransactions.filter((tx) => String(tx.account_db_id || "") === String(account.id || ""));
@@ -3432,18 +3447,12 @@ function renderPortfolioValueDashboard(items) {
       const allocation = entry.allocation;
       if (!allocation?.total) return "";
       const share = accountShares.shares.get(String(entry.key)) ?? accountShares.shares.get(cleanSourceLabel(entry.key));
-      const shareText = Number.isFinite(share) ? `${fmt(share, 1)}%` : optionLabel("Not available");
-      const shareHelp = Number.isFinite(share)
-        ? "Account net value divided by all primary account net values, including signed cash, in the dashboard currency. Filters do not change this percentage."
-        : "Account shares require valid net amounts and exchange rates, and a positive total net value.";
       const segments = allocation.bands.map((band) => `<span class="account-risk-segment account-risk-${band.key}" style="--risk-allocation:${band.percent}%" title="${esc(`${optionLabel(band.label)}: ${fmt(band.percent, 1)}%`)}"></span>`).join("");
       const labels = allocation.bands.map((band) => `<span class="account-risk-allocation-label"><i class="account-risk-dot account-risk-${band.key}"></i>${esc(optionLabel(band.label))} <b>${esc(fmt(band.percent, 1))}%</b></span>`).join("");
       return `<article class="account-risk-allocation-card" title="${esc(optionLabel("Allocation is based on each holding's asset-risk category. Cash and money-market holdings are No risk only in the base currency; foreign-currency exposure is Low risk."))}">
-        <div class="account-risk-allocation-heading"><b>${esc(entry.account)}</b>${riskBadge(entry.risk, true)}</div>
-        <p class="account-risk-portfolio-share" title="${esc(optionLabel(shareHelp))}"><span>${esc(optionLabel("Share of total accounts"))}</span><b>${esc(shareText)}</b></p>
+        <div class="account-risk-allocation-heading"><b>${esc(entry.account)}</b><span class="account-risk-metrics">${riskBadge(entry.risk, true)}${accountShareBadge(share)}</span></div>
         <div class="account-risk-allocation-bar" role="img" aria-label="${esc(`${entry.account}: ${allocation.bands.map((band) => `${optionLabel(band.label)} ${fmt(band.percent, 1)}%`).join(", ")}`)}">${segments}</div>
         <div class="account-risk-allocation-labels">${labels}</div>
-        <small>${esc(optionLabel("Total"))}: <b>${esc(fmt(sum(allocation.bands.map((band) => band.percent)), 1))}%</b></small>
       </article>`;
     })
     .join("");
