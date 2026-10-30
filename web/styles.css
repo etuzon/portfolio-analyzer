@@ -1790,10 +1790,9 @@ textarea.muted-control {
 }
 
 .analytics-board {
-  display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  grid-auto-flow: row;
-  align-items: start;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
   gap: 12px;
   margin-top: 14px;
 }
@@ -2099,6 +2098,37 @@ textarea.muted-control {
 
 .dashboard-widget-compact {
   grid-column: span 3;
+}
+
+/* Keep saved card order, fill row tails, and align mixed-height card edges. */
+.analytics-board > .dashboard-widget {
+  flex: 1 0 calc(33.333% - 8px);
+  align-self: stretch;
+  height: auto;
+}
+
+.analytics-board > .dashboard-widget-wide { flex-basis: calc(50% - 6px); }
+.analytics-board > .dashboard-widget-compact { flex-basis: calc(25% - 9px); }
+.analytics-board > .dashboard-widget[data-widget="portfolio_value"],
+.analytics-board > .empty { flex-basis: 100%; }
+.analytics-board > .dashboard-section { flex: 1 0 100%; min-width: 0; }
+
+.analytics-board > .comparison-card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.analytics-board > .industry-split-card .industry-split-list {
+  /* Contents scroll within the allocated row instead of sizing the row. */
+  contain: size;
+}
+
+@media (max-width: 1240px) {
+  .analytics-board > .dashboard-widget { flex-basis: calc(50% - 6px); }
+}
+
+@media (max-width: 760px) {
+  .analytics-board > .dashboard-widget { flex-basis: 100%; }
 }
 
 .dashboard-widget-toolbar {
