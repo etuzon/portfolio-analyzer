@@ -344,7 +344,8 @@ h2 {
   width: 28px;
   height: 28px;
   border-radius: 8px;
-  background: url("/assets/app-icon.svg?v=0.5.1") center / contain no-repeat;
+  background: url("/assets/portfolio-vault/icon-64.png?v=1") center / contain no-repeat;
+  background-image: image-set(url("/assets/portfolio-vault/icon-32.png?v=1") 1x, url("/assets/portfolio-vault/icon-64.png?v=1") 2x, url("/assets/portfolio-vault/icon-96.png?v=1") 3x);
   box-shadow: 0 0 18px rgba(155, 77, 255, 0.26);
 }
 
