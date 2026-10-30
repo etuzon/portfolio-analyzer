@@ -88,3 +88,23 @@ def test_async_planning_rejects_duplicates_and_late_stale_results_then_recovers(
  resetTradePlannerViews();assert.equal(tradePlannerViews.size,0);
 })();
 ''')
+
+
+def test_missing_price_explanation_names_dates_and_links_to_matching_price_form_in_both_languages():
+    run_ui('''
+const issue={symbol:'BONDQA',stock_market:'MANUAL',asset_class:'BOND',currency:'USD',location:'USA',
+ account:{account_id:'A1'},reason:'price_stale',price_date:'2026-07-31',manual:true};
+for(const language of ['he','en']){
+ state.language=language;
+ const html=tradePlannerResultHtml({status:'ready',result:{status:'unavailable',reason:'valuation_unavailable',issues:[issue]}});
+ assert.ok(html.includes('BONDQA')&&html.includes('31/07/2026'));
+ assert.ok(html.includes('data-price-history-symbol="BONDQA"'));
+ assert.ok(html.includes('data-price-history-market="MANUAL"'));
+ assert.ok(html.includes('data-price-history-asset="BOND"'));
+ const text=html.replace(/<[^>]*>/g,'');
+ if(language==='he'){
+  assert.ok(text.includes('רענון אינו מוריד מחירים'));
+  assert.ok(!/Refresh|Manual|saved|price|Update|days/.test(text));
+ }else assert.ok(!/[א-ת]/.test(text));
+}
+''')

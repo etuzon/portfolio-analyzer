@@ -2,6 +2,8 @@
 from datetime import date, timedelta
 from types import SimpleNamespace
 import time
+import copy
+import hashlib
 import pytest
 from app import main
 from app.local_portfolio import LocalPortfolioStore
@@ -69,6 +71,26 @@ def test_first_response_reconstructs_available_market_data_without_provider_io(e
     assert result['refresh_pending'] is True
     assert env.calls==[], 'deferred response invoked live provider methods'
     for item in result['items']: assert_financials(item,item['holding']['symbol'])
+
+
+def test_legacy_undated_aggregate_reloads_dated_quotes_without_changing_saved_evidence(env, monkeypatch):
+    env.add('FDUS')
+    old = copy.deepcopy(main.portfolio_payload(defer_enrichment=True))
+    for item in old['items']:
+        for period in item['price_ranges'].values():
+            period.pop('current_date', None)
+    main.write_portfolio_cache({'signature': f'v8:{env.store.change_token()}',
+                                'expires_at': time.time() + 3600, 'payload': old})
+    monkeypatch.setattr(main, '_portfolio_cache', None)  # Process restart, disk cache still valid by age.
+    market_before = hashlib.sha256((env.tmp / 'market.sqlite3').read_bytes()).digest()
+    ledger_before = env.store.change_token()
+    result = main.portfolio_payload(defer_enrichment=True)
+    item = result['items'][0]
+    assert item['price_ranges']['1m']['current_date'] == date.today().isoformat()
+    assert_financials(item)
+    assert env.calls == []
+    assert env.store.change_token() == ledger_before
+    assert hashlib.sha256((env.tmp / 'market.sqlite3').read_bytes()).digest() == market_before
 
 
 def test_actual_edit_reload_account_edit_add_delete_keep_cached_financials(env):

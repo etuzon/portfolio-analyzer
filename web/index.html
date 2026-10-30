@@ -743,9 +743,9 @@
             </span>
           </div>
           <div class="management-form transaction-form">
-            <label class="management-field"><span>Account *</span><select id="securityAccount"></select></label>
-            <label class="management-field"><span>Defined Instrument *</span><select id="securityKnownInstrument"></select></label>
-            <label class="management-field"><span>Action *</span><select id="securityAction">
+            <label class="management-field transaction-field-wide"><span>Account *</span><select id="securityAccount"></select></label>
+            <label class="management-field transaction-field-wide"><span>Defined Instrument *</span><select id="securityKnownInstrument"></select></label>
+            <label class="management-field transaction-field-compact transaction-identity-choice"><span>Action *</span><select id="securityAction">
               <option value="BUY">Buy</option>
               <option value="SELL">Sell</option>
               <option value="SHORT">Short</option>
@@ -755,18 +755,18 @@
               <option value="ADD">Add security</option>
               <option value="REMOVE">Remove security</option>
             </select></label>
-            <label class="management-field" data-general-transaction-field><span>Symbol *</span><input id="securitySymbol" placeholder="Ticker or security ID" /></label>
-            <label class="management-field" data-general-transaction-field><span>Stock Market *</span><input id="securityMarket" list="marketOptions" placeholder="Market" /></label>
-            <label class="management-field" data-general-transaction-field>
+            <label class="management-field transaction-field-compact transaction-identity-choice" data-general-transaction-field>
               <span class="field-label">Holding / grant type * <em tabindex="0" title="Choose RSU for shares granted by an employer; choose Equity for shares bought on the market." aria-label="Choose RSU for shares granted by an employer; choose Equity for shares bought on the market.">i</em></span>
               <select id="securityAssetClass"></select>
             </label>
-            <label class="management-field"><span id="securityQuantityLabel">Quantity *</span><input id="securityQuantity" type="number" min="0.0001" step="0.0001" inputmode="decimal" placeholder="Number of units" /></label>
-            <label id="securityPriceField" class="management-field"><span>Entered Price *</span><input id="securityPrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Price" /></label>
-            <label class="management-field"><span id="securityDateLabel">Transaction Date *</span><input id="securityDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
-            <label id="securityVestDateField" class="management-field" data-equity-comp-field hidden><span>Single Vest Date *</span><input id="securityVestDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
-            <label class="management-field" data-option-grant-field data-employee-option-derived-field hidden><span>Strike Price *</span><input id="securityStrikePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Strike price" /></label>
-            <label class="management-field" data-equity-comp-field data-employee-option-derived-field hidden><span>Exercise/Purchase Price</span><input id="securityPurchasePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Optional" /></label>
+            <label class="management-field transaction-field-wide transaction-symbol" data-general-transaction-field><span>Symbol *</span><input id="securitySymbol" placeholder="Ticker or security ID" /></label>
+            <label class="management-field transaction-field-compact" data-general-transaction-field><span>Stock Market *</span><input id="securityMarket" list="marketOptions" placeholder="Market" /></label>
+            <label class="management-field transaction-field-compact"><span id="securityQuantityLabel">Quantity *</span><input id="securityQuantity" type="number" min="0.0001" step="0.0001" inputmode="decimal" placeholder="Number of units" /></label>
+            <label id="securityPriceField" class="management-field transaction-field-compact"><span>Entered Price *</span><input id="securityPrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Price" /></label>
+            <label class="management-field transaction-field-compact"><span id="securityDateLabel">Transaction Date *</span><input id="securityDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+            <label id="securityVestDateField" class="management-field transaction-field-wide" data-equity-comp-field hidden><span>Single Vest Date *</span><input id="securityVestDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+            <label class="management-field transaction-field-wide" data-option-grant-field data-employee-option-derived-field hidden><span>Strike Price *</span><input id="securityStrikePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Strike price" /></label>
+            <label class="management-field transaction-field-wide" data-equity-comp-field data-employee-option-derived-field hidden><span>Exercise/Purchase Price</span><input id="securityPurchasePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Optional" /></label>
             <section id="vestingSchedulePanel" class="vesting-schedule-panel" data-employee-option-transaction-field hidden aria-labelledby="vestingScheduleTitle">
               <div class="vesting-schedule-head">
                 <div>
@@ -816,10 +816,14 @@
               </div>
               <div id="vestingSchedulePreview" class="vesting-schedule-preview" role="status" aria-live="polite"></div>
             </section>
-            <label class="check" data-general-transaction-field><input id="securityAllowManual" type="checkbox" /> Save manually if market data is unavailable</label>
-            <label class="management-field field-wide"><span>Comments</span><input id="securityComments" placeholder="Optional notes" /></label>
-            <button id="saveSecurity" type="button">Save transaction</button>
-            <button id="cancelSecurityEdit" class="secondary" type="button" hidden>Cancel edit</button>
+            <div class="transaction-footer">
+              <label class="management-field transaction-notes"><span>Comments</span><input id="securityComments" placeholder="Optional notes" /></label>
+              <label class="check transaction-manual-option" data-general-transaction-field><input id="securityAllowManual" type="checkbox" /><span>Save manually if market data is unavailable</span></label>
+              <div class="transaction-actions">
+                <button id="saveSecurity" type="button">Save transaction</button>
+                <button id="cancelSecurityEdit" class="secondary" type="button" hidden>Cancel edit</button>
+              </div>
+            </div>
           </div>
         </div>
         <p id="securityStatus" class="status-line" role="status" aria-live="polite"></p>

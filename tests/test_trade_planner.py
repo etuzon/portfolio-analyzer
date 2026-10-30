@@ -102,6 +102,27 @@ assert.equal(planner.plan(ctx,request,adapters).reason,'cash_unverified');
 ''')
 
 
+def test_stale_manual_holding_names_the_security_and_date_and_recovers_after_price_update():
+    run_planner_js('''
+const ctx=context();ctx.accounts.push(account('bank','USA',10000,'USD','Bank'));
+const bond=stock('BONDQA',1000,'bank');
+bond.holding.asset_class='BOND';bond.holding.stock_market='MANUAL';bond.holding.data_source='MANUAL';
+for(const range of Object.values(bond.price_ranges))range.current_date='2026-07-31';
+ctx.items=[bond];
+const before=JSON.stringify(ctx);
+const blocked=planner.plan(ctx,request,adapters);
+assert.equal(blocked.reason,'valuation_unavailable');
+assert.equal(blocked.issues.length,1);
+assert.equal(blocked.issues[0].symbol,'BONDQA');
+assert.equal(blocked.issues[0].price_date,'2026-07-31');
+assert.equal(blocked.issues[0].reason,'price_stale');
+assert.equal(blocked.issues[0].manual,true);
+assert.equal(JSON.stringify(ctx),before);
+for(const range of Object.values(bond.price_ranges))range.current_date='2026-10-29';
+assert.equal(planner.plan(ctx,request,adapters).status,'ok');
+''')
+
+
 def test_existing_global_concentration_can_block_every_account():
     run_planner_js('''
 const ctx=context();ctx.accounts.push(account('us2'));

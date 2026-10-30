@@ -2610,7 +2610,9 @@ def portfolio_payload(force_refresh: bool = False, defer_enrichment: bool = Fals
 def portfolio_cache_signature() -> str | None:
     if not hasattr(local_store, "change_token"):
         return None
-    return f"v8:{local_store.change_token()}"
+    # Dated quote evidence is required by trade sizing. Rebuild legacy aggregate
+    # payloads from saved evidence instead of accepting undated cached prices.
+    return f"v9:{local_store.change_token()}"
 
 
 def read_portfolio_cache() -> dict[str, Any] | None:

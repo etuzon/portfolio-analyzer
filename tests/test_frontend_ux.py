@@ -700,12 +700,19 @@ def test_security_transaction_fields_stay_aligned_with_compact_help():
     html = (ROOT / "web/index.html").read_text()
     styles = (ROOT / "web/styles.css").read_text()
 
-    grant_field = html.split('id="securityAssetClass"', 1)[0].rsplit('<label class="management-field"', 1)[1]
+    grant_field = html.split('id="securityAssetClass"', 1)[0].rsplit('<label', 1)[1]
     assert 'class="field-label"' in grant_field
     assert 'aria-label="Choose RSU for shares granted by an employer' in grant_field
     assert '>i</em>' in grant_field
     assert '<small>' not in grant_field
-    assert '.transaction-form {\n  grid-template-columns: repeat(6, minmax(140px, 1fr));' in styles
+    assert '#accountTransactionSection .transaction-form {\n  grid-template-columns: repeat(12, minmax(0, 1fr));' in styles
+    assert html.index('id="securityAssetClass"') < html.index('id="securitySymbol"')
+    footer = html.split('<div class="transaction-footer">', 1)[1].split('id="securityStatus"', 1)[0]
+    assert footer.index('id="securityComments"') < footer.index('id="securityAllowManual"') < footer.index('id="saveSecurity"')
+    assert '<span>Save manually if market data is unavailable</span>' in footer
+    assert 'class="transaction-actions"' in footer
+    assert '#accountTransactionSection .transaction-manual-option {' in styles
+    assert '#accountTransactionSection .transaction-manual-option input {' in styles
 
 
 def test_portfolio_filter_is_immediate_and_can_find_employee_securities():

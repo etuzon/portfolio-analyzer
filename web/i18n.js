@@ -3,6 +3,17 @@
 
   const HEBREW_TEXT = Object.freeze({
     "Account recommendation": "המלצת חשבון",
+    "Update the holdings listed below before calculating a trade amount.": "יש לעדכן את נתוני ההחזקות המפורטות להלן לפני חישוב סכום עסקה.",
+    "No saved price": "אין מחיר שמור",
+    "The saved price has no date": "למחיר השמור חסר תאריך",
+    "The saved price is older than 7 days": "המחיר השמור ישן משבעה ימים",
+    "The saved price is dated in the future": "תאריך המחיר השמור נמצא בעתיד",
+    "Quantity and recorded value are inconsistent": "הכמות והשווי הרשום אינם תואמים",
+    "Required exchange rate unavailable": "שער החליפין הנדרש אינו זמין",
+    "Last saved price": "תאריך המחיר האחרון",
+    "Update saved price": "עדכון מחיר שמור",
+    "Manual securities need a recent price entered in Prices. Refresh does not fetch prices for them. Save a real quote with its actual date, then recalculate.": "לניירות ידניים יש להזין מחיר עדכני במסך מחירים. רענון אינו מוריד מחירים עבורם. שמרו מחיר אמיתי עם התאריך שלו ולאחר מכן חשבו מחדש.",
+    "Refresh analytics, then recalculate. A missing price date cannot be inferred from the cache update time.": "רעננו את הניתוח ולאחר מכן חשבו מחדש. לא ניתן להסיק תאריך מחיר חסר ממועד עדכון המטמון.",
     "Holdings are valued using their recent saved quotes for this estimate; the recorded portfolio is unchanged.": "באומדן זה שווי ההחזקות מחושב לפי המחירים השמורים העדכניים שלהן; התיק הרשום אינו משתנה.",
     "Choose a stock and action. Leave the amount empty to get a suggested size.": "בחרו מניה ופעולה. השאירו את הסכום ריק לקבלת סכום מומלץ.",
     "Stock symbol": "סימול המניה",

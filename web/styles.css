@@ -4425,9 +4425,69 @@ textarea.muted-control {
   margin-top: 0;
 }
 
-.transaction-form {
-  grid-template-columns: repeat(6, minmax(140px, 1fr));
+#accountTransactionSection .transaction-form {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  align-items: end;
   margin-top: 0;
+}
+
+#accountTransactionSection .transaction-field-wide {
+  grid-column: span 4;
+}
+
+#accountTransactionSection .transaction-field-compact {
+  grid-column: span 2;
+}
+
+#accountTransactionSection .transaction-footer {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(220px, 1fr) minmax(190px, 280px) auto;
+  align-items: end;
+  gap: 12px;
+  min-width: 0;
+  margin-top: 4px;
+}
+
+#accountTransactionSection .transaction-notes {
+  min-width: 0;
+}
+
+#accountTransactionSection .transaction-manual-option {
+  min-width: 0;
+  min-height: 38px;
+  align-items: flex-start;
+  align-self: end;
+  padding-block: 7px;
+  white-space: normal;
+  line-height: 1.45;
+}
+
+#accountTransactionSection .transaction-manual-option input {
+  flex: 0 0 16px;
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  min-height: 16px;
+  margin: 2px 0 0;
+}
+
+#accountTransactionSection .transaction-manual-option span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#accountTransactionSection .transaction-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+#accountTransactionSection .transaction-actions button {
+  width: auto;
+  white-space: nowrap;
 }
 
 .management-field {
@@ -5985,8 +6045,25 @@ tbody tr:hover {
 }
 
 @media (max-width: 1050px) {
-  .transaction-form {
-    grid-template-columns: repeat(3, minmax(140px, 1fr));
+  #accountTransactionSection .transaction-form {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
+  #accountTransactionSection .transaction-field-wide,
+  #accountTransactionSection .transaction-identity-choice {
+    grid-column: span 3;
+  }
+
+  #accountTransactionSection .transaction-symbol {
+    grid-column: span 4;
+  }
+
+  #accountTransactionSection .transaction-footer {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  #accountTransactionSection .transaction-notes {
+    grid-column: 1 / -1;
   }
 
   .employee-wizard-grid {
@@ -6003,8 +6080,17 @@ tbody tr:hover {
 }
 
 @media (max-width: 700px) {
-  .transaction-form {
+  #accountTransactionSection .transaction-form,
+  #accountTransactionSection .transaction-footer {
     grid-template-columns: 1fr;
+  }
+
+  #accountTransactionSection .transaction-form > .management-field {
+    grid-column: 1 / -1;
+  }
+
+  #accountTransactionSection .transaction-actions {
+    justify-content: flex-start;
   }
 
   .employee-options-mode .section-head {
@@ -8226,6 +8312,9 @@ html[dir="rtl"] .signal-condition-help::after {
 .trade-plan-result p { margin: 10px 0 0; }
 .trade-plan-result ul { padding-inline-start: 20px; }
 .trade-plan-result li + li { margin-top: 6px; }
+.trade-plan-issues li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.trade-plan-issues li > div { flex: 1 1 240px; min-width: 0; }
+.trade-plan-issues li > button { width: auto; flex: 0 0 auto; }
 
 @media (max-width: 420px) {
   .trade-planner-form, .trade-plan-facts { grid-template-columns: minmax(0, 1fr); }

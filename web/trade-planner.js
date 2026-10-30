@@ -58,6 +58,18 @@
     }
     return null;
   }
+  function priceIssue(item, now, accounts = []) {
+    const holding = item.holding || {};
+    const evidence = Object.values(item.price_ranges || {}).filter((range) => range && number(range.current) > 0);
+    const dates = evidence.map((range) => range.current_date).filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day || "")).sort();
+    return { symbol: upper(holding.symbol), stock_market: holding.stock_market || "", currency: holding.currency || "",
+      asset_class: holding.asset_class || "", location: holding.location || "",
+      account: accounts.find((account) => String(account.id) === String(holding.account_id)) || null,
+      reason: !evidence.length ? "price_missing" : !dates.length ? "price_date_missing"
+        : Date.parse(`${dates.at(-1)}T00:00:00Z`) > now ? "price_in_future" : "price_stale",
+      price_date: dates.at(-1) || null,
+      manual: upper(holding.data_source) === "MANUAL" && !holding.secondary_symbol };
+  }
   function cashBalance(account, transactions, now) {
     let cash = number(account.initial_cash);
     if (cash === null) return null;
@@ -79,7 +91,7 @@
     const now = Date.parse(context.calculated_at);
     const action = upper(request.action || "BUY");
     let requested = request.amount === "" || request.amount === null || request.amount === undefined ? null : number(request.amount);
-    const blocked = (reason, excluded = []) => ({ status: "unavailable", reason, excluded, action, requested, policy: POLICY });
+    const blocked = (reason, excluded = [], issues = []) => ({ status: "unavailable", reason, excluded, issues, action, requested, policy: POLICY });
     if (!["BUY", "SHORT"].includes(action) || (request.amount !== "" && request.amount != null && (requested === null || requested <= 0))) return blocked("invalid_request");
     const security = context.security;
     if (!security) return blocked(context.reason || "listing_unverified");
@@ -88,7 +100,7 @@
     const listing = listingCountry(security);
     if (!listing) return blocked("listing_unverified");
     const current = quote(security, now);
-    if (!current) return blocked("price_unavailable");
+    if (!current) return blocked("price_unavailable", [], [priceIssue(security, now, context.accounts)]);
     const base = upper(context.base_currency), currency = upper(h.currency);
     const convert = converter(context.fx_quotes, base);
     if (requested !== null && request.amountCurrency) {
@@ -101,13 +113,14 @@
     const accountIds = new Set(accounts.map((account) => String(account.id)));
     const snapshotRows = context.items.filter((item) => accountIds.has(String(item.holding?.account_id)));
     const value = (item) => convert(item.holding.market_value, item.holding.currency);
-    if (snapshotRows.some((item) => {
+    const issues = snapshotRows.flatMap((item) => {
       const quantity = number(item.holding.quantity), amount = number(item.holding.market_value), currentQuote = quote(item, now);
-      if (quantity === null || amount === null || value(item) === null || Math.sign(quantity) !== Math.sign(amount)) return true;
-      if (quantity === 0) return false;
-      if (!currentQuote) return true;
-      return false;
-    })) return blocked("valuation_unavailable");
+      const issue = priceIssue(item, now, accounts);
+      if (quantity === null || amount === null || Math.sign(quantity) !== Math.sign(amount)) return [{ ...issue, reason: "invalid_valuation" }];
+      if (value(item) === null) return [{ ...issue, reason: "fx_unavailable" }];
+      return quantity !== 0 && !currentQuote ? [issue] : [];
+    });
+    if (issues.length) return blocked("valuation_unavailable", [], issues);
     // Local ledger snapshots can retain the entry valuation while analytics
     // carry a newer quote. Reprice only this immutable planning snapshot.
     const rows = snapshotRows.map((item) => ({ ...item, holding: { ...item.holding,

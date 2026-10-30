@@ -10,7 +10,7 @@ function tradePlannerReason(reason) {
     listing_unverified: "The stock listing could not be verified. Check the symbol and market.",
     unsupported_instrument: "The planner supports listed stocks and ETFs only.",
     price_unavailable: "A dated price from the last 7 days is required. Refresh analytics or add a recent local price, then retry.",
-    valuation_unavailable: "Some holdings lack recent prices or valid valuations. Refresh analytics before sizing a trade.",
+    valuation_unavailable: "Update the holdings listed below before calculating a trade amount.",
     fx_unavailable: "A required exchange rate is unavailable. Check display currencies and refresh.",
     cash_unverified: "Spendable cash cannot be verified from the ledger. Check balances and transactions in other currencies.",
     no_cash: "No positive cash is available for this trade.",
@@ -35,6 +35,22 @@ function tradePlannerAccountName(account) {
   return [account.management_company, account.account_id || account.username].filter(Boolean).join(" · ") || t("Account");
 }
 
+function tradePlannerIssuesHtml(issues) {
+  if (!issues?.length) return "";
+  const labels = { price_missing: "No saved price", price_date_missing: "The saved price has no date",
+    price_stale: "The saved price is older than 7 days", price_in_future: "The saved price is dated in the future",
+    invalid_valuation: "Quantity and recorded value are inconsistent", fx_unavailable: "Required exchange rate unavailable" };
+  const list = issues.map((issue) => {
+    const label = t(labels[issue.reason] || "No saved price");
+    const account = issue.account ? ` · <bdi>${esc(tradePlannerAccountName(issue.account))}</bdi>` : "";
+    const day = issue.price_date ? ` · ${esc(t("Last saved price"))}: <bdi>${esc(formatDate(issue.price_date))}</bdi>` : "";
+    const repair = issue.manual && ["price_missing", "price_date_missing", "price_stale", "price_in_future"].includes(issue.reason)
+      ? `<button class="secondary compact-button" type="button" data-price-history-symbol="${esc(issue.symbol)}" data-price-history-market="${esc(issue.stock_market)}" data-price-history-asset="${esc(issue.asset_class)}" data-price-history-currency="${esc(issue.currency)}" data-price-history-location="${esc(issue.location)}">${esc(t("Update saved price"))}</button>` : "";
+    return `<li><div><bdi><b>${esc(issue.symbol)}</b></bdi>${account}<br>${esc(label)}${day}</div>${repair}</li>`;
+  }).join("");
+  return `<ul class="trade-plan-issues">${list}</ul>${issues.some((issue) => issue.manual) ? `<p>${esc(t("Manual securities need a recent price entered in Prices. Refresh does not fetch prices for them. Save a real quote with its actual date, then recalculate."))}</p>` : `<p>${esc(t("Refresh analytics, then recalculate. A missing price date cannot be inferred from the cache update time."))}</p>`}`;
+}
+
 function tradePlannerResultHtml(view) {
   if (!view) return "";
   if (view.status === "loading") return `<p role="status">${esc(t("Checking accounts, cash and risk…"))}</p>`;
@@ -42,7 +58,7 @@ function tradePlannerResultHtml(view) {
   if (view.status === "stale") return `<p role="status">${esc(t("Portfolio inputs changed. Recalculate the account suggestion."))}</p>`;
   const result = view.result;
   const exclusions = (result.excluded || []).map(({ account, reason }) => `<li><bdi>${esc(tradePlannerAccountName(account))}</bdi>: ${esc(tradePlannerReason(reason))}</li>`).join("");
-  if (result.status !== "ok") return `<p role="status" class="signal-missing">${esc(tradePlannerReason(result.reason))}</p>${exclusions ? `<details><summary>${esc(t("Accounts checked"))}</summary><ul>${exclusions}</ul></details>` : ""}`;
+  if (result.status !== "ok") return `<p role="status" class="signal-missing">${esc(tradePlannerReason(result.reason))}</p>${tradePlannerIssuesHtml(result.issues)}${exclusions ? `<details><summary>${esc(t("Accounts checked"))}</summary><ul>${exclusions}</ul></details>` : ""}`;
   const rec = result.recommendation, short = result.action === "SHORT";
   const cash = (amount) => `<bdi>${esc(money(amount, rec.currency))}</bdi>`;
   const fact = (label, value) => `<div><dt>${esc(t(label))}</dt><dd>${value}</dd></div>`;

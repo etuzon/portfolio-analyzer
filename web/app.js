@@ -11383,7 +11383,7 @@ function renderAlerts(data) {
       ${missing.length ? `<p class="signal-missing">Some provider data is unavailable: ${esc(missing.join(", "))}</p>` : ""}
       <div class="signal-card-actions">
         <button class="secondary compact-button" type="button" data-alert-chart="${esc(signal.symbol)}">${t("Chart")}</button>
-        <button type="button" data-investigate-signal="${esc(signal.symbol)}">Investigate &amp; score</button>
+        <button class="secondary compact-button" type="button" data-investigate-signal="${esc(signal.symbol)}">${esc(t("Investigate & score"))}</button>
         ${typeof tradePlannerSignalAction === "function" ? tradePlannerSignalAction(signal, index) : ""}
         <button class="secondary compact-button" type="button" data-dismiss-alert-signal="${esc(signal.symbol)}" data-dismiss-alert-type="${esc(signalType)}" aria-label="${esc(`${t("Dismiss signal")}: ${signal.symbol}`)}" title="${esc(t("Dismiss this stock and signal type across all rules for {days} days.").replace("{days}", fmt(dismissalDays, 0)))}"${dismissing ? " disabled" : ""}>${esc(t(dismissing ? "Dismissing…" : "Dismiss"))}</button>
       </div>
