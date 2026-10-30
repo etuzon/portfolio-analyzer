@@ -39,6 +39,7 @@ from .metrics import analyze_holding, moving_averages, screen, support_resistanc
 from .mcp_server import create_portfolio_mcp_server
 from .models import Ohlcv
 from .providers import MarketDataHub
+from .portfolio_refresh import attach_market_analysis, refresh_positions, security_key
 from .report_pdf import build_portfolio_report_pdf
 
 
@@ -170,6 +171,7 @@ _portfolio_cache: dict[str, Any] | None = None
 _portfolio_refresh_in_progress = False
 _portfolio_cache_generation = 0
 _portfolio_refresh_failure: dict[str, Any] | None = None
+_portfolio_refresh_progress: dict[str, Any] | None = None
 _alert_run_lock = RLock()
 _alert_runs_in_progress: set[str] = set()
 _full_restore_lock = RLock()
@@ -2266,10 +2268,13 @@ def analyze_all():
     return enriched_local_holdings()
 
 
-def enriched_local_holdings(*, cached_only: bool = False):
+def enriched_local_holdings(*, cached_only: bool = False, on_progress=None, timeout_seconds: float = 120, cancelled=lambda: False):
     analyses = local_store.holdings()
     enriched = []
     market_hub = hub().cached_view() if cached_only else hub()
+    if on_progress is not None:
+        return refresh_positions(analyses, market_hub, analyze_holding, on_progress, timeout_seconds,
+                                 lambda local: attach_market_analysis(local, analyze_holding(local.holding, hub().cached_view())), cancelled)
     for local_analysis in analyses:
         if local_analysis.holding.data_source == "MANUAL" and not local_analysis.holding.secondary_symbol:
             enriched.append(local_analysis)
@@ -2363,23 +2368,45 @@ def _serialized_portfolio_payload(analyses, cache_status: str) -> dict[str, Any]
 
 def _portfolio_loading_state(payload: dict[str, Any], state: str) -> dict[str, Any]:
     """Keep available evidence; pending/failure must never masquerade as absence."""
+    with _portfolio_cache_lock:
+        progress = _portfolio_refresh_progress
+        progress_states = dict((progress or {}).get("states", {}))
+        progress_results = dict((progress or {}).get("results", {}))
+    if state == "refreshing" and progress:
+        payload["refresh_progress"] = {key: progress.get(key, 0) for key in ("total", "completed", "failed")}
     for item in payload.get("items", []):
         holding = item.get("holding") or {}
         if holding.get("data_source") == "MANUAL" and not holding.get("secondary_symbol"):
             continue
-        item["analytics_state"] = state
+        key = security_key(holding)
+        row_state = progress_states.get(key, "queued") if state == "refreshing" else state
+        completed = progress_results.get(key) if state == "refreshing" else None
+        if completed:
+            completed = json.loads(json.dumps(completed))
+            for field in ("price_ranges", "moving_averages", "support_resistance", "volume", "technical_signals",
+                          "income_trend", "profit_trend", "dividend_trend", "profit_market_cap_trend", "market_cap", "industry", "missing", "provider_status"):
+                if field in completed:
+                    item[field] = completed[field]
+            row_state = "failed" if completed.get("analytics_state") == "failed" else "ready"
+            current = ((item.get("price_ranges") or {}).get("5y") or {}).get("current")
+            if holding.get("secondary_symbol") and current is not None and current > 0:
+                quantity, basis = float(holding.get("quantity") or 0), float(holding.get("cost_basis") or 0)
+                holding["market_value"] = quantity * current
+                holding["unrealized_profit"] = quantity * current - basis if quantity >= 0 else abs(quantity) * (abs(basis / quantity) - current)
+        item["analytics_state"] = row_state
+        metric_state = "refreshing" if row_state in {"queued", "updating"} else row_state
         for key in ("income_trend", "profit_trend", "dividend_trend", "profit_market_cap_trend"):
             trend = item.get(key)
             if trend and trend.get("state") in {"missing", "pending", "error"}:
-                trend["state"] = "pending" if state == "refreshing" else "error" if state == "failed" else "missing"
-                trend["message"] = "Loading financial data" if state == "refreshing" else "Financial data could not be updated" if state == "failed" else trend.get("message", "")
+                trend["state"] = "pending" if metric_state == "refreshing" else "error" if metric_state == "failed" else "missing"
+                trend["message"] = "Loading financial data" if metric_state == "refreshing" else "Financial data could not be updated" if metric_state == "failed" else trend.get("message", "")
         for values in (item.get("price_ranges") or {}).values():
             if values.get("state") in {"missing", "pending", "error"}:
-                values["state"] = "pending" if state == "refreshing" else "error" if state == "failed" else "missing"
-                values["message"] = "Loading price history" if state == "refreshing" else "Price history could not be updated" if state == "failed" else values.get("message", "")
+                values["state"] = "pending" if metric_state == "refreshing" else "error" if metric_state == "failed" else "missing"
+                values["message"] = "Loading price history" if metric_state == "refreshing" else "Price history could not be updated" if metric_state == "failed" else values.get("message", "")
         for values in (item.get("support_resistance") or {}).values():
             if values.get("state") in {"missing", "pending", "error"}:
-                values["state"] = "pending" if state == "refreshing" else "error" if state == "failed" else "missing"
+                values["state"] = "pending" if metric_state == "refreshing" else "error" if metric_state == "failed" else "missing"
     payload["refresh_state"] = state
     payload["refresh_pending"] = state == "refreshing"
     return payload
@@ -2411,14 +2438,41 @@ def _portfolio_provider_failures(payload: dict[str, Any]) -> None:
 
 def _refresh_portfolio_cache() -> None:
     """Refresh provider analytics off the request path."""
-    global _portfolio_cache, _portfolio_refresh_in_progress, _portfolio_refresh_failure
+    global _portfolio_cache, _portfolio_refresh_in_progress, _portfolio_refresh_failure, _portfolio_refresh_progress
     with _portfolio_cache_lock:
         generation = _portfolio_cache_generation
+        progress = {"total": 0, "completed": 0, "failed": 0, "states": {}, "results": {}}
+        _portfolio_refresh_progress = progress
+
+    def record(key, state, analysis, total):
+        serialized = to_dict(analysis) if analysis is not None else None
+        if serialized:
+            _portfolio_provider_failures({"items": [serialized]})
+            if serialized.get("analytics_state") == "failed":
+                state = "failed"
+        with _portfolio_cache_lock:
+            if generation != _portfolio_cache_generation or _portfolio_refresh_progress is not progress:
+                return
+            if progress["states"].get(key) in {"ready", "failed"} and state in {"queued", "updating"}:
+                return
+            progress["total"] = total
+            progress["states"][key] = state
+            if serialized:
+                progress["results"][key] = serialized
+            progress["completed"] = sum(value in {"ready", "failed"} for value in progress["states"].values())
+            progress["failed"] = sum(value == "failed" for value in progress["states"].values())
     signature = None
     try:
         signature = portfolio_cache_signature()
-        payload = _serialized_portfolio_payload(enriched_local_holdings(), "refreshed")
+        timeout_seconds = min(300, max(0.01, float(config.market_data.get("analysis_refresh_timeout_seconds", 120))))
+        payload = _serialized_portfolio_payload(enriched_local_holdings(on_progress=record, timeout_seconds=timeout_seconds,
+            cancelled=lambda: generation != _portfolio_cache_generation or _portfolio_refresh_progress is not progress), "refreshed")
         _portfolio_provider_failures(payload)
+        for item in payload.get("items", []):
+            if progress["states"].get(security_key(item.get("holding") or {})) == "failed":
+                _portfolio_loading_state({"items": [item]}, "failed")
+                payload["refresh_state"] = "failed"
+        payload["refresh_progress"] = {key: progress[key] for key in ("total", "completed", "failed")}
         if signature != portfolio_cache_signature():
             return
         if signature:
@@ -2555,7 +2609,7 @@ def read_portfolio_cache() -> dict[str, Any] | None:
     try:
         data = json.loads(path.read_text())
         return data if isinstance(data, dict) else None
-    except json.JSONDecodeError:
+    except (OSError, json.JSONDecodeError):
         return None
 
 
@@ -2574,11 +2628,12 @@ def write_portfolio_cache(cache_record: dict[str, Any]) -> None:
 
 
 def clear_portfolio_cache() -> None:
-    global _portfolio_cache, _portfolio_cache_generation, _portfolio_refresh_failure
+    global _portfolio_cache, _portfolio_cache_generation, _portfolio_refresh_failure, _portfolio_refresh_progress
     with _portfolio_cache_lock:
         _portfolio_cache = None
         _portfolio_cache_generation += 1
         _portfolio_refresh_failure = None
+        _portfolio_refresh_progress = None
         try:
             portfolio_cache_path().unlink()
         except OSError:

@@ -2571,6 +2571,11 @@ function providerStatusHint(providerStatus) {
 }
 
 function statusCell(item) {
+  if (["queued", "updating"].includes(item.analytics_state)) {
+    const saved = [item.income_trend, item.profit_trend, item.dividend_trend].some((metric) => ["ok", "partial", "stale"].includes(metric?.state));
+    const label = item.analytics_state === "queued" ? (saved ? "Saved data · awaiting update" : "Awaiting update") : (saved ? "Saved data · updating" : "Updating analytics");
+    return `<div class="status-cell status-cell-compact"><span class="badge neutral">${esc(t(label))}</span></div>`;
+  }
   if (item.analytics_state === "refreshing" || item.analytics_state === "failed") {
     return `<div class="status-cell status-cell-compact"><span class="badge ${item.analytics_state === "failed" ? "partial" : "neutral"}">${esc(t(item.analytics_state === "failed" ? "Update failed" : "Updating analytics"))}</span></div>`;
   }
@@ -2915,13 +2920,20 @@ function renderPortfolioValueDashboard(items) {
   return `
     <div class="chart-card portfolio-value-card">
       <div class="balance-panel">
-        <p class="eyebrow">Portfolio value</p>
-        <div class="balance-value" title="Securities ${money(securitiesValue, state.baseCurrency, 0)} + cash ${money(cashValue, state.baseCurrency, 0)}">${money(primaryValue, state.baseCurrency)}</div>
-        <div class="delta ${profitClass}" title="Holding profit converted to ${esc(state.baseCurrency)} using displayed FX rates when available">${esc(optionLabel("Holding Profit"))} ${signedMoney(primaryProfit, state.baseCurrency)}</div>
-        <div class="portfolio-risk-summary">
-          <span>${esc(optionLabel("Total portfolio risk"))}</span>
-          ${riskBadge(state.riskSnapshot.total)}
-          <small>${esc(optionLabel("0 is very low · 100 is extreme"))}</small>
+        <div class="portfolio-summary-metrics">
+          <div class="portfolio-summary-value">
+            <p class="eyebrow">Portfolio value</p>
+            <div class="balance-value" title="Securities ${money(securitiesValue, state.baseCurrency, 0)} + cash ${money(cashValue, state.baseCurrency, 0)}">${money(primaryValue, state.baseCurrency)}</div>
+          </div>
+          <div class="portfolio-summary-profit">
+            <p class="eyebrow">${esc(optionLabel("Holding Profit"))}</p>
+            <div class="delta ${profitClass}" title="Holding profit converted to ${esc(state.baseCurrency)} using displayed FX rates when available">${signedMoney(primaryProfit, state.baseCurrency)}</div>
+          </div>
+          <div class="portfolio-risk-summary">
+            <span>${esc(optionLabel("Total portfolio risk"))}</span>
+            ${riskBadge(state.riskSnapshot.total)}
+            <small>${esc(optionLabel("0 is very low · 100 is extreme"))}</small>
+          </div>
         </div>
         <details class="summary-drawer">
           <summary>Portfolio stats</summary>
@@ -3986,7 +3998,7 @@ function renderCompleteness(items) {
   return `
     <div class="chart-card meters-card">
       <div class="chart-title">Provider data coverage</div>
-      ${items.some((item) => item.analytics_state === "refreshing") ? `<p class="section-note">${esc(t("Updating analytics in the background"))}</p>` : ""}
+      ${items.some((item) => ["refreshing", "queued", "updating"].includes(item.analytics_state)) ? `<p class="section-note">${esc(t("Updating analytics in the background"))}</p>` : ""}
       <div class="coverage-list">
         ${metrics.map((metric, index) => `
           <div class="coverage-row" title="${esc(`${metric.ok} of ${metric.total} positions have ${metric.label.toLowerCase()} data`)}">
@@ -10255,7 +10267,12 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
       accounts: (trend.accounts || []).filter((entry) => !isEquityCompAccount(entry.account)),
     };
     populateOptions(allItems);
-    const refreshText = t(data.refresh_pending ? "Updating analytics in the background" : data.refresh_state === "failed" ? "Financial data could not be updated. Use Refresh to retry." : "Analytics updated");
+    const progress = data.refresh_progress;
+    const refreshText = data.refresh_pending && progress?.total
+      ? `${t("Updating analytics")}: ${progress.completed}/${progress.total} ${t("securities completed")}`
+      : data.refresh_state === "failed" && progress?.failed
+        ? `${t("Update finished")}: ${progress.completed - progress.failed}/${progress.total} ${t("securities updated")} · ${progress.failed} ${t("updates failed. Use Refresh to retry.")}`
+      : t(data.refresh_pending ? "Updating analytics in the background" : data.refresh_state === "failed" ? "Financial data could not be updated. Use Refresh to retry." : "Analytics updated");
     $("status").textContent = `${state.items.length} ${t("portfolio positions")} · ${refreshText}`;
     renderPortfolio(state.items);
     if (!$("macroScenarioModal")?.hidden) renderMacroScenario();

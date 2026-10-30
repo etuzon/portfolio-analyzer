@@ -1932,7 +1932,6 @@ textarea.muted-control {
   padding: 0;
 }
 
-.portfolio-value-card,
 .account-trend-card {
   min-height: 352px;
 }
@@ -1946,7 +1945,35 @@ textarea.muted-control {
   border: 0;
   border-radius: 0;
   background: transparent;
-  min-height: 100%;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.portfolio-summary-metrics {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 12px 28px;
+}
+
+.portfolio-summary-metrics > div { min-width: 0; }
+.portfolio-summary-metrics .eyebrow { margin: 0 0 8px; }
+.portfolio-summary-metrics .balance-value { margin-top: 0; font-size: clamp(30px, 3.2vw, 44px); overflow-wrap: anywhere; }
+.portfolio-summary-metrics .delta { margin-top: 0; min-height: 34px; font-size: clamp(16px, 1.7vw, 22px); padding: 4px 10px; }
+.portfolio-summary-metrics .portfolio-risk-summary { display: grid; grid-column: auto; gap: 6px; margin-top: 0; }
+.portfolio-summary-metrics .portfolio-risk-summary > .risk-badge { justify-self: start; }
+.portfolio-value-card .summary-drawer { grid-column: 1; grid-row: auto; max-width: none; }
+
+@media (max-width: 700px) {
+  .portfolio-summary-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .portfolio-summary-value { grid-column: 1 / -1; }
+  .portfolio-summary-metrics .balance-value { font-size: clamp(30px, 7vw, 40px); }
+  .portfolio-summary-metrics .delta { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+}
+
+@media (max-width: 360px) {
+  .portfolio-summary-metrics { grid-template-columns: minmax(0, 1fr); }
 }
 
 .long-term-savings-card {

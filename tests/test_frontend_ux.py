@@ -305,10 +305,12 @@ def test_market_banner_uses_dense_responsive_cards_without_smaller_text():
     assert "font-size: 12px" in styles
 
 
-def test_account_value_trend_matches_portfolio_value_card_height():
+def test_portfolio_summary_can_shrink_while_account_trend_keeps_chart_space():
     styles = (ROOT / "web/styles.css").read_text()
 
-    assert ".portfolio-value-card,\n.account-trend-card {\n  min-height: 352px;" in styles
+    assert ".portfolio-value-card,\n.account-trend-card {\n  min-height: 352px;" not in styles
+    assert ".account-trend-card {\n  min-height: 352px;" in styles
+    assert ".portfolio-summary-metrics {" in styles
     assert ".account-trend-card {\n  display: grid;\n  grid-template-rows: auto minmax(0, 1fr);" in styles
 
 

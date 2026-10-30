@@ -2,6 +2,13 @@
   "use strict";
 
   const HEBREW_TEXT = Object.freeze({
+    "Saved data · awaiting update": "נתונים שמורים · ממתין לעדכון",
+    "Saved data · updating": "נתונים שמורים · מתעדכן",
+    "Awaiting update": "ממתין לעדכון",
+    "securities completed": "ניירות ערך הושלמו",
+    "securities updated": "ניירות ערך עודכנו",
+    "Update finished": "העדכון הסתיים",
+    "updates failed. Use Refresh to retry.": "עדכונים נכשלו. יש ללחוץ על רענון כדי לנסות שוב.",
     "share": "מניה",
     "cached": "נתונים שמורים",
     "pending": "ממתין לעדכון",

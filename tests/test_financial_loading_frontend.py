@@ -127,7 +127,9 @@ def test_financial_refresh_states_are_localized():
     labels=['Loading financial data','Loading price history','Financial data could not be updated','Price history could not be updated',
             'Update failed','Updating analytics','Updating analytics in the background',
             'Connection interrupted. Retrying the analytics update.','Financial data could not be updated. Use Refresh to retry.',
-            'Analytics updated','portfolio positions','portfolio positions matched']
+            'Analytics updated','portfolio positions','portfolio positions matched',
+            'Saved data · awaiting update','Saved data · updating','Awaiting update','securities completed',
+            'securities updated','Update finished','updates failed. Use Refresh to retry.']
     js='const window={};'+(SOURCE.parent/'i18n.js').read_text()+'\nconst labels='+json.dumps(labels)+";console.log(JSON.stringify(labels.map(x=>window.PortfolioI18n.translate(x,'he'))));"
     result=subprocess.run(['node'],input=js,text=True,capture_output=True,check=True)
     assert all(re.search('[א-ת]',label) and not re.search('[A-Za-z]',label) for label in json.loads(result.stdout))
@@ -156,6 +158,24 @@ assert.equal(document.activeElement,newButton,'focus follows its stock identity,
 """
     result=subprocess.run(['node'],input=script,text=True,capture_output=True)
     assert result.returncode==0,result.stderr
+
+
+def test_unique_security_progress_and_partial_failure_are_reported_truthfully():
+    run_js('''
+let calls=0;
+const api=async(path)=>{
+ if(!path.startsWith('/api/portfolio'))return otherApi(path);
+ calls++;
+ return {...payload(12,calls===1),refresh_state:calls===1?'refreshing':'failed',
+  refresh_progress:{total:2,completed:calls===1?1:2,failed:calls===1?0:1}};
+};
+(async()=>{
+ await loadPortfolio();assert.ok($('status').textContent.includes('1/2 securities completed'));
+ await tick();assert.equal(pending.size,0);assert.ok($('status').textContent.includes('1/2 securities updated'));
+ assert.ok($('status').textContent.includes('1 updates failed'));assert.ok(!$('status').textContent.includes('Analytics updated'));
+ console.log('completed');
+})().catch(error=>{console.error(error);process.exitCode=1;});
+''')
 
 
 def test_hebrew_mobile_labels_and_dividend_unit_use_shared_localization():

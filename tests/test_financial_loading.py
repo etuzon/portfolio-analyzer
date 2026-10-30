@@ -40,6 +40,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(main,'_portfolio_refresh_in_progress',False)
     monkeypatch.setattr(main,'_portfolio_refresh_failure',None)
     monkeypatch.setattr(main,'_portfolio_cache_generation',0)
+    monkeypatch.setattr(main,'_portfolio_refresh_progress',None)
     monkeypatch.setattr(main,'schedule_portfolio_refresh',lambda:True)
     monkeypatch.setattr(main,'_resolve_supported_stock_market',lambda *a:('NASDAQ',{}))
     account = main.save_local_account({'type':'Investment','location':'USA','currency':'USD','username':'QA','account_id':'QA-1','persons':[{'name':'QA Owner','birth_date':'01/01/1990'}]})
@@ -226,3 +227,46 @@ def test_worker_completion_during_request_returns_completed_data_not_stale_previ
     result=main.portfolio_payload(defer_enrichment=True)
     assert result['refresh_pending'] is False
     assert result['items'][0]['profit_trend']['current']==20
+
+
+def test_completed_security_updates_while_another_security_is_still_running(env,monkeypatch):
+    from threading import Event, Thread
+    from app.metrics import analyze_holding
+    env.add('FDUS');env.add('UNB')
+    release = Event()
+    def provider(holding, hub):
+        if hub is env.hub and holding.symbol == 'UNB':
+            release.wait(2)
+        result = analyze_holding(holding, env.hub.cached_view())
+        if hub is env.hub and holding.symbol == 'FDUS':
+            result.profit_trend.current = 999
+        return result
+    monkeypatch.setattr(main,'analyze_holding',provider)
+    monkeypatch.setattr(main,'schedule_portfolio_refresh',lambda:False)
+    monkeypatch.setattr(main,'_portfolio_refresh_in_progress',True)
+    worker=Thread(target=main._refresh_portfolio_cache)
+    worker.start()
+    try:
+        deadline=time.monotonic()+1.5
+        while time.monotonic()<deadline:
+            progress=main._portfolio_refresh_progress or {}
+            if progress.get('completed') == 1:
+                break
+            time.sleep(.005)
+        payload=main.portfolio_payload(defer_enrichment=True)
+        rows={item['holding']['symbol']:item for item in payload['items']}
+        assert rows['FDUS']['analytics_state']=='ready'
+        assert rows['FDUS']['profit_trend']['current']==999
+        assert rows['UNB']['analytics_state']=='updating'
+        assert payload['refresh_progress']=={'total':2,'completed':1,'failed':0}
+        assert payload['refresh_pending'] is True
+    finally:
+        release.set();worker.join(3)
+    assert not worker.is_alive()
+
+
+def test_unreadable_aggregate_cache_is_recoverable(monkeypatch):
+    def denied():
+        raise PermissionError("Synthetic unreadable cache")
+    monkeypatch.setattr(main,'portfolio_cache_path',lambda:SimpleNamespace(exists=lambda:True,read_text=denied))
+    assert main.read_portfolio_cache() is None
