@@ -21,7 +21,7 @@ def run_js(source):
     assert result.returncode == 0, result.stderr
 
 
-def test_navigation_rebuild_preserves_alarm_count_and_role_permissions():
+def test_navigation_rebuild_preserves_external_alarm_count_and_role_permissions():
     run_js(functions('ensureHierarchicalNav') + '''
 const assert = require('node:assert/strict');
 let admin = false;
@@ -37,16 +37,15 @@ const NAV_MENU_ICONS = {reports: ''};
 for (const role of ['Viewer', 'Operator', 'Admin']) {
   admin = role === 'Admin';
   ensureHierarchicalNav();
-  assert.ok(nav.innerHTML.includes('id="alarmsCount">28</span>'));
-  assert.ok(nav.innerHTML.includes('has-alarms'));
-  assert.ok(nav.innerHTML.includes('data-modal="alarmsModal"'));
+  assert.equal(nodes.alarmsCount.textContent, '28');
+  assert.ok(!nav.innerHTML.includes('id="alarmsCount"'));
+  assert.ok(!nav.innerHTML.includes('data-modal="alarmsModal"'));
   assert.ok(nav.innerHTML.includes('data-modal="settingsModal"'));
   assert.equal(nav.innerHTML.includes('data-modal="usersModal"'), admin);
 }
 nodes.alarmsCount.textContent = '0';
 ensureHierarchicalNav();
-assert.ok(nav.innerHTML.includes('id="alarmsCount">0</span>'));
-assert.ok(!nav.innerHTML.includes('has-alarms'));
+assert.equal(nodes.alarmsCount.textContent, '0');
 ''')
 
 

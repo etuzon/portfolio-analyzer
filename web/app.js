@@ -1080,7 +1080,6 @@ function ensureHierarchicalNav() {
   // Top-level groups open as compact popovers, so keep the header uncluttered
   // until the user chooses a group.
   const defaultOpen = "";
-  const alarmCount = $("alarmsCount")?.textContent || "0";
   nav.innerHTML = `
     <details class="nav-menu"${defaultOpen}>
       ${navMenuSummary("portfolio", t("portfolioData"))}
@@ -1125,7 +1124,6 @@ function ensureHierarchicalNav() {
       </div>
     </details>
     <button class="nav-menu-link" type="button" data-modal="reportsModal"><span class="nav-menu-icon" aria-hidden="true">${NAV_MENU_ICONS.reports}</span><span class="nav-menu-label">${esc(t("reports"))}</span></button>
-    <button id="alarmsButton" class="nav-menu-link alarm-button${Number(alarmCount) > 0 ? " has-alarms" : ""}" type="button" data-modal="alarmsModal" title="${esc(t("Open portfolio alarms"))}"><span class="nav-menu-label">${esc(t("Alarms"))}</span><span id="alarmsCount">${esc(alarmCount)}</span></button>
     <details class="nav-menu">
       ${navMenuSummary("system", t("system"))}
       <div class="nav-children">

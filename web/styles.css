@@ -9319,6 +9319,18 @@ html[dir="rtl"] .settings-menu-button.active {
   .sidebar > .nav:not(.is-expanded) { display: none; }
   .sidebar > .header-status { grid-row: 4; }
 
+  .header-actions {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    width: 100%;
+  }
+  .header-actions .user-session { display: contents; }
+  .header-actions #alarmsButton { grid-column: 1; grid-row: 1; }
+  .header-actions #currentUserName { grid-column: 2; grid-row: 1; justify-self: start; max-width: 100%; }
+  .header-actions #currentUserRole { grid-column: 3; grid-row: 1; }
+  .header-actions #logoutButton { grid-column: 2; grid-row: 2; justify-self: end; }
+  .header-actions #refresh { grid-column: 3; grid-row: 2; justify-self: end; }
+
   .ticker-row,
   .analytics-board,
   .toolbar,

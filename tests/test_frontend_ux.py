@@ -327,7 +327,9 @@ def test_dashboard_header_does_not_repeat_overview_label():
     assert 'id="currentUserName"' in sidebar
     assert 'id="logoutButton"' in sidebar
     assert 'id="refresh"' in sidebar
-    assert 'id="alarmsButton"' in sidebar.split('</nav>', 1)[0]
+    assert 'id="alarmsButton"' not in sidebar.split('</nav>', 1)[0]
+    actions = sidebar.split('class="header-actions"', 1)[1].split('class="header-status"', 1)[0]
+    assert actions.index('id="alarmsButton"') < actions.index('id="currentUserName"')
     assert 'id="changePasswordButton"' not in sidebar
     security = html.split('id="settingsPanelSecurity"', 1)[1].split('</section>', 1)[0]
     assert 'id="changePasswordButton"' in security
