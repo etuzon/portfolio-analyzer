@@ -7663,10 +7663,14 @@ function renderAlarms() {
   if (!list) return;
   list.innerHTML = alarms.length ? alarms.map((alarm) => `
     <button class="alarm-item ${esc(alarm.tone)}" type="button" ${alarm.kind === "vesting" ? `data-open-vesting-alarm="${esc(alarm.transactionId)}"` : `data-open-dividend-alarm="${esc(alarm.event.id)}"`}>
-      <span class="alarm-kind">${esc(t(alarm.kind === "vesting" ? "Upcoming vesting" : alarm.tone === "future" ? "Future dividend" : "Dividend paid"))}</span>
-      <b>${esc(alarm.title)}</b>
-      <span>${esc(alarm.body)}</span>
-      <small>${esc(alarm.meta)}</small>
+      <span class="alarm-heading">
+        <b>${esc(alarm.title)}</b>
+        <span class="alarm-kind">${esc(t(alarm.kind === "vesting" ? "Upcoming vesting" : alarm.tone === "future" ? "Future dividend" : "Dividend paid"))}</span>
+      </span>
+      <span class="alarm-details">
+        <span class="alarm-body">${esc(alarm.body)}</span>
+        <small class="alarm-meta">${esc(alarm.meta)}</small>
+      </span>
     </button>
   `).join("") : `<div class="empty">${esc(t("No vesting or dividend alarms"))}</div>`;
 }

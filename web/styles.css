@@ -5926,14 +5926,42 @@ tbody tr:hover {
   overflow-wrap: anywhere;
   width: 100%;
   display: grid;
-  gap: 5px;
+  gap: 4px;
   text-align: start;
   justify-items: start;
-  padding: 12px;
+  padding: 8px 10px;
   border-radius: 7px;
   border: 1px solid #2a3442;
   background: #15181d;
   color: #e8edf6;
+}
+
+.alarm-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+}
+
+.alarm-heading > b { min-width: 0; }
+.alarm-heading > .alarm-kind { white-space: nowrap; }
+
+.alarm-details {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  width: 100%;
+  min-width: 0;
+}
+
+.alarm-details > .alarm-body { flex: 1 1 320px; min-width: 0; }
+.alarm-details > .alarm-meta { flex: 1 1 280px; min-width: 0; }
+
+@media (max-width: 360px) {
+  .alarm-heading { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
 
 .alarm-item.future {
