@@ -1040,7 +1040,7 @@ function openDatePickerFor(input) {
 }
 
 const NAV_MENU_ICONS = Object.freeze({
-  dashboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
+  reports: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>',
   portfolio: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18M10 12v2h4v-2"/></svg>',
   people: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   retirement: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 18 0Z"/><path d="M12 12v9M8 21h8M7 12V9M17 12V9"/></svg>',
@@ -1061,13 +1061,6 @@ function ensureHierarchicalNav() {
   // until the user chooses a group.
   const defaultOpen = "";
   nav.innerHTML = `
-    <details class="nav-menu"${defaultOpen}>
-      ${navMenuSummary("dashboard", t("dashboard"))}
-      <div class="nav-children">
-        <button class="nav-item active" type="button">${esc(t("overview"))}</button>
-        <button class="nav-item" type="button" data-modal="reportsModal">${esc(t("reports"))}</button>
-      </div>
-    </details>
     <details class="nav-menu"${defaultOpen}>
       ${navMenuSummary("portfolio", t("portfolioData"))}
       <div class="nav-children">
@@ -1109,6 +1102,7 @@ function ensureHierarchicalNav() {
         <button class="nav-item" type="button" data-modal="bannerModal">${esc(t("marketBanner"))}</button>
       </div>
     </details>
+    <button class="nav-menu-link" type="button" data-modal="reportsModal"><span class="nav-menu-icon" aria-hidden="true">${NAV_MENU_ICONS.reports}</span><span class="nav-menu-label">${esc(t("reports"))}</span></button>
     <details class="nav-menu">
       ${navMenuSummary("system", t("system"))}
       <div class="nav-children">
@@ -1515,6 +1509,7 @@ function applyLanguage() {
   if (state.positionTransactionsDetail) syncPositionTransactionLimit();
   if (state.eventDividendSettings) renderEvents();
   refreshReportFilterOptions();
+  document.querySelectorAll(".modal:not([hidden])").forEach(mountModalHomeLink);
   applyAutoDirection();
   window.PortfolioI18n?.applyToDocument(state.language);
   window.PortfolioI18n?.observe();
@@ -11404,11 +11399,53 @@ function focusModalDestination(modal, { targetId = "", focusId = "" } = {}) {
   });
 }
 
+function mountModalHomeLink(modal) {
+  modal.querySelector(".modal-home-link")?.remove();
+  const brand = $("dashboardHome");
+  if (!brand) return;
+  const link = brand.cloneNode(true);
+  link.removeAttribute("id");
+  link.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
+  link.classList.add("modal-home-link");
+  link.setAttribute("aria-label", t("Return to dashboard"));
+  link.setAttribute("title", t("Return to dashboard"));
+  link.querySelector(".brand-version")?.setAttribute("aria-label", t("Application version"));
+  modal.append(link);
+  positionModalHomeLinks();
+}
+
+function positionModalHomeLinks() {
+  const brand = $("dashboardHome");
+  if (!brand) return;
+  const rect = brand.getBoundingClientRect();
+  document.querySelectorAll(".modal-home-link").forEach((link) => {
+    link.style.left = `${Math.min(Math.max(rect.left, 8), Math.max(8, window.innerWidth - rect.width - 8))}px`;
+    link.style.top = `${rect.top}px`;
+    link.style.width = `${rect.width}px`;
+    link.style.height = `${rect.height}px`;
+  });
+}
+
+function returnToDashboard() {
+  document.querySelectorAll(".modal:not([hidden])").forEach((modal) => {
+    modal.hidden = true;
+    modal.querySelector(".modal-home-link")?.remove();
+  });
+  modalReturnFocus.clear();
+  state.returnToEmployeeOptionsAfterAccount = false;
+  document.querySelectorAll(".nav-menu[open]").forEach((menu) => { menu.open = false; });
+  window.scrollTo({ top: 0, behavior: "instant" });
+  $("dashboardTitle")?.focus({ preventScroll: true });
+}
+
+window.addEventListener("resize", positionModalHomeLinks);
+
 function openModal(id, returnFocus = document.activeElement, destination = {}) {
   const modal = $(id);
   if (!modal) return;
   if (returnFocus instanceof HTMLElement) modalReturnFocus.set(id, returnFocus);
   modal.hidden = false;
+  mountModalHomeLink(modal);
   if (id === "accountsModal") {
     setAccountsTab("existing");
     Promise.all([loadBrokers(), loadFamilyMembers(), loadLocalAccounts()]);
@@ -11476,6 +11513,7 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
 function closeModal(modal) {
   if (!modal) return;
   modal.hidden = true;
+  modal.querySelector(".modal-home-link")?.remove();
   if (modal.id === "accountsModal" && state.returnToEmployeeOptionsAfterAccount) {
     state.returnToEmployeeOptionsAfterAccount = false;
   }
@@ -11525,7 +11563,7 @@ document.addEventListener("keydown", (event) => {
   }
   if (event.key !== "Tab") return;
   const focusable = [...activeModal.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])')]
-    .filter((element) => element.offsetParent !== null);
+    .filter((element) => element.getClientRects().length > 0);
   if (!focusable.length) return;
   const currentIndex = focusable.indexOf(document.activeElement);
   if (currentIndex === -1) {
@@ -11541,6 +11579,11 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-dashboard-home]")) {
+    event.preventDefault();
+    returnToDashboard();
+    return;
+  }
   const actionHelpSummary = event.target.closest(".row-action-help summary");
   if (actionHelpSummary) {
     requestAnimationFrame(() => {

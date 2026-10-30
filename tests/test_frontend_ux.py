@@ -320,7 +320,11 @@ def test_dashboard_header_does_not_repeat_overview_label():
     topbar = html.split('<header class="topbar">', 1)[1].split("</header>", 1)[0]
     assert '<p class="eyebrow">Overview</p>' not in topbar
     assert "Portfolio analyzer" in topbar
-    assert '<button class="nav-item active" type="button">Home</button>' in html
+    sidebar = html.split('<aside class="sidebar"', 1)[1].split('</aside>', 1)[0]
+    assert '>Home</button>' not in sidebar
+    assert '<span class="nav-menu-label">Dashboard</span>' not in sidebar
+    assert 'id="dashboardHome" href="/" data-dashboard-home' in sidebar
+    assert sidebar.index('<span class="nav-menu-label">Markets</span>') < sidebar.index('data-modal="reportsModal"') < sidebar.index('<span class="nav-menu-label">System</span>')
     assert 'overview: "ראשי"' in script
     assert '"Home": "ראשי"' in i18n
 

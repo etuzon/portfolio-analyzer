@@ -318,6 +318,23 @@ h2 {
   color: #fff;
   font-size: 14px;
   font-weight: 800;
+  text-decoration: none;
+}
+
+.brand:focus-visible {
+  outline: 2px solid var(--ux-blue);
+  outline-offset: 2px;
+  border-radius: 7px;
+}
+
+.modal-home-link {
+  position: fixed;
+  z-index: 1;
+  background: var(--ux-bg);
+}
+
+.topbar h1[tabindex="-1"]:focus {
+  outline: none;
 }
 
 .brand-mark {
@@ -362,7 +379,8 @@ h2 {
   flex: 0 0 auto;
 }
 
-.nav-menu summary {
+.nav-menu summary,
+.nav-menu-link {
   display: flex;
   align-items: center;
   gap: 7px;
@@ -376,6 +394,10 @@ h2 {
   font-size: 12px;
   font-weight: 850;
   list-style: none;
+}
+
+.nav-menu-link {
+  flex: 0 0 auto;
 }
 
 .nav-menu-icon {
@@ -426,6 +448,7 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
 }
 
 .nav-menu summary:focus-visible,
+.nav-menu-link:focus-visible,
 .nav-item:focus-visible {
   outline: 2px solid #21a7ff;
   outline-offset: 2px;

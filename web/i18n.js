@@ -2,6 +2,8 @@
   "use strict";
 
   const HEBREW_TEXT = Object.freeze({
+    "Return to dashboard": "חזרה לתיק ההשקעות",
+    "Select the portfolio title or logo to return to the dashboard.": "לחזרה לתיק ההשקעות, יש ללחוץ על שם התיק או על הסמל.",
     "Enter a total value before saving history. Blank values do not replace existing records.": "יש להזין שווי כולל לפני שמירת ההיסטוריה. ערכים ריקים אינם מחליפים רשומות קיימות.",
     "History total value must be a finite number; blank values cannot overwrite existing history.": "השווי הכולל בהיסטוריה חייב להיות מספר תקין; ערכים ריקים אינם יכולים לדרוס היסטוריה קיימת.",
     "Asset class": "סוג נכס",

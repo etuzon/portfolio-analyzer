@@ -58,18 +58,11 @@
 
     <div id="appShell" class="app-shell" inert aria-hidden="true">
       <aside class="sidebar" aria-label="Main navigation">
-        <div class="brand">
+        <a class="brand" id="dashboardHome" href="/" data-dashboard-home aria-label="Return to dashboard" title="Return to dashboard">
           <span class="brand-mark" aria-hidden="true"></span>
           <span class="brand-label"><span class="brand-name">Portfolio</span><span id="brandVersion" class="brand-version" aria-label="Application version" hidden></span></span>
-        </div>
+        </a>
         <nav class="nav">
-          <details class="nav-menu" open>
-            <summary><span class="nav-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span><span class="nav-menu-label">Dashboard</span></summary>
-            <div class="nav-children">
-              <button class="nav-item active" type="button">Home</button>
-              <button class="nav-item" type="button" data-modal="reportsModal">Reports</button>
-            </div>
-          </details>
           <details class="nav-menu" open>
             <summary><span class="nav-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 7h18v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18M10 12v2h4v-2"/></svg></span><span class="nav-menu-label">Portfolio Data</span></summary>
             <div class="nav-children">
@@ -112,6 +105,7 @@
               <button class="nav-item" type="button" data-modal="bannerModal">Market Banner</button>
             </div>
           </details>
+          <button class="nav-menu-link" type="button" data-modal="reportsModal"><span class="nav-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span><span class="nav-menu-label">Reports</span></button>
           <details class="nav-menu">
             <summary><span class="nav-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg></span><span class="nav-menu-label">System</span></summary>
             <div class="nav-children">
@@ -132,7 +126,7 @@
       <main class="workspace">
         <header class="topbar">
           <div>
-            <h1>Portfolio analyzer</h1>
+            <h1 id="dashboardTitle" tabindex="-1">Portfolio analyzer</h1>
             <p id="status">Preparing dashboard</p>
           </div>
           <div class="topbar-actions">
@@ -899,6 +893,7 @@
             <div class="help-group-content">
               <article class="help-feature">
                 <h3>Home</h3>
+                <p>Select the portfolio title or logo to return to the dashboard.</p>
                 <p>Use Area to choose the part of the portfolio and View to switch between compact, full, and editing modes. Cards show value, holdings, long-term savings, and data-quality warnings.</p>
               </article>
               <article class="help-feature">
