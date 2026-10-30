@@ -2247,6 +2247,7 @@ class LocalPortfolioStore:
         with self._connect() as conn:
             position_quantity = self._validate_position_ledger(conn, record)
             self._insert_transaction(conn, record)
+            self._refresh_transaction_snapshots(conn, [record])
         return self._transaction_with_position_status(record, position_quantity)
 
     def _transaction_record(
@@ -2484,16 +2485,56 @@ class LocalPortfolioStore:
                     exclude_id=transaction_id,
                 )
             self._update_transaction_record(conn, record)
+            self._refresh_transaction_snapshots(conn, [_dict(existing), record])
         return self._transaction_with_position_status(record, position_quantity)
 
     def delete_transaction(self, transaction_id: str) -> bool:
         with self._connect() as conn:
-            row = conn.execute("select transition_id from transactions where id = ?", (transaction_id,)).fetchone()
+            row = conn.execute("select * from transactions where id = ?", (transaction_id,)).fetchone()
             if row and str(row["transition_id"] or "").strip():
                 raise ValueError("Lifecycle-generated transactions are read-only")
             before = int(bool(row))
             conn.execute("delete from transactions where id = ?", (transaction_id,))
+            if row:
+                self._refresh_transaction_snapshots(conn, [_dict(row)])
         return bool(before)
+
+    def _refresh_transaction_snapshots(self, conn: sqlite3.Connection, changes: list[dict[str, Any]]) -> None:
+        """Keep derived history in the same transaction as its ledger changes.
+
+        Manual statement balances are independent observations, not generated
+        valuations. Only daily calculated records are rebuilt here.
+        """
+        affected: dict[str, str] = {}
+        for record in changes:
+            account_id = record["account_db_id"]
+            day = record["trade_date"]
+            affected[account_id] = min(affected.get(account_id, day), day)
+        for account_id, from_date in affected.items():
+            snapshots = conn.execute(
+                """select snapshot_date from account_snapshots
+                   where account_db_id = ? and source = 'daily' and snapshot_date >= ?
+                   order by snapshot_date""",
+                (account_id, from_date),
+            ).fetchall()
+            if not snapshots:
+                continue
+            account = _dict(conn.execute("select * from accounts where id = ?", (account_id,)).fetchone())
+            dates = [date.fromisoformat(row["snapshot_date"]) for row in snapshots]
+            points = self._computed_trend_for_account(
+                account, dates[0], dates[-1], connection=conn, extra_dates=dates,
+            )
+            by_date = {point["date"]: point for point in points}
+            updated_at = _now()
+            conn.executemany(
+                """update account_snapshots set value = ?, cash = ?, profit = ?, profit_percent = ?, updated_at = ?
+                   where account_db_id = ? and snapshot_date = ? and source = 'daily'""",
+                [
+                    (point["value"], point["cash"], point["profit"], point["profit_percent"], updated_at, account_id, row["snapshot_date"])
+                    for row in snapshots
+                    for point in [by_date[row["snapshot_date"]]]
+                ],
+            )
 
     def list_equity_transitions(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
@@ -3043,7 +3084,9 @@ class LocalPortfolioStore:
 
     def save_account_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
         account = self._account(payload.get("account_db_id") or payload.get("account_id"))
-        value = _number(payload.get("value"), 0)
+        value = _optional_number(payload.get("value"))
+        if value is None or not math.isfinite(value) or isinstance(payload.get("value"), bool):
+            raise ValueError("History total value must be a finite number; blank values cannot overwrite existing history.")
         cash = _number(payload.get("cash"), 0)
         profit = _number(payload.get("profit"), value - cash)
         basis = abs(value - cash - profit)
@@ -3959,8 +4002,11 @@ class LocalPortfolioStore:
             by_date[point["date"]] = point
         return [by_date[day] for day in sorted(by_date)]
 
-    def _computed_trend_for_account(self, account: dict[str, Any], from_date: date, to_date: date) -> list[dict[str, Any]]:
-        with self._connect() as conn:
+    def _computed_trend_for_account(
+        self, account: dict[str, Any], from_date: date, to_date: date, *,
+        connection: sqlite3.Connection | None = None, extra_dates: list[date] | None = None,
+    ) -> list[dict[str, Any]]:
+        with (nullcontext(connection) if connection is not None else self._connect()) as conn:
             transactions = [_dict(row) for row in conn.execute(
                 "select * from transactions where account_db_id = ? and trade_date <= ? order by trade_date",
                 (account["id"], to_date.isoformat()),
@@ -3978,7 +4024,7 @@ class LocalPortfolioStore:
                     (account["id"], from_date.isoformat(), to_date.isoformat()),
                 ).fetchall()
             ]
-        dates = sorted({from_date, to_date, *price_dates, *[date.fromisoformat(tx["trade_date"]) for tx in transactions if from_date <= date.fromisoformat(tx["trade_date"]) <= to_date]})
+        dates = sorted({from_date, to_date, *(extra_dates or []), *price_dates, *[date.fromisoformat(tx["trade_date"]) for tx in transactions if from_date <= date.fromisoformat(tx["trade_date"]) <= to_date]})
         points = []
         for day in dates:
             positions: dict[tuple[str, str], dict[str, Any]] = {}

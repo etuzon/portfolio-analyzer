@@ -1326,7 +1326,7 @@
           <div>
             <p class="eyebrow">Household reporting</p>
             <h2 id="reportsTitle">Portfolio reports</h2>
-            <p class="section-note">Review the entire portfolio or narrow it by person, account category, or account.</p>
+            <p class="section-note">See current balances, explore account history, and inspect the holdings behind each total.</p>
           </div>
           <div class="settings-actions">
             <button id="exportReportsPdf" class="secondary" type="button" title="Download the currently displayed report as a PDF">Download PDF</button>
@@ -1341,18 +1341,27 @@
             <button id="loadReports" type="button">Generate report</button>
           </div>
           <details class="report-more-filters">
-            <summary>More filters <small>Location and reporting period</small></summary>
+            <summary>More filters <small>Location</small></summary>
             <div class="report-secondary-controls">
               <label class="field"><span>Location</span><input id="reportLocation" list="countryOptions" placeholder="All locations" /></label>
-              <label class="field"><span>From</span><input id="reportFrom" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
-              <label class="field"><span>To</span><input id="reportTo" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
             </div>
           </details>
         </div>
         <p id="reportsExportStatus" class="status-line report-screen-only" role="status" aria-live="polite"></p>
         <div id="reportScopeSummary" class="report-scope-summary" role="status" aria-live="polite"></div>
-        <div id="reportsSummary" class="report-grid"></div>
-        <div id="accountTrendChart" class="chart-card report-chart"></div>
+        <div class="report-section-heading"><h3>Current balances</h3><p class="section-note">Latest recorded cash and security prices. History dates below apply only to the history chart.</p></div>
+        <div id="reportsSummary" class="report-grid report-balance-grid"></div>
+        <p id="reportValuationNote" class="section-note" role="status"></p>
+        <div id="reportRetirementSummary" class="report-retirement-summary"></div>
+        <section class="report-history-section" aria-labelledby="reportHistoryTitle">
+          <div class="report-section-heading"><h3 id="reportHistoryTitle">Account history</h3><p class="section-note">Balance changes can include deposits and withdrawals; they are not investment returns. Historical amounts use current exchange rates.</p></div>
+          <div class="report-history-controls report-screen-only">
+            <label class="field"><span>From</span><input id="reportFrom" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+            <label class="field"><span>To</span><input id="reportTo" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+            <button id="updateReportHistory" type="button" class="secondary">Update history</button>
+          </div>
+          <div id="accountTrendChart" class="chart-card report-chart"></div>
+        </section>
         <div class="account-report-breakdowns">
           <section class="account-report-section">
             <h3>Accounts included</h3>
@@ -1367,26 +1376,30 @@
             <div id="reportsByLocation" class="report-breakdown-list"></div>
           </section>
         </div>
-        <div class="history-editor report-screen-only">
+        <details class="report-history-editor report-screen-only">
+          <summary>Manage history records</summary>
+          <div class="history-editor">
           <div class="section-head">
             <div>
               <p class="eyebrow">Saved daily history</p>
-              <h2>Correct account history</h2>
+              <h2>Account history records</h2>
             </div>
-            <button id="captureHistorySnapshot" class="secondary" type="button">Capture today</button>
+            <button id="captureHistorySnapshot" class="secondary" type="button">Save calculated history for all accounts</button>
           </div>
+          <p class="section-note">Enter values manually for one account, or save calculated values for all accounts using the selected date. Saving again replaces the history record for the same account and date. These records are used in report charts.</p>
           <div class="history-form">
             <select id="historyAccount"></select>
             <input id="historyDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
-            <input id="historyValue" type="number" step="0.01" placeholder="Total value" />
+            <input id="historyValue" type="number" step="0.01" placeholder="Total value" aria-label="Total value" required aria-required="true" />
             <input id="historyCash" type="number" step="0.01" placeholder="Cash" />
             <input id="historyProfit" type="number" step="0.01" placeholder="Profit" />
             <input id="historyProfitPercent" type="number" step="0.01" placeholder="Profit %" />
-            <button id="saveHistorySnapshot" type="button">Save point</button>
+            <button id="saveHistorySnapshot" type="button">Save entered account values</button>
           </div>
-          <p id="historyStatus" class="status-line"></p>
+          <p id="historyStatus" class="status-line" role="status" aria-live="polite"></p>
           <div id="historyList" class="stack management-list"></div>
-        </div>
+          </div>
+        </details>
       </section>
     </div>
 

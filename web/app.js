@@ -1509,6 +1509,8 @@ function applyLanguage() {
   if (state.alertData) renderAlerts(state.alertData);
   if (state.companyOutlook) renderCompanyOutlook(state.companyOutlook);
   if (state.financeReport) renderFinanceReport(state.financeReport);
+  if (state.activeReport) renderReportSummary(state.activeReport);
+  if (state.activeReportTrend) renderAccountTrend(state.activeReportTrend);
   if (state.items?.length) renderRows(state.items);
   if (state.positionTransactionsDetail) syncPositionTransactionLimit();
   if (state.eventDividendSettings) renderEvents();
@@ -7619,60 +7621,86 @@ async function savePrice() {
   await loadPortfolio();
 }
 
+// Report totals must never silently treat unlike currencies as equivalent.
+function reportAmount(value, currency, target = state.baseCurrency) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return null;
+  if (!currency || !target) return null;
+  if (currency === target) return Number(value);
+  if (Number(value) === 0) return 0;
+  const direct = Number(state.fxRates[`${currency}/${target}`]);
+  const reverse = Number(state.fxRates[`${target}/${currency}`]);
+  if (Number.isFinite(direct) && direct > 0) return Number(value) * direct;
+  if (Number.isFinite(reverse) && reverse > 0) return Number(value) / reverse;
+  if (currency !== state.baseCurrency && target !== state.baseCurrency) {
+    const baseValue = reportAmount(value, currency, state.baseCurrency);
+    return baseValue === null ? null : reportAmount(baseValue, state.baseCurrency, target);
+  }
+  return null;
+}
+
+function reportSum(values) {
+  return values.some((value) => value === null) ? null : sum(values);
+}
+
+function reportMoney(value, currency = state.baseCurrency) {
+  return value === null ? t("Not available") : money(value, currency, 0);
+}
+
+function reportAccountAmounts(account, currency = state.baseCurrency) {
+  const cash = reportAmount(account.cash, account.currency, currency);
+  const securities = reportSum((account.holdings || []).map((holding) => reportAmount(holding.market_value, holding.currency || account.currency, currency)));
+  const profit = reportSum((account.holdings || []).map((holding) => reportAmount(holding.profit, holding.currency || account.currency, currency)));
+  return { cash, securities, profit, value: reportSum([cash, securities]) };
+}
+
 function renderReportSummary(report) {
   const accountDetails = report.account_details || [];
-  const reportCash = accountDetails.length
-    ? sum(accountDetails.map((account) => normalizedAmount(account.cash, account.currency)))
-    : Number(report.cash || 0);
-  const reportSecurities = accountDetails.length
-    ? sum(accountDetails.flatMap((account) => account.holdings || [])
-      .map((holding) => normalizedAmount(holding.market_value, holding.currency)))
-    : Number(report.securities_value || 0);
-  const reportProfit = accountDetails.length
-    ? sum(accountDetails.flatMap((account) => account.holdings || [])
-      .map((holding) => normalizedAmount(holding.profit, holding.currency)))
-    : Number(report.profit || 0);
-  const monthlyPension = accountDetails.length
-    ? sum(accountDetails.flatMap((account) => (account.funds || []).map((fund) => (
-      normalizedAmount(fund.monthly_estimate || 0, account.currency)
-    ))))
-    : Number(report.funds?.monthly_estimate || 0);
+  const amounts = accountDetails.map((account) => reportAccountAmounts(account));
+  const reportCash = reportSum(amounts.map((account) => account.cash));
+  const reportSecurities = reportSum(amounts.map((account) => account.securities));
+  const reportProfit = reportSum(amounts.map((account) => account.profit));
+  const total = reportSum([reportCash, reportSecurities]);
+  const funds = accountDetails.flatMap((account) => (account.funds || []).map((fund) => ({...fund, currency: account.currency})));
+  const fundAmount = reportSum(funds.map((fund) => reportAmount(fund.amount, fund.currency)));
+  const monthlyPension = reportSum(funds.filter((fund) => fund.kind === "Pension").map((fund) => reportAmount(fund.monthly_estimate, fund.currency)));
   $("reportsSummary").innerHTML = [
-    ["Accounts", report.accounts],
-    ["Holdings", report.holdings],
-    ["Total value", money(reportCash + reportSecurities, state.baseCurrency, 0)],
-    ["Cash", money(reportCash, state.baseCurrency, 0)],
-    ["Securities", money(reportSecurities, state.baseCurrency, 0)],
-    ["Profit", money(reportProfit, state.baseCurrency, 0)],
-    ["Monthly pension estimate", money(monthlyPension, state.baseCurrency, 0)],
-  ].map(([label, value]) => `<div class="stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`).join("");
+    ["Cash + securities", total, "Excludes linked fund records"],
+    ["Cash", reportCash, "Recorded account cash"],
+    ["Securities", reportSecurities, "Value of open positions"],
+    ["P/L on open positions", reportProfit, "Realized + unrealized P/L attached to open positions; excludes closed positions and dividends"],
+  ].map(([label, value, note]) => `<div class="stat"><span>${esc(t(label))}</span><b dir="auto">${esc(reportMoney(value))}</b><small>${esc(t(note))}</small></div>`).join("");
+  $("reportValuationNote").textContent = total === null || reportProfit === null || fundAmount === null || monthlyPension === null
+    ? t("Some totals are unavailable because an exchange rate or amount is missing. Account details retain their original currencies.")
+    : `${t("Summary currency")}: ${currencyDisplayLabel(state.baseCurrency)} · ${t("Converted using current exchange rates")}`;
+  $("reportRetirementSummary").innerHTML = funds.length ? `<div><b>${esc(t("Linked long-term funds"))}</b><span>${esc(t("Shown separately; not added to cash + securities to avoid double counting"))}</span></div><dl><div><dt>${esc(t("Recorded fund balances"))}</dt><dd>${esc(reportMoney(fundAmount))}</dd></div><div><dt>${esc(t("Monthly pension estimate"))}</dt><dd>${esc(reportMoney(monthlyPension))}</dd></div></dl>` : "";
   $("reportsDetails").innerHTML = accountDetails.length ? accountDetails.map((account, index) => {
     const owners = (account.persons || []).map(personLabel).join(", ") || optionLabel("No assigned people");
     const holdings = account.holdings || [];
     const funds = account.funds || [];
+    const native = reportAccountAmounts(account, account.currency);
     return `
       <details class="report-account-card"${index === 0 ? " open" : ""}>
         <summary>
           <span><b>${esc(cleanSourceLabel(account.label) || account.id)}</b><small>${esc(optionLabel(account.type))} · ${esc(countryDisplayLabel(account.location))} · ${esc(owners)}</small></span>
-          <strong>${money(account.value, account.currency, 0)}</strong>
+          <strong>${reportMoney(native.value, account.currency)}</strong>
         </summary>
         <div class="report-account-content">
           <dl class="report-account-facts">
             <div><dt>Cash</dt><dd>${money(account.cash, account.currency, 0)}</dd></div>
-            <div><dt>Securities</dt><dd>${money(account.securities_value, account.currency, 0)}</dd></div>
-            <div><dt>Profit</dt><dd>${money(account.profit, account.currency, 0)}</dd></div>
+            <div><dt>Securities</dt><dd>${reportMoney(native.securities, account.currency)}</dd></div>
+            <div><dt>${esc(t("P/L on open positions"))}</dt><dd>${reportMoney(native.profit, account.currency)}</dd></div>
             <div><dt>Holdings</dt><dd>${esc(holdings.length)}</dd></div>
           </dl>
           <div class="table-wrap report-holdings-table">
             ${holdings.length ? `<table class="holdings-table compact-report-table">
-              <thead><tr><th>Symbol</th><th>Name</th><th>Asset class</th><th>Quantity</th><th>Value</th><th>Profit</th></tr></thead>
+              <thead><tr><th>Symbol</th><th>Name</th><th>Asset class</th><th>Quantity</th><th>Value</th><th>${esc(t("P/L on open positions"))}</th></tr></thead>
               <tbody>${holdings.map((holding) => `<tr>
-                <td data-label="Symbol"><b>${esc(holding.symbol)}</b></td>
-                <td data-label="Name">${esc(holding.name || holding.symbol)}</td>
-                <td data-label="Asset class">${esc(optionLabel(holding.asset_class || ""))}</td>
-                <td data-label="Quantity">${fmt(holding.quantity, 3)}</td>
-                <td data-label="Value">${money(holding.market_value, holding.currency || account.currency, 0)}</td>
-                <td data-label="Profit">${money(holding.profit, holding.currency || account.currency, 0)}</td>
+                <td data-label="${esc(t("Symbol"))}"><b>${esc(holding.symbol)}</b></td>
+                <td data-label="${esc(t("Name"))}">${esc(holding.name || holding.symbol)}</td>
+                <td data-label="${esc(t("Asset class"))}">${esc(optionLabel(holding.asset_class || ""))}</td>
+                <td data-label="${esc(t("Quantity"))}">${fmt(holding.quantity, 3)}</td>
+                <td data-label="${esc(t("Value"))}">${money(holding.market_value, holding.currency || account.currency, 0)}</td>
+                <td data-label="${esc(t("P/L on open positions"))}">${money(holding.profit, holding.currency || account.currency, 0)}</td>
               </tr>`).join("")}</tbody>
             </table>` : '<div class="empty">No holdings in this account</div>'}
           </div>
@@ -7681,15 +7709,19 @@ function renderReportSummary(report) {
         </div>
       </details>`;
   }).join("") : '<div class="empty report-empty-state"><b>No accounts match these filters</b><span>Try All people or All account categories.</span></div>';
-  const totalsBy = (field) => accountDetails.reduce((items, account) => {
-    const label = account[field] || "Unknown";
-    items[label] = (items[label] || 0) + normalizedAmount(account.value, account.currency);
-    return items;
-  }, {});
-  const breakdown = (items, formatLabel = (value) => value) => Object.entries(items || {})
-    .sort((left, right) => Number(right[1] || 0) - Number(left[1] || 0))
-    .map(([label, value]) => `<div class="report-breakdown-row"><span>${esc(formatLabel(label))}</span><b>${money(value, state.baseCurrency, 0)}</b></div>`)
-    .join("") || '<div class="empty">No report data</div>';
+  const totalsBy = (field) => {
+    const groups = new Map();
+    accountDetails.forEach((account, index) => {
+      const label = account[field] || "Unknown";
+      if (!groups.has(label)) groups.set(label, []);
+      groups.get(label).push(amounts[index].value);
+    });
+    return [...groups].map(([label, values]) => [label, reportSum(values)]);
+  };
+  const breakdown = (items, formatLabel) => items
+    .sort((left, right) => (right[1] ?? -Infinity) - (left[1] ?? -Infinity))
+    .map(([label, value]) => `<div class="report-breakdown-row"><span>${esc(formatLabel(label))}</span><b>${esc(reportMoney(value))}${total > 0 && value !== null ? `<small>${pct(value / total * 100)}</small>` : ""}</b></div>`)
+    .join("") || `<div class="empty">${esc(t("No report data"))}</div>`;
   $("reportsByType").innerHTML = breakdown(totalsBy("type"), optionLabel);
   $("reportsByLocation").innerHTML = breakdown(totalsBy("location"), countryDisplayLabel);
   renderReportScopeSummary(report);
@@ -7729,7 +7761,7 @@ function renderReportScopeSummary(report) {
     filters.location ? countryDisplayLabel(filters.location) : "",
   ].filter(Boolean);
   const title = scope.length ? scope.join(" · ") : optionLabel("Entire portfolio");
-  $("reportScopeSummary").innerHTML = `<b>${esc(title)}</b><span>${esc(report.accounts)} accounts · ${esc(report.holdings)} holdings · ${esc(report.funds?.count || 0)} linked funds</span>`;
+  $("reportScopeSummary").innerHTML = `<b>${esc(title)}</b><span>${esc(report.accounts)} ${esc(t("Accounts"))} · ${esc(report.holdings)} ${esc(t("Holdings"))} · ${esc(report.funds?.count || 0)} ${esc(t("Linked funds"))}</span>`;
 }
 
 function markReportFiltersChanged() {
@@ -7743,6 +7775,7 @@ function markReportFiltersChanged() {
 
 async function exportReportsPdf() {
   if (!state.activeReportFilters) await loadReports();
+  if (!state.activeReportFilters) return;
   const button = $("exportReportsPdf");
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
@@ -7760,75 +7793,53 @@ async function exportReportsPdf() {
 }
 
 function renderAccountTrend(trend) {
-  const accounts = (trend.accounts || []).filter((account) => account.points?.length).map((account) => ({
+  state.activeReportTrend = trend;
+  const metric = state.reportTrendMetric || "value";
+  const isValue = metric === "value";
+  const accounts = (trend.accounts || []).map((account, index) => ({
     ...account,
-    points: account.points.map((point) => ({
+    color: colorAt(index),
+    points: (account.points || []).map((point) => ({
       ...point,
-      value: normalizedAmount(point.value, account.account?.currency),
-      cash: normalizedAmount(point.cash, account.account?.currency),
-      profit: normalizedAmount(point.profit, account.account?.currency),
-    })),
-  }));
-  const series = accounts.flatMap((account) => account.points.map((point) => ({ ...point, account: account.account })));
+      plotted: isValue ? reportAmount(point.value, account.account?.currency) : (point.profit_percent == null ? null : Number(point.profit_percent)),
+    })).filter((point) => point.plotted !== null && Number.isFinite(point.plotted) && Number.isFinite(Date.parse(point.date))),
+  })).filter((account) => account.points.length);
+  const series = accounts.flatMap((account) => account.points);
+  const control = `<div class="report-chart-metrics" role="group" aria-label="${esc(t("Chart measure"))}">${[["value", "Account value"], ["profit_percent", "Recorded profit %"]].map(([key, label]) => `<button type="button" class="secondary compact-button" data-report-metric="${key}" aria-pressed="${metric === key}">${esc(t(label))}</button>`).join("")}</div>`;
+  const dates = (trend.accounts || []).flatMap((account) => (account.points || []).map((point) => point.date)).filter((day) => Number.isFinite(Date.parse(day))).sort();
+  const startDate = dates[0];
+  const endDate = dates.at(-1);
+  const period = startDate ? `${formatDate(startDate)} – ${formatDate(endDate)}` : "";
   if (!series.length) {
-    $("accountTrendChart").innerHTML = '<div class="empty">No trend data for this date range</div>';
+    $("accountTrendChart").innerHTML = control + `<div class="empty">${esc(t("No chart values available. Check the date range and exchange rates."))}</div>`;
     return;
   }
-  const width = 760;
-  const height = 280;
-  const padLeft = 48;
-  const padRight = 72;
-  const plotWidth = width - padLeft - padRight;
-  const values = series.map((point) => Number(point.value || 0));
-  const profits = series.map((point) => Number(point.profit_percent || 0));
-  const minValue = Math.min(...values, 0);
-  const maxValue = Math.max(...values, 1);
-  const minProfit = Math.min(...profits, 0);
-  const maxProfit = Math.max(...profits, 1);
-  const scaleLane = (value, min, max, top, bottom) => bottom - ((value - min) / (max - min || 1)) * (bottom - top);
-  const scaleValue = (value) => scaleLane(value, minValue, maxValue, 42, 124);
-  const scaleProfit = (value) => scaleLane(value, minProfit, maxProfit, 170, 244);
-  const pointX = (pointIndex, count) => padLeft + (pointIndex / Math.max(1, count - 1)) * plotWidth;
-  const accountLines = accounts.map((account, index) => {
-    const points = account.points;
-    const valuePath = points.map((point, pointIndex) => `${pointIndex ? "L" : "M"} ${pointX(pointIndex, points.length)} ${scaleValue(point.value)}`).join(" ");
-    const profitPath = points.map((point, pointIndex) => `${pointIndex ? "L" : "M"} ${pointX(pointIndex, points.length)} ${scaleProfit(point.profit_percent)}`).join(" ");
-    const last = points.at(-1) || {};
-    const label = accountLabel(account.account);
-    return `<g>
-      <title>${esc(`${label}\nValue ${money(last.value, state.baseCurrency, 0)}\nProfit ${pct(last.profit_percent)}\nDate ${formatDate(last.date || "")}`)}</title>
-      <path d="${valuePath}" fill="none" stroke="${colorAt(index)}" stroke-width="3"></path>
-      <path d="${profitPath}" fill="none" stroke="${colorAt(index + 3)}" stroke-width="2" stroke-dasharray="5 5"></path>
-    </g>`;
+  const width = 920, height = 270, left = 100, right = 40, top = 22, bottom = 226;
+  const minimum = Math.min(...series.map((point) => point.plotted), 0);
+  const maximum = Math.max(...series.map((point) => point.plotted), 1);
+  const first = Date.parse(startDate), last = Date.parse(endDate);
+  const x = (day) => left + (Date.parse(day) - first) / (last - first || 1) * (width - left - right);
+  const y = (value) => bottom - (value - minimum) / (maximum - minimum || 1) * (bottom - top);
+  const display = (value) => isValue ? compactMoney(value, state.baseCurrency) : pct(value);
+  const grid = [0, 0.5, 1].map((fraction) => {
+    const value = minimum + (maximum - minimum) * fraction;
+    return `<line x1="${left}" y1="${y(value)}" x2="${width - right}" y2="${y(value)}"></line><text x="${left - 12}" y="${y(value) + 4}" text-anchor="end">${esc(display(value))}</text>`;
   }).join("");
-  const legend = accounts.map((account, index) => {
-    const last = account.points.at(-1) || {};
-    return `
-      <div class="report-trend-account" title="${esc(accountLabel(account.account))}">
-        <b><i style="--line-color:${colorAt(index)}"></i>${esc(accountLabel(account.account))}</b>
-        <span>Value ${money(last.value, state.baseCurrency, 0)} · Profit ${pct(last.profit_percent)}</span>
-      </div>`;
+  const lines = accounts.map((account) => {
+    const path = account.points.map((point, i) => `${i ? "L" : "M"} ${x(point.date)} ${y(point.plotted)}`).join(" ");
+    // Isolated observations need a visible marker; they cannot form a line.
+    const markers = account.points.length === 1 ? account.points : [account.points[0], account.points.at(-1)];
+    return `<g><title>${esc(accountLabel(account.account))}</title><path d="${path}" fill="none" stroke="${account.color}" stroke-width="3"/>${markers.map((point) => `<circle cx="${x(point.date)}" cy="${y(point.plotted)}" r="4" fill="${account.color}"><title>${esc(`${accountLabel(account.account)} · ${formatDate(point.date)} · ${display(point.plotted)}`)}</title></circle>`).join("")}</g>`;
   }).join("");
+  const legend = accounts.map((account) => {
+    const lastPoint = account.points.at(-1);
+    return `<div class="report-trend-account"><b><i style="--line-color:${account.color}"></i>${esc(accountLabel(account.account))}</b><span>${esc(display(lastPoint.plotted))} · ${esc(formatDate(lastPoint.date))}</span></div>`;
+  }).join("");
+  const missing = (trend.accounts || []).filter((account) => (account.points || []).some((point) => isValue && reportAmount(point.value, account.account?.currency) === null)).length;
   $("accountTrendChart").innerHTML = `
-    <div class="chart-header">
-      <div>
-        <div class="chart-title">Account value and profit %</div>
-        <small class="chart-subtitle">Solid lines show value. Dashed lines show profit percentage.</small>
-      </div>
-    </div>
-    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Account value and percent profit trend">
-      <text x="${padLeft}" y="24">Value</text>
-      <text x="${padLeft}" y="154">Profit %</text>
-      <line x1="${padLeft}" y1="42" x2="${padLeft + plotWidth}" y2="42"></line>
-      <line x1="${padLeft}" y1="124" x2="${padLeft + plotWidth}" y2="124"></line>
-      <line x1="${padLeft}" y1="170" x2="${padLeft + plotWidth}" y2="170"></line>
-      <line x1="${padLeft}" y1="244" x2="${padLeft + plotWidth}" y2="244"></line>
-      <text x="${padLeft + plotWidth + 10}" y="46">${compactMoney(maxValue, state.baseCurrency)}</text>
-      <text x="${padLeft + plotWidth + 10}" y="128">${compactMoney(minValue, state.baseCurrency)}</text>
-      <text x="${padLeft + plotWidth + 10}" y="174">${pct(maxProfit)}</text>
-      <text x="${padLeft + plotWidth + 10}" y="248">${pct(minProfit)}</text>
-      ${accountLines}
-    </svg>
+    <div class="chart-header"><div><div class="chart-title">${esc(t(isValue ? "Account value" : "Recorded profit %"))}</div><small class="chart-subtitle"><bdi dir="ltr">${esc(period)}</bdi> · ${isValue ? esc(currencyDisplayLabel(state.baseCurrency)) : esc(t("Saved or calculated P/L %; not a period return"))}</small></div>${control}</div>
+    ${missing ? `<p class="section-note">${esc(t("Some history values are hidden because an exchange rate is missing."))}</p>` : ""}
+    <div class="report-plot-scroll"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(t(isValue ? "Account value" : "Recorded profit %"))}"><title>${esc(t("Account history"))} · ${esc(period)}</title>${grid}${lines}<text x="${left}" y="256">${esc(formatDate(startDate))}</text>${startDate !== endDate ? `<text x="${width - right}" y="256" text-anchor="end">${esc(formatDate(endDate))}</text>` : ""}</svg></div>
     <div class="report-trend-legend">${legend}</div>`;
 }
 
@@ -8184,7 +8195,7 @@ function renderHistorySnapshots() {
         data-history-profit="${esc(snapshot.profit)}"
         data-history-profit-percent="${esc(snapshot.profit_percent)}">Edit</button>
       <button class="secondary compact-button" type="button" data-delete-history-snapshot data-history-account="${esc(snapshot.account_db_id)}" data-history-date="${esc(snapshot.snapshot_date)}">Delete</button>
-      <div class="sub">${esc(currencyDisplayLabel(snapshot.account?.currency || ""))} · ${esc(snapshot.source || "manual")}</div>
+      <div class="sub">${esc(currencyDisplayLabel(snapshot.account?.currency || ""))} · ${esc(t(snapshot.source || "manual"))}</div>
     </div>
   `).join("") : '<div class="empty">No saved history points in this range</div>';
 }
@@ -8202,12 +8213,20 @@ async function saveHistorySnapshot() {
     $("historyStatus").textContent = "Choose an account before saving history";
     return;
   }
+  const value = valueOf("historyValue");
+  if (!value.trim() || !Number.isFinite(Number(value))) {
+    $("historyStatus").textContent = t("Enter a total value before saving history. Blank values do not replace existing records.");
+    $("historyValue").setAttribute("aria-invalid", "true");
+    $("historyValue").focus();
+    return;
+  }
+  $("historyValue").removeAttribute("aria-invalid");
   await api("/api/local/account-snapshots", {
     method: "POST",
     body: JSON.stringify({
       account_id: accountId,
       snapshot_date: clampedHistoryDate(dateValue("historyDate") || todayString()),
-      value: valueOf("historyValue"),
+      value,
       cash: valueOf("historyCash") || 0,
       profit: valueOf("historyProfit") || 0,
       profit_percent: valueOf("historyProfitPercent") || 0,
@@ -8229,10 +8248,18 @@ async function captureHistorySnapshot() {
 
 async function loadReports() {
   const filters = currentReportFilters();
+  if (["reportFrom", "reportTo"].some((id) => valueOf(id) && !dateValue(id)) || filters.date_from > filters.date_to) {
+    $("reportsExportStatus").textContent = t("Enter a valid history range: From must be on or before To (dd/mm/yyyy).");
+    return;
+  }
   const params = reportQueryParams(filters);
   const trendParams = reportQueryParams(filters, { includeDates: true });
   const button = $("loadReports");
+  const historyButton = $("updateReportHistory");
+  const version = (state.reportLoadVersion || 0) + 1;
+  state.reportLoadVersion = version;
   button.disabled = true;
+  historyButton.disabled = true;
   button.setAttribute("aria-busy", "true");
   $("reportsExportStatus").textContent = "Generating report";
   try {
@@ -8241,6 +8268,7 @@ async function loadReports() {
       api(`/api/local/account-trends?${trendParams}`),
       api(`/api/local/account-snapshots?${trendParams}`),
     ]);
+    if (version !== state.reportLoadVersion) return;
     state.activeReportFilters = filters;
     state.activeReport = report;
     state.historySnapshots = snapshots.items || [];
@@ -8250,9 +8278,19 @@ async function loadReports() {
     $("reportsExportStatus").textContent = report.accounts
       ? `Report ready · ${report.accounts} accounts included`
       : "No accounts match these filters";
+  } catch (error) {
+    if (version === state.reportLoadVersion) {
+      $("reportsExportStatus").textContent = t(state.activeReport
+        ? "Could not update the report. The previous report is still displayed. Try again."
+        : "Could not load the report. Try again.");
+    }
+    throw error;
   } finally {
-    button.disabled = false;
-    button.removeAttribute("aria-busy");
+    if (version === state.reportLoadVersion) {
+      button.disabled = false;
+      historyButton.disabled = false;
+      button.removeAttribute("aria-busy");
+    }
   }
 }
 
@@ -12395,7 +12433,15 @@ $("saveAlarmSettings").addEventListener("click", saveVestingAlertSettings);
 $("clearAlarms").addEventListener("click", clearAlarms);
 $("savePrice").addEventListener("click", () => savePrice().catch((error) => { $("priceStatus").textContent = `Error: ${error.message}`; }));
 $("saveDetailPrice").addEventListener("click", () => saveSecurityDetailPrice().catch((error) => { $("securityDetailStatus").textContent = `Error: ${error.message}`; }));
-$("loadReports").addEventListener("click", () => loadReports().catch((error) => { $("reportsDetails").innerHTML = `<div class="empty">Error: ${esc(error.message)}</div>`; }));
+$("loadReports").addEventListener("click", () => loadReports().catch(() => {}));
+$("updateReportHistory").addEventListener("click", () => loadReports().catch(() => {}));
+$("accountTrendChart").addEventListener("click", (event) => {
+  const metric = event.target.closest("[data-report-metric]")?.dataset.reportMetric;
+  if (!["value", "profit_percent"].includes(metric)) return;
+  state.reportTrendMetric = metric;
+  if (state.activeReportTrend) renderAccountTrend(state.activeReportTrend);
+  $("accountTrendChart").querySelector(`[data-report-metric="${metric}"]`)?.focus();
+});
 $("exportReportsPdf").addEventListener("click", () => exportReportsPdf().catch((error) => { $("reportsExportStatus").textContent = `Error: ${error.message}`; }));
 ["reportPerson", "reportAccountType", "reportAccount", "reportLocation", "reportFrom", "reportTo"].forEach((id) => {
   $(id).addEventListener("change", markReportFiltersChanged);

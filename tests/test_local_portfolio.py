@@ -2566,3 +2566,119 @@ def test_employee_option_schedule_round_trips_in_backup(tmp_path):
     assert restored_option["vesting_start_date"] == "2024-01-01"
     assert restored_option["company_name"] == "Private Labs"
     assert restored_schedule["tranches"][-1]["cumulative_quantity"] == 4000
+
+
+@pytest.mark.parametrize('invalid_value', ['', None, ' ', 'invalid', 'NaN', float('inf'), True])
+def test_invalid_history_value_cannot_replace_a_valid_snapshot(tmp_path, invalid_value):
+    store = LocalPortfolioStore(tmp_path / 'local.sqlite3')
+    account = _save_owned_account(store, {
+        'type': 'Investment', 'location': 'Israel', 'currency': 'ILS', 'initial_cash': 491003.65,
+    })
+    store.capture_daily_snapshots('2026-10-30')
+    original = store.list_account_snapshots({'account_id': account['id']})[0]
+
+    with pytest.raises(ValueError, match='blank values cannot overwrite existing history'):
+        store.save_account_snapshot({'account_id': account['id'], 'snapshot_date': '2026-10-30', 'value': invalid_value})
+
+    assert store.list_account_snapshots({'account_id': account['id']})[0] == original
+    trend = store.account_trends({'account_id': account['id'], 'from': '2026-10-29', 'to': '2026-10-30'})
+    assert trend['accounts'][0]['points'][-1]['value'] == 491003.65
+
+
+def test_explicit_zero_history_value_remains_valid(tmp_path):
+    store = LocalPortfolioStore(tmp_path / 'local.sqlite3')
+    account = _save_owned_account(store, {'type': 'Investment', 'location': 'Israel', 'currency': 'ILS'})
+    saved = store.save_account_snapshot({'account_id': account['id'], 'snapshot_date': '2026-10-30', 'value': '0'})
+    assert saved['value'] == 0
+
+
+def test_correcting_israeli_sale_price_refreshes_calculated_history_automatically(tmp_path):
+    store = LocalPortfolioStore(tmp_path / 'local.sqlite3')
+    account = _save_owned_account(store, {
+        'type': 'Investment', 'location': 'Israel', 'currency': 'ILS', 'initial_cash': 5291,
+    })
+    store.add_transaction({
+        'account_db_id': account['id'], 'action': 'ADD', 'symbol': '5136924',
+        'stock_market': 'TASE', 'asset_class': 'MUTUALFUND', 'quantity': 515181,
+        'price_input': 91.09, 'trade_date': '2026-04-07', 'location': 'Israel', 'currency': 'ILS',
+    })
+    store.save_price({
+        'symbol': '5136924', 'stock_market': 'TASE', 'asset_class': 'MUTUALFUND',
+        'location': 'Israel', 'currency': 'ILS', 'price_input': 89.18, 'price_date': '2026-08-15',
+    })
+    for day in ['2026-10-28', '2026-10-29', '2026-10-30']:
+        store.capture_daily_snapshots(day)
+    before = {row['snapshot_date']: row for row in store.list_account_snapshots({'account_id': account['id']})}
+    sale = store.add_transaction({
+        'account_db_id': account['id'], 'action': 'SELL', 'symbol': '5136924',
+        'stock_market': 'TASE', 'asset_class': 'MUTUALFUND', 'quantity': 515181,
+        'price_input': 0.9428, 'trade_date': '2026-10-29', 'location': 'Israel', 'currency': 'ILS',
+    })
+    mistaken = store.account_trends({'account_id': account['id'], 'from': '2026-10-28', 'to': '2026-10-30'})
+    assert mistaken['accounts'][0]['points'][-1]['value'] == pytest.approx(5291 + 515181 * 0.009428)
+
+    store.update_transaction(sale['id'], {'price_input': 94.28})
+
+    corrected = {row['snapshot_date']: row for row in store.list_account_snapshots({'account_id': account['id']})}
+    assert corrected['2026-10-28'] == before['2026-10-28']
+    for day in ['2026-10-29', '2026-10-30']:
+        assert corrected[day]['value'] == pytest.approx(491003.6468)
+        assert corrected[day]['cash'] == pytest.approx(491003.6468)
+        assert corrected[day]['source'] == 'daily'
+        assert corrected[day]['created_at'] == before[day]['created_at']
+    trend = store.account_trends({'account_id': account['id'], 'from': '2026-10-28', 'to': '2026-10-30'})
+    assert trend['accounts'][0]['points'][-1]['value'] == pytest.approx(491003.6468)
+
+    store.update_transaction(sale['id'], {'trade_date': '2026-10-30'})
+    dated = {row['snapshot_date']: row for row in store.list_account_snapshots({'account_id': account['id']})}
+    assert dated['2026-10-29']['value'] == pytest.approx(464729.4158)
+    assert dated['2026-10-30']['value'] == pytest.approx(491003.6468)
+    assert store.delete_transaction(sale['id'])
+    deleted = store.account_trends({'account_id': account['id'], 'from': '2026-10-28', 'to': '2026-10-30'})
+    for point in deleted['accounts'][0]['points']:
+        assert point['value'] == pytest.approx(464729.4158)
+        assert point['cash'] == 5291
+
+
+def test_transaction_history_refresh_preserves_manual_balances_and_other_accounts(tmp_path):
+    store = LocalPortfolioStore(tmp_path / 'local.sqlite3')
+    account = _save_owned_account(store, {'type': 'Investment', 'location': 'USA', 'currency': 'USD', 'initial_cash': 1000})
+    other = _save_owned_account(store, {'type': 'Investment', 'location': 'USA', 'currency': 'USD', 'initial_cash': 2000})
+    for day in ['2026-10-28', '2026-10-29', '2026-10-30']:
+        store.capture_daily_snapshots(day)
+    store.save_account_snapshot({'account_id': account['id'], 'snapshot_date': '2026-10-29', 'value': 1050, 'cash': 50})
+    manual = store.list_account_snapshots({'account_id': account['id'], 'from': '2026-10-29', 'to': '2026-10-29'})[0]
+    other_before = store.list_account_snapshots({'account_id': other['id']})
+    buy = store.add_transaction({
+        'account_db_id': account['id'], 'action': 'BUY', 'symbol': 'TEST', 'stock_market': 'MANUAL',
+        'quantity': 10, 'price_input': 10, 'trade_date': '2026-10-28',
+    })
+    assert store.list_account_snapshots({'account_id': other['id']}) == other_before
+    assert store.list_account_snapshots({'account_id': account['id'], 'from': '2026-10-29', 'to': '2026-10-29'})[0] == manual
+    store.update_transaction(buy['id'], {'account_db_id': other['id']})
+    moved_from = store.list_account_snapshots({'account_id': account['id'], 'from': '2026-10-30'})[0]
+    moved_to = store.list_account_snapshots({'account_id': other['id'], 'from': '2026-10-30'})[0]
+    assert moved_from['cash'] == 1000
+    assert moved_to['cash'] == 1900
+    assert store.list_account_snapshots({'account_id': account['id'], 'from': '2026-10-29', 'to': '2026-10-29'})[0] == manual
+
+
+def test_failed_history_refresh_rolls_back_transaction_change(tmp_path, monkeypatch):
+    store = LocalPortfolioStore(tmp_path / 'local.sqlite3')
+    account = _save_owned_account(store, {'type': 'Investment', 'location': 'USA', 'currency': 'USD', 'initial_cash': 1000})
+    buy = store.add_transaction({
+        'account_db_id': account['id'], 'action': 'BUY', 'symbol': 'TEST', 'stock_market': 'MANUAL',
+        'quantity': 10, 'price_input': 10, 'trade_date': '2026-10-28',
+    })
+    store.capture_daily_snapshots('2026-10-30')
+    before = store.list_account_snapshots({'account_id': account['id']})
+    def fail(*args, **kwargs):
+        raise RuntimeError('history refresh failed')
+    monkeypatch.setattr(store, '_computed_trend_for_account', fail)
+    with pytest.raises(RuntimeError, match='history refresh failed'):
+        store.update_transaction(buy['id'], {'price_input': 20})
+    assert store.list_transactions()[0]['price_input'] == 10
+    assert store.list_account_snapshots({'account_id': account['id']}) == before
+    with pytest.raises(RuntimeError, match='history refresh failed'):
+        store.delete_transaction(buy['id'])
+    assert len(store.list_transactions()) == 1

@@ -1066,7 +1066,7 @@ def test_portfolio_reports_filter_complete_accounts_by_person_and_download_pdf()
     assert 'All people' in reports_dialog
     assert 'id="reportAccountType"' in reports_dialog
     assert 'id="reportAccount"' in reports_dialog
-    assert '<summary>More filters <small>Location and reporting period</small></summary>' in reports_dialog
+    assert '<summary>More filters <small>Location</small></summary>' in reports_dialog
     assert 'id="exportReportsPdf"' in reports_dialog
     assert '>Download PDF</button>' in reports_dialog
 

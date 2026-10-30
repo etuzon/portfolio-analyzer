@@ -378,3 +378,32 @@ def test_every_static_english_label_is_translated_or_intentionally_technical():
     uncovered = parser.values - translation_keys - TECHNICAL_UI_VALUES
 
     assert uncovered == set()
+
+
+def test_report_status_counts_and_history_sources_follow_language():
+    messages = [
+        'Filters changed. Generate the report to update the preview; PDF download still uses the displayed report.',
+        '10 accounts · 34 holdings · 8 linked funds',
+        'Report ready · 10 accounts included',
+        'Captured 10 account history points for 30/10/2026',
+        'Generating report', 'PDF report downloaded', 'manual', 'daily',
+        'No report data', 'No accounts match these filters',
+        'Try All people or All account categories.',
+        'Solid lines show value. Dashed lines show profit percentage.',
+    ]
+    script = 'const window = {};\n' + (ROOT / 'web/i18n.js').read_text()
+    script += '\nconst messages = ' + json.dumps(messages) + ';'
+    script += '''
+      const assert = require('node:assert/strict');
+      for (const language of ['he', 'en', 'he']) {
+        for (const message of messages) {
+          const result = window.PortfolioI18n.translate(message, language);
+          if (language === 'en') assert.equal(result, message);
+          else {
+            assert.match(result, /[א-ת]/u);
+            assert.ok(!/[a-z]/iu.test(result.replaceAll('PDF', '')), result);
+          }
+        }
+      }
+    '''
+    subprocess.run(['node'], input=script, check=True, capture_output=True, text=True)

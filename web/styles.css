@@ -6152,12 +6152,25 @@ tbody tr:hover {
 
 .report-account-card > summary {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content;
+  grid-template-columns: 14px minmax(0, 1fr) max-content;
   align-items: center;
   gap: 12px;
   min-height: 56px;
   padding: 10px 12px;
   cursor: pointer;
+}
+
+.report-account-card > summary::before {
+  content: "▸";
+  color: var(--ux-blue);
+}
+
+html[dir="rtl"] .report-account-card:not([open]) > summary::before {
+  transform: rotate(180deg);
+}
+
+.report-account-card[open] > summary::before {
+  content: "▾";
 }
 
 .report-account-card > summary::marker {
@@ -6177,11 +6190,10 @@ tbody tr:hover {
 }
 
 .report-account-card > summary small {
-  overflow: hidden;
   color: #8e9bb0;
   font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
 }
 
 .report-account-content {
@@ -6293,6 +6305,198 @@ tbody tr:hover {
 
 .report-breakdown-row b {
   color: #eef3ff;
+}
+
+.account-reports-card .report-balance-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.report-balance-grid .stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+  min-height: 128px;
+}
+
+.report-balance-grid .stat:first-child {
+  border-color: var(--ux-blue);
+}
+
+.report-balance-grid .stat b {
+  font-size: clamp(19px, 2vw, 27px);
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.report-balance-grid .stat small {
+  color: var(--ux-muted);
+  line-height: 1.5;
+  font-size: 11px;
+}
+
+.report-section-heading {
+  margin-top: 20px;
+}
+
+.report-section-heading h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.report-retirement-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px;
+  margin-top: 16px;
+  border: 1px solid var(--ux-stroke);
+  border-radius: 8px;
+}
+
+.report-retirement-summary:empty {
+  display: none;
+}
+
+.report-retirement-summary > div {
+  display: grid;
+  gap: 5px;
+}
+
+.report-retirement-summary span {
+  color: var(--ux-muted);
+  font-size: 12px;
+}
+
+.report-retirement-summary dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin: 0;
+}
+
+.report-retirement-summary dt {
+  color: var(--ux-muted);
+  font-size: 11px;
+}
+
+.report-retirement-summary dd {
+  margin: 6px 0 0;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.report-history-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(160px, 220px)) max-content;
+  align-items: end;
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.report-history-controls input {
+  width: 100%;
+  min-width: 150px;
+}
+
+.report-chart-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.report-chart-metrics [aria-pressed="true"] {
+  border-color: var(--ux-blue);
+  color: var(--ux-blue);
+}
+
+.report-plot-scroll {
+  overflow-x: auto;
+  direction: ltr;
+}
+
+.report-plot-scroll svg {
+  min-width: 580px;
+}
+
+.account-reports-card .account-report-breakdowns {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.account-reports-card .account-report-section:first-child {
+  grid-column: 1 / -1;
+}
+
+.report-breakdown-row b small {
+  display: block;
+  margin-top: 3px;
+  color: var(--ux-muted);
+  font-weight: 400;
+  text-align: end;
+}
+
+.report-history-editor {
+  margin-top: 20px;
+  border-top: 1px solid var(--ux-stroke);
+  padding-top: 14px;
+}
+
+.report-history-editor > summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.report-history-editor > summary:focus-visible,
+.report-chart-metrics button:focus-visible {
+  outline: 2px solid var(--ux-blue);
+  outline-offset: 3px;
+}
+
+@media (max-width: 700px) {
+  .account-reports-card .report-account-card > summary {
+    grid-template-columns: 14px minmax(0, 1fr);
+  }
+
+  .account-reports-card .report-account-card > summary strong {
+    grid-column: 2;
+  }
+
+  .account-reports-card .report-balance-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .account-reports-card .account-report-breakdowns,
+  .report-history-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .report-history-controls .field {
+    min-width: 0;
+  }
+
+  .report-retirement-summary dl {
+    gap: 16px;
+  }
+
+  .report-balance-grid .stat {
+    min-height: 145px;
+    padding: 10px;
+  }
+
+}
+
+@media (max-width: 900px) {
+  .report-holdings-table table {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .report-holdings-table td {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
 }
 
 .research-card {
