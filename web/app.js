@@ -4270,13 +4270,11 @@ function renderDonut(groups, title, centerLabel, total, centerSub = null, extraC
     ? currencyDisplayLabel(label) : optionLabel(label);
   const requestedCenterSub = centerSub || (state.language === "he" ? ["נכס", "מוביל"] : ["TOP", "ASSET"]);
   const centerSubLines = requestedCenterSub.filter(Boolean).map(groupLabel);
-  const centerSubText = centerSubLines.length <= 1
-    ? `<text x="65" y="82" class="donut-sub single">${esc(centerSubLines[0] || "")}</text>`
-    : centerSubLines.slice(0, 2).map((line, index) => `<text x="65" y="${76 + index * 12}" class="donut-sub">${esc(line)}</text>`).join("");
+  const centerSubText = `<foreignObject x="45" y="66" width="40" height="18" aria-hidden="true"><div xmlns="http://www.w3.org/1999/xhtml" class="donut-center-caption" dir="auto" title="${esc(centerSubLines.join(" "))}">${centerSubLines.slice(0, 2).map((line) => `<span>${esc(line)}</span>`).join("")}</div></foreignObject>`;
   return `
     <div class="chart-card donut-card ${esc(extraClass)}">
       <div class="chart-title">${esc(localizedTitle)}</div>
-      <svg viewBox="0 0 130 130" role="img" aria-label="${esc(localizedTitle)}">
+      <svg viewBox="0 0 130 130" role="img" aria-label="${esc([localizedTitle, centerLabel, ...centerSubLines].filter(Boolean).join(" · "))}">
         <circle cx="65" cy="65" r="42" fill="none" stroke="#202a3f" stroke-width="14"></circle>
         ${visibleGroups.map((group, index) => {
           const dash = total ? (group.value / total) * circumference : 0;

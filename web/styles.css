@@ -2938,17 +2938,21 @@ textarea.muted-control {
   text-anchor: middle;
 }
 
-.donut-sub {
-  fill: #9aa4b2;
-  font-size: 7px;
+.donut-center-caption {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  max-height: 18px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  color: #9aa4b2;
+  font-size: 7.5px;
+  line-height: 9px;
   font-weight: 700;
-  text-anchor: middle;
+  text-align: center;
 }
 
-.donut-sub.single {
-  font-size: 9px;
-  font-weight: 800;
-}
+.donut-center-caption > span { display: block; }
 
 .donut-legend {
   display: grid;
