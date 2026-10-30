@@ -1324,7 +1324,7 @@
             <p class="section-note">See current balances, explore account history, and inspect the holdings behind each total.</p>
           </div>
           <div class="settings-actions">
-            <button id="exportReportsPdf" class="secondary" type="button" title="Download the currently displayed report as a PDF">Download PDF</button>
+            <button id="exportReportsPdf" class="secondary" type="button" title="Download account balances and account history as a PDF">Download PDF</button>
             <button class="icon-button" type="button" data-close aria-label="Close">×</button>
           </div>
         </div>
@@ -1348,6 +1348,22 @@
         <div id="reportsSummary" class="report-grid report-balance-grid"></div>
         <p id="reportValuationNote" class="section-note" role="status"></p>
         <div id="reportRetirementSummary" class="report-retirement-summary"></div>
+        <section class="trade-history-section" aria-labelledby="tradeHistoryTitle">
+          <div class="section-head report-section-heading">
+            <div><h3 id="tradeHistoryTitle">Buy / sell history</h3><p class="section-note">Includes recorded positions that are fully sold. Closing and reopening a position creates a separate holding period.</p></div>
+            <button id="exportTradeHistoryCsv" class="secondary compact-button" type="button" disabled>Download history CSV</button>
+          </div>
+          <div class="trade-history-controls">
+            <label class="field"><span>Position status</span><select id="tradeHistoryPositionStatus"><option value="all">All positions</option><option value="open">Open positions</option><option value="closed">Closed positions</option></select></label>
+            <label class="field"><span>Search history</span><input id="tradeHistorySearch" type="search" placeholder="Symbol, name or account" /></label>
+            <button id="retryTradeHistory" class="secondary compact-button" type="button" hidden>Retry</button>
+          </div>
+          <p class="section-note">Annualized monetary P/L = total P/L ÷ calendar days held × 365. Each position uses its own currency.</p>
+          <p class="section-note">P/L uses average cost and includes allocated recorded income and fees. Unrecorded costs and taxes are excluded.</p>
+          <p id="tradeHistoryStatus" class="status-line" role="status" aria-live="polite"></p>
+          <div id="tradeHistoryTable" class="table-wrap trade-history-table-wrap"></div>
+          <div id="tradeHistoryUnallocated"></div>
+        </section>
         <section class="report-history-section" aria-labelledby="reportHistoryTitle">
           <div class="report-section-heading"><h3 id="reportHistoryTitle">Account history</h3><p class="section-note">Balance changes can include deposits and withdrawals; they are not investment returns. Historical amounts use current exchange rates.</p></div>
           <div class="report-history-controls report-screen-only">
@@ -1395,6 +1411,18 @@
           <div id="historyList" class="stack management-list"></div>
           </div>
         </details>
+      </section>
+    </div>
+
+    <div id="tradeHistoryDetailModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="tradeHistoryDetailTitle" aria-describedby="tradeHistoryDetailSubtitle">
+        <div class="section-head"><div><h2 id="tradeHistoryDetailTitle" tabindex="-1">Position history details</h2><p id="tradeHistoryDetailSubtitle" class="section-note"></p></div><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <div id="tradeHistoryDetailSummary" class="report-grid trade-history-detail-summary"></div>
+        <p id="tradeHistoryDetailIssues" class="section-note"></p>
+        <p class="section-note">Annualized monetary P/L = total P/L ÷ calendar days held × 365. Each position uses its own currency.</p>
+        <p class="section-note">To correct a transaction, open Portfolio Data → Securities.</p>
+        <div id="tradeHistoryDetailTransactions" class="table-wrap trade-history-table-wrap"></div>
       </section>
     </div>
 

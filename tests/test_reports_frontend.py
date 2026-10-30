@@ -126,6 +126,7 @@ const api=async()=>{requests++;throw Error('offline');};
 const renderReportSummary=()=>{throw Error('must not replace the preview');};
 const renderAccountTrend=renderReportSummary;
 const renderHistorySnapshots=renderReportSummary;
+const loadTradeHistory=()=>{};
 (async()=>{
   await loadReports();
   assert.equal(requests,0);
@@ -153,6 +154,7 @@ const api=()=>new Promise(resolve=>pending.push(resolve));
 const renderReportSummary=report=>{$('reportsDetails').innerHTML=String(report.accounts);};
 const renderAccountTrend=()=>{};
 const renderHistorySnapshots=()=>{};
+const loadTradeHistory=()=>{};
 (async()=>{
   const older=loadReports();
   const newer=loadReports();

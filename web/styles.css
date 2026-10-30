@@ -6359,6 +6359,133 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
   font-size: 11px;
 }
 
+.trade-history-section {
+  margin-block: 22px;
+  padding-block: 8px 18px;
+  border-bottom: 1px solid var(--ux-stroke);
+}
+
+.trade-history-controls {
+  display: grid;
+  grid-template-columns: minmax(170px, 220px) minmax(220px, 1fr) max-content;
+  align-items: end;
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.trade-history-controls input,
+.trade-history-controls select {
+  width: 100%;
+  min-width: 160px;
+}
+
+.trade-history-table-wrap {
+  max-height: 560px;
+  overflow: auto;
+  margin-top: 12px;
+}
+
+.holdings-table.trade-history-table {
+  table-layout: auto;
+  min-width: 1020px;
+}
+
+.holdings-table.trade-history-table th {
+  width: auto;
+  white-space: normal;
+  min-width: 95px;
+  position: sticky;
+  top: 0;
+  background: var(--ux-surface, #171a20);
+  z-index: 1;
+}
+
+#tradeHistoryDetailTransactions .trade-history-table {
+  min-width: 760px;
+}
+
+.holdings-table.trade-history-table td {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.trade-history-table td:first-child {
+  min-width: 180px;
+}
+
+.trade-history-table td > small {
+  display: block;
+  max-width: 240px;
+  margin-top: 4px;
+  color: var(--ux-muted);
+  font-size: 11px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.trade-history-pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 14px;
+  padding: 12px;
+}
+
+.trade-history-pagination span,
+.trade-history-data-note > summary {
+  color: var(--ux-muted);
+  font-size: 12px;
+}
+
+.trade-history-data-note {
+  margin-top: 12px;
+}
+
+.trade-history-data-note > summary {
+  cursor: pointer;
+}
+
+.report-grid.trade-history-detail-summary {
+  grid-template-columns: repeat(5, minmax(130px, 1fr));
+}
+
+.trade-history-detail-summary .stat b {
+  overflow-wrap: anywhere;
+  font-size: 18px;
+}
+
+@media (max-width: 900px) {
+  .trade-history-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .trade-history-controls .field {
+    min-width: 0;
+  }
+
+  .holdings-table.trade-history-table {
+    min-width: 0;
+  }
+
+  #tradeHistoryDetailTransactions .trade-history-table {
+    min-width: 0;
+  }
+
+  .holdings-table.trade-history-table td {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    grid-template-columns: minmax(110px, 0.9fr) minmax(0, 1fr);
+  }
+
+  .trade-history-table-wrap {
+    max-height: none;
+  }
+
+  .report-grid.trade-history-detail-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .report-section-heading {
   margin-top: 20px;
 }

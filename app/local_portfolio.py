@@ -3471,6 +3471,14 @@ class LocalPortfolioStore:
             analyses.append(self._analysis(position))
         return analyses
 
+    def trade_history(self, filters: dict[str, Any] | None = None, as_of_date: Any = None) -> dict[str, Any]:
+        from .trade_history import build_trade_history
+
+        filters = filters or {}
+        with self._sync_lock:
+            accounts = {row["id"]: {**row, "label": _account_label(row)} for row in self._filtered_accounts(filters)}
+            return build_trade_history(self.list_transactions(), accounts, self.list_prices(), as_of_date, filters)
+
     def account_trends(self, filters: dict[str, Any]) -> dict[str, Any]:
         from_date = _parse_date(filters.get("from")) or (date.today() - timedelta(days=365))
         to_date = _parse_date(filters.get("to")) or date.today()

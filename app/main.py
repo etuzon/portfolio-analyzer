@@ -3006,6 +3006,34 @@ def list_local_securities():
     return {"items": local_store.list_transactions()}
 
 
+@app.get("/api/local/trade-history")
+def local_trade_history(
+    account_id: str = "", account_type: str = "", location: str = "",
+    person_id: str = "", person_name: str = "", status: str = "all",
+    query: str = "", as_of_date: str = "",
+):
+    as_of = _parse_query_date(as_of_date) if as_of_date else date.today()
+    if as_of is None:
+        raise HTTPException(status_code=400, detail="Invalid as-of date. Use dd/mm/yyyy.")
+    try:
+        report = local_store.trade_history({
+            "account_id": account_id, "account_type": account_type, "location": location,
+            "person_id": person_id, "person_name": person_name, "status": status, "query": query,
+        }, as_of_date=as_of)
+        search = query.strip().casefold()
+        if search:
+            report["items"] = [item for item in report.get("items", []) if any(
+                search in str(item.get(key) or "").casefold()
+                for key in ("symbol", "name", "account_label", "stock_market")
+            )]
+            report["unallocated_transactions"] = [item for item in report.get("unallocated_transactions", []) if any(
+                search in str(item.get(key) or "").casefold() for key in ("symbol", "stock_market")
+            )]
+        return report
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.post("/api/local/securities")
 def add_local_security(payload: dict[str, Any]):
     payload = payload or {}

@@ -11,6 +11,9 @@ const state = {
   bannerItems: [],
   configuredBannerItems: [],
   historySnapshots: [],
+  tradeHistory: null,
+  tradeHistoryLoading: false,
+  tradeHistoryPage: 1,
   fxRates: {},
   coreFxRates: {},
   bannerFxRates: {},
@@ -1505,6 +1508,8 @@ function applyLanguage() {
   if (state.financeReport) renderFinanceReport(state.financeReport);
   if (state.activeReport) renderReportSummary(state.activeReport);
   if (state.activeReportTrend) renderAccountTrend(state.activeReportTrend);
+  if (state.tradeHistory || state.tradeHistoryLoading) renderTradeHistory();
+  if (state.tradeHistoryDetail) renderTradeHistoryDetails(state.tradeHistoryDetail);
   if (state.items?.length) renderRows(state.items);
   if (state.positionTransactionsDetail) syncPositionTransactionLimit();
   if (state.eventDividendSettings) renderEvents();
@@ -5706,6 +5711,7 @@ async function savePositionTransaction() {
   }
   // The saved transaction is already confirmed; analytics must not delay or undo its feedback.
   loadPortfolio().then(() => {
+    if (state.activeReportFilters && !$("reportsModal")?.hidden) loadTradeHistory(state.activeReportFilters);
     if (state.positionTransactionsDetail !== detail) return;
     refreshPositionTransactionDetail(result.position_quantity);
     renderPositionTransactionHistory();
@@ -7648,6 +7654,190 @@ function reportAccountAmounts(account, currency = state.baseCurrency) {
   return { cash, securities, profit, value: reportSum([cash, securities]) };
 }
 
+const TRADE_HISTORY_ISSUES = Object.freeze({
+  imported_position_date_unknown: "Purchase date unavailable — imported position snapshot",
+  opening_date_unknown: "Opening date is unavailable",
+  unsupported_instrument: "P/L is unavailable for this instrument type",
+  trade_date_unknown: "A transaction date is unavailable",
+  zero_duration: "Daily and yearly P/L are unavailable for a same-day position",
+  valuation_before_as_of: "Valuation uses the saved price date shown in Details",
+  missing_valuation: "No suitable saved price is available",
+  transfer_without_profit: "A transfer or removal does not establish sale profit",
+  incomplete_cost_basis: "The recorded position or cost basis is incomplete",
+  ambiguous_cash_allocation: "Some income or fees cannot be assigned to this holding period",
+  invalid_transaction: "An invalid transaction needs review",
+  unsupported_action: "An unsupported transaction action needs review",
+  unallocated_cash_entry: "Income or fees recorded while no position was open remain unallocated",
+  transfer_without_position: "A removal has no recorded open position",
+  excess_closing_quantity: "A closing quantity exceeds the recorded position",
+});
+
+function tradeHistoryIssueText(issue) {
+  return t(TRADE_HISTORY_ISSUES[issue] || "Some history data is incomplete");
+}
+
+function tradeHistoryAmount(value, currency) {
+  return value === null || value === undefined || !Number.isFinite(Number(value))
+    ? t("Not available") : money(value, currency, 2);
+}
+
+function tradeHistoryActionLabel(action) {
+  const labels = { BUY: "Buy", SELL: "Sell", ADD: "Add", REMOVE: "Remove", SHORT: "Short", DIVIDEND: "Dividend", INTEREST: "Interest", FEE: "Fee" };
+  return t(labels[action] || "Other activity");
+}
+
+function tradeHistorySourceLabel(source) {
+  const key = String(source || "").toLowerCase();
+  if (key.endsWith("_import")) return t("Imported");
+  if (key === "manual") return t("Manual");
+  if (key === "dividend_scan") return t("Automatic dividend");
+  if (key === "employee_option_exercise") return t("Option exercise");
+  return t("Recorded locally");
+}
+
+function filteredTradeHistoryItems() {
+  const status = valueOf("tradeHistoryPositionStatus") || "all";
+  const query = valueOf("tradeHistorySearch").toLocaleLowerCase();
+  return (state.tradeHistory?.items || []).filter((item) => (
+    (status === "all" || item.status === status)
+    && (!query || [item.symbol, item.name, item.account_label, item.stock_market,
+      formatDate(item.opened_date || ""), formatDate(item.closed_date || "")]
+      .some((part) => String(part || "").toLocaleLowerCase().includes(query)))
+  ));
+}
+
+async function loadTradeHistory(filters = state.activeReportFilters) {
+  if (!filters) return;
+  const version = (state.tradeHistoryRequestVersion || 0) + 1;
+  state.tradeHistoryRequestVersion = version;
+  state.tradeHistoryLoading = true;
+  state.tradeHistoryError = false;
+  renderTradeHistory();
+  try {
+    const data = await api(`/api/local/trade-history?${reportQueryParams(filters)}`);
+    if (version !== state.tradeHistoryRequestVersion) return;
+    state.tradeHistory = data;
+    state.tradeHistoryPage = 1;
+  } catch (_error) {
+    if (version !== state.tradeHistoryRequestVersion) return;
+    state.tradeHistory = null;
+    state.tradeHistoryError = true;
+  } finally {
+    if (version === state.tradeHistoryRequestVersion) {
+      state.tradeHistoryLoading = false;
+      renderTradeHistory();
+    }
+  }
+}
+
+function renderTradeHistory() {
+  const status = $("tradeHistoryStatus");
+  const table = $("tradeHistoryTable");
+  const unallocated = $("tradeHistoryUnallocated");
+  $("retryTradeHistory").hidden = !state.tradeHistoryError;
+  $("exportTradeHistoryCsv").disabled = true;
+  if (state.tradeHistoryLoading) {
+    status.textContent = t("Loading recorded trade history…");
+    table.innerHTML = "";
+    unallocated.innerHTML = "";
+    return;
+  }
+  if (state.tradeHistoryError) {
+    status.textContent = t("Could not load trade history. Retry to load this section.");
+    table.innerHTML = "";
+    unallocated.innerHTML = "";
+    return;
+  }
+  const data = state.tradeHistory;
+  if (!data) return;
+  const rows = filteredTradeHistoryItems();
+  const pageSize = 20;
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const page = Math.min(Math.max(Number(state.tradeHistoryPage || 1), 1), pages);
+  state.tradeHistoryPage = page;
+  $("exportTradeHistoryCsv").disabled = !rows.length;
+  status.textContent = `${rows.length} ${t("Holding periods")} · ${t("As of")} ${formatDate(data.as_of_date)} · ${t("Saved local prices")}`;
+  const headers = ["Security / account", "Position status", "Opened / closed", "Total P/L", "P/L per day", "P/L per year", "Actions"];
+  const cell = (label, content, extra = "") => `<td data-label="${esc(t(label))}"${extra}>${content}</td>`;
+  table.innerHTML = rows.length ? `<table class="holdings-table compact-report-table trade-history-table"><thead><tr>${headers.map((header) => `<th scope="col">${esc(t(header))}</th>`).join("")}</tr></thead><tbody>${rows.slice((page - 1) * pageSize, page * pageSize).map((row) => `<tr>
+    ${cell("Security / account", `<b>${esc(row.symbol)}</b>${row.name && row.name !== row.symbol ? `<small>${esc(row.name)}</small>` : ""}<small>${esc(row.account_label)}</small><small>${esc(currencyDisplayLabel(row.currency))} · ${esc(row.stock_market)}</small>`)}
+    ${cell("Position status", `<span class="badge ${row.status === "closed" ? "ok" : "partial"}">${esc(t(row.status === "closed" ? "Closed position" : "Open position"))}</span>${row.issues?.length ? `<small title="${esc(row.issues.map(tradeHistoryIssueText).join(" · "))}">${esc(t("Limited data"))} · ${row.issues.length}</small>` : ""}`)}
+    ${cell("Opened / closed", `<span>${esc(t("Opened"))}: ${esc(row.opened_date ? formatDate(row.opened_date) : t("Not available"))}</span><small>${esc(t("Closed"))}: ${esc(row.closed_date ? formatDate(row.closed_date) : t(row.status === "open" ? "Still open" : "Not available"))}</small><small>${esc(t("Days held"))}: ${esc(row.duration_days ?? t("Not available"))}</small>`)}
+    ${cell("Total P/L", `<b class="${row.total_profit > 0 ? "positive" : row.total_profit < 0 ? "negative" : ""}">${esc(tradeHistoryAmount(row.total_profit, row.currency))}</b><small>${esc(t("Realized P/L"))}: ${esc(tradeHistoryAmount(row.realized_profit, row.currency))}</small><small>${esc(t("Unrealized P/L"))}: ${esc(tradeHistoryAmount(row.unrealized_profit, row.currency))}</small>`)}
+    ${["profit_per_day", "profit_per_year"].map((key, index) => cell(headers[index + 4], esc(tradeHistoryAmount(row[key], row.currency)), ` class="${row[key] > 0 ? "positive" : row[key] < 0 ? "negative" : ""}"`)).join("")}
+    ${cell("Actions", `<button class="secondary compact-button" type="button" data-trade-history-details="${esc(row.id)}" aria-label="${esc(t("Position history details"))}: ${esc(row.symbol)} · ${esc(row.account_label)}">${esc(t("Details"))}</button>`)}
+  </tr>`).join("")}</tbody></table>${pages > 1 ? `<div class="trade-history-pagination"><button type="button" class="secondary compact-button" data-trade-history-page="-1"${page === 1 ? " disabled" : ""}>${esc(t("Previous"))}</button><span>${esc(t("Page"))} ${page} / ${pages}</span><button type="button" class="secondary compact-button" data-trade-history-page="1"${page === pages ? " disabled" : ""}>${esc(t("Next"))}</button></div>` : ""}`
+    : `<div class="empty">${esc(t(data.items?.length ? "No positions match these history filters" : "No recorded position history is available"))}</div>`;
+  const query = valueOf("tradeHistorySearch").toLocaleLowerCase();
+  const entries = (data.unallocated_transactions || []).filter((entry) => !query || String(entry.symbol || "").toLocaleLowerCase().includes(query));
+  const reportIssues = [...new Set(data.issues || [])];
+  unallocated.innerHTML = reportIssues.length || entries.length ? `<details class="trade-history-data-note"><summary>${esc(t("History data notes"))}${entries.length ? ` · ${entries.length} ${esc(t("Unallocated activities"))}` : ""}</summary>${reportIssues.map((issue) => `<p class="section-note">${esc(tradeHistoryIssueText(issue))}</p>`).join("")}${entries.map((entry) => `<p class="section-note"><b>${esc(entry.symbol)}</b> · ${esc(entry.trade_date ? formatDate(entry.trade_date) : t("Not available"))} · ${esc(tradeHistoryActionLabel(entry.action))} · ${esc(tradeHistoryAmount(Number.isFinite(entry.quantity) && Number.isFinite(entry.price) ? entry.quantity * entry.price : null, entry.currency))}</p>`).join("")}</details>` : "";
+}
+
+function openTradeHistoryDetails(id, trigger) {
+  const row = state.tradeHistory?.items?.find((item) => item.id === id);
+  if (!row) return;
+  state.tradeHistoryDetail = row;
+  renderTradeHistoryDetails(row);
+  $("reportsModal").inert = true;
+  $("reportsModal").setAttribute("aria-hidden", "true");
+  openModal("tradeHistoryDetailModal", trigger, { focusId: "tradeHistoryDetailTitle" });
+}
+
+function renderTradeHistoryDetails(row) {
+  $("tradeHistoryDetailTitle").textContent = `${row.symbol} · ${t("Position history details")}`;
+  $("tradeHistoryDetailSubtitle").textContent = [row.account_label, currencyDisplayLabel(row.currency),
+    t(row.side === "short" ? "Short position" : "Long position"), t(row.status === "closed" ? "Closed position" : "Open position"),
+    `${t("Opened")}: ${row.opened_date ? formatDate(row.opened_date) : t("Not available")}`,
+    `${t("Closed")}: ${row.closed_date ? formatDate(row.closed_date) : t(row.status === "open" ? "Still open" : "Not available")}`].join(" · ");
+  $("tradeHistoryDetailSummary").innerHTML = [
+    ["Days held", row.duration_days ?? t("Not available")],
+    ["Units remaining", fmt(row.quantity_remaining, 4)],
+    ["Trading realized P/L", tradeHistoryAmount(row.realized_trading_profit, row.currency)],
+    ["Recorded income", tradeHistoryAmount(row.income, row.currency)],
+    ["Recorded fees", tradeHistoryAmount(row.fees, row.currency)],
+    ["Unrealized P/L", tradeHistoryAmount(row.unrealized_profit, row.currency)],
+    ["Total P/L", tradeHistoryAmount(row.total_profit, row.currency)],
+    ["P/L per day", tradeHistoryAmount(row.profit_per_day, row.currency)],
+    ["P/L per year", tradeHistoryAmount(row.profit_per_year, row.currency)],
+    ["Price date", row.valuation_date ? formatDate(row.valuation_date) : t("Not applicable")],
+  ].map(([label, value]) => `<div class="stat"><span>${esc(t(label))}</span><b dir="auto">${esc(value)}</b></div>`).join("");
+  $("tradeHistoryDetailIssues").textContent = (row.issues || []).map(tradeHistoryIssueText).join(" · ");
+  const headers = ["Date", "Action", "Units", "Unit price", "Total", "Source"];
+  $("tradeHistoryDetailTransactions").innerHTML = `<table class="holdings-table compact-report-table trade-history-table"><thead><tr>${headers.map((header) => `<th scope="col">${esc(t(header))}</th>`).join("")}</tr></thead><tbody>${(row.transactions || []).map((tx) => {
+    const quantity = tx.allocated_quantity ?? tx.quantity;
+    const values = [tx.trade_date ? formatDate(tx.trade_date) : t("Not available"), tradeHistoryActionLabel(tx.action), fmt(quantity, 4),
+      tx.price === null || tx.price === undefined ? t("Not available") : money(tx.price, tx.currency || row.currency, 4),
+      tradeHistoryAmount(Number.isFinite(quantity) && Number.isFinite(tx.price) ? quantity * tx.price : null, tx.currency || row.currency),
+      tradeHistorySourceLabel(tx.source)];
+    return `<tr>${values.map((value, index) => `<td data-label="${esc(t(headers[index]))}">${esc(value)}</td>`).join("")}</tr>`;
+  }).join("")}</tbody></table>`;
+}
+
+function tradeHistoryCsvCell(value) {
+  let text = value === null || value === undefined ? "" : String(value);
+  if (typeof value !== "number" && /^\s*[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function exportTradeHistoryCsv() {
+  const rows = filteredTradeHistoryItems();
+  if (!rows.length) return;
+  const headers = ["Symbol", "Account", "Currency", "Position status", "Opened", "Closed", "Days held", "Realized P/L", "Unrealized P/L", "Total P/L", "P/L per day", "P/L per year", "History data notes"];
+  const lines = [headers.map(t), ...rows.map((row) => [row.symbol, row.account_label, currencyDisplayLabel(row.currency),
+    t(row.status === "closed" ? "Closed position" : "Open position"), row.opened_date ? formatDate(row.opened_date) : "", row.closed_date ? formatDate(row.closed_date) : "", row.duration_days,
+    row.realized_profit, row.unrealized_profit, row.total_profit, row.profit_per_day, row.profit_per_year, (row.issues || []).map(tradeHistoryIssueText).join(" · ")])];
+  const blob = new Blob(["\uFEFF", lines.map((line) => line.map(tradeHistoryCsvCell).join(",")).join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `trade-history-${formatDate(state.tradeHistory.as_of_date).replaceAll("/", "-")}.csv`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 function renderReportSummary(report) {
   const accountDetails = report.account_details || [];
   const amounts = accountDetails.map((account) => reportAccountAmounts(account));
@@ -8270,6 +8460,7 @@ async function loadReports() {
     renderReportSummary(report);
     renderAccountTrend(trend);
     renderHistorySnapshots();
+    loadTradeHistory(filters);
     $("reportsExportStatus").textContent = report.accounts
       ? `Report ready · ${report.accounts} accounts included`
       : "No accounts match these filters";
@@ -11429,6 +11620,8 @@ function positionModalHomeLinks() {
 function returnToDashboard() {
   document.querySelectorAll(".modal:not([hidden])").forEach((modal) => {
     modal.hidden = true;
+    modal.inert = false;
+    modal.removeAttribute("aria-hidden");
     modal.querySelector(".modal-home-link")?.remove();
   });
   modalReturnFocus.clear();
@@ -11512,6 +11705,10 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
 
 function closeModal(modal) {
   if (!modal) return;
+  if (modal.id === "tradeHistoryDetailModal") {
+    $("reportsModal").inert = false;
+    $("reportsModal").removeAttribute("aria-hidden");
+  }
   modal.hidden = true;
   modal.querySelector(".modal-home-link")?.remove();
   if (modal.id === "accountsModal" && state.returnToEmployeeOptionsAfterAccount) {
@@ -11527,7 +11724,7 @@ function closeModal(modal) {
     if (focusTarget instanceof HTMLElement) {
       const parentMenu = focusTarget.closest("details");
       if (parentMenu && !parentMenu.open) parentMenu.open = true;
-      focusTarget.focus();
+      focusTarget.focus({ preventScroll: modal.id === "tradeHistoryDetailModal" });
     }
   });
 }
@@ -11582,6 +11779,18 @@ document.addEventListener("click", (event) => {
   if (event.target.closest("[data-dashboard-home]")) {
     event.preventDefault();
     returnToDashboard();
+    return;
+  }
+  const tradeDetail = event.target.closest("[data-trade-history-details]");
+  if (tradeDetail) {
+    openTradeHistoryDetails(tradeDetail.dataset.tradeHistoryDetails, tradeDetail);
+    return;
+  }
+  const tradePage = event.target.closest("[data-trade-history-page]");
+  if (tradePage) {
+    state.tradeHistoryPage += Number(tradePage.dataset.tradeHistoryPage);
+    renderTradeHistory();
+    $("tradeHistoryTitle").scrollIntoView({ block: "nearest" });
     return;
   }
   const actionHelpSummary = event.target.closest(".row-action-help summary");
@@ -12485,6 +12694,10 @@ $("accountTrendChart").addEventListener("click", (event) => {
   if (state.activeReportTrend) renderAccountTrend(state.activeReportTrend);
   $("accountTrendChart").querySelector(`[data-report-metric="${metric}"]`)?.focus();
 });
+$("tradeHistoryPositionStatus").addEventListener("change", () => { state.tradeHistoryPage = 1; renderTradeHistory(); });
+$("tradeHistorySearch").addEventListener("input", () => { state.tradeHistoryPage = 1; renderTradeHistory(); });
+$("retryTradeHistory").addEventListener("click", () => loadTradeHistory(state.activeReportFilters));
+$("exportTradeHistoryCsv").addEventListener("click", exportTradeHistoryCsv);
 $("exportReportsPdf").addEventListener("click", () => exportReportsPdf().catch((error) => { $("reportsExportStatus").textContent = `Error: ${error.message}`; }));
 ["reportPerson", "reportAccountType", "reportAccount", "reportLocation", "reportFrom", "reportTo"].forEach((id) => {
   $(id).addEventListener("change", markReportFiltersChanged);
