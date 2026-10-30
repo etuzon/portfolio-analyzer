@@ -8588,6 +8588,11 @@ async function renderCompanyOutlookDiagram(outlook) {
   }
 }
 
+function outlookScoreText(value, maximum = 100) {
+  if (value == null || !Number.isFinite(Number(value)) || maximum <= 0) return t("Not available");
+  return `${fmt(Math.round(Number(value) / maximum * 1000) / 10, 1)}/100`;
+}
+
 function renderCompanyOutlook(outlook) {
   state.companyOutlook = outlook;
   $("companyOutlookEmpty").hidden = true;
@@ -8596,19 +8601,19 @@ function renderCompanyOutlook(outlook) {
   const components = outlook.score_components || {};
   $("companyOutlookStatus").textContent = `${outlook.symbol} · ${t(outlook.label || "Mixed")} · ${t("Confidence")}: ${t(outlook.confidence || "Low")} · ${t(outlook.peer_source || "")}`;
   $("companyOutlookSummary").innerHTML = [
-    ["Final score", `${fmt(outlook.score, 0)}/100`],
+    ["Final score", outlookScoreText(outlook.score), "Final outlook score on a 0–100 scale. Combines company fundamentals, industry outlook, related-industry effects, peer rank and data quality."],
     ["Peer rank", `${outlook.rank || 1}/${(outlook.companies || []).length || 1}`],
     ["Industry", industry.health || "Not available"],
-    ["Industry score", `${fmt(industry.score, 0)}/25`],
-    ["Company signals", `${fmt(components.company_fundamentals, 0)}/45`],
-    ["Related effect", `${fmt(components.related_industry_effect, 0)}/15`],
-  ].map(([label, value]) => `<div class="stat"><b>${esc(t(value))}</b><span>${esc(t(label))}</span></div>`).join("");
+    ["Industry score", outlookScoreText(industry.score, 25), "Industry score on a 0–100 scale. Contributes up to 25 points to the final outlook score."],
+    ["Company signals", outlookScoreText(components.company_fundamentals, 45), "Company fundamentals on a 0–100 scale. Contributes up to 45 points to the final outlook score."],
+    ["Related effect", outlookScoreText(components.related_industry_effect, 15), "Related-industry effect on a 0–100 scale. Contributes up to 15 points to the final outlook score."],
+  ].map(([label, value, tooltip]) => `<div class="stat"${tooltip ? ` title="${esc(t(tooltip))}"` : ""}><b>${esc(t(value))}</b><span>${esc(t(label))}</span></div>`).join("");
   $("companyOutlookWords").innerHTML = `
     <p>${esc(t(outlook.simple_words || ""))}</p>
     ${outlook.missing?.length ? `<div class="sub">${t("Missing or limited")}: ${esc(outlook.missing.map((item) => t(item)).join(", "))}</div>` : ""}
   `;
   const companies = outlook.companies || [];
-  const fundamentalsTooltip = t("Company fundamentals score, out of 45. Compares growth, profitability, cash flow and balance-sheet metrics with the peer group. The final score out of 100 is shown above.");
+  const fundamentalsTooltip = t("Company fundamentals score, out of 100. Compares growth, profitability, cash flow and balance-sheet metrics with the peer group. This component contributes up to 45 points to the final outlook score shown above.");
   $("companyOutlookTable").innerHTML = companies.length ? `
     <table class="holdings-table compact-report-table outlook-table">
       <thead><tr>${["Company", "Industry", "Fiscal date", "Revenue growth", "Operating margin", "Net margin", "FCF margin", "Current ratio", "Company signals"].map((label) => `<th${label === "Company signals" ? ` title="${esc(fundamentalsTooltip)}"` : ""}>${esc(t(label))}</th>`).join("")}</tr></thead>
@@ -8622,7 +8627,7 @@ function renderCompanyOutlook(outlook) {
           <td data-label="Net margin">${pct(company.net_margin_percent)}</td>
           <td data-label="FCF margin">${pct(company.free_cash_flow_margin_percent)}</td>
           <td data-label="Current ratio">${fmt(company.current_ratio, 2)}</td>
-          <td data-label="${esc(t("Company signals"))}" title="${esc(fundamentalsTooltip)}">${fmt(company.symbol === outlook.symbol ? components.company_fundamentals ?? company.score : company.score, 0)}/45</td>
+          <td data-label="${esc(t("Company signals"))}" title="${esc(fundamentalsTooltip)}">${outlookScoreText(company.symbol === outlook.symbol ? components.company_fundamentals ?? company.score : company.score, 45)}</td>
         </tr>
       `).join("")}</tbody>
     </table>

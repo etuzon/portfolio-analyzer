@@ -67,7 +67,7 @@ def test_alert_progress_and_run_history_follow_active_language():
 def test_company_outlook_localizes_mermaid_labels_missing_data_and_report_copy():
     source = (ROOT / "web/app.js").read_text()
     functions = []
-    for name in ("t", "companyOutlookDiagramSource", "renderCompanyOutlook", "renderCompanyOutlookDiagramFallback"):
+    for name in ("t", "companyOutlookDiagramSource", "renderCompanyOutlook", "renderCompanyOutlookDiagramFallback", "outlookScoreText"):
         start = source.index(f"function {name}(")
         end = re.search(r"\n(?:async )?function ", source[start + 1:])
         functions.append(source[start:start + 1 + end.start()])
@@ -110,18 +110,23 @@ def test_company_outlook_localizes_mermaid_labels_missing_data_and_report_copy()
       }
       for (const language of ['he', 'en']) {
         state.language = language;
-        renderCompanyOutlook({...outlook, score: 43, score_components: {company_fundamentals: 16}, companies: [
+        renderCompanyOutlook({...outlook, score: 43, industry: {score: 18}, score_components: {company_fundamentals: 16, related_industry_effect: 3}, companies: [
           {symbol: 'BRKR', score: 16, industry: 'Computer Communications Equipment'},
           {symbol: 'PEER', score: 33, industry: 'Computer Communications Equipment'},
         ]});
         const table = nodes.companyOutlookTable.innerHTML;
-        assert.ok(table.includes('16/45') && table.includes('33/45'));
-        assert.ok(!table.includes('/32') && !table.includes('/100'));
+        assert.ok(table.includes('35.6/100') && table.includes('73.3/100'));
+        assert.ok(!/\/(32|45|25|15)(?![0-9])/u.test(table));
         assert.ok(nodes.companyOutlookSummary.innerHTML.includes('43/100'));
+        assert.ok(nodes.companyOutlookSummary.innerHTML.includes('72/100'));
+        assert.ok(nodes.companyOutlookSummary.innerHTML.includes('20/100'));
         assert.ok(table.includes(language === 'he' ? 'מדדי החברה' : 'Company signals'));
-        assert.ok(table.includes(language === 'he' ? 'מתוך 45' : 'out of 45'));
+        assert.ok(table.includes(language === 'he' ? 'מתוך 100' : 'out of 100'));
         if (language === 'he') assert.ok(!table.includes('Computer Communications Equipment'));
       }
+      assert.equal(outlookScoreText(null, 45), 'Not available');
+      assert.equal(outlookScoreText(0, 45), '0/100');
+      assert.equal(outlookScoreText(45, 45), '100/100');
     """
     subprocess.run(["node"], input=script, check=True, capture_output=True, text=True)
 

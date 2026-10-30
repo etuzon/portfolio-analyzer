@@ -899,15 +899,15 @@ def _outlook_mermaid(target: dict[str, Any], industry: dict[str, Any], peers: li
     edges = [{"from": "target", "to": "industry", "label": "competes in"}]
     lines = [
         "flowchart LR",
-        f'  T["{_mermaid_label(target["symbol"])}<br/>Revenue growth: {_pct_label(target.get("revenue_growth_percent"))}<br/>Net margin: {_pct_label(target.get("net_margin_percent"))}<br/>Score: {score:.0f}"]:::target',
-        f'  I["{_mermaid_label(industry["name"])}<br/>Median revenue growth: {_pct_label(industry.get("median_revenue_growth_percent"))}<br/>Health: {_mermaid_label(industry["health"])}"]:::industry',
+        f'  T["{_mermaid_label(target["symbol"])}<br/>Revenue growth: {_pct_label(target.get("revenue_growth_percent"))}<br/>Net margin: {_pct_label(target.get("net_margin_percent"))}<br/>Final score: {score:.1f}/100"]:::target',
+        f'  I["{_mermaid_label(industry["name"])}<br/>Median revenue growth: {_pct_label(industry.get("median_revenue_growth_percent"))}<br/>Industry score: {industry.get("score", 0) / 25 * 100:.1f}/100<br/>Health: {_mermaid_label(industry["health"])}"]:::industry',
         '  T -->|"competes in"| I',
     ]
     for index, peer in enumerate(peers[:6], 1):
         node_id = f"peer{index}"
         nodes.append({"id": node_id, "label": peer["symbol"], "type": "peer"})
         edges.append({"from": node_id, "to": "industry", "label": "same industry"})
-        lines.append(f'  P{index}["{_mermaid_label(peer["symbol"])}<br/>Score: {peer.get("score", 0):.0f}<br/>Revenue growth: {_pct_label(peer.get("revenue_growth_percent"))}"]:::peer')
+        lines.append(f'  P{index}["{_mermaid_label(peer["symbol"])}<br/>Company signals: {peer.get("score", 0) / 45 * 100:.1f}/100<br/>Revenue growth: {_pct_label(peer.get("revenue_growth_percent"))}"]:::peer')
         lines.append(f'  P{index} -->|"same industry"| I')
     for index, item in enumerate(related[:4], 1):
         node_id = f"related{index}"
@@ -1061,7 +1061,7 @@ def _company_outlook_payload(symbol: str, request: dict[str, Any] | None = None)
         f"Cash-flow and balance-sheet measures are included when filed; missing statement evidence lowers confidence."
     )
     simple_words = (
-        f"{target_symbol} scores {final_score:.0f}/100. It ranks {rank} out of {len(ranked)} companies using available annual report numbers. "
+        f"{target_symbol} scores {final_score:.1f}/100. It ranks {rank} out of {len(ranked)} companies using available annual report numbers. "
         f"The {industry_name} outlook looks {industry_health.casefold()}. {thesis.split('. ')[-1]} Confidence: {confidence}."
     )
     payload = {
