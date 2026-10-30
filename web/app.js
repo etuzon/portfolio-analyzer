@@ -2430,14 +2430,10 @@ function accountShareBadge(share) {
   const chartAvailable = available && share >= 0 && share <= 100;
   const label = optionLabel("Share of total accounts");
   const value = available ? `${fmt(share, 1)}%` : optionLabel("Not available");
-  const help = available
-    ? "Account net value divided by all primary account net values, including signed cash, in the dashboard currency. Filters do not change this percentage."
-    : "Account shares require valid net amounts and exchange rates, and a positive total net value.";
-  const chartHelp = available && !chartAvailable ? ` ${optionLabel("The circular chart applies only to shares from 0% to 100%.")}` : "";
   const chart = chartAvailable
     ? `<svg class="account-share-ring" viewBox="0 0 28 28" aria-hidden="true" focusable="false"><circle class="account-share-ring-track" cx="14" cy="14" r="11"/><circle class="account-share-ring-value" cx="14" cy="14" r="11" pathLength="100" stroke-dasharray="${share} ${100 - share}"/></svg>`
     : `<span class="account-share-ring-placeholder" aria-hidden="true">${available ? "!" : "—"}</span>`;
-  return `<span class="account-risk-portfolio-share" role="group" aria-label="${esc(label)}" title="${esc(optionLabel(help) + chartHelp)}">${chart}<bdi dir="auto">${esc(value)}</bdi></span>`;
+  return `<span class="account-risk-portfolio-share" role="group" aria-label="${esc(label)}" title="${esc(label)}">${chart}<bdi dir="auto">${esc(value)}</bdi></span>`;
 }
 
 function accountCashBalance(account) {

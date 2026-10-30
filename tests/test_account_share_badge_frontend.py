@@ -22,11 +22,12 @@ def test_share_badge_keeps_actual_values_and_draws_only_valid_percentages():
         r'''
 for (const language of ['en', 'he']) {
   state.language = language;
-  const label = language === 'he' ? 'חלק מסך החשבונות' : 'Share of total accounts';
+  const label = language === 'he' ? 'אחוז מסה"כ החשבונות' : 'Share of total accounts';
   for (const [share, dash] of [[46.2, '46.2 53.8'], [0, '0 100'], [100, '100 0']]) {
     const html = accountShareBadge(share);
-    assert.ok(html.includes(`aria-label="${label}"`));
-    assert.ok(!html.includes(`>${label}<`), 'share label stays available to assistive technology without visible copy');
+    assert.ok(html.includes(`aria-label="${esc(label)}"`));
+    assert.ok(html.includes(`title="${esc(label)}"`));
+    assert.ok(!html.includes(`>${esc(label)}<`), 'share label stays available to assistive technology without visible copy');
     assert.ok(html.includes(`>${share}%</bdi>`));
     assert.ok(html.includes(`stroke-dasharray="${dash}"`));
     assert.match(html, /<svg[^>]*aria-hidden="true"[^>]*focusable="false"/);
@@ -36,11 +37,12 @@ for (const language of ['en', 'he']) {
     const text = html.match(/<bdi[^>]*>(.*?)<\/bdi>/)[1].replace(/[\u061c\u200e\u200f]/g, '');
     assert.equal(text, `${share}%`, 'signed or oversized shares must stay accurate');
     assert.ok(!html.includes('<svg'), 'out-of-range shares cannot look like valid donut charts');
-    assert.ok(html.includes(window.PortfolioI18n.translate('The circular chart applies only to shares from 0% to 100%.', language)));
+    assert.ok(html.includes(`title="${esc(label)}"`));
   }
   for (const share of [undefined, null, NaN, Infinity, -Infinity]) {
     const html = accountShareBadge(share);
     assert.ok(!html.includes('<svg'));
+    assert.ok(html.includes(`title="${esc(label)}"`));
     assert.ok(html.includes(language === 'he' ? 'לא זמין' : 'Not available'));
     assert.match(html, /account-share-ring-placeholder" aria-hidden="true"/);
     assert.ok(!html.includes('NaN') && !html.includes('Infinity'));

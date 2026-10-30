@@ -2,10 +2,7 @@
   "use strict";
 
   const HEBREW_TEXT = Object.freeze({
-    "Share of total accounts": "חלק מסך החשבונות",
-    "The circular chart applies only to shares from 0% to 100%.": "התרשים המעגלי מוצג רק עבור חלק יחסי שבין 0% ל־100%.",
-    "Account net value divided by all primary account net values, including signed cash, in the dashboard currency. Filters do not change this percentage.": "שווי החשבון נטו חלקי השווי נטו של כל החשבונות בתיק הראשי, כולל יתרות מזומן חיוביות ושליליות, במטבע לוח הבקרה. סינון אינו משנה אחוז זה.",
-    "Account shares require valid net amounts and exchange rates, and a positive total net value.": "לחישוב חלקו של חשבון דרושים סכומים נטו ושערי חליפין תקינים, וכן שווי כולל נטו חיובי.",
+    "Share of total accounts": "אחוז מסה\"כ החשבונות",
     "Answer table. Scroll horizontally to see all columns.": "טבלת תשובה. יש לגלול לרוחב כדי לראות את כל העמודות.",
     "Code block. Scroll to read all code.": "מקטע קוד. יש לגלול כדי לקרוא את כל הקוד.",
     "Column {count}": "עמודה {count}",
