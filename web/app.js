@@ -94,6 +94,9 @@ const state = {
   macroScenarioSettings: null,
   alertData: null,
   alertRefreshTimer: null,
+  alertDismissPending: [],
+  alertClientDismissals: [],
+  alertDismissStatus: null,
   alertOptions: { metrics: [], operators: [], signals: [], match_modes: [] },
   alertConditions: [],
   editingAlertId: "",
@@ -637,6 +640,8 @@ async function api(path, options = {}) {
       failure.requestId = requestId;
       throw failure;
     }
+    if (!["GET", "HEAD", "OPTIONS"].includes(String(method).toUpperCase()) && endpoint.startsWith("/api/local/")
+      && typeof invalidateTradePlans === "function") invalidateTradePlans();
     return response.json();
   } catch (error) {
     appWarn("api.error", { method, endpoint, message: error.message, request_id: error.requestId || undefined });
@@ -1140,7 +1145,7 @@ const WRITE_CONTROL_IDS = new Set([
   "saveFund", "saveFundHistory", "saveHistorySnapshot", "saveLocalAccount", "saveManualSecurity",
   "saveIndustryClassification", "removeIndustryClassification", "savePositionTransaction", "savePrice", "saveSecurity", "saveTableSettings", "saveUser", "showFundCreate",
   "addSecurityExposureCurrency", "saveSecurityExposure", "removeSecurityExposure", "newFamilyMember",
-  "showPensionPeriodEntry", "showPensionRateEntry",
+  "showPensionPeriodEntry", "showPensionRateEntry", "saveAlertDismissalSettings",
 ]);
 const WRITE_DATA_ACTIONS = new Set([
   "data-add-skipped-account", "data-dashboard-move", "data-dashboard-set-view", "data-delete-account",
@@ -1154,7 +1159,7 @@ const WRITE_DATA_ACTIONS = new Set([
   "data-remove-banner", "data-run-alert", "data-schedule-pension-scenario", "data-toggle-alert", "data-use-manual-security",
   "data-user-enabled", "data-delete-user",
   "data-remove-exposure-currency",
-  "data-position-action",
+  "data-position-action", "data-dismiss-alert-signal",
 ]);
 
 function currentUser() {
@@ -1232,6 +1237,7 @@ function renderCurrentUser() {
 }
 
 function setAuthenticatedSession(payload) {
+  if (state.auth.user?.id !== payload?.user?.id && typeof resetTradePlannerViews === "function") resetTradePlannerViews();
   state.auth.user = payload?.user || null;
   state.auth.csrfToken = String(payload?.csrf_token || "");
   state.auth.forcedPasswordChange = Boolean(payload?.user?.must_change_password);
@@ -1241,6 +1247,7 @@ function setAuthenticatedSession(payload) {
 }
 
 function showLogin(message = "") {
+  if (typeof resetTradePlannerViews === "function") resetTradePlannerViews();
   state.portfolioRefreshPending = false;
   state.portfolioLoadVersion = (state.portfolioLoadVersion || 0) + 1;
   clearTimeout(portfolioEnrichmentRetryTimer);
@@ -2011,8 +2018,10 @@ function applyLanguage() {
   renderAlarms();
   renderMacroScenario();
   if (state.alertData) renderAlerts(state.alertData);
+  if (typeof renderTradePlannerViews === "function") renderTradePlannerViews();
   renderAssistantChat();
   renderLoggingSettings();
+  renderAlertDismissalSettings();
   if (state.companyOutlook) renderCompanyOutlook(state.companyOutlook);
   if (state.financeReport) renderFinanceReport(state.financeReport);
   if (state.activeReport) renderReportSummary(state.activeReport);
@@ -2021,6 +2030,7 @@ function applyLanguage() {
   if (state.tradeHistoryDetail) renderTradeHistoryDetails(state.tradeHistoryDetail);
   if (state.items?.length) renderRows(state.items);
   if (state.positionTransactionsDetail) syncPositionTransactionLimit();
+  if (state.securityDetail && $("securityDetailModal")?.hidden === false) renderSecurityDetail();
   if (state.eventDividendSettings) renderEvents();
   refreshReportFilterOptions();
   document.querySelectorAll(".modal:not([hidden])").forEach(mountModalHomeLink);
@@ -2704,10 +2714,12 @@ function riskTooltip(risk) {
 
 function riskScoreForItems(items, options = {}) {
   const rows = items || [];
+  const valueOfHolding = options.normalizeField || normalizedField;
+  const baseCurrency = options.baseCurrency || state.baseCurrency;
   const label = options.label || "Portfolio risk";
   const cash = Math.max(0, Number(options.cash || 0));
   const horizonYears = options.horizonYears ?? null;
-  const values = rows.map((item) => Math.abs(normalizedField(item, "market_value"))).filter((value) => value > 0);
+  const values = rows.map((item) => Math.abs(valueOfHolding(item, "market_value"))).filter((value) => value > 0);
   const holdingsValue = sum(values);
   const totalValue = holdingsValue + cash;
   if (totalValue <= 0) {
@@ -2716,39 +2728,39 @@ function riskScoreForItems(items, options = {}) {
 
   const topPositionPct = values.length ? Math.max(...values) / totalValue * 100 : 0;
   const hhi = rows.reduce((total, item) => {
-    const pct = Math.abs(normalizedField(item, "market_value")) / totalValue * 100;
+    const pct = Math.abs(valueOfHolding(item, "market_value")) / totalValue * 100;
     return total + pct * pct;
   }, 0);
   const concentration = Math.min(topPositionPct / 40, 1) * 10 + Math.min(hhi / 2500, 1) * 6;
 
-  const weightedAsset = rows.reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")) * assetRiskFactor(item), cash * 0.05);
+  const weightedAsset = rows.reduce((total, item) => total + Math.abs(valueOfHolding(item, "market_value")) * assetRiskFactor(item), cash * 0.05);
   const assetMix = totalValue ? weightedAsset / totalValue * 14 : 0;
 
   const currencyTotals = rows.reduce((totals, item) => {
-    const value = Math.abs(normalizedField(item, "market_value"));
+    const value = Math.abs(valueOfHolding(item, "market_value"));
     economicCurrencyExposure(item).allocations.forEach(({ currency, percent }) => {
       totals[currency] = (totals[currency] || 0) + value * Number(percent || 0) / 100;
     });
     return totals;
   }, {});
   const unknownCurrencyValue = rows.reduce((total, item) => total
-    + Math.abs(normalizedField(item, "market_value")) * economicCurrencyExposure(item).unknownPercent / 100, 0);
+    + Math.abs(valueOfHolding(item, "market_value")) * economicCurrencyExposure(item).unknownPercent / 100, 0);
   if (cash) {
-    const cashCurrency = options.cashCurrency || state.baseCurrency;
+    const cashCurrency = options.cashCurrency || baseCurrency;
     currencyTotals[cashCurrency] = (currencyTotals[cashCurrency] || 0) + cash;
   }
-  const foreignValues = Object.entries(currencyTotals).filter(([currency]) => currency !== state.baseCurrency).map(([, value]) => value);
+  const foreignValues = Object.entries(currencyTotals).filter(([currency]) => currency !== baseCurrency).map(([, value]) => value);
   const nonBaseCurrencyPct = sum(foreignValues) / totalValue * 100;
   const largestForeignCurrencyPct = (foreignValues.length ? Math.max(...foreignValues) : 0) / totalValue * 100;
   const currency = Math.min(nonBaseCurrencyPct / 80, 1) * 7 + Math.min(largestForeignCurrencyPct / 60, 1) * 3;
 
-  const industryRows = rows.filter((item) => Math.abs(normalizedField(item, "market_value")) > 0
+  const industryRows = rows.filter((item) => Math.abs(valueOfHolding(item, "market_value")) > 0
     && ["EQUITY", "RSU", "ETF", "MUTUALFUND"].includes(String(item.holding.asset_class || "").toUpperCase())
     && !["money_market", "government_bond", "investment_grade_bond", "high_yield_bond"].includes(item.exposure_profile?.asset_focus));
   const industryTotals = industryRows.reduce((totals, item) => {
     const industry = industryLabel(item);
     if (!industry) return totals;
-    totals[industry] = (totals[industry] || 0) + Math.abs(normalizedField(item, "market_value"));
+    totals[industry] = (totals[industry] || 0) + Math.abs(valueOfHolding(item, "market_value"));
     return totals;
   }, {});
   const industryHhi = Object.values(industryTotals).reduce((total, value) => {
@@ -2757,7 +2769,7 @@ function riskScoreForItems(items, options = {}) {
   }, 0);
   const missingIndustryPct = holdingsValue ? industryRows
     .filter((item) => !industryLabel(item))
-    .reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")), 0) / holdingsValue * 100 : 0;
+    .reduce((total, item) => total + Math.abs(valueOfHolding(item, "market_value")), 0) / holdingsValue * 100 : 0;
   const industry = Math.min(industryHhi / 3000, 1) * 7 + missingIndustryPct / 100 * 3;
 
   const cashPct = cash / totalValue * 100;
@@ -2765,18 +2777,18 @@ function riskScoreForItems(items, options = {}) {
 
   const derivativesValue = rows
     .filter(derivativeHolding)
-    .reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")), 0);
+    .reduce((total, item) => total + Math.abs(valueOfHolding(item, "market_value")), 0);
   const derivativePct = derivativesValue / totalValue * 100;
   const hasShort = rows.some((item) => Number(item.holding.quantity || 0) < 0);
   const derivatives = Math.min(derivativePct / 25, 1) * 8 + (hasShort ? 2 : 0);
 
-  const weightedVolatility = rows.reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")) * volatilityProxy(item), 0);
+  const weightedVolatility = rows.reduce((total, item) => total + Math.abs(valueOfHolding(item, "market_value")) * volatilityProxy(item), 0);
   const avgVolatilityPct = holdingsValue ? weightedVolatility / holdingsValue : 0;
   const volatility = Math.min(avgVolatilityPct / 60, 1) * 10;
 
   const riskyAssetPct = totalValue ? rows
     .filter((item) => assetRiskFactor(item) >= 0.65 || derivativeHolding(item))
-    .reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")), 0) / totalValue * 100 : 0;
+    .reduce((total, item) => total + Math.abs(valueOfHolding(item, "market_value")), 0) / totalValue * 100 : 0;
   let horizon = 0;
   if (horizonYears !== null && horizonYears !== undefined) {
     const shortHorizonPressure = horizonYears < 3 ? 1 : horizonYears < 7 ? (7 - horizonYears) / 4 : 0;
@@ -2787,18 +2799,18 @@ function riskScoreForItems(items, options = {}) {
   const issuerRiskTotals = rows.reduce((totals, item) => {
     const issuer = issuerLabel(item);
     const fundLookThroughWeight = diversifiedFund(item) ? 0.35 : 1;
-    totals[issuer] = (totals[issuer] || 0) + Math.abs(normalizedField(item, "market_value")) * fundLookThroughWeight;
+    totals[issuer] = (totals[issuer] || 0) + Math.abs(valueOfHolding(item, "market_value")) * fundLookThroughWeight;
     return totals;
   }, {});
   const symbolTotals = rows.reduce((totals, item) => {
     const symbol = issuerLabel(item);
-    totals[symbol] = (totals[symbol] || 0) + Math.abs(normalizedField(item, "market_value"));
+    totals[symbol] = (totals[symbol] || 0) + Math.abs(valueOfHolding(item, "market_value"));
     return totals;
   }, {});
   const countryTotals = rows.reduce((totals, item) => {
     const country = countryLabel(item);
     if (!country) return totals;
-    totals[country] = (totals[country] || 0) + Math.abs(normalizedField(item, "market_value"));
+    totals[country] = (totals[country] || 0) + Math.abs(valueOfHolding(item, "market_value"));
     return totals;
   }, {});
   const largestIssuerRiskPct = holdingsValue ? Math.max(0, ...Object.values(issuerRiskTotals)) / holdingsValue * 100 : 0;
@@ -2806,8 +2818,8 @@ function riskScoreForItems(items, options = {}) {
   const largestCountryPct = holdingsValue ? Math.max(0, ...Object.values(countryTotals)) / holdingsValue * 100 : 0;
   const issuerCountry = Math.min(largestIssuerRiskPct / 35, 1) * 4 + Math.max(0, Math.min((largestCountryPct - 55) / 35, 1)) * 4;
 
-  const missingPricePct = holdingsValue ? rows.filter((item) => (item.missing || []).includes("price history")).reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")), 0) / holdingsValue * 100 : 0;
-  const missingClassPct = holdingsValue ? rows.filter((item) => !item.holding.asset_class || !item.holding.currency).reduce((total, item) => total + Math.abs(normalizedField(item, "market_value")), 0) / holdingsValue * 100 : 0;
+  const missingPricePct = holdingsValue ? rows.filter((item) => (item.missing || []).includes("price history")).reduce((total, item) => total + Math.abs(valueOfHolding(item, "market_value")), 0) / holdingsValue * 100 : 0;
+  const missingClassPct = holdingsValue ? rows.filter((item) => !item.holding.asset_class || !item.holding.currency).reduce((total, item) => total + Math.abs(valueOfHolding(item, "market_value")), 0) / holdingsValue * 100 : 0;
   const dataQuality = Math.min(missingPricePct / 100 * 2 + missingIndustryPct / 100 * 1.5
     + missingClassPct / 100 * 1.5 + unknownCurrencyValue / totalValue * 1.5, 5);
 
@@ -2837,7 +2849,7 @@ function riskScoreForItems(items, options = {}) {
     missingIndustryPct > 20 ? `Missing industry ${fmt(missingIndustryPct, 1)}%` : "",
   ].filter(Boolean);
   const positionRisks = new Map(rows.map((item) => {
-    const valuePct = Math.abs(normalizedField(item, "market_value")) / totalValue * 100;
+    const valuePct = Math.abs(valueOfHolding(item, "market_value")) / totalValue * 100;
     const itemVolatility = volatilityProxy(item);
     const itemScore = Math.min(Math.round(valuePct * 0.65 + assetRiskFactor(item) * 20 + itemVolatility / 120 * 15 + (derivativeHolding(item) ? 15 : 0) + ((item.missing || []).length ? 6 : 0)), 100);
     return [item, {
@@ -3314,6 +3326,7 @@ function refreshLocalizedFormOptions() {
   setCompanyLocationOptions(valueOf("employeeWizardLocation") || "USA", "employeeWizardLocation");
   ["localAccountCurrency", "editAccountCurrency", "brokerCurrency", "employeeWizardCurrency"]
     .forEach((id) => setCurrencyOptions(id, SUPPORTED_MANAGEMENT_CURRENCIES));
+  setCurrencyOptions("tradePlanCurrency", SUPPORTED_MANAGEMENT_CURRENCIES);
   setCurrencyOptions("priceCurrency");
   setCurrencyOptions("manualSecurityCurrency", SUPPORTED_MANAGEMENT_CURRENCIES);
 }
@@ -6511,7 +6524,7 @@ function priceMatchesSecurity(price, detail) {
     && String(price.stock_market || "").toUpperCase() === String(detail.market_key || detail.stock_market || "").toUpperCase();
 }
 
-async function openSecurityDetail(dataset) {
+async function openSecurityDetail(dataset, returnFocus = document.activeElement) {
   const symbol = cleanSecuritySymbol(dataset.securityDetailSymbol);
   const marketKey = String(dataset.securityDetailMarketKey || "MANUAL").toUpperCase();
   const item = (state.allPortfolioItems || state.items).find((candidate) => securityMatches(candidate, symbol, marketKey));
@@ -6533,7 +6546,7 @@ async function openSecurityDetail(dataset) {
   setDateField("detailPriceDate", todayString());
   $("detailPriceInput").value = "";
   $("detailPriceComments").value = "";
-  openModal("securityDetailModal");
+  openModal("securityDetailModal", returnFocus);
   await loadSecurityDetail();
 }
 
@@ -6559,45 +6572,73 @@ async function loadSecurityDetail() {
   renderSecurityDetail();
 }
 
+function securityTransactionCommentText(tx) {
+  const text = String(tx.comments || "").trim();
+  // Keep audit/source keys in the ledger; show people a readable source description.
+  const generatedComments = [
+    [/^Dividend event\s+dividend:[^\s·;|]+/iu, "Automatic dividend"],
+    [/^Imported source\s+(?:BUY|SELL|SHORT|ADD|REMOVE|DIVIDEND|INTEREST|FEE|order|profile)\b/iu, "Imported transaction"],
+    [/^Imported quantity\s+[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?\b/iu, "Imported holding"],
+    [/^Employee stock option exercise\b/iu, "Option exercise"],
+    [/^Shares acquired by exercising employee stock options\b/iu, "Shares acquired by exercising employee stock options"],
+    [/^Shares acquired from employee stock options\b/iu, "Shares acquired from employee stock options"],
+  ];
+  for (const [pattern, label] of generatedComments) {
+    const match = text.match(pattern);
+    if (!match) continue;
+    const note = text.slice(match[0].length).replace(/^\s*(?:[·;|]\s*)?/u, "").trim();
+    return [t(label), note].filter(Boolean).join(" · ");
+  }
+  return text;
+}
+
 function renderSecurityDetail() {
   const detail = state.securityDetail;
   if (!detail) return;
   const h = detail.item?.holding || {};
-  $("securityDetailTitle").textContent = `${detail.symbol}${detail.secondary_symbol ? ` · ${detail.secondary_symbol}` : ""} overview`;
+  $("securityDetailTitle").textContent = t(`${detail.symbol}${detail.secondary_symbol ? ` · ${detail.secondary_symbol}` : ""} overview`);
   $("securityDetailOverview").innerHTML = [
     ["Name", h.name || detail.symbol],
     ...(detail.secondary_symbol ? [["Secondary symbol", detail.secondary_symbol, "Optional alternate ticker used for market-data lookup."]] : []),
     ["Stock market", detail.stock_market, "The exchange/market where the security trades. This is not the API provider."],
     ["Data provider", detail.data_provider, "Where the market data was read from."],
-    ["Type", h.asset_class || detail.asset_class],
+    ["Type", optionLabel(h.asset_class || detail.asset_class)],
     ["Currency", currencyDisplayLabel(h.currency || detail.currency)],
     ["Quantity", fmt(h.quantity || 0, 4)],
     ["Market value", money(h.market_value || 0, h.currency || detail.currency)],
     ["Cost basis", money(h.cost_basis || 0, h.currency || detail.currency)],
-    ["Average buy price", Math.abs(Number(h.quantity || 0)) ? money(Math.abs(Number(h.cost_basis || 0) / Number(h.quantity || 0)), h.currency || detail.currency, 2) : "Not available"],
+    ["Average buy price", Math.abs(Number(h.quantity || 0)) ? money(Math.abs(Number(h.cost_basis || 0) / Number(h.quantity || 0)), h.currency || detail.currency, 2) : t("Not available")],
     ["Holding profit (open)", signedMoney(h.unrealized_profit || 0, h.currency || detail.currency), "Profit/loss on the quantity still held. It changes with the current price."],
     ["Closed profit", signedMoney(h.realized_profit || 0, h.currency || detail.currency), "Profit/loss already recorded by sell, cover, dividend, interest, or fee transactions."],
     ["Account", cleanSourceLabel(h.account || "")],
-  ].map(([label, value, title]) => `<div class="security-kpi" title="${esc(title || "")}"><span>${esc(optionLabel(label))}</span><b>${esc(value || "∅")}</b></div>`).join("");
+  ].map(([label, value, title]) => `<div class="security-kpi" title="${esc(optionLabel(title || ""))}"><span>${esc(optionLabel(label))}</span><b>${esc(value || "∅")}</b></div>`).join("");
   const txs = state.localTransactions.filter((tx) => transactionMatchesSecurity(tx, detail));
-  $("securityDetailTransactions").innerHTML = txs.length ? txs.map((tx) => `
+  $("securityDetailTransactions").innerHTML = txs.length ? txs.map((tx) => {
+    const action = { ADD: "Add security", REMOVE: "Remove security" }[tx.action];
+    const actionLabel = action ? t(action) : tradeHistoryActionLabel(tx.action);
+    const cash = transactionCashImpact(tx);
+    const note = securityTransactionCommentText(tx);
+    const metadata = [cash ? `${t("Cash")} ${signedMoney(cash, tx.currency)}` : t("No cash movement"),
+      cleanSourceLabel(tx.management_company || ""), cleanSourceLabel(tx.account_id || ""), note].filter(Boolean);
+    return `
     <div class="stack-item management-item">
-      <b>${esc(tx.action)} ${fmt(tx.quantity, 4)}</b>
-    <span>${esc(formatDate(tx.trade_date))} · input ${fmt(tx.price_input, 4)} · ${esc(currencyDisplayLabel(tx.currency))} ${fmt(tx.price, 4)}</span>
-      <button class="secondary compact-button" type="button" data-edit-security="${esc(tx.id)}">Edit</button>
-      <button class="secondary compact-button" type="button" data-delete-security="${esc(tx.id)}">Delete</button>
-      <div class="sub">${transactionCashImpact(tx) ? `Cash ${signedMoney(transactionCashImpact(tx), tx.currency)}` : "No cash movement"} · ${esc(cleanSourceLabel(tx.management_company || ""))} ${esc(cleanSourceLabel(tx.account_id || ""))}${tx.comments ? ` · ${esc(cleanSourceLabel(tx.comments))}` : ""}</div>
+      <b>${esc(actionLabel)} <bdi>${fmt(tx.quantity, 4)}</bdi></b>
+      <span>${esc(formatDate(tx.trade_date))} · ${esc(t("Entered price"))} <bdi>${fmt(tx.price_input, 4)}</bdi> · <bdi>${esc(currencyDisplayLabel(tx.currency))} ${fmt(tx.price, 4)}</bdi></span>
+      <button class="secondary compact-button" type="button" data-edit-security="${esc(tx.id)}">${esc(t("Edit"))}</button>
+      <button class="secondary compact-button" type="button" data-delete-security="${esc(tx.id)}">${esc(t("Delete"))}</button>
+      <div class="sub">${metadata.map((value) => `<bdi>${esc(value)}</bdi>`).join(" · ")}</div>
     </div>
-  `).join("") : '<div class="empty">No transactions for this security</div>';
+  `;
+  }).join("") : `<div class="empty">${esc(t("No transactions for this security"))}</div>`;
   const prices = state.localPrices.filter((price) => priceMatchesSecurity(price, detail));
   $("securityDetailPrices").innerHTML = prices.length ? prices.map((price) => `
     <div class="stack-item management-item">
       <b>${esc(formatDate(price.price_date))}</b>
       <span>${fmt(price.price_input, 4)} · ${esc(currencyDisplayLabel(price.currency))} ${fmt(price.price, 4)}</span>
-      <button class="secondary compact-button" type="button" data-delete-price="${esc(price.id)}">Remove</button>
-      <div class="sub">${esc(price.asset_class)} · ${esc(countryDisplayLabel(price.location))}${price.comments ? ` · ${esc(price.comments)}` : ""}</div>
+      <button class="secondary compact-button" type="button" data-delete-price="${esc(price.id)}">${esc(t("Remove"))}</button>
+      <div class="sub">${esc(optionLabel(price.asset_class))} · ${esc(countryDisplayLabel(price.location))}${price.comments ? ` · ${esc(price.comments)}` : ""}</div>
     </div>
-  `).join("") : '<div class="empty">No saved price history for this security</div>';
+  `).join("") : `<div class="empty">${esc(t("No saved price history for this security"))}</div>`;
   renderSecurityTechnicalSignal();
   renderSecurityChart();
 }
@@ -6797,7 +6838,7 @@ function renderSecurityChart() {
   renderSecurityChartZoomControls(allPoints, zoomWindow);
   const points = allPoints.slice(zoomWindow.start, zoomWindow.end + 1);
   if (!allPoints.length) {
-    frame.innerHTML = '<div class="empty">No price history for this period</div>';
+    frame.innerHTML = `<div class="empty">${esc(t("No price history for this period"))}</div>`;
     return;
   }
   const meta = state.securityHistoryMeta || {};
@@ -6865,7 +6906,7 @@ function renderSecurityChart() {
     const color = level.kind === "support" ? "#2dde98" : "#ff5b73";
     return `
       <g>
-        <title>${esc(level.label)} ${esc(level.kind)} ${esc(fmt(level.price, 4))}</title>
+        <title>${esc(level.label)} ${esc(t(level.kind === "support" ? "Support" : "Resistance"))} ${esc(fmt(level.price, 4))}</title>
         <rect x="${markerX.toFixed(1)}" y="${markerY.toFixed(1)}" width="9" height="9" rx="1.5" fill="${color}" />
         <text x="${(markerX + 13).toFixed(1)}" y="${(markerY + 8.5).toFixed(1)}" fill="${color}" font-size="11" font-weight="900">${esc(level.label)}</text>
       </g>
@@ -6891,25 +6932,26 @@ function renderSecurityChart() {
     return `<rect x="${(px - barWidth / 2).toFixed(1)}" y="${(volumeBase - barHeight).toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" rx="1.5" fill="${up ? "#2dde98" : "#ff5b73"}" opacity="0.72" />`;
   }).join("") : "";
   const legend = [
-    showCandles ? '<span><i style="background:#2dde98"></i>Up candle</span><span><i style="background:#ff5b73"></i>Down candle</span>' : '<span><i style="background:#21a7ff"></i>Adjusted close</span>',
+    showCandles ? `<span><i style="background:#2dde98"></i>${esc(t("Up candle"))}</span><span><i style="background:#ff5b73"></i>${esc(t("Down candle"))}</span>` : `<span><i style="background:#21a7ff"></i>${esc(t("Adjusted close"))}</span>`,
     ...selectedMaWindows.map((window) => `<span><i style="background:${maColors[window] || "#aab4cf"}"></i>MA ${esc(window)}</span>`),
     ...selectedLevelPeriods.flatMap((period) => [
-      `<span><i style="background:#2dde98"></i>${esc(levelPeriodLabel(period))} support</span>`,
-      `<span><i style="background:#ff5b73"></i>${esc(levelPeriodLabel(period))} resistance</span>`,
+      `<span><i style="background:#2dde98"></i>${esc(levelPeriodLabel(period))} ${esc(t("Support"))}</span>`,
+      `<span><i style="background:#ff5b73"></i>${esc(levelPeriodLabel(period))} ${esc(t("Resistance"))}</span>`,
     ]),
-    hasVolume ? '<span><i style="background:#2dde98"></i>Volume up</span><span><i style="background:#ff5b73"></i>Volume down</span>' : "",
+    hasVolume ? `<span><i style="background:#2dde98"></i>${esc(t("Volume up"))}</span><span><i style="background:#ff5b73"></i>${esc(t("Volume down"))}</span>` : "",
   ].filter(Boolean).join("");
   const volumeText = hasVolume
-    ? `Volume ${fmt(meta.volume?.latest || last.volume, 0)} · Avg 20D ${meta.volume?.average_20d ? fmt(meta.volume.average_20d, 0) : "N/A"} · Avg 90D ${meta.volume?.average_90d ? fmt(meta.volume.average_90d, 0) : "N/A"}`
-    : "No volume data from provider for this period";
-  const chartNotice = state.securityChartMode === "candles" && !meta.has_candles ? '<div class="chart-notice">Candles need OHLC data. Showing line chart for this source.</div>' : "";
+    ? `${t("Volume")} ${fmt(meta.volume?.latest || last.volume, 0)} · ${t("Avg 20D")} ${meta.volume?.average_20d ? fmt(meta.volume.average_20d, 0) : t("N/A")} · ${t("Avg 90D")} ${meta.volume?.average_90d ? fmt(meta.volume.average_90d, 0) : t("N/A")}`
+    : t("No volume data from provider for this period");
+  const pointCountText = `${fmt(points.length, 0)}${zoomWindow.isFull ? "" : ` ${t("of")} ${fmt(allPoints.length, 0)}`} ${t(points.length === 1 ? "price point" : "price points")}`;
+  const chartNotice = state.securityChartMode === "candles" && !meta.has_candles ? `<div class="chart-notice">${esc(t("Candles need OHLC data. Showing line chart for this source."))}</div>` : "";
   frame.innerHTML = `
     ${chartNotice}
-    <svg viewBox="0 0 ${width} ${height}" role="img" tabindex="0" aria-label="Interactive security price history. Drag horizontally to zoom.">
+    <svg viewBox="0 0 ${width} ${height}" role="img" tabindex="0" aria-label="${esc(t("Interactive security price history. Drag horizontally to zoom."))}">
       ${[max, mid, min].map((value) => `<line x1="${padLeft}" y1="${y(value).toFixed(1)}" x2="${width - padRight}" y2="${y(value).toFixed(1)}" stroke="#1e2835" stroke-dasharray="5 7" />`).join("")}
       <line x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}" stroke="#344052" />
       <line x1="${padLeft}" y1="${(padTop + plotHeight).toFixed(1)}" x2="${width - padRight}" y2="${(padTop + plotHeight).toFixed(1)}" stroke="#344052" />
-      ${hasVolume ? `<line x1="${padLeft}" y1="${volumeTop.toFixed(1)}" x2="${width - padRight}" y2="${volumeTop.toFixed(1)}" stroke="#26303d" stroke-dasharray="5 7" /><line x1="${padLeft}" y1="${volumeBase.toFixed(1)}" x2="${width - padRight}" y2="${volumeBase.toFixed(1)}" stroke="#344052" />${volumeBars}<text x="${padLeft}" y="${(volumeTop - 6).toFixed(1)}" fill="#9cacc2" font-size="11" font-weight="800">Volume</text>` : ""}
+      ${hasVolume ? `<line x1="${padLeft}" y1="${volumeTop.toFixed(1)}" x2="${width - padRight}" y2="${volumeTop.toFixed(1)}" stroke="#26303d" stroke-dasharray="5 7" /><line x1="${padLeft}" y1="${volumeBase.toFixed(1)}" x2="${width - padRight}" y2="${volumeBase.toFixed(1)}" stroke="#344052" />${volumeBars}<text x="${padLeft}" y="${(volumeTop - 6).toFixed(1)}" fill="#9cacc2" font-size="11" font-weight="800">${esc(t("Volume"))}</text>` : ""}
       <line x1="${middleX.toFixed(1)}" y1="${height - padBottom}" x2="${middleX.toFixed(1)}" y2="${(height - padBottom + 5).toFixed(1)}" stroke="#344052" />
       ${[max, mid, min].map((value) => `<text x="${padLeft - 8}" y="${(y(value) + 4).toFixed(1)}" fill="#9cacc2" font-size="11" font-weight="700" text-anchor="end">${esc(fmt(value, 4))}</text>`).join("")}
       ${showCandles ? candles : `<path d="${d}" fill="none" stroke="#21a7ff" stroke-width="3" />`}
@@ -6932,7 +6974,7 @@ function renderSecurityChart() {
     <div class="chart-hover-tip" hidden></div>
     <div class="security-chart-footer">
       <div class="chart-legend">${legend}</div>
-      <div class="sub ${cls}">${points.length}${zoomWindow.isFull ? "" : ` of ${allPoints.length}`} price points · ${esc(volumeText)}</div>
+      <div class="sub ${cls}">${esc(pointCountText)} · ${esc(volumeText)}</div>
     </div>
   `;
   attachSecurityChartHover(frame, points, { width, height, padLeft, padRight, padTop, padBottom, plotWidth, plotHeight, min, max });
@@ -7671,6 +7713,7 @@ function setSecuritiesWorkflow(workflow = "general") {
   const employeeOptions = workflow === "employee-options";
   state.securitiesWorkflow = employeeOptions ? "employee-options" : "general";
   $("securitiesModal")?.classList.toggle("employee-options-mode", employeeOptions);
+  if ($("tradePlannerSection")) $("tradePlannerSection").hidden = employeeOptions;
   $("employeeOptionSavedSection").hidden = !employeeOptions;
   $("instrumentDefinitionSection").hidden = employeeOptions;
   $("accountTransactionSection").hidden = employeeOptions;
@@ -10966,6 +11009,7 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
     const allItems = data.items || [];
     state.allPortfolioItems = allItems;
     state.items = portfolioItems(allItems);
+    if (typeof checkTradePlannerInputs === "function") checkTradePlannerInputs();
     state.portfolioReady = true;
     state.accountTrend = {
       ...trend,
@@ -11307,8 +11351,14 @@ function renderAlerts(data) {
   else renderAlertConditions();
 
   const rules = data.rules || [];
-  const signals = data.active_signals || [];
+  const locallyDismissed = (state.alertClientDismissals || []).filter((entry) => Date.parse(entry.expires_at) > Date.now());
+  const signals = (data.active_signals || []).filter((signal) => !locallyDismissed.some((entry) => entry.symbol === String(signal.symbol || "").toUpperCase() && entry.signal === signal.signal));
   const runs = data.runs || [];
+  const dismissalDays = Number.isInteger(Number(data.dismissal_days)) && Number(data.dismissal_days) >= 1 ? Number(data.dismissal_days) : 60;
+  if ($("alertSignalStatus")) {
+    const message = state.alertDismissStatus;
+    $("alertSignalStatus").textContent = message ? Object.entries(message.values || {}).reduce((text, [key, value]) => text.replaceAll(`{${key}}`, value), t(message.template)) : "";
+  }
   $("alertActiveSummary").textContent = fmt(signals.length, 0);
   $("alertRuleSummary").textContent = `${rules.filter((rule) => rule.enabled).length} of ${rules.length}`;
   $("alertScheduleSummary").textContent = data.schedule?.next_run ? formatDateTime(data.schedule.next_run) : t("Not scheduled");
@@ -11316,11 +11366,12 @@ function renderAlerts(data) {
     ? `${runs[0].status === "failed" ? `${t("Failed")} · ` : ""}${formatDateTime(runs[0].run_at)}`
     : t("Not run");
 
-  $("alertsSignals").innerHTML = signals.length ? signals.map((signal) => {
+  $("alertsSignals").innerHTML = signals.length ? signals.map((signal, index) => {
     const signalType = ["buy", "sell", "watch"].includes(signal.signal) ? signal.signal : "watch";
     const reasons = (signal.reasons || []).map((reason) => `<li>${esc(alertReasonText(reason))}</li>`).join("");
     const missing = (signal.missing || []).filter(Boolean);
     const missingRuleMetrics = (signal.missing_metrics || []).map((metric) => alertMetric(metric).label);
+    const dismissing = (state.alertDismissPending || []).includes(`${String(signal.symbol || "").toUpperCase()}|${signalType}`);
     return `<article class="signal-card signal-match-card signal-${esc(signalType)}">
       <div class="signal-card-head">
         <div><span class="signal-badge">${esc(t(`${signalType[0].toUpperCase()}${signalType.slice(1)} signal`))}</span><h5>${esc(signal.symbol)} <small>${esc(signal.name || "")}</small></h5></div>
@@ -11333,7 +11384,10 @@ function renderAlerts(data) {
       <div class="signal-card-actions">
         <button class="secondary compact-button" type="button" data-alert-chart="${esc(signal.symbol)}">${t("Chart")}</button>
         <button type="button" data-investigate-signal="${esc(signal.symbol)}">Investigate &amp; score</button>
+        ${typeof tradePlannerSignalAction === "function" ? tradePlannerSignalAction(signal, index) : ""}
+        <button class="secondary compact-button" type="button" data-dismiss-alert-signal="${esc(signal.symbol)}" data-dismiss-alert-type="${esc(signalType)}" aria-label="${esc(`${t("Dismiss signal")}: ${signal.symbol}`)}" title="${esc(t("Dismiss this stock and signal type across all rules for {days} days.").replace("{days}", fmt(dismissalDays, 0)))}"${dismissing ? " disabled" : ""}>${esc(t(dismissing ? "Dismissing…" : "Dismiss"))}</button>
       </div>
+      ${typeof tradePlannerSignalPanel === "function" ? tradePlannerSignalPanel(signal, index) : ""}
     </article>`;
   }).join("") : '<div class="empty signal-empty">No current matches. Run the rules now or wait for the next daily check.</div>';
 
@@ -11398,8 +11452,50 @@ function scheduleAlertRefresh() {
 }
 
 async function loadAlerts() {
+  const revision = state.alertDismissRevision || 0;
   const data = await api("/api/alerts");
+  if (revision !== (state.alertDismissRevision || 0)) return;
   renderAlerts(data);
+}
+
+async function dismissAlertSignal(symbol, signal, button) {
+  if (!canWrite()) return;
+  const normalized = String(symbol || "").trim().toUpperCase();
+  if (!normalized || !["buy", "sell", "watch"].includes(signal)) return;
+  const key = `${normalized}|${signal}`;
+  state.alertDismissPending ||= [];
+  if (state.alertDismissPending.includes(key)) return;
+  state.alertDismissPending.push(key);
+  state.alertDismissRevision = (state.alertDismissRevision || 0) + 1;
+  const restoreFocus = document.activeElement === button;
+  const sourceModal = button?.closest?.(".modal") || null;
+  state.alertDismissStatus = { template: "Dismissing {symbol}…", values: { symbol: normalized } };
+  document.querySelectorAll("[data-dismiss-alert-signal]").forEach((control) => {
+    if (String(control.dataset.dismissAlertSignal).toUpperCase() === normalized && control.dataset.dismissAlertType === signal) {
+      control.disabled = true;
+      control.textContent = t("Dismissing…");
+    }
+  });
+  if ($("alertSignalStatus")) $("alertSignalStatus").textContent = t("Dismissing {symbol}…").replace("{symbol}", normalized);
+  let nextState = null;
+  try {
+    const result = await api("/api/alerts/dismiss", { method: "POST", body: JSON.stringify({ symbol: normalized, signal }) });
+    if (!result.dismissed || !result.state || !result.expires_at) throw new Error("Invalid dismissal response");
+    state.alertClientDismissals ||= [];
+    state.alertClientDismissals.push({ symbol: normalized, signal, expires_at: result.expires_at });
+    state.alertDismissStatus = { template: "{symbol} signal dismissed until {date}.", values: { symbol: normalized, date: formatDateTime(result.expires_at) } };
+    nextState = result.state;
+  } catch {
+    state.alertDismissStatus = { template: "Could not dismiss the signal. Try again.", values: {} };
+  } finally {
+    state.alertDismissPending = state.alertDismissPending.filter((entry) => entry !== key);
+    state.alertDismissRevision = (state.alertDismissRevision || 0) + 1;
+    const shouldRestoreFocus = restoreFocus && (document.activeElement === button || document.activeElement === document.body);
+    if (nextState || state.alertData) renderAlerts(nextState || state.alertData);
+    if (shouldRestoreFocus && (!sourceModal || (!sourceModal.hidden && !sourceModal.inert))) {
+      requestAnimationFrame(() => $("alertSignalStatus")?.focus({ preventScroll: true }));
+    }
+  }
 }
 
 async function saveAlert() {
@@ -12001,7 +12097,77 @@ async function loadCacheStatus() {
   renderApiAccessSettings();
 }
 
-const SETTINGS_SECTIONS = new Set(["display", "security", "table", "assistant", "api", "logging", "data", "backup", "system"]);
+const SETTINGS_SECTIONS = new Set(["display", "security", "table", "signals", "assistant", "api", "logging", "data", "backup", "system"]);
+
+function alertDismissalSettingsUi() {
+  return state.alertDismissalSettingsUi ||= { loading: false, saving: false, loaded: false, version: 0, status: "" };
+}
+
+function renderAlertDismissalSettings() {
+  const input = $("alertDismissalDays");
+  if (!input) return;
+  const ui = alertDismissalSettingsUi();
+  input.disabled = ui.loading || ui.saving || !ui.loaded || !canWrite();
+  $("saveAlertDismissalSettings").disabled = input.disabled;
+  $("reloadAlertDismissalSettings").disabled = ui.loading || ui.saving;
+  $("alertDismissalSettingsForm").setAttribute("aria-busy", String(ui.loading || ui.saving));
+  $("alertDismissalSettingsStatus").textContent = t(ui.status);
+}
+
+async function loadAlertDismissalSettings() {
+  const ui = alertDismissalSettingsUi();
+  if (ui.loading || ui.saving) return;
+  const version = ++ui.version;
+  ui.loading = true;
+  ui.status = "Loading signal settings…";
+  renderAlertDismissalSettings();
+  try {
+    const result = await api("/api/settings/alerts");
+    if (version !== ui.version) return;
+    const days = Number(result.dismissal_days);
+    if (!Number.isInteger(days) || days < 1 || days > 3650) throw new Error("Invalid dismissal period");
+    $("alertDismissalDays").value = String(days);
+    ui.loaded = true;
+    ui.status = "";
+  } catch {
+    if (version !== ui.version) return;
+    ui.status = "Could not load signal settings. Reload to try again.";
+  } finally {
+    if (version === ui.version) {
+      ui.loading = false;
+      renderAlertDismissalSettings();
+    }
+  }
+}
+
+async function saveAlertDismissalSettings() {
+  const ui = alertDismissalSettingsUi();
+  if (!canWrite() || !ui.loaded || ui.loading || ui.saving) return;
+  const raw = $("alertDismissalDays").value.trim();
+  const days = Number(raw);
+  if (!/^\d+$/u.test(raw) || !Number.isInteger(days) || days < 1 || days > 3650) {
+    ui.status = "Enter a whole number of days from 1 to 3650.";
+    renderAlertDismissalSettings();
+    $("alertDismissalDays").focus();
+    return;
+  }
+  ui.saving = true;
+  ui.status = "Saving signal settings…";
+  renderAlertDismissalSettings();
+  try {
+    const result = await api("/api/settings/alerts", { method: "PUT", body: JSON.stringify({ dismissal_days: days }) });
+    const savedDays = Number(result.dismissal_days);
+    if (!Number.isInteger(savedDays) || savedDays < 1 || savedDays > 3650) throw new Error("Invalid dismissal period");
+    $("alertDismissalDays").value = String(savedDays);
+    if (state.alertData) renderAlerts({ ...state.alertData, dismissal_days: savedDays });
+    ui.status = "Signal dismissal period saved. Existing dismissals keep their original expiry.";
+  } catch {
+    ui.status = "Could not save signal settings. Your value is kept. Try again.";
+  } finally {
+    ui.saving = false;
+    renderAlertDismissalSettings();
+  }
+}
 
 function setSettingsSection(requestedSection = "display", { focus = false } = {}) {
   const allowedSection = !["api", "logging"].includes(requestedSection) || canAdmin();
@@ -12020,6 +12186,7 @@ function setSettingsSection(requestedSection = "display", { focus = false } = {}
     loadCacheStatus().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; });
   }
   if (section === "assistant") loadAssistantSettings();
+  if (section === "signals") loadAlertDismissalSettings();
   if (section === "logging") loadLoggingSettings();
   if (focus) requestAnimationFrame(() => document.querySelector(`[data-settings-section="${section}"]`)?.focus());
 }
@@ -12562,8 +12729,21 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
   const modal = $(id);
   if (!modal) return;
   if (returnFocus instanceof HTMLElement) modalReturnFocus.set(id, returnFocus);
+  // CSS stacking and the keyboard focus trap both follow modal document order.
+  modal.parentElement?.append(modal);
   modal.hidden = false;
   mountModalHomeLink(modal);
+  if (id === "securityDetailModal") {
+    const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : null;
+    if (parentModal && parentModal !== modal) {
+      modal.dataset.parentModalId = parentModal.id;
+      parentModal.inert = true;
+      parentModal.setAttribute("aria-hidden", "true");
+    }
+    requestAnimationFrame(() => {
+      if (!modal.hidden) modal.querySelector("button[data-close]")?.focus({ preventScroll: true });
+    });
+  }
   if (id === "assistantModal") {
     loadAssistantChats();
     requestAnimationFrame(() => $("assistantPrompt")?.focus());
@@ -12645,6 +12825,14 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
 function closeModal(modal) {
   if (!modal) return;
   if (modal.id === "assistantModal") saveAssistantDraft();
+  if (modal.id === "securityDetailModal" && modal.dataset.parentModalId) {
+    const parentModal = $(modal.dataset.parentModalId);
+    if (parentModal) {
+      parentModal.inert = false;
+      parentModal.removeAttribute("aria-hidden");
+    }
+    delete modal.dataset.parentModalId;
+  }
   if (modal.id === "familyMemberModal") {
     if (state.familyMemberSaving) return;
     $("familyModal").inert = false;
@@ -12676,7 +12864,7 @@ function closeModal(modal) {
     if (focusTarget instanceof HTMLElement) {
       const parentMenu = focusTarget.closest("details");
       if (parentMenu && !parentMenu.open) parentMenu.open = true;
-      focusTarget.focus({ preventScroll: modal.id === "tradeHistoryDetailModal" });
+      focusTarget.focus({ preventScroll: ["tradeHistoryDetailModal", "securityDetailModal"].includes(modal.id) });
     }
   });
 }
@@ -12884,6 +13072,9 @@ document.addEventListener("click", (event) => {
       $("alertStatus").textContent = `Error: ${error.message}`;
     });
   }
+
+  const dismissSignalButton = event.target.closest("[data-dismiss-alert-signal]");
+  if (dismissSignalButton) dismissAlertSignal(dismissSignalButton.dataset.dismissAlertSignal, dismissSignalButton.dataset.dismissAlertType, dismissSignalButton);
 
   const editAlertId = event.target.closest("[data-edit-alert]")?.dataset.editAlert;
   if (editAlertId) editAlertRule(editAlertId);
@@ -13664,6 +13855,8 @@ $("saveDisplaySettings").addEventListener("click", () => {
   loadCacheStatus().catch(reportBackgroundError);
   $("settingsStatus").textContent = t("displaySettingsSaved");
 });
+$("saveAlertDismissalSettings").addEventListener("click", saveAlertDismissalSettings);
+$("reloadAlertDismissalSettings").addEventListener("click", loadAlertDismissalSettings);
 $("dashboardEdit").addEventListener("click", () => setDashboardEdit(!state.dashboard.edit));
 $("dashboardReset").addEventListener("click", resetDashboard);
 $("saveManualSecurity").addEventListener("click", () => saveManualSecurity().catch((error) => { $("manualSecurityStatus").textContent = `Error: ${error.message}`; }));

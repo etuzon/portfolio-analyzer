@@ -13,6 +13,14 @@ Open `https://localhost:6443`. The container generates a local self-signed certi
 
 Keep `config.yaml` private because it may include external provider credentials or optional import credentials.
 
+## Trade planning and signals
+
+**Securities → Account recommendation** accepts a stock, Buy or Short, and an optional amount/currency. Buy-signal cards offer the same planner directly. Suggestions use current ledger cash, recent dated prices, the existing account-risk model, cash reserves, stock/sector concentration, and retirement-horizon and volatility proxies. US listings require US investment accounts with USD cash. Missing prices, FX, or unverifiable cash produce an explanation instead of an amount. Saved local instruments can be planned before they are held. Planning never records a transaction or changes the portfolio.
+
+Sizing defaults and the limiting factor appear with each result. Short suggestions are conditional estimates: the model reserves twice the short exposure from existing cash, and broker permissions, borrow availability, and actual margin requirements remain unverified. Separate suggestions reuse the same cash and must not be added together as a spending plan.
+
+Use **Dismiss** on an active signal to hide the same stock and signal type across all rules, including later runs. **Settings → Portfolio signals** controls the period (default **60 days**, range **1–3650**). Settings and dismissals persist in `data/alerts.json`. Changing the period affects new dismissals; existing expiry dates remain unchanged. Admins and Operators can dismiss signals and save the period; Viewers can read the setting.
+
 ## Reset an Admin Password
 
 If an Admin forgets their password, set a temporary replacement from an interactive shell inside the running container:

@@ -20,7 +20,7 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/assets/portfolio-vault/icon-48.png?v=1" />
     <link rel="shortcut icon" href="/assets/portfolio-vault/favicon.ico?v=1" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.8" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.9" />
   </head>
   <body>
     <div id="authOverlay" class="auth-overlay">
@@ -509,6 +509,18 @@
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
+        <section id="tradePlannerSection" class="management-section trade-planner" aria-labelledby="tradePlannerTitle">
+          <div class="workflow-section-heading"><span><b id="tradePlannerTitle">Account recommendation</b><small>Choose a stock and action. Leave the amount empty to get a suggested size.</small></span></div>
+          <form id="tradePlannerForm" class="trade-planner-form">
+            <label class="management-field" for="tradePlanSymbol"><span>Stock symbol</span><input id="tradePlanSymbol" required maxlength="80" placeholder="Ticker" autocomplete="off" spellcheck="false" dir="ltr" /></label>
+            <label class="management-field" for="tradePlanMarket"><span>Stock market (optional)</span><input id="tradePlanMarket" list="marketOptions" placeholder="NASDAQ, NYSE, TASE…" autocomplete="off" /></label>
+            <label class="management-field" for="tradePlanAction"><span>Action</span><select id="tradePlanAction"><option value="BUY">Buy</option><option value="SHORT">Short</option></select></label>
+            <label class="management-field" for="tradePlanAmount"><span>Target trade amount (optional)</span><input id="tradePlanAmount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="Suggest an amount" /></label>
+            <label class="management-field" for="tradePlanCurrency"><span>Amount currency</span><select id="tradePlanCurrency"></select></label>
+            <button id="suggestTradeAccount" type="submit">Suggest account &amp; amount</button>
+          </form>
+          <section class="trade-plan-result" data-trade-result="manual" aria-label="Account recommendation" aria-live="polite" hidden></section>
+        </section>
         <section id="employeeOptionsGuide" class="employee-options-guide" aria-label="Employee stock option setup steps" hidden>
           <button class="employee-guide-step active" type="button" data-employee-guide-step="1" aria-current="step">
             <span class="employee-guide-number" aria-hidden="true">1</span>
@@ -1643,6 +1655,7 @@
 
           <section class="signal-section" aria-labelledby="activeSignalsTitle">
             <div class="section-head compact-head"><div><p class="eyebrow">Matches</p><h4 id="activeSignalsTitle">Active signals</h4><p class="section-note">Open a company investigation before making a decision.</p></div></div>
+            <p id="alertSignalStatus" class="status-line" role="status" aria-live="polite" tabindex="-1"></p>
             <div id="alertsSignals" class="signal-card-list"></div>
           </section>
 
@@ -2204,6 +2217,7 @@
             <button id="settingsNavDisplay" class="settings-menu-button active" type="button" data-settings-section="display" aria-controls="settingsPanelDisplay" aria-current="page">Display and language</button>
             <button id="settingsNavSecurity" class="settings-menu-button" type="button" data-settings-section="security" aria-controls="settingsPanelSecurity">Account security</button>
             <button id="settingsNavTable" class="settings-menu-button" type="button" data-settings-section="table" aria-controls="settingsPanelTable">Table settings</button>
+            <button id="settingsNavSignals" class="settings-menu-button" type="button" data-settings-section="signals" aria-controls="settingsPanelSignals">Portfolio signals</button>
             <button id="settingsNavAssistant" class="settings-menu-button" type="button" data-settings-section="assistant" aria-controls="settingsPanelAssistant">Portfolio chat</button>
             <button id="settingsNavApi" class="settings-menu-button" type="button" data-settings-section="api" aria-controls="settingsPanelApi" data-admin-only hidden>REST API &amp; MCP</button>
             <button id="settingsNavLogging" class="settings-menu-button" type="button" data-settings-section="logging" aria-controls="settingsPanelLogging" data-admin-only hidden>Logging</button>
@@ -2246,6 +2260,17 @@
                 <label class="field"><span data-i18n="tableMaPeriod">Table MA period</span><select id="tableMaPeriod"><option value="7">MA 7</option><option value="15">MA 15</option><option value="30">MA 30</option></select></label>
                 <button id="saveTableSettings" type="button" data-i18n="saveTableSettings">Save table settings</button>
               </div>
+            </section>
+
+            <section id="settingsPanelSignals" class="settings-section settings-panel" data-settings-panel="signals" aria-labelledby="settingsNavSignals" hidden>
+              <div class="settings-section-title"><h3>Portfolio signals</h3></div>
+              <p id="alertDismissalDaysHelp" class="settings-section-description">Dismissed signals stay hidden for this many days across all rules for the same stock and signal type. The default is 60 days. Changes apply to new dismissals; existing dismissals keep their original expiry.</p>
+              <div id="alertDismissalSettingsForm" class="management-form settings-form">
+                <label class="field" for="alertDismissalDays"><span>Signal dismissal period (days)</span><input id="alertDismissalDays" type="number" min="1" max="3650" step="1" value="60" inputmode="numeric" aria-describedby="alertDismissalDaysHelp" disabled /></label>
+                <button id="saveAlertDismissalSettings" type="button" disabled>Save signal settings</button>
+                <button id="reloadAlertDismissalSettings" class="secondary compact-button" type="button">Reload signal settings</button>
+              </div>
+              <p id="alertDismissalSettingsStatus" class="status-line" role="status" aria-live="polite"></p>
             </section>
 
             <section id="settingsPanelAssistant" class="settings-section settings-panel" data-settings-panel="assistant" aria-labelledby="settingsNavAssistant" hidden>
@@ -2402,6 +2427,8 @@
   <script src="/i18n.js?v=1.2.7"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
-  <script src="/app.js?v=0.9.8"></script>
+  <script src="/trade-planner.js?v=1"></script>
+  <script src="/trade-planner-ui.js?v=1"></script>
+  <script src="/app.js?v=0.9.9"></script>
   </body>
 </html>

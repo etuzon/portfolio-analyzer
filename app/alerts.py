@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 import math
-from datetime import datetime, timezone
+import os
+import re
+import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Any, Callable
@@ -71,7 +74,75 @@ class AlertStore:
 
     def list_rules(self) -> list[dict[str, Any]]:
         with self._lock:
-            return [self._normalize_stored_rule(rule) for rule in self._read().get("rules", [])]
+            data = self._read()
+            suppressed = self._suppressed_keys(data)
+            rules = [self._normalize_stored_rule(rule) for rule in data.get("rules", [])]
+            for rule in rules:
+                previous = rule.get("last_matches") or []
+                rule["last_matches"] = [match for match in previous if self._signal_key(match) not in suppressed]
+                if len(previous) != len(rule["last_matches"]) and rule.get("last_status") != "Running":
+                    count = len(rule["last_matches"])
+                    rule["last_status"] = f"{count} match{'es' if count != 1 else ''}" if count else "No matches"
+            return rules
+
+    def settings(self) -> dict[str, int]:
+        with self._lock:
+            raw = self._read().get("settings", {}).get("dismissal_days", 60)
+            days = raw if type(raw) is int and 1 <= raw <= 3650 else 60
+            return {"dismissal_days": days}
+
+    def save_settings(self, payload: dict[str, Any]) -> dict[str, int]:
+        days = payload.get("dismissal_days")
+        if type(days) is not int or not 1 <= days <= 3650:
+            raise ValueError("Dismissal days must be a whole number from 1 to 3650")
+        with self._lock:
+            data = self._read()
+            data.setdefault("settings", {})["dismissal_days"] = days
+            self._write(data)
+        return {"dismissal_days": days}
+
+    @staticmethod
+    def _signal_key(signal: dict[str, Any]) -> tuple[str, str]:
+        if not isinstance(signal, dict):
+            return "", ""
+        return str(signal.get("symbol") or "").strip().upper(), str(signal.get("signal") or "watch").lower()
+
+    @staticmethod
+    def _active_dismissals(data: dict[str, Any]) -> list[dict[str, Any]]:
+        now = datetime.fromisoformat(_now().replace("Z", "+00:00"))
+        active = []
+        for row in data.get("dismissals") or []:
+            try:
+                if datetime.fromisoformat(str(row["expires_at"]).replace("Z", "+00:00")) > now:
+                    active.append(row)
+            except (KeyError, ValueError, TypeError):
+                continue
+        return active
+
+    def _suppressed_keys(self, data: dict[str, Any]) -> set[tuple[str, str]]:
+        return {self._signal_key(row) for row in self._active_dismissals(data)}
+
+    def list_dismissals(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return self._active_dismissals(self._read())
+
+    def dismiss_signal(self, payload: dict[str, Any]) -> dict[str, Any]:
+        symbol, signal = self._signal_key(payload)
+        if not re.fullmatch(r"[A-Z0-9_^.=-]{1,80}", symbol) or payload.get("signal") not in ALERT_SIGNALS:
+            raise ValueError("A valid stock symbol and signal type are required")
+        with self._lock:
+            data = self._read()
+            active = self._active_dismissals(data)
+            existing = next((row for row in active if self._signal_key(row) == (symbol, signal)), None)
+            if existing:
+                return existing  # Retried requests must not extend the expiry.
+            now = datetime.fromisoformat(_now().replace("Z", "+00:00"))
+            days = self.settings()["dismissal_days"]
+            dismissed = {"symbol": symbol, "signal": signal, "days": days,
+                         "dismissed_at": now.isoformat(), "expires_at": (now + timedelta(days=days)).isoformat()}
+            data["dismissals"] = [*active, dismissed]
+            self._write(data)
+            return dismissed
 
     def list_runs(self, limit: int = 20) -> list[dict[str, Any]]:
         with self._lock:
@@ -126,6 +197,7 @@ class AlertStore:
         results: list[dict[str, Any]] = []
         with self._lock:
             data = self._read()
+            suppressed = self._suppressed_keys(data)
             for stored_rule in data.setdefault("rules", []):
                 rule = self._normalize_stored_rule(stored_rule)
                 stored_rule.update(rule)
@@ -144,6 +216,8 @@ class AlertStore:
                 matches: list[dict[str, Any]] = []
                 missing_count = 0
                 for row in safe_rows:
+                    if (str(row.get("symbol") or "").strip().upper(), str(rule.get("signal") or "watch")) in suppressed:
+                        continue
                     match, reasons, missing_metrics = self._matches_rule(row, rule)
                     missing_count += int(bool(missing_metrics))
                     if match:
@@ -392,7 +466,17 @@ class AlertStore:
             return {"rules": [], "runs": []}
 
     def _write(self, data: dict[str, Any]) -> None:
-        self.path.write_text(json.dumps(data, indent=2, default=str))
+        temporary = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", dir=self.path.parent, prefix=f".{self.path.name}.", delete=False) as stream:
+                temporary = Path(stream.name)
+                json.dump(data, stream, indent=2, default=str)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, self.path)
+        finally:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
 
 
 def start_scheduler(alert_store: AlertStore, evaluate_alerts: Callable[[], Any], alert_config: dict[str, Any], capture_history=None) -> BackgroundScheduler:

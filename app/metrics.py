@@ -116,6 +116,7 @@ def price_range_metrics(prices: list[Ohlcv]) -> dict[str, dict]:
             "min": low.low,
             "min_date": low.date.isoformat(),
             "current": current,
+            "current_date": subset[-1].date.isoformat(),
             "percent_from_high": percent(current, high.high),
             "percent_from_min": percent(current, low.low),
             "message": f"Only from {oldest.isoformat()}" if state == "partial" else "",

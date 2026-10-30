@@ -48,6 +48,7 @@ from .models import Ohlcv
 from .providers import MarketDataHub
 from .portfolio_refresh import attach_market_analysis, refresh_positions, security_key
 from .report_pdf import build_portfolio_report_pdf
+from .trade_planner import planner_security
 
 
 logger = logging.getLogger(__name__)
@@ -4649,6 +4650,31 @@ def assistant_market_screen(request: Request):
     return market_screener(arguments)
 
 
+@app.get("/api/trade-planner/context")
+def trade_planner_context(
+    symbol: Annotated[str, Query(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_^.=-]+$")],
+    stock_market: str = "",
+):
+    """Current local ledger plus saved analytics; never creates a trade."""
+    symbol = symbol.strip().upper()
+    market = _stock_market_key(stock_market)
+    if market and market not in SUPPORTED_STOCK_MARKETS:
+        raise HTTPException(status_code=422, detail="unsupported_listing")
+    signature = portfolio_cache_signature()
+    payload = portfolio_payload(defer_enrichment=True)
+    accounts = local_store.list_accounts()
+    transactions = local_store.list_transactions()
+    target, reason = planner_security(symbol, market, payload.get("items") or [], hub(), _stock_market_key, US_STOCK_MARKETS, local_store)
+    quotes = fx()["quotes"]
+    if signature != portfolio_cache_signature():
+        raise HTTPException(status_code=409, detail="portfolio_changed")
+    return {"accounts": accounts, "transactions": transactions, "items": payload.get("items") or [],
+            "security": target, "reason": reason, "fx_quotes": quotes,
+            "base_currency": str(config.dashboard.get("base_currency") or "ILS").upper(),
+            "signature": signature, "calculated_at": datetime.now(timezone.utc).isoformat(),
+            "refresh_pending": payload.get("refresh_pending", False)}
+
+
 @app.get("/api/alerts")
 def list_alerts():
     rules = alert_store.list_rules()
@@ -4681,6 +4707,8 @@ def list_alerts():
         "rules": rules,
         "runs": runs,
         "active_signals": active_signals,
+        "dismissal_days": alert_store.settings()["dismissal_days"],
+        "dismissals": alert_store.list_dismissals(),
         "options": alert_rule_options(),
         "schedule": {
             "cron": str(config.alerts.get("schedule") or "0 7 * * *"),
@@ -4688,6 +4716,28 @@ def list_alerts():
             "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None,
         },
     }
+
+
+@app.get("/api/settings/alerts")
+def alert_settings():
+    return alert_store.settings()
+
+
+@app.put("/api/settings/alerts")
+def save_alert_settings(payload: dict[str, Any]):
+    try:
+        return alert_store.save_settings(payload or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/alerts/dismiss")
+def dismiss_alert_signal(payload: dict[str, Any]):
+    try:
+        dismissed = alert_store.dismiss_signal(payload or {})
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"dismissed": True, **dismissed, "state": list_alerts()}
 
 
 @app.post("/api/alerts")
