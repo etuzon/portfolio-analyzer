@@ -51,6 +51,11 @@ bash -n "$0"
 echo "Running tests..."
 ./.venv/bin/python -m pytest
 
+echo "Checking the local assistant bridge..."
+if command -v codex >/dev/null && codex login status >/dev/null 2>&1; then
+  ./scripts/start-codex-bridge.sh --restart
+fi
+
 echo "Committing selected files..."
 git add -- "${files[@]}"
 if git diff --cached --quiet; then
@@ -60,9 +65,6 @@ fi
 git commit -m "$message" -- "${files[@]}"
 
 echo "Building and deploying Docker Compose services..."
-if command -v codex >/dev/null && codex login status >/dev/null 2>&1; then
-  ./scripts/start-codex-bridge.sh --restart
-fi
 docker compose up --build -d
 
 health_url=https://localhost:6443/api/health

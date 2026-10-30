@@ -15,3 +15,4 @@ def test_commit_and_deploy_script_has_safe_release_gates() -> None:
     assert 'git commit -m "$message" -- "${files[@]}"' in script
     assert "docker compose up --build -d" in script
     assert "https://localhost:6443/api/health" in script
+    assert script.index("./scripts/start-codex-bridge.sh --restart") < script.index('git commit -m "$message"')
