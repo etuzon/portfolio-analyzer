@@ -350,6 +350,7 @@ h2 {
   align-items: baseline;
   gap: 6px;
   min-width: 0;
+  white-space: nowrap;
 }
 
 .brand-version {
