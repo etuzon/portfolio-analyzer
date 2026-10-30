@@ -620,8 +620,10 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
 .assistant-message-user { margin-inline-start: min(8%, 36px); border-color: #39406a; background: #1c2034; }
 .assistant-message-answer { margin-inline-end: min(8%, 36px); }
 .assistant-message-meta { align-items: baseline; justify-content: flex-start; flex-wrap: wrap; margin-bottom: 8px; color: #aeb6c8; font-size: 10px; }
+.assistant-message-meta b { min-width: 0; overflow-wrap: anywhere; }
 .assistant-message-meta time { margin-inline-start: auto; font-size: 9px; }
 .assistant-message-content { color: #eef1fa; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; font-size: 12px; }
+.assistant-message-outcome { display: flex; flex-direction: column; gap: 5px; margin: 10px 0 0; padding-top: 9px; border-top: 1px solid #49402f; color: #d9c192; font-size: 10px; line-height: 1.6; overflow-wrap: anywhere; }
 .assistant-composer { flex: 0 0 auto; border-top: 1px solid var(--ux-stroke); padding-top: 10px; }
 .assistant-composer textarea { width: 100%; min-height: 64px; max-height: 160px; resize: vertical; padding: 10px 12px; border: 1px solid #394052; border-radius: 8px; background: #0e1015; color: #eef1fa; font: inherit; font-size: 12px; line-height: 1.5; }
 .assistant-composer textarea::placeholder { color: #8891a5; }
@@ -630,7 +632,7 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
 .assistant-composer-actions p { margin: 0; }
 .assistant-composer-actions button { min-width: 88px; }
 .assistant-status-row { min-height: 20px; flex: 0 0 auto; }
-.assistant-status-row .status-line { margin: 0; font-size: 10px; }
+.assistant-status-row .status-line { flex: 1 1 0; min-width: 0; margin: 0; font-size: 10px; overflow-wrap: anywhere; }
 .assistant-status-row button { flex: 0 0 auto; }
 .assistant-permissions { flex: 0 0 auto; min-height: 20px; font-size: 10px; color: var(--ux-muted); }
 .assistant-permissions summary { cursor: pointer; }
@@ -640,6 +642,14 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
 #assistantMaxChats { min-width: 120px; width: 140px; }
 #assistantSettingsForm { grid-template-columns: minmax(140px, 220px) auto; justify-content: start; align-items: end; }
 #assistantSettingsForm button { width: auto; }
+#loggingSettingsForm { grid-template-columns: repeat(2, minmax(160px, 220px)) auto; justify-content: start; align-items: end; }
+#loggingSettingsForm input { min-width: 140px; width: 160px; }
+#loggingSettingsForm button { width: auto; }
+
+@media (max-width: 1000px) {
+  #loggingSettingsForm { grid-template-columns: minmax(0, 1fr); }
+  #loggingSettingsForm button { justify-self: start; }
+}
 
 @media (max-width: 700px) {
   .assistant-launcher { flex-basis: 100%; max-width: none; margin-inline-start: 0; }

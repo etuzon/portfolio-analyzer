@@ -2199,6 +2199,7 @@
             <button id="settingsNavTable" class="settings-menu-button" type="button" data-settings-section="table" aria-controls="settingsPanelTable">Table settings</button>
             <button id="settingsNavAssistant" class="settings-menu-button" type="button" data-settings-section="assistant" aria-controls="settingsPanelAssistant">Portfolio chat</button>
             <button id="settingsNavApi" class="settings-menu-button" type="button" data-settings-section="api" aria-controls="settingsPanelApi" data-admin-only hidden>REST API &amp; MCP</button>
+            <button id="settingsNavLogging" class="settings-menu-button" type="button" data-settings-section="logging" aria-controls="settingsPanelLogging" data-admin-only hidden>Logging</button>
             <div class="settings-menu-entry">
               <button id="settingsNavData" class="settings-menu-button" type="button" data-settings-section="data" aria-controls="settingsPanelData">Portfolio data import and export</button>
               <details class="settings-menu-help">
@@ -2248,6 +2249,18 @@
                 <button id="saveAssistantSettings" type="submit">Save chat settings</button>
               </form>
               <p id="assistantSettingsStatus" class="status-line" role="status" aria-live="polite"></p>
+            </section>
+
+            <section id="settingsPanelLogging" class="settings-section settings-panel" data-settings-panel="logging" aria-labelledby="settingsNavLogging" hidden>
+              <div class="settings-section-title"><h3>Logging</h3></div>
+              <p class="settings-section-description">These global settings apply to separate logs for the application, HTTP requests, portfolio, market data, authentication, and chat.</p>
+              <p class="settings-section-description">The file limit is per component and includes its active log file. Rotated logs are compressed to ZIP. The oldest archives are deleted when the limit is exceeded.</p>
+              <form id="loggingSettingsForm" class="management-form settings-form" novalidate>
+                <label class="field"><span>Maximum log files per component</span><input id="loggingMaxFiles" type="number" min="1" max="100" step="1" value="10" inputmode="numeric" required /></label>
+                <label class="field"><span>Maximum log file size (MB)</span><input id="loggingMaxSizeMb" type="number" min="1" max="1024" step="1" value="10" inputmode="numeric" required /></label>
+                <button id="saveLoggingSettings" type="submit">Save logging settings</button>
+              </form>
+              <p id="loggingSettingsStatus" class="status-line" role="status" aria-live="polite"></p>
             </section>
 
             <section id="settingsPanelApi" class="settings-section settings-panel" data-settings-panel="api" aria-labelledby="settingsNavApi" hidden>

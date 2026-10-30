@@ -22,7 +22,9 @@ def _run(script):
 const assert = require('node:assert/strict');
 const state = {language: 'en'};
 let userId = 'user-a';
-const currentUser = () => ({id: userId});
+let profile = {first_name:'Test', last_name:'Owner', username:'test-owner', role:'Admin'};
+const currentUser = () => ({id: userId, ...profile});
+const canAdmin = () => currentUser().role === 'Admin';
 const nodes = {};
 const $ = id => nodes[id] ||= {
   value: '', innerHTML: '', textContent: '', hidden: false, disabled: false,
@@ -43,10 +45,11 @@ let requests = [];
 let api;
 """
     function_names = (
-        "assistantUi", "assistantText", "assistantChatLabel", "assistantStatusText", "assistantToolLabel",
-        "renderAssistantChat", "saveAssistantDraft", "assistantFailure", "selectAssistantChat",
+        "assistantUi", "assistantText", "assistantChatLabel", "assistantUserName", "assistantReferenceId",
+        "assistantAnswerText", "assistantMessageText", "assistantMessageMetadata", "assistantStatusText", "assistantToolLabel",
+        "renderAssistantChat", "saveAssistantDraft", "assistantFailure", "setAssistantFailure", "selectAssistantChat",
         "loadAssistantChats", "newAssistantChat", "askPortfolioAssistant", "openAssistantFromLauncher",
-        "loadAssistantSettings", "saveAssistantSettings",
+        "loadAssistantSettings", "saveAssistantSettings", "loggingSettingsUi", "renderLoggingSettings", "loadLoggingSettings", "saveLoggingSettings",
     )
     code = "const window = {};\n" + (ROOT / "web/i18n.js").read_text() + base
     code += _functions(*function_names) + "\n(async () => {\nassistantUi();\n" + script
@@ -217,3 +220,115 @@ def test_chat_controls_are_labeled_and_keyboard_submission_is_composition_safe()
     keyboard = SOURCE[SOURCE.index('$("assistantPrompt").addEventListener("keydown"'):]
     keyboard = keyboard[:keyboard.index('\n});')]
     assert '!event.shiftKey' in keyboard and '!event.isComposing' in keyboard and 'event.keyCode !== 229' in keyboard
+
+
+def test_chat_authors_use_current_full_name_and_escape_profile_data():
+    _run("""
+const ui=assistantUi(); ui.chat=chat('saved');
+profile.first_name='<img src=x>'; profile.last_name='Owner & Co';
+renderAssistantChat();
+assert.ok($('assistantMessages').innerHTML.includes('&lt;img src=x&gt; Owner &amp; Co'));
+assert.ok(!$('assistantMessages').innerHTML.includes('<img'));
+assert.ok(!$('assistantMessages').innerHTML.includes('>You</b>'));
+profile.first_name='נועה'; profile.last_name='כהן'; state.language='he'; renderAssistantChat();
+assert.ok($('assistantMessages').innerHTML.includes('נועה כהן'));
+assert.ok(!$('assistantMessages').innerHTML.includes('>אתם</b>'));
+profile.first_name='';profile.last_name='';
+assert.equal(assistantUserName(),'test-owner');
+""")
+
+
+def test_saved_source_footers_are_hidden_without_removing_financial_facts_or_user_text():
+    _run(r"""
+const content='Revenue grew 12% on 31/12/2025.\n- Profit was $500.\n**Sources:** GET /api/portfolio\n- **Source:** annual report\nמקור: נתוני יישום\n* מקורות: נתונים\n- `GET /api/local/reports`\n- **GET** /api/security/history\nGET /api/portfolio?symbol=ABC\nRevenue source: services.\nThe source of income remains unchanged.';
+const clean=assistantAnswerText(content);
+assert.ok(clean.includes('Revenue grew 12% on 31/12/2025.'));
+assert.ok(clean.includes('- Profit was $500.'));
+assert.ok(clean.includes('Revenue source: services.'));
+assert.ok(clean.includes('The source of income remains unchanged.'));
+assert.ok(!clean.includes('/api/')&&!clean.includes('Sources:')&&!clean.includes('מקורות:'));
+assert.equal(assistantMessageText({role:'user',content:'Source: explain this field'}),'Source: explain this field');
+const ui=assistantUi();ui.chat={id:'old',title:'Old',messages:[{role:'assistant',content}]};renderAssistantChat();
+assert.ok(!$('assistantMessages').innerHTML.includes('/api/'));
+assert.ok($('assistantMessages').innerHTML.includes('31/12/2025'));
+assert.equal(ui.chat.messages[0].content,content,'history cleaning must not mutate saved records');
+""")
+
+
+def test_unsupported_history_and_failed_request_references_follow_ui_language_and_keep_draft():
+    _run("""
+const reference='123e4567-e89b-42d3-a456-426614174000';
+const ui=assistantUi();ui.enabled=true;
+ui.chat={id:'unsupported',title:'Question',messages:[{role:'assistant',content:'Old English unsupported response. Reference: '+reference,support_status:'unsupported',request_id:reference}]};
+for(const language of ['he','en','he']) {
+  state.language=language;renderAssistantChat();
+  const html=$('assistantMessages').innerHTML;
+  assert.ok(html.includes(reference));
+  assert.ok(!html.includes('Old English'));
+  assert.ok(language==='he'?html.includes('מזהה פנייה:'):html.includes('Reference:'));
+  assert.ok(language==='he'?html.includes('בקשה שאינה נתמכת'):html.includes('Unsupported request'));
+}
+api=async()=>{const error=new Error('Wrong-language server summary');error.code='assistant_failed';error.requestId=reference;throw error;};
+$('assistantPrompt').value='Keep this draft';await askPortfolioAssistant();
+assert.equal($('assistantPrompt').value,'Keep this draft');
+assert.equal(ui.requestId,reference);
+for(const language of ['en','he']){
+ state.language=language;renderAssistantChat();
+ assert.ok($('assistantStatus').textContent.includes(reference));
+ assert.ok(language==='he'?$('assistantStatus').textContent.includes('מזהה פנייה:'):$('assistantStatus').textContent.includes('Reference:'));
+ assert.ok(!$('assistantStatus').textContent.includes('Wrong-language'));
+}
+assert.equal(assistantReferenceId('<img>'),'');
+""")
+
+
+def test_logging_settings_are_global_admin_only_bounded_and_preserve_failed_edits():
+    _run("""
+api=async(path,options={})=>{requests.push({path,options});if(options.method==='PUT')return JSON.parse(options.body);return {max_files:10,max_size_mb:10};};
+profile.role='Viewer';await loadLoggingSettings();await saveLoggingSettings();assert.equal(requests.length,0);
+profile.role='Admin';await loadLoggingSettings();assert.equal($('loggingMaxFiles').value,10);assert.equal($('loggingMaxSizeMb').value,10);
+for(const [files,size] of [['0','10'],['101','10'],['10','0'],['10','1025'],['2.5','10']]){
+ $('loggingMaxFiles').value=files;$('loggingMaxSizeMb').value=size;await saveLoggingSettings();
+ assert.equal(requests.length,1);
+ assert.ok($('loggingSettingsStatus').textContent.includes('1–100'));
+}
+$('loggingMaxFiles').value='100';$('loggingMaxSizeMb').value='1024';await saveLoggingSettings();
+assert.equal(requests.length,2);assert.deepEqual(JSON.parse(requests[1].options.body),{max_files:100,max_size_mb:1024});
+api=async()=>{throw new Error('temporary disconnect');};
+$('loggingMaxFiles').value='3';$('loggingMaxSizeMb').value='20';await saveLoggingSettings();
+assert.equal($('loggingMaxFiles').value,'3');assert.equal($('loggingMaxSizeMb').value,'20');
+state.language='he';renderLoggingSettings();assert.ok($('loggingSettingsStatus').textContent.includes('לא ניתן לשמור'));
+state.language='en';renderLoggingSettings();assert.ok(!$('loggingSettingsStatus').textContent.match(/[א-ת]/u));
+""")
+    html = (ROOT / "web/index.html").read_text()
+    assert 'data-settings-section="logging" aria-controls="settingsPanelLogging" data-admin-only hidden' in html
+    assert 'id="loggingMaxFiles" type="number" min="1" max="100"' in html
+    assert 'id="loggingMaxSizeMb" type="number" min="1" max="1024"' in html
+    assert 'id="loggingSettingsForm" class="management-form settings-form" novalidate' in html
+    assert 'includes its active log file' in html
+    assert 'compressed to ZIP' in html
+
+
+def test_api_error_keeps_safe_machine_code_and_request_reference_without_headers():
+    code = _functions("api") + """
+const assert = require('node:assert/strict');
+const state={auth:{csrfToken:''}};
+const warnings=[];
+const appLog=()=>{};
+const appWarn=(_event,details)=>warnings.push(details);
+const showLogin=()=>{};
+const showPasswordChange=()=>{};
+const requestId='123e4567-e89b-42d3-a456-426614174000';
+const fetch=async()=>({ok:false,status:503,statusText:'Unavailable',json:async()=>({detail:{code:'assistant_unavailable',message:'העוזר אינו זמין',request_id:requestId}})});
+(async()=>{
+ try { await api('/api/assistant/questions',{method:'POST',headers:{Authorization:'private-credential'}});assert.fail('must reject'); }
+ catch(error){
+  assert.equal(error.code,'assistant_unavailable');assert.equal(error.requestId,requestId);
+  assert.equal(error.message,'העוזר אינו זמין');assert.equal(error.headers,undefined);
+ }
+ assert.equal(warnings[0].request_id,requestId);
+ assert.ok(!JSON.stringify(warnings).includes('private-credential'));
+})().catch(error=>{console.error(error);process.exitCode=1;});
+"""
+    result = subprocess.run(["node"], input=code, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr

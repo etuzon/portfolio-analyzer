@@ -5,6 +5,7 @@ import hmac
 import io
 import json
 import logging
+import traceback
 import os
 import sqlite3
 import stat
@@ -18,6 +19,7 @@ from threading import RLock, Thread
 import time
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from uuid import uuid4
 
 from apscheduler.triggers.cron import CronTrigger
 import anyio
@@ -35,6 +37,7 @@ from .assistant_chats import AssistantChats, ChatError
 from .assistant_rest import AssistantRestGateway
 from .auth import API_ACCESS_MODES, AUTH_ROLES, PASSWORD_MIN_LENGTH, SESSION_COOKIE_NAME, AuthStore
 from .config import data_dir, load_config
+from .diagnostics import Diagnostics, TRACE_ID
 from .company_logos import CompanyLogoService
 from .external_import import ExternalImportClient
 from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, SUPPORTED_MANAGEMENT_CURRENCIES, LocalPortfolioStore, validate_portfolio_ownership
@@ -54,6 +57,8 @@ logger = logging.getLogger(__name__)
 async def application_lifespan(_app: FastAPI):
     global scheduler, _mcp_session_context
     auth_store.initialize()
+    _diagnostics().install()
+    _diagnostics().event("application", "application_started")
     local_store.delete_history_before(HISTORY_START_DATE)
     local_store.capture_daily_snapshots()
     if scheduler is None:
@@ -100,6 +105,31 @@ alert_store = AlertStore()
 local_store = LocalPortfolioStore()
 auth_store = AuthStore(local_store.path)
 assistant_chats = AssistantChats(lambda key, default: local_store.get_preference(key, default), lambda key, value: local_store.set_preference(key, value))
+_diagnostics_lock = RLock()
+_diagnostics_instance = None
+
+
+def _diagnostics() -> Diagnostics:
+    global _diagnostics_instance
+    directory = local_store.path.parent / "logs"
+    with _diagnostics_lock:
+        if _diagnostics_instance is None or _diagnostics_instance.directory != directory:
+            if _diagnostics_instance is not None:
+                _diagnostics_instance.close()
+            saved = local_store.get_preference("logging_settings", {})
+            saved = saved if isinstance(saved, dict) else {}
+            _diagnostics_instance = Diagnostics(directory, max_files=saved.get("max_files", 10), max_size_mb=saved.get("max_size_mb", 10), config=config.raw)
+        return _diagnostics_instance
+
+
+def _record_log(component: str, event: str, **fields) -> None:
+    try:
+        _diagnostics().event(component, event, **fields)
+    except Exception as exc:
+        # Keep correlation available even when a volume is full or unavailable.
+        print(json.dumps({"component": component, "event": "diagnostics_unavailable", "request_id": TRACE_ID.get(), "error_type": type(exc).__name__}), flush=True)
+
+
 scheduler = None
 _mcp_session_context = None
 BACKUP_JOB_ID = "local-data-backup"
@@ -195,6 +225,7 @@ VIEWER_READ_ONLY_POST_PATHS = {
 }
 ADMIN_ONLY_API_PREFIXES = ("/api/auth/users", "/api/local/backups")
 ADMIN_ONLY_API_PATHS = {
+    "/api/settings/logging",
     "/api/settings/backup",
     "/api/settings/api-access",
     "/api/settings/mcp-access",
@@ -422,6 +453,37 @@ async def enforce_authentication_and_roles(request: Request, call_next):
         if not csrf_token or not hmac.compare_digest(csrf_token, session["csrf_token"]):
             return _auth_error(403, "csrf_failed", "The request security token is missing or expired")
     return await call_next(request)
+
+
+@app.middleware("http")
+async def request_diagnostics(request: Request, call_next):
+    if not request.url.path.startswith(("/api/", "/mcp")):
+        return await call_next(request)
+    request_id = TRACE_ID.get() or str(uuid4())
+    token = TRACE_ID.set(request_id)
+    request.state.request_id = request_id
+    started = time.monotonic()
+    path, method = request.url.path, request.method
+    _record_log("http", "request_started", method=method, path=path)
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        response.headers["X-Request-ID"] = request_id
+        return response
+    except Exception as exc:
+        _record_log("application", "request_failed", level=logging.ERROR, method=method, path=path, error_type=type(exc).__name__, exception=traceback.format_exc())
+        return JSONResponse(status_code=500, content={"detail": {"code": "application_failed", "message": "The request failed.", "request_id": request_id}}, headers={"X-Request-ID": request_id})
+    finally:
+        fields = {"method": method, "path": path, "status": status, "elapsed_ms": round((time.monotonic() - started) * 1000, 1)}
+        _record_log("http", "request_finished", **fields)
+        if path.startswith("/api/auth/") or status in {401, 403}:
+            _record_log("auth", "request_finished", **fields)
+        elif path.startswith(("/api/local/", "/api/portfolio", "/api/alerts", "/api/screener", "/api/company-outlook")):
+            _record_log("portfolio", "request_finished", **fields)
+        elif path.startswith(("/api/market/", "/api/banner", "/api/fx", "/api/finance-reports", "/api/security/", "/api/assistant/market-", "/api/assistant/stock-dividends")):
+            _record_log("market-data", "request_finished", **fields)
+        TRACE_ID.reset(token)
 
 
 def _parse_query_date(value: str) -> date | None:
@@ -2938,6 +3000,25 @@ def assistant_chat_settings(request: Request):
     return {"max_chats": assistant_chats.list(request.state.auth_user["id"])["max_chats"]}
 
 
+@app.get("/api/settings/logging")
+def logging_settings():
+    return _diagnostics().settings()
+
+
+@app.put("/api/settings/logging")
+def save_logging_settings(payload: dict[str, Any]):
+    if set(payload) != {"max_files", "max_size_mb"}:
+        raise HTTPException(status_code=400, detail="Provide log file count and size only.")
+    diagnostics = _diagnostics()
+    try:
+        diagnostics.configure(payload["max_files"], payload["max_size_mb"])
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    local_store.set_preference("logging_settings", payload)
+    _record_log("application", "logging_settings_changed", **payload)
+    return diagnostics.settings()
+
+
 @app.put("/api/settings/assistant")
 def save_assistant_chat_settings(payload: dict[str, Any], request: Request):
     try:
@@ -2948,34 +3029,76 @@ def save_assistant_chat_settings(payload: dict[str, Any], request: Request):
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
+def _chat_notice(code: str, language: str, request_id: str) -> str:
+    messages = {
+        "assistant_unsupported": ("This request is not supported.", "הבקשה הזו אינה נתמכת."),
+        "assistant_unavailable": ("The assistant is temporarily unavailable. Try again shortly.", "העוזר אינו זמין כרגע. נסו שוב בעוד זמן קצר."),
+        "assistant_limit": ("The request reached its read limit. Try a narrower question.", "הבקשה הגיעה למגבלת הקריאות. נסו שאלה ממוקדת יותר."),
+        "assistant_invalid_response": ("The assistant could not process the response. Try again.", "העוזר לא הצליח לעבד את התשובה. נסו שוב."),
+        "assistant_invalid_request": ("The question is invalid. Enter a question of up to 8000 characters.", "השאלה אינה תקינה. הזינו שאלה באורך של עד 8000 תווים."),
+        "assistant_busy": ("A question is already running. Wait for its answer.", "שאלה כבר נמצאת בעיבוד. המתינו לתשובה."),
+        "assistant_chat_not_found": ("This chat is unavailable. Reload your chat history.", "השיחה אינה זמינה. טענו מחדש את היסטוריית השיחות."),
+        "assistant_failed": ("The request failed. Your previous messages are unchanged. Try again.", "הבקשה נכשלה. ההודעות הקודמות נשמרו. נסו שוב."),
+    }
+    hebrew = str(language).lower().startswith("he")
+    message = messages.get(code, messages["assistant_failed"])[int(hebrew)]
+    return message + (" מזהה תקלה: " if hebrew else " Reference: ") + request_id
+
+
 @app.post("/api/assistant/questions")
 async def assistant_question(payload: dict[str, Any], request: Request):
-    """Persist chat metadata in the app; give the LLM only a GET-only gateway."""
-    assistant = PortfolioAssistant(assistant_settings(config.raw), ASSISTANT_READ_TOOLS)
-    if not assistant.status()["enabled"]:
-        raise HTTPException(status_code=503, detail="The portfolio assistant is not configured.")
-    prompt = payload.get("prompt")
-    if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 8_000:
-        raise HTTPException(status_code=400, detail="Ask a question between 1 and 8000 characters.")
-    chat_id = payload.get("chat_id")
-    if chat_id is not None and (not isinstance(chat_id, str) or len(chat_id) > 80):
-        raise HTTPException(status_code=400, detail="Invalid chat identifier.")
+    """Persist app-owned history and record redacted, correlated diagnostics."""
+    request_id = getattr(request.state, "request_id", None) or str(uuid4())
+    language = str(payload.get("language") or "en")[:24]
     user_id = request.state.auth_user["id"]
+    prompt = payload.get("prompt")
+    started = time.monotonic()
     begun = False
+    def audit(event, **fields):
+        _record_log("chat", event, request_id=request_id, user_id=user_id, **fields)
+    def failure(status, code):
+        return HTTPException(status_code=status, detail={"code": code, "message": _chat_notice(code, language, request_id), "request_id": request_id})
+    assistant = PortfolioAssistant(assistant_settings(config.raw), ASSISTANT_READ_TOOLS)
+    audit("request_received", chat_id=payload.get("chat_id"), language=language, prompt=prompt)
     try:
+        if not assistant.status()["enabled"]:
+            audit("request_failed", code="assistant_unavailable", error_type="AssistantNotConfigured")
+            raise failure(503, "assistant_unavailable")
+        if not isinstance(prompt, str) or not 1 <= len(prompt.strip()) <= 8_000:
+            audit("request_failed", code="assistant_invalid_request", error_type="PromptValidation")
+            raise failure(400, "assistant_invalid_request")
+        chat_id = payload.get("chat_id")
+        if chat_id is not None and (not isinstance(chat_id, str) or len(chat_id) > 80):
+            audit("request_failed", code="assistant_invalid_request", error_type="ChatIdentifierValidation")
+            raise failure(400, "assistant_invalid_request")
         chat = await run_in_threadpool(assistant_chats.begin, user_id, chat_id)
         begun = True
+        audit("context_loaded", chat_id=chat["id"], context=chat["messages"][-assistant.settings["max_context_messages"]:] if assistant.settings["max_context_messages"] else [])
         gateway = _assistant_gateway(request)
         def read_tool(name, arguments):
             return anyio.from_thread.run(gateway.read, name, arguments)
-        result = await run_in_threadpool(assistant.ask, prompt.strip(), payload.get("language", ""), read_tool, chat["messages"])
+        result = await run_in_threadpool(assistant.ask, prompt.strip(), language, read_tool, chat["messages"], audit=audit)
+        result["request_id"] = request_id
+        if result.get("support_status") == "unsupported":
+            audit("request_unsupported", reason=result["answer"])
+            result["answer"] = _chat_notice("assistant_unsupported", language, request_id)
         saved = await run_in_threadpool(assistant_chats.finish, user_id, chat["id"], prompt.strip(), result)
+        audit("request_completed", chat_id=chat["id"], status=result.get("support_status", "answered"), answer=result["answer"], model_requests=result["model_requests"], tool_calls=result["tool_calls"], elapsed_ms=round((time.monotonic() - started) * 1000, 1))
         return {**result, **saved, "context_messages": min(len(saved["chat"]["messages"]), assistant.settings["max_context_messages"])}
     except ChatError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        code = "assistant_busy" if exc.status_code == 409 else "assistant_chat_not_found" if exc.status_code == 404 else "assistant_invalid_request"
+        audit("request_failed", code=code, error_type=type(exc).__name__, error=str(exc))
+        raise failure(exc.status_code, code) from exc
     except AssistantError as exc:
-        status = 503 if "not configured" in str(exc) or "unavailable" in str(exc) else 400
-        raise HTTPException(status_code=status, detail=str(exc)) from exc
+        message = str(exc)
+        code = "assistant_unavailable" if "unavailable" in message or "not configured" in message else "assistant_limit" if "read limit" in message else "assistant_invalid_response"
+        audit("request_failed", code=code, error_type=type(exc).__name__, error=message, exception=traceback.format_exc())
+        raise failure(503 if code == "assistant_unavailable" else 400 if code == "assistant_limit" else 502, code) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        audit("request_failed", code="assistant_failed", error_type=type(exc).__name__, exception=traceback.format_exc())
+        raise failure(500, "assistant_failed") from exc
     finally:
         if begun:
             assistant_chats.end(user_id)

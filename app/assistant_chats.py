@@ -126,7 +126,7 @@ class AssistantChats:
             now = _now()
             chat["messages"].extend([
                 {"role": "user", "content": prompt, "created_at": now},
-                {"role": "assistant", "content": result["answer"], "created_at": now, "tool_calls": result.get("tool_calls", [])},
+                {"role": "assistant", "content": result["answer"], "created_at": now, "tool_calls": result.get("tool_calls", []), "support_status": result.get("support_status", "answered"), "request_id": result.get("request_id", "")},
             ])
             if not chat["title"]:
                 chat["title"] = " ".join(prompt.split())[:80]

@@ -92,6 +92,16 @@ PORTFOLIO_CODEX_SOCKET=/tmp/portfolio-codex/bridge.sock ./.venv/bin/python tests
 
 Transcripts and review flags are saved under `/tmp/portfolio-chat-qa`. The real replay is opt-in and is not run by pytest. Synthetic provider facts and real model behavior are reported separately; automated flags do not establish answer correctness.
 
+### Application diagnostics
+
+Application logs are stored in `data/logs` on the host (`/app/data/logs` inside Docker), so they survive container crashes and replacement. Separate files cover `application`, `http`, `auth`, `portfolio`, `market-data`, and `chat`. Each record is flushed and synced to disk. Full files rotate into ZIP archives; the oldest archives are deleted. If a main log is missing after a restart, it is recreated.
+
+Admins can change **Settings → Logging** globally. Defaults are **10 files per component, including the current log**, and **10 MB per current file**. Changes apply immediately and persist across restarts. Chat-history and logging-settings changes do not invalidate financial analytics.
+
+Docker's separate stdout/stderr capture also defaults to ten 10 MB files with compression. Its engine-level limits are configured through Compose (`CONTAINER_LOG_MAX_SIZE` and `CONTAINER_LOG_MAX_FILES`) when recreating the container; the in-app settings control the component files in `data/logs`.
+
+Chat diagnostics record redacted prompts/context, model exchanges, approved REST reads/results, unsupported reasons, and errors. Passwords, API keys, tokens, cookies, authorization values, credential-bearing URLs, and configured secrets are redacted before writing or ZIP rotation. Chat authors show the authenticated user's full name; ordinary answers omit source footers. Unsupported requests and failures receive localized messages with a server-generated UUID. Search that UUID in `chat.log` or the minimal correlation events in `docker compose logs`; source paths and detailed diagnostic evidence stay in the log rather than the answer. The read-only model has no tool for reading logs, changing logging settings, or writing portfolio records.
+
 ## World-event research workflow
 
 Curated historical examples are bundled under `app/workflows/cases/` and exposed

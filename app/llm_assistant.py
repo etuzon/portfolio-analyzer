@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any
@@ -16,6 +17,20 @@ from urllib import error, request
 
 class AssistantError(ValueError):
     """A safe error that can be shown to an authenticated user."""
+
+
+ANSWER_SCHEMA = {
+    "type": "object", "additionalProperties": False,
+    "properties": {"answer": {"type": "string"}, "support_status": {"type": "string", "enum": ["answered", "unsupported"]}},
+    "required": ["answer", "support_status"],
+}
+
+
+def clean_answer(content: str) -> str:
+    """Keep evidence attribution in diagnostics, not ordinary chat answers."""
+    return "\n".join(line for line in str(content).splitlines() if not re.match(
+        r"^\s*(?:[-*•]\s*)?(?:\*\*)?(?:(?:sources?|מקור(?:ות)?(?: הנתונים)?)\s*[:：]|(?:GET|POST|PUT|PATCH|DELETE)\s+/api/)", line, re.I,
+    )).strip()
 
 
 def assistant_settings(raw: dict[str, Any]) -> dict[str, Any]:
@@ -68,7 +83,7 @@ class PortfolioAssistant:
             "tools": [{"name": name, "method": item.get("method", "GET"), "path": item["path"], "description": item["description"]} for name, item in self.catalog.items()],
         }
 
-    def ask(self, prompt: str, language: str, run_tool: Callable[[str, dict[str, Any]], Any], history: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    def ask(self, prompt: str, language: str, run_tool: Callable[[str, dict[str, Any]], Any], history: list[dict[str, Any]] | None = None, *, audit=None) -> dict[str, Any]:
         if not self.status()["enabled"]:
             raise AssistantError("The portfolio assistant is not configured. Ask an administrator to enable the llm section in config.yaml.")
         prompt = str(prompt or "").strip()
@@ -84,7 +99,8 @@ class PortfolioAssistant:
                 "Give a short, clear answer in the user's language (" + (language or "the prompt language") + "). "
                 "Write every user-visible date as dd/mm/yyyy (for example 30/10/2026), never a named-month or ISO date. "
                 "Use simple words and never guess. For account, holding, stock or market facts, read the relevant current data first. "
-                "Identify the REST sources used and their data dates when available. Never describe missing data as zero or old market data as current. "
+                "Keep source attribution, citations, tool names, REST URLs and implementation details internal; do not show source lines to the user. State actual evidence dates when relevant. Never describe missing data as zero or old market data as current. "
+                "Classify your final response support_status as unsupported when the requested capability is not provided by approved tools, including writes, direct database/file access or unavailable live news. Missing values for an otherwise supported question are unknown, not an unsupported capability. "
                 "Never add amounts in different currencies. Report account_details or currency groups separately; report-wide totals are not FX-converted. "
                 "For recorded transactions or paid dividends, use get_securities or get_trade_history. Scheduled/discovered get_events records are a separate dataset; an empty event list never disproves ledger transactions or cash income. "
                 "For account inventory, current holdings and share quantities, use get_portfolio_summary with account_id, not a filtered portfolio screen. A screen with no matches never establishes that an account has no holdings. "
@@ -112,14 +128,21 @@ class PortfolioAssistant:
             final_turn = index == self.settings["max_tool_loops"] - 1
             if final_turn:
                 messages.append({"role": "system", "content": "This is the final allowed response. Answer from evidence already received. State any remaining unknowns; do not request more tools or guess."})
+            if audit:
+                audit("model_request", exchange=index + 1, tools_enabled=not final_turn, message_count=len(messages))
             message = self._completion(messages, final_turn=final_turn)
+            if audit:
+                audit("model_response", exchange=index + 1, response=message)
             messages.append(message)
             tool_calls = message.get("tool_calls") or []
             if not tool_calls:
                 content = str(message.get("content") or "").strip()
                 if not content:
                     raise AssistantError("The LLM returned an empty answer.")
-                return {"answer": content, "tool_calls": calls, "max_tool_loops": self.settings["max_tool_loops"], "model_requests": index + 1}
+                answer = clean_answer(content)
+                if not answer:
+                    raise AssistantError("The LLM returned an empty answer.")
+                return {"answer": answer, "support_status": message.get("support_status", "answered"), "tool_calls": calls, "max_tool_loops": self.settings["max_tool_loops"], "model_requests": index + 1}
             if final_turn:
                 break
             if not isinstance(tool_calls, list) or len(tool_calls) != 1 or not isinstance(tool_calls[0], dict):
@@ -134,10 +157,16 @@ class PortfolioAssistant:
                     arguments = json.loads(function.get("arguments") or "{}")
                     if not isinstance(arguments, dict) or name not in self.catalog:
                         raise AssistantError("The LLM requested an unavailable read tool.")
+                    if audit:
+                        audit("tool_request", tool=name, path=self.catalog[name]["path"], arguments=arguments)
                     result = run_tool(name, arguments)
+                    if audit:
+                        audit("tool_response", tool=name, path=self.catalog[name]["path"], result=json.loads(_tool_content(result)))
                     calls.append({"tool": name, "path": self.catalog[name]["path"], "arguments": arguments})
                     content = _tool_content(result)
                 except (ValueError, TypeError, AssistantError) as exc:
+                    if audit:
+                        audit("tool_failed", tool=name, error_type=type(exc).__name__, error=str(exc))
                     content = json.dumps({"error": str(exc)})
                 messages.append({"role": "tool", "tool_call_id": call_id, "content": content})
         raise AssistantError(f"The assistant reached the configured {self.settings['max_tool_loops']}-step read limit. Please ask a narrower question.")
@@ -148,7 +177,16 @@ class PortfolioAssistant:
             message = response["choices"][0]["message"]
         except (KeyError, IndexError, TypeError) as exc:
             raise AssistantError("The LLM returned an unsupported response.") from exc
-        return message if isinstance(message, dict) else {}
+        if not isinstance(message, dict):
+            return {}
+        if not message.get("tool_calls") and isinstance(message.get("content"), str):
+            try:
+                structured = json.loads(message["content"])
+            except ValueError:
+                structured = None
+            if isinstance(structured, dict) and isinstance(structured.get("answer"), str) and structured.get("support_status") in {"answered", "unsupported"}:
+                message = {**message, "content": structured["answer"], "support_status": structured["support_status"]}
+        return message
 
     def _call_provider(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
         if self.settings.get("provider") == "local_codex":
@@ -157,7 +195,9 @@ class PortfolioAssistant:
                 with httpx.Client(transport=httpx.HTTPTransport(uds=self.settings["codex_socket"]), base_url="http://codex-local", timeout=max(self.settings["timeout_seconds"], 120)) as client:
                     response = client.post("/completion", json={"messages": messages, "tools": tools})
                     if response.status_code != 200:
-                        raise AssistantError("The local Codex service is unavailable. Check that the bridge is running and Codex is signed in.")
+                        detail = response.json().get("error", {})
+                        cause = detail.get("message", "") if isinstance(detail, dict) else ""
+                        raise AssistantError("The local Codex service is unavailable. " + cause)
                     return response.json()
             except (httpx.HTTPError, ValueError) as exc:
                 if isinstance(exc, AssistantError):
@@ -167,6 +207,7 @@ class PortfolioAssistant:
             "model": self.settings["model"],
             "messages": messages,
             "reasoning_effort": self.settings["reasoning_effort"],
+            "response_format": {"type": "json_schema", "json_schema": {"name": "portfolio_answer", "strict": True, "schema": ANSWER_SCHEMA}},
         }
         if tools:
             payload.update({"tools": tools, "tool_choice": "auto", "parallel_tool_calls": False})

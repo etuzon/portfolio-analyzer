@@ -621,20 +621,25 @@ async function api(path, options = {}) {
     if (!response.ok) {
       let message = `${response.status} ${response.statusText}`;
       let code = "";
+      let requestId = "";
       try {
         const data = await response.json();
-        message = data.detail?.message || data.detail || message;
+        message = data.detail?.message || (typeof data.detail === "string" ? data.detail : message);
         code = data.detail?.code || "";
+        requestId = data.detail?.request_id || "";
       } catch {
         // Keep the HTTP status text when the API returns no JSON body.
       }
       if (response.status === 401 || code === "authentication_required") showLogin();
       if (code === "password_change_required") showPasswordChange({ forced: true });
-      throw new Error(message);
+      const failure = new Error(message);
+      failure.code = code;
+      failure.requestId = requestId;
+      throw failure;
     }
     return response.json();
   } catch (error) {
-    appWarn("api.error", { method, endpoint, message: error.message });
+    appWarn("api.error", { method, endpoint, message: error.message, request_id: error.requestId || undefined });
     throw error;
   }
 }
@@ -644,7 +649,7 @@ function assistantUi() {
   if (!state.assistant || state.assistant.owner !== owner) {
     state.assistant = {
       owner, chats: [], chat: null, enabled: null, tools: [], maxChats: 10,
-      loading: false, selecting: false, creating: false, sending: false, pendingPrompt: "", status: "", retry: "",
+      loading: false, selecting: false, creating: false, sending: false, pendingPrompt: "", status: "", requestId: "", retry: "",
       loadVersion: 0, selectVersion: 0, drafts: {}, settingsVersion: 0,
     };
     if ($("assistantPrompt")) $("assistantPrompt").value = "";
@@ -661,10 +666,42 @@ function assistantChatLabel(chat) {
   return chat?.message_count || chat?.messages?.length ? String(chat.title || t("Untitled chat")) : t("New chat");
 }
 
+function assistantUserName() {
+  const user = currentUser();
+  return [user?.first_name, user?.last_name].map((value) => String(value || "").trim()).filter(Boolean).join(" ")
+    || String(user?.username || "").trim() || t("Signed-in user");
+}
+
+function assistantReferenceId(value) {
+  const reference = String(value || "").trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(reference) ? reference : "";
+}
+
+function assistantAnswerText(content) {
+  const prefix = /^\s*(?:(?:[-*+]\s+|\d+[.)]\s+))?(?:\*\*|__|`)?\s*(?:sources?|מקור|מקורות)\s*(?:\*\*|__|`)?\s*[:：]/i;
+  const endpoint = /^\s*(?:(?:[-*+]\s+|\d+[.)]\s+))?(?:\*\*|__|`)?\s*GET(?:\*\*|__|`)?\s+\/?api\//i;
+  return String(content || "").split(/\r?\n/).filter((line) => !prefix.test(line) && !endpoint.test(line)).join("\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function assistantMessageText(message) {
+  if (message.role === "user") return String(message.content || "");
+  if (message.support_status === "unsupported") return t("This request is not supported by the available app data or approved read tools.");
+  return assistantAnswerText(message.content);
+}
+
+function assistantMessageMetadata(message) {
+  if (message.role === "user" || message.support_status !== "unsupported") return "";
+  const reference = assistantReferenceId(message.request_id);
+  return `<p class="assistant-message-outcome"><span>${esc(t("Unsupported request"))}</span>${reference ? `<span>${esc(assistantText("Reference: {id}", { id: `\u2066${reference}\u2069` }))}</span>` : ""}</p>`;
+}
+
 function assistantStatusText(ui) {
   if (ui.sending) return t("Reading approved portfolio data…");
   if (ui.loading) return t("Loading your chats…");
-  if (ui.status) return t(ui.status);
+  if (ui.status) {
+    const reference = assistantReferenceId(ui.requestId);
+    return [t(ui.status), reference ? assistantText("Reference: {id}", { id: `\u2066${reference}\u2069` }) : ""].filter(Boolean).join(" ");
+  }
   if (ui.enabled === false) return t("Connect the local Codex bridge or configure an AI provider. Saved chats are still available.");
   return "";
 }
@@ -705,8 +742,9 @@ function renderAssistantChat() {
   if (ui.sending && ui.pendingPrompt) messages.push({ role: "user", content: ui.pendingPrompt });
   $("assistantMessages").innerHTML = messages.length ? messages.map((message) => `
     <article class="assistant-message assistant-message-${message.role === "user" ? "user" : "answer"}">
-      <div class="assistant-message-meta"><b>${esc(t(message.role === "user" ? "You" : "Portfolio assistant"))}</b>${message.created_at ? `<time datetime="${esc(message.created_at)}">${esc(formatDateTime(message.created_at))}</time>` : ""}</div>
-      <div class="assistant-message-content" dir="auto" data-i18n-skip>${esc(message.content || "")}</div>
+      <div class="assistant-message-meta"><b dir="auto"${message.role === "user" ? " data-i18n-skip" : ""}>${esc(message.role === "user" ? assistantUserName() : t("Portfolio assistant"))}</b>${message.created_at ? `<time datetime="${esc(message.created_at)}">${esc(formatDateTime(message.created_at))}</time>` : ""}</div>
+      <div class="assistant-message-content" dir="auto" data-i18n-skip>${esc(assistantMessageText(message))}</div>
+      ${assistantMessageMetadata(message)}
     </article>`).join("") : `<div class="assistant-empty"><p>${esc(t("Ask a question about your portfolio."))}</p><p>${esc(t("Answers use approved app data. If the data is missing, the assistant will say so."))}</p></div>`;
   $("assistantMessages").setAttribute("aria-busy", String(ui.sending || ui.loading));
   $("assistantStatus").textContent = assistantStatusText(ui);
@@ -724,11 +762,27 @@ function saveAssistantDraft() {
 }
 
 function assistantFailure(error, fallback) {
+  const messages = {
+    assistant_unavailable: "The assistant is unavailable. Reconnect the local Codex bridge and try again.",
+    assistant_limit: "The request reached its read limit. Try a narrower question.",
+    assistant_invalid_response: "The assistant returned an invalid answer. Your draft is kept. Try again.",
+    assistant_invalid_request: "The question could not be accepted. Check your draft and try again.",
+    assistant_busy: "A chat request is already running. Wait for it to finish, then retry.",
+    assistant_chat_not_found: "This chat is no longer available. Start a new chat or refresh your history.",
+    assistant_failed: "The assistant could not complete this request. Your draft is kept. Try again.",
+    assistant_unsupported: "This request is not supported by the available app data or approved read tools.",
+  };
+  if (messages[error?.code]) return messages[error.code];
   return /not configured/i.test(String(error?.message || ""))
     ? "Connect the local Codex bridge or configure an AI provider. Saved chats are still available."
     : /limit|read limit/i.test(String(error?.message || ""))
       ? "The request reached its read limit. Try a narrower question."
       : fallback;
+}
+
+function setAssistantFailure(ui, error, fallback) {
+  ui.status = assistantFailure(error, fallback);
+  ui.requestId = assistantReferenceId(error?.requestId);
 }
 
 async function selectAssistantChat(chatId, { preserveDraft = false } = {}) {
@@ -738,7 +792,7 @@ async function selectAssistantChat(chatId, { preserveDraft = false } = {}) {
   const version = ++ui.selectVersion;
   ui.loading = true;
   ui.selecting = !preserveDraft;
-  if (!preserveDraft) { ui.retry = ""; ui.status = ""; }
+  if (!preserveDraft) { ui.retry = ""; ui.status = ""; ui.requestId = ""; }
   renderAssistantChat();
   try {
     const chat = await api(`/api/assistant/chats/${encodeURIComponent(chatId)}`);
@@ -749,11 +803,11 @@ async function selectAssistantChat(chatId, { preserveDraft = false } = {}) {
     ui.selecting = false;
     renderAssistantChat();
     $("assistantMessages").scrollTop = $("assistantMessages").scrollHeight;
-  } catch {
+  } catch (error) {
     if (assistantUi() !== ui || version !== ui.selectVersion) return;
     ui.loading = false;
     ui.selecting = false;
-    ui.status = "Could not load this chat. Retry to refresh your saved chats.";
+    setAssistantFailure(ui, error, "Could not load this chat. Retry to refresh your saved chats.");
     ui.retry = "load";
     renderAssistantChat();
   }
@@ -767,6 +821,7 @@ async function loadAssistantChats() {
   ui.selecting = false;
   ui.loading = true;
   ui.status = "";
+  ui.requestId = "";
   ui.retry = "";
   renderAssistantChat();
   const results = await Promise.allSettled([api("/api/assistant/chats"), api("/api/assistant/status")]);
@@ -777,12 +832,12 @@ async function loadAssistantChats() {
     ui.tools = service.value.tools || [];
   } else {
     ui.enabled = null;
-    ui.status = "Could not check the assistant connection. Retry to reconnect.";
+    setAssistantFailure(ui, service.reason, "Could not check the assistant connection. Retry to reconnect.");
     ui.retry = "load";
   }
   ui.loading = false;
   if (history.status !== "fulfilled") {
-    ui.status = "Could not load your chats. Retry to reconnect.";
+    setAssistantFailure(ui, history.reason, "Could not load your chats. Retry to reconnect.");
     ui.retry = "load";
     renderAssistantChat();
     return;
@@ -804,6 +859,7 @@ async function newAssistantChat() {
   ui.loading = true;
   ui.creating = true;
   ui.status = "";
+  ui.requestId = "";
   ui.retry = "";
   renderAssistantChat();
   try {
@@ -817,11 +873,11 @@ async function newAssistantChat() {
     ui.creating = false;
     renderAssistantChat();
     $("assistantPrompt").focus();
-  } catch {
+  } catch (error) {
     if (assistantUi() !== ui) return;
     ui.loading = false;
     ui.creating = false;
-    ui.status = "Could not start a new chat. Your current chat is unchanged. Try again.";
+    setAssistantFailure(ui, error, "Could not start a new chat. Your current chat is unchanged. Try again.");
     renderAssistantChat();
   }
 }
@@ -832,6 +888,7 @@ async function askPortfolioAssistant() {
   const prompt = $("assistantPrompt").value.trim();
   if (!prompt) {
     ui.status = "Enter a question first.";
+    ui.requestId = "";
     renderAssistantChat();
     $("assistantPrompt").focus();
     return;
@@ -841,6 +898,7 @@ async function askPortfolioAssistant() {
   ui.sending = true;
   ui.pendingPrompt = prompt;
   ui.status = "";
+  ui.requestId = "";
   ui.retry = "";
   renderAssistantChat();
   $("assistantMessages").scrollTop = $("assistantMessages").scrollHeight;
@@ -854,10 +912,10 @@ async function askPortfolioAssistant() {
     ui.chats = result.chats || [];
     ui.maxChats = result.max_chats || ui.maxChats;
     $("assistantPrompt").value = "";
-    ui.status = "Answer saved in this chat.";
+    ui.status = result.support_status === "unsupported" ? "Unsupported request" : "Answer saved in this chat.";
   } catch (error) {
     if (assistantUi() !== ui) return;
-    ui.status = assistantFailure(error, "Could not send your question. Your draft is kept. Retry when ready.");
+    setAssistantFailure(ui, error, "Could not send your question. Your draft is kept. Retry when ready.");
     ui.retry = "send";
   } finally {
     if (assistantUi() === ui) {
@@ -929,6 +987,80 @@ async function saveAssistantSettings() {
     $("assistantSettingsStatus").textContent = t("Could not save chat settings. Your saved limit is unchanged. Try again.");
   } finally {
     if (assistantUi() === ui) $("saveAssistantSettings").disabled = false;
+  }
+}
+
+function loggingSettingsUi() {
+  const owner = currentUser()?.id || "";
+  if (!state.loggingSettings || state.loggingSettings.owner !== owner) {
+    state.loggingSettings = { owner, loading: false, saving: false, status: "", version: 0 };
+  }
+  return state.loggingSettings;
+}
+
+function renderLoggingSettings() {
+  if (!$("loggingSettingsStatus")) return;
+  const ui = loggingSettingsUi();
+  $("loggingSettingsStatus").textContent = t(ui.status);
+  const disabled = ui.loading || ui.saving || !canAdmin();
+  $("saveLoggingSettings").disabled = disabled;
+  $("loggingMaxFiles").disabled = disabled;
+  $("loggingMaxSizeMb").disabled = disabled;
+}
+
+async function loadLoggingSettings() {
+  if (!canAdmin()) return;
+  const ui = loggingSettingsUi();
+  const version = ++ui.version;
+  ui.loading = true;
+  ui.status = "Loading logging settings…";
+  renderLoggingSettings();
+  try {
+    const data = await api("/api/settings/logging");
+    if (!canAdmin() || loggingSettingsUi() !== ui || version !== ui.version) return;
+    $("loggingMaxFiles").value = data.max_files;
+    $("loggingMaxSizeMb").value = data.max_size_mb;
+    ui.status = "";
+  } catch {
+    if (!canAdmin() || loggingSettingsUi() !== ui || version !== ui.version) return;
+    ui.status = "Could not load logging settings. Reopen this section to retry.";
+  } finally {
+    if (loggingSettingsUi() === ui && version === ui.version) {
+      ui.loading = false;
+      renderLoggingSettings();
+    }
+  }
+}
+
+async function saveLoggingSettings() {
+  if (!canAdmin()) return;
+  const ui = loggingSettingsUi();
+  if (ui.loading || ui.saving) return;
+  const maxFiles = Number($("loggingMaxFiles").value);
+  const maxSizeMb = Number($("loggingMaxSizeMb").value);
+  if (!Number.isInteger(maxFiles) || maxFiles < 1 || maxFiles > 100 || !Number.isInteger(maxSizeMb) || maxSizeMb < 1 || maxSizeMb > 1024) {
+    ui.status = "Enter whole numbers: 1–100 files and 1–1024 MB.";
+    renderLoggingSettings();
+    return;
+  }
+  const version = ++ui.version;
+  ui.saving = true;
+  ui.status = "Saving logging settings…";
+  renderLoggingSettings();
+  try {
+    const data = await api("/api/settings/logging", { method: "PUT", body: JSON.stringify({ max_files: maxFiles, max_size_mb: maxSizeMb }) });
+    if (!canAdmin() || loggingSettingsUi() !== ui || version !== ui.version) return;
+    $("loggingMaxFiles").value = data.max_files;
+    $("loggingMaxSizeMb").value = data.max_size_mb;
+    ui.status = "Logging settings saved for all components.";
+  } catch {
+    if (!canAdmin() || loggingSettingsUi() !== ui || version !== ui.version) return;
+    ui.status = "Could not save logging settings. Your saved limits are unchanged. Try again.";
+  } finally {
+    if (loggingSettingsUi() === ui && version === ui.version) {
+      ui.saving = false;
+      renderLoggingSettings();
+    }
   }
 }
 
@@ -1815,6 +1947,7 @@ function applyLanguage() {
   renderMacroScenario();
   if (state.alertData) renderAlerts(state.alertData);
   renderAssistantChat();
+  renderLoggingSettings();
   if (state.companyOutlook) renderCompanyOutlook(state.companyOutlook);
   if (state.financeReport) renderFinanceReport(state.financeReport);
   if (state.activeReport) renderReportSummary(state.activeReport);
@@ -11753,10 +11886,10 @@ async function loadCacheStatus() {
   renderApiAccessSettings();
 }
 
-const SETTINGS_SECTIONS = new Set(["display", "security", "table", "assistant", "api", "data", "backup", "system"]);
+const SETTINGS_SECTIONS = new Set(["display", "security", "table", "assistant", "api", "logging", "data", "backup", "system"]);
 
 function setSettingsSection(requestedSection = "display", { focus = false } = {}) {
-  const allowedSection = requestedSection !== "api" || canAdmin();
+  const allowedSection = !["api", "logging"].includes(requestedSection) || canAdmin();
   const section = SETTINGS_SECTIONS.has(requestedSection) && allowedSection ? requestedSection : "display";
   document.querySelectorAll("[data-settings-section]").forEach((button) => {
     const active = button.dataset.settingsSection === section;
@@ -11772,6 +11905,7 @@ function setSettingsSection(requestedSection = "display", { focus = false } = {}
     loadCacheStatus().catch((error) => { $("settingsStatus").textContent = `Error: ${error.message}`; });
   }
   if (section === "assistant") loadAssistantSettings();
+  if (section === "logging") loadLoggingSettings();
   if (focus) requestAnimationFrame(() => document.querySelector(`[data-settings-section="${section}"]`)?.focus());
 }
 
@@ -13344,6 +13478,10 @@ $("retryAssistant").addEventListener("click", () => {
 $("assistantSettingsForm").addEventListener("submit", (event) => {
   event.preventDefault();
   saveAssistantSettings();
+});
+$("loggingSettingsForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  saveLoggingSettings();
 });
 $("apply").addEventListener("click", applyFilter);
 $("saveAlert").addEventListener("click", saveAlert);

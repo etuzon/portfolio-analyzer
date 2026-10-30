@@ -114,8 +114,9 @@ def codex_completion(messages: list[dict[str, Any]], tools: list[dict[str, Any]]
             "action": {"type": "string", "enum": ["read", "answer"]},
             "tool": {"type": "string", "enum": ["", *names]},
             "arguments": {"type": "string"}, "answer": {"type": "string"},
+            "support_status": {"type": "string", "enum": ["answered", "unsupported"]},
         },
-        "required": ["action", "tool", "arguments", "answer"],
+        "required": ["action", "tool", "arguments", "answer", "support_status"],
     }
     policy = (
         "You are an isolated portfolio question planner, not a coding agent. "
@@ -126,7 +127,8 @@ def codex_completion(messages: list[dict[str, Any]], tools: list[dict[str, Any]]
         "When evidence suffices select action=answer with a concise natural-language answer and empty tool/arguments. "
         "If allowed_read_tools is empty you MUST answer now using existing evidence or clearly state what is unknown. "
         "Never guess or invent data, tools, actions or current news. Never combine different currencies. "
-        "Respect the user's language. Format dates dd/mm/yyyy. Cite actual GET paths from read tool descriptions. "
+        "Respect the user's language. Format dates dd/mm/yyyy. Never show source footers, citations, tool names or REST paths in answers. "
+        "Set support_status=unsupported when an approved capability does not exist for the request (writes, direct database/files or unavailable live news); use answered for supported questions with unknown/missing data or clarification. "
         "Do not search the computer, load skills, read instructions or call any native tool."
     )
     with tempfile.TemporaryDirectory(prefix="portfolio-codex-planner-") as workspace:
@@ -181,7 +183,7 @@ def codex_completion(messages: list[dict[str, Any]], tools: list[dict[str, Any]]
                     raise CodexBridgeError("Local Codex requested an unapproved read.")
                 message = {"role": "assistant", "tool_calls": [{"id": "local-" + uuid4().hex, "function": {"name": decision["tool"], "arguments": decision["arguments"]}}]}
             elif decision.get("action") == "answer" and isinstance(decision.get("answer"), str) and decision["answer"].strip():
-                message = {"role": "assistant", "content": decision["answer"]}
+                message = {"role": "assistant", "content": decision["answer"], "support_status": decision.get("support_status", "answered")}
             else:
                 raise CodexBridgeError("Local Codex returned an invalid decision.")
             return {"choices": [{"message": message}]}
@@ -224,8 +226,11 @@ class _Handler(BaseHTTPRequestHandler):
             finally:
                 _slots.release()
             body, status = json.dumps(result).encode(), 200
-        except Exception:
-            body, status = b'{"error":"Local Codex is unavailable or rejected the request."}', 503
+        except Exception as exc:
+            # Return only controlled diagnostics, never subprocess stderr or
+            # credentials. The app stores this cause in its redacted chat log.
+            body = json.dumps({"error": {"type": type(exc).__name__, "message": str(exc) if isinstance(exc, CodexBridgeError) else "Local Codex is unavailable or rejected the request."}}).encode()
+            status = 503
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))

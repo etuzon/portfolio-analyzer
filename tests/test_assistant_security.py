@@ -183,7 +183,8 @@ def test_six_exchange_cap_and_recovery_are_enforced_by_main_endpoint(authenticat
     env.patch.setattr(PortfolioAssistant, "_call_provider", loop)
     response = client.post("/api/assistant/questions", json={"prompt": "Keep reading accounts indefinitely"})
     assert response.status_code == 400
-    assert "6-step" in response.json()["detail"]
+    assert response.json()["detail"]["code"] == "assistant_limit"
+    assert response.json()["detail"]["request_id"]
     assert len(requests) == 6
     assert requests[-1] == []
     assert all(requests[index] for index in range(5))
