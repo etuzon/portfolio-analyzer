@@ -6109,10 +6109,46 @@ tbody tr:hover {
 .family-member-item {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: start;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+#familyMembersList { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+.family-member-item .attached-account-list > * { min-width: 0; max-width: 100%; }
+
+.family-member-editor { width: min(620px, calc(100vw - 24px)); }
+.family-member-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
+.family-member-fields .field { min-width: 0; }
+.family-member-fields input,
+.family-member-fields select,
+.family-member-fields textarea { width: 100%; min-width: 0; }
+.family-member-fields .date-field,
+.family-member-fields input[type="number"] { min-width: 140px; }
+.family-member-comments { grid-column: 1 / -1; }
+.family-member-fields textarea {
+  resize: vertical;
+  min-height: 88px;
+  padding: 8px 12px;
+  border: 1px solid #2b2d32;
+  border-radius: 7px;
+  background: #202124;
+  color: #f4f6f8;
+  font: inherit;
+  line-height: 1.5;
+}
+.family-member-fields :is(input, select, textarea):focus-visible { outline: 2px solid var(--ux-blue); outline-offset: 2px; }
+.family-member-editor .modal-toolbar { justify-content: flex-end; margin-top: 12px; }
+.family-member-delete-note { color: var(--ux-muted); font-size: 11px; }
+
+@media (max-width: 600px) {
+  .family-member-fields { grid-template-columns: minmax(0, 1fr); }
+  .family-member-item { grid-template-columns: minmax(0, 1fr); }
+  .family-member-actions { justify-self: end; }
 }
 
 .family-member-main {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   gap: 8px;
 }
@@ -6120,7 +6156,7 @@ tbody tr:hover {
 .family-member-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 6px 14px;
 }
 
 .family-member-meta span {
@@ -6128,12 +6164,9 @@ tbody tr:hover {
   align-items: center;
   gap: 5px;
   width: auto;
-  padding: 4px 7px;
-  border: 1px solid #2a3448;
-  border-radius: 6px;
-  background: #111827;
+  padding: 0;
   color: #d2daf0;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
 }
 

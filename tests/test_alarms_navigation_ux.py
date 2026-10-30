@@ -28,7 +28,7 @@ def test_people_and_retirement_are_separate_navigation_groups_with_deep_links():
     assert ">Pensions & Funds</button>" in html
     assert ">Retirement Projections</button>" in html
     assert html.index('<span class="nav-menu-label">People</span>') < html.index('<span class="nav-menu-label">Retirement</span>')
-    assert 'data-modal-target="familyMembersSection" data-modal-focus="familyMemberFirstName"' in html
+    assert 'data-modal-target="familyMembersSection" data-modal-focus="newFamilyMember"' in html
     assert 'data-modal-target="accountOwnershipSection" data-modal-focus="familyAttachAccount"' in html
     assert 'data-modal-target="simulatorPanel" data-modal-focus="simPersonSource"' in html
     assert 'id="familyMembersSection"' in html

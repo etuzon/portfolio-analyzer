@@ -61,6 +61,12 @@ const state = {
   editingAccountId: "",
   editingBrokerId: "",
   editingFamilyMemberId: "",
+  familyMemberSaving: false,
+  deletingFamilyMemberIds: [],
+  familyMembersLoaded: false,
+  familyStatusMessage: "",
+  familyMemberError: "",
+  familyMemberErrorField: "",
   editingFundId: "",
   editingManualSecurityId: "",
   editingTransactionId: "",
@@ -670,7 +676,7 @@ const WRITE_CONTROL_IDS = new Set([
   "saveEditFund", "saveEmployeeExercise", "saveEmployeeListing", "saveEmployeeOptionGrant", "saveFamilyMember",
   "saveFund", "saveFundHistory", "saveHistorySnapshot", "saveLocalAccount", "saveManualSecurity",
   "saveIndustryClassification", "removeIndustryClassification", "savePositionTransaction", "savePrice", "saveSecurity", "saveTableSettings", "saveUser", "showFundCreate",
-  "addSecurityExposureCurrency", "saveSecurityExposure", "removeSecurityExposure",
+  "addSecurityExposureCurrency", "saveSecurityExposure", "removeSecurityExposure", "newFamilyMember",
   "showPensionPeriodEntry", "showPensionRateEntry",
 ]);
 const WRITE_DATA_ACTIONS = new Set([
@@ -1099,7 +1105,7 @@ function ensureHierarchicalNav() {
     <details class="nav-menu">
       ${navMenuSummary("people", t("people"))}
       <div class="nav-children">
-        <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="familyMembersSection" data-modal-focus="familyMemberFirstName">${esc(t("familyMembers"))}</button>
+        <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="familyMembersSection" data-modal-focus="newFamilyMember">${esc(t("familyMembers"))}</button>
         <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="accountOwnershipSection" data-modal-focus="familyAttachAccount">${esc(t("accountOwnership"))}</button>
       </div>
     </details>
@@ -1519,6 +1525,10 @@ function applyLanguage() {
   refreshBrokerSelects();
   renderBrokersList();
   renderLocalAccountsList();
+  renderFamilyMembers();
+  renderFamilyMemberEditor();
+  refreshFamilyMemberSelects();
+  refreshFamilyAccountSelects();
   renderImportSkippedAccounts();
   renderFundAccountOwners();
   document.querySelectorAll("[data-i18n]").forEach((node) => {
@@ -4695,10 +4705,10 @@ function memberMetaHtml(member) {
   const rows = [
     ["Gender", member.gender || "Not set"],
     ["Birth Date", formatDate(member.birth_date)],
-    ["Retire Age", member.retire_age ? fmt(member.retire_age, 1) : "Not set"],
-    ["Age", member.age ? fmt(member.age, 1) : ""],
+    ["Retire Age", member.retire_age != null ? fmt(member.retire_age, 1) : "Not set"],
+    ["Age", member.age != null ? fmt(member.age, 1) : ""],
   ].filter(([, value]) => value !== "");
-  return rows.map(([label, value]) => `<span><strong>${esc(label)}</strong>${esc(value)}</span>`).join("");
+  return rows.map(([label, value]) => `<span><strong>${esc(t(label))}</strong><bdi>${esc(t(value))}</bdi></span>`).join("");
 }
 
 function familyMemberById(id) {
@@ -4719,8 +4729,8 @@ function personFromFamilyMember(member) {
 }
 
 function refreshFamilyMemberSelects() {
-  const options = '<option value="">Choose family member</option>' + state.familyMembers
-    .map((member) => `<option value="${esc(member.id)}">${esc(memberLabel(member))}</option>`)
+  const options = `<option value="">${esc(t("Choose family member"))}</option>` + state.familyMembers
+    .map((member) => `<option value="${esc(member.id)}" data-i18n-skip>${esc(memberLabel(member))}</option>`)
     .join("");
   ["localAccountFamilyMember", "editAccountFamilyMember", "familyAttachMember"].forEach((id) => {
     const select = $(id);
@@ -4775,8 +4785,8 @@ function refreshReportFilterOptions() {
 }
 
 function refreshFamilyAccountSelects() {
-  const options = '<option value="">Choose account</option>' + state.localAccounts
-    .map((account) => `<option value="${esc(account.id)}">${esc(accountLabel(account))} · ${esc(account.type)}</option>`)
+  const options = `<option value="">${esc(t("Choose account"))}</option>` + state.localAccounts
+    .map((account) => `<option value="${esc(account.id)}" data-i18n-skip>${esc(accountLabel(account))} · ${esc(t(account.type))}</option>`)
     .join("");
   ["familyAttachAccount"].forEach((id) => {
     const select = $(id);
@@ -4790,75 +4800,190 @@ function refreshFamilyAccountSelects() {
 async function loadFamilyMembers() {
   const data = await api("/api/local/family-members");
   state.familyMembers = data.items || [];
+  state.familyMembersLoaded = true;
   refreshFamilyMemberSelects();
   refreshReportPersonSelect();
   refreshReportAccountSelect();
   refreshFamilyAccountSelects();
   renderSimulationPersonOptions();
+  renderFamilyMembers();
+}
+
+function setFamilyStatus(message = "") {
+  state.familyStatusMessage = message;
+  if ($("familyStatus")) $("familyStatus").textContent = t(message);
+}
+
+function renderFamilyMembers() {
+  setFamilyStatus(state.familyStatusMessage || "");
   const list = $("familyMembersList");
-  if (list) {
+  if (list && state.familyMembersLoaded) {
     list.innerHTML = state.familyMembers.length ? state.familyMembers.map((member) => {
       const attachedAccounts = member.attached_account_items || [];
+      const attached = Number(member.attached_accounts || 0) > 0 || attachedAccounts.length > 0;
+      const deleting = (state.deletingFamilyMemberIds || []).includes(member.id);
       return `
       <div class="stack-item management-item family-member-item">
         <div class="family-member-main">
-          <b>${esc(memberLabel(member))}</b>
+          <b dir="auto" data-i18n-skip>${esc(memberLabel(member))}</b>
           <div class="family-member-meta">${memberMetaHtml(member)}</div>
-          <div class="sub">${esc(member.comments || "No comments")}</div>
+          ${member.comments ? `<div class="sub" dir="auto" data-i18n-skip>${esc(member.comments)}</div>` : ""}
         </div>
         <div class="family-member-actions">
-          <button class="secondary compact-button" type="button" data-edit-family-member="${esc(member.id)}">Edit</button>
-          <button class="secondary compact-button" type="button" data-delete-family-member="${esc(member.id)}"${member.attached_accounts ? " disabled" : ""} title="${member.attached_accounts ? "Cannot delete while attached to an account" : "Remove family member"}">Remove</button>
+          <button class="secondary compact-button" type="button" data-edit-family-member="${esc(member.id)}"${deleting ? " disabled" : ""}>${esc(t("Edit"))}</button>
+          <button class="secondary compact-button" type="button" data-delete-family-member="${esc(member.id)}"${attached || deleting ? " disabled" : ""} title="${esc(t(attached ? "Cannot delete while attached to an account" : "Remove family member"))}">${esc(t(deleting ? "Deleting…" : "Delete"))}</button>
         </div>
         <div class="attached-account-list">
-          ${attachedAccounts.length ? attachedAccounts.map((account) => `<span>${esc(account.label)} · ${esc(account.type)}</span>`).join("") : "<em>No attached accounts</em>"}
+          ${attachedAccounts.length ? attachedAccounts.map((account) => `<span><bdi data-i18n-skip>${esc(account.label)}</bdi> · ${esc(t(account.type))}</span>`).join("") : `<em>${esc(t("No attached accounts"))}</em>`}
+          ${attached ? `<small class="family-member-delete-note">${esc(t("Cannot delete while attached to an account"))}</small>` : ""}
         </div>
       </div>
     `;
-    }).join("") : '<div class="empty">No family members yet</div>';
+    }).join("") : `<div class="empty">${esc(t("No family members yet"))}</div>`;
   }
 }
 
 async function saveFamilyMember() {
+  if (!canWrite() || state.familyMemberSaving) return;
+  const firstName = valueOf("familyMemberFirstName");
   const birthDate = dateValue("familyMemberBirthDate");
+  const retireAge = valueOf("familyMemberRetireAge");
+  if (!firstName) return familyMemberValidation("First name is required.", "familyMemberFirstName");
   if (!birthDate) {
-    $("familyStatus").textContent = `Birthday must use ${DATE_PLACEHOLDER}`;
-    return;
+    return familyMemberValidation("Enter a valid birth date in dd/mm/yyyy.", "familyMemberBirthDate");
   }
-  await api("/api/local/family-members", {
-    method: "POST",
-    body: JSON.stringify({
-      id: state.editingFamilyMemberId || undefined,
-      first_name: valueOf("familyMemberFirstName"),
+  if (birthDate > todayString()) return familyMemberValidation("Birth date cannot be in the future.", "familyMemberBirthDate");
+  if ($("familyMemberRetireAge").validity.badInput || (retireAge !== "" && (!Number.isFinite(Number(retireAge)) || Number(retireAge) < 0))) {
+    return familyMemberValidation("Retirement age must be zero or a positive number.", "familyMemberRetireAge");
+  }
+  const editingId = state.editingFamilyMemberId;
+  const payload = {
+      id: editingId || undefined,
+      first_name: firstName,
       last_name: valueOf("familyMemberLastName"),
       gender: valueOf("familyMemberGender"),
       birth_date: birthDate,
-      retire_age: valueOf("familyMemberRetireAge"),
+      retire_age: retireAge,
       comments: valueOf("familyMemberComments"),
-    }),
-  });
-  $("familyStatus").textContent = state.editingFamilyMemberId ? "Person updated" : "Person saved";
-  clearFamilyMemberForm();
-  await loadFamilyMembers();
+  };
+  state.familyMemberError = "";
+  state.familyMemberErrorField = "";
+  setFamilyMemberSaving(true);
+  try {
+    const saved = await api("/api/local/family-members", { method: "POST", body: JSON.stringify(payload) });
+    const existing = familyMemberById(saved.id);
+    state.familyMembers = [...state.familyMembers.filter((member) => member.id !== saved.id), { ...existing, ...saved }];
+    state.familyMembersLoaded = true;
+    refreshFamilyMemberSelects();
+    refreshReportPersonSelect();
+    renderSimulationPersonOptions();
+    renderFamilyMembers();
+    const refreshed = await Promise.allSettled([loadFamilyMembers(), loadLocalAccounts()]);
+    setFamilyStatus(refreshed.some((result) => result.status === "rejected")
+      ? "Person saved. Some linked data could not refresh; reopen People to retry."
+      : editingId ? "Person updated" : "Person saved");
+    setFamilyMemberSaving(false);
+    if (!$("familyMemberModal").hidden) closeModal($("familyMemberModal"));
+  } catch (_error) {
+    state.familyMemberError = "Could not save this person. Check the details and try again.";
+    renderFamilyMemberEditor();
+  } finally {
+    setFamilyMemberSaving(false);
+    if (state.familyMemberError && !$("familyMemberModal").hidden) requestAnimationFrame(() => $("saveFamilyMember")?.focus());
+  }
 }
 
 function clearFamilyMemberForm() {
   state.editingFamilyMemberId = "";
   ["familyMemberFirstName", "familyMemberLastName", "familyMemberBirthDate", "familyMemberRetireAge", "familyMemberComments"].forEach((id) => { $(id).value = ""; });
   $("familyMemberGender").value = "";
+  state.familyMemberError = "";
+  state.familyMemberErrorField = "";
 }
 
-function editFamilyMember(memberId) {
+function familyMemberValidation(message, field) {
+  state.familyMemberError = message;
+  state.familyMemberErrorField = field;
+  renderFamilyMemberEditor();
+  $(field)?.focus();
+}
+
+function renderFamilyMemberEditor() {
+  if (!$("familyMemberEditorTitle")) return;
+  $("familyMemberEditorTitle").textContent = t(state.editingFamilyMemberId ? "Edit person" : "Add person");
+  $("familyMemberEditorStatus").textContent = t(state.familyMemberError || "");
+  $("saveFamilyMember").textContent = t(state.familyMemberSaving ? "Saving person…" : "Save person");
+  $("familyMemberForm").querySelectorAll("input, select, textarea").forEach((field) => {
+    if (field.id === state.familyMemberErrorField) {
+      field.setAttribute("aria-invalid", "true");
+      field.setAttribute("aria-describedby", "familyMemberEditorStatus");
+    } else {
+      field.removeAttribute("aria-invalid");
+      field.removeAttribute("aria-describedby");
+    }
+  });
+}
+
+function setFamilyMemberSaving(saving) {
+  state.familyMemberSaving = saving;
+  $("familyMemberModal").querySelectorAll("button, input, select, textarea").forEach((control) => { control.disabled = saving; });
+  $("saveFamilyMember").disabled = saving || !canWrite();
+  $("newFamilyMember").disabled = saving || !canWrite();
+  $("familyMemberForm").setAttribute("aria-busy", String(saving));
+  renderFamilyMemberEditor();
+}
+
+function openFamilyMemberEditor(memberId = "", returnFocus = document.activeElement) {
+  if (!canWrite() || state.familyMemberSaving) return;
+  const member = memberId ? familyMemberById(memberId) : null;
+  if (memberId && !member) return;
+  clearFamilyMemberForm();
+  if (member) {
+    state.editingFamilyMemberId = member.id;
+    $("familyMemberFirstName").value = member.first_name || "";
+    $("familyMemberLastName").value = member.last_name || "";
+    $("familyMemberGender").value = member.gender || "";
+    setDateField("familyMemberBirthDate", member.birth_date || "");
+    $("familyMemberRetireAge").value = member.retire_age ?? "";
+    $("familyMemberComments").value = member.comments || "";
+  }
+  renderFamilyMemberEditor();
+  $("familyModal").inert = true;
+  $("familyModal").setAttribute("aria-hidden", "true");
+  openModal("familyMemberModal", returnFocus, { focusId: "familyMemberFirstName" });
+}
+
+function editFamilyMember(memberId, returnFocus = document.activeElement) {
+  openFamilyMemberEditor(memberId, returnFocus);
+}
+
+async function deleteFamilyMember(memberId) {
+  if (!canWrite() || (state.deletingFamilyMemberIds || []).includes(memberId)) return;
   const member = familyMemberById(memberId);
   if (!member) return;
-  state.editingFamilyMemberId = member.id;
-  $("familyMemberFirstName").value = member.first_name || "";
-  $("familyMemberLastName").value = member.last_name || "";
-  $("familyMemberGender").value = member.gender || "";
-  setDateField("familyMemberBirthDate", member.birth_date || "");
-  $("familyMemberRetireAge").value = member.retire_age || "";
-  $("familyMemberComments").value = member.comments || "";
-  $("familyStatus").textContent = `Editing ${memberLabel(member)}`;
+  if (Number(member.attached_accounts || 0) > 0 || member.attached_account_items?.length) {
+    setFamilyStatus("Cannot delete while attached to an account");
+    return;
+  }
+  if (!window.confirm(t("Delete {name}? This cannot be undone.").replace("{name}", memberLabel(member)))) return;
+  state.deletingFamilyMemberIds = [...(state.deletingFamilyMemberIds || []), memberId];
+  renderFamilyMembers();
+  try {
+    await api(`/api/local/family-members/${encodeURIComponent(memberId)}`, { method: "DELETE" });
+    state.familyMembers = state.familyMembers.filter((item) => item.id !== memberId);
+    renderFamilyMembers();
+    refreshFamilyMemberSelects();
+    refreshReportPersonSelect();
+    renderSimulationPersonOptions();
+    const refreshed = await Promise.allSettled([loadFamilyMembers(), loadLocalAccounts()]);
+    setFamilyStatus(refreshed.some((result) => result.status === "rejected") ? "Person deleted. Reopen People to refresh linked data." : "Person deleted");
+    $("newFamilyMember")?.focus();
+  } catch (_error) {
+    setFamilyStatus("Could not delete this person. They may have linked accounts; refresh People and try again.");
+  } finally {
+    state.deletingFamilyMemberIds = state.deletingFamilyMemberIds.filter((id) => id !== memberId);
+    renderFamilyMembers();
+  }
 }
 
 function attachFamilyMember(listKey, selectId, statusId, { single = false } = {}) {
@@ -11914,7 +12039,12 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
     Promise.all([loadBrokers(), loadFamilyMembers(), loadLocalAccounts()]);
   }
   if (id === "brokersModal") loadBrokers();
-  if (id === "familyModal") Promise.all([loadLocalAccounts(), loadFamilyMembers()]);
+  if (id === "familyModal") {
+    setFamilyStatus("Loading people…");
+    Promise.all([loadLocalAccounts(), loadFamilyMembers()])
+      .then(() => setFamilyStatus())
+      .catch(() => setFamilyStatus("Could not load people. Close and reopen People to retry."));
+  }
   if (id === "securitiesModal") {
     Promise.all([
       loadLocalAccounts(),
@@ -11980,6 +12110,18 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
 
 function closeModal(modal) {
   if (!modal) return;
+  if (modal.id === "familyMemberModal") {
+    if (state.familyMemberSaving) return;
+    $("familyModal").inert = false;
+    $("familyModal").removeAttribute("aria-hidden");
+    if (!modalReturnFocus.get(modal.id)?.isConnected) {
+      const editButton = [...document.querySelectorAll("[data-edit-family-member]")]
+        .find((button) => button.dataset.editFamilyMember === state.editingFamilyMemberId);
+      modalReturnFocus.set(modal.id, editButton || $("newFamilyMember"));
+    }
+    clearFamilyMemberForm();
+    renderFamilyMemberEditor();
+  }
   if (modal.id === "tradeHistoryDetailModal") {
     $("positionsModal").inert = false;
     $("positionsModal").removeAttribute("aria-hidden");
@@ -12064,7 +12206,7 @@ document.addEventListener("keydown", (event) => {
     return;
   }
   if (event.key !== "Tab") return;
-  const focusable = [...activeModal.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])')]
+  const focusable = [...activeModal.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])')]
     .filter((element) => element.getClientRects().length > 0);
   if (!focusable.length) return;
   const currentIndex = focusable.indexOf(document.activeElement);
@@ -12490,14 +12632,12 @@ document.addEventListener("click", (event) => {
 
   const familyMemberId = event.target.closest("[data-delete-family-member]")?.dataset.deleteFamilyMember;
   if (familyMemberId) {
-    api(`/api/local/family-members/${familyMemberId}`, { method: "DELETE" })
-      .then(loadFamilyMembers)
-      .catch((error) => { $("familyStatus").textContent = `Error: ${error.message}`; });
+    deleteFamilyMember(familyMemberId);
   }
 
   const editFamilyMemberId = event.target.closest("[data-edit-family-member]")?.dataset.editFamilyMember;
   if (editFamilyMemberId) {
-    editFamilyMember(editFamilyMemberId);
+    editFamilyMember(editFamilyMemberId, event.target.closest("[data-edit-family-member]"));
   }
 
   const brokerId = event.target.closest("[data-delete-broker]")?.dataset.deleteBroker;
@@ -12919,8 +13059,11 @@ $("saveLocalAccount").addEventListener("click", () => saveLocalAccount().catch((
 $("saveEditAccount").addEventListener("click", () => saveEditAccount().catch((error) => { $("editAccountStatus").textContent = `Error: ${error.message}`; }));
 $("saveBroker").addEventListener("click", () => saveBroker().catch((error) => { $("brokerStatus").textContent = `Error: ${error.message}`; }));
 $("clearBrokerForm").addEventListener("click", clearBrokerForm);
-$("saveFamilyMember").addEventListener("click", () => saveFamilyMember().catch((error) => { $("familyStatus").textContent = `Error: ${error.message}`; }));
-$("clearFamilyMemberForm").addEventListener("click", clearFamilyMemberForm);
+$("newFamilyMember").addEventListener("click", () => openFamilyMemberEditor("", $("newFamilyMember")));
+$("familyMemberForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  saveFamilyMember().catch(() => familyMemberValidation("Could not save this person. Check the details and try again.", ""));
+});
 $("attachAccountToMember").addEventListener("click", () => attachAccountToMember().catch((error) => { $("accountOwnershipStatus").textContent = `Error: ${error.message}`; }));
 $("attachLocalAccountPerson").addEventListener("click", () => attachFamilyMember("localAccountPersons", "localAccountFamilyMember", "accountsStatus", { single: !accountAllowsMultipleMembers({ type: valueOf("localAccountType") }) }));
 $("attachEditAccountPerson").addEventListener("click", () => attachFamilyMember("editAccountPersons", "editAccountFamilyMember", "editAccountStatus", { single: !accountAllowsMultipleMembers({ type: valueOf("editAccountType") }) }));

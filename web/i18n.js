@@ -2,6 +2,23 @@
   "use strict";
 
   const HEBREW_TEXT = Object.freeze({
+    "Not set": "לא הוגדר",
+    "Add person": "הוספת אדם",
+    "Edit person": "עריכת פרטי אדם",
+    "Saving person…": "שומר את פרטי האדם…",
+    "Deleting…": "מוחק…",
+    "Person deleted": "האדם נמחק",
+    "Loading people…": "טוען את רשימת האנשים…",
+    "Could not load people. Close and reopen People to retry.": "לא ניתן לטעון את רשימת האנשים. יש לסגור ולפתוח שוב את חלון האנשים כדי לנסות מחדש.",
+    "First name is required.": "יש להזין שם פרטי.",
+    "Enter a valid birth date in dd/mm/yyyy.": "יש להזין תאריך לידה תקין בתבנית dd/mm/yyyy.",
+    "Birth date cannot be in the future.": "תאריך הלידה אינו יכול להיות בעתיד.",
+    "Retirement age must be zero or a positive number.": "גיל הפרישה חייב להיות אפס או מספר חיובי.",
+    "Could not save this person. Check the details and try again.": "לא ניתן לשמור את פרטי האדם. יש לבדוק את הפרטים ולנסות שוב.",
+    "Person saved. Some linked data could not refresh; reopen People to retry.": "פרטי האדם נשמרו, אך חלק מהנתונים המשויכים לא עודכנו. יש לפתוח שוב את חלון האנשים כדי לנסות מחדש.",
+    "Delete {name}? This cannot be undone.": "למחוק את {name}? לא ניתן לבטל פעולה זו.",
+    "Person deleted. Reopen People to refresh linked data.": "האדם נמחק. יש לפתוח שוב את חלון האנשים כדי לעדכן את הנתונים המשויכים.",
+    "Could not delete this person. They may have linked accounts; refresh People and try again.": "לא ניתן למחוק את האדם. ייתכן שקיימים חשבונות משויכים; יש לרענן את חלון האנשים ולנסות שוב.",
     "Could not update alarms. Reopen Alerts to retry.": "לא ניתן לעדכן את ההתראות. יש לפתוח שוב את ההתראות כדי לנסות מחדש.",
     "{symbol} dividend was paid": "הדיבידנד של {symbol} שולם",
     "{symbol} dividend is expected {due}": "הדיבידנד של {symbol} צפוי {due}",

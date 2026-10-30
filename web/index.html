@@ -79,7 +79,7 @@
           <details class="nav-menu">
             <summary><span class="nav-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="nav-menu-label">People</span></summary>
             <div class="nav-children">
-              <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="familyMembersSection" data-modal-focus="familyMemberFirstName">Family Members</button>
+              <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="familyMembersSection" data-modal-focus="newFamilyMember">Family Members</button>
               <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="accountOwnershipSection" data-modal-focus="familyAttachAccount">Account Ownership</button>
             </div>
           </details>
@@ -423,21 +423,7 @@
               <p class="eyebrow">People</p>
               <h3 id="familyMembersSectionTitle">Family members</h3>
             </div>
-          </div>
-          <div class="management-form">
-            <input id="familyMemberFirstName" placeholder="First name" />
-            <input id="familyMemberLastName" placeholder="Last name" />
-            <select id="familyMemberGender">
-              <option value="">Gender</option>
-              <option value="Female">Female</option>
-              <option value="Male">Male</option>
-              <option value="Other">Other</option>
-            </select>
-            <input id="familyMemberBirthDate" class="date-field" inputmode="numeric" placeholder="Birthday dd/mm/yyyy" />
-            <input id="familyMemberRetireAge" type="number" min="0" step="0.1" placeholder="Retire age optional" />
-            <input id="familyMemberComments" placeholder="Comments" />
-            <button id="saveFamilyMember" type="button">Save person</button>
-            <button id="clearFamilyMemberForm" class="secondary" type="button">Clear form</button>
+            <button id="newFamilyMember" type="button">Add person</button>
           </div>
           <p id="familyStatus" class="status-line" role="status" aria-live="polite"></p>
           <div id="familyMembersList" class="stack management-list"></div>
@@ -460,6 +446,31 @@
           </div>
           <p id="accountOwnershipStatus" class="status-line" role="status" aria-live="polite"></p>
         </section>
+      </section>
+    </div>
+
+    <div id="familyMemberModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card family-member-editor" role="dialog" aria-modal="true" aria-labelledby="familyMemberEditorTitle">
+        <div class="section-head">
+          <h2 id="familyMemberEditorTitle">Add person</h2>
+          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+        </div>
+        <form id="familyMemberForm" novalidate>
+          <div class="family-member-fields">
+            <label class="field" for="familyMemberFirstName"><span>First name <em class="required-mark">Required</em></span><input id="familyMemberFirstName" autocomplete="given-name" required /></label>
+            <label class="field" for="familyMemberLastName"><span>Last name</span><input id="familyMemberLastName" autocomplete="family-name" /></label>
+            <label class="field" for="familyMemberGender"><span>Gender</span><select id="familyMemberGender"><option value="">Not set</option><option value="Female">Female</option><option value="Male">Male</option><option value="Other">Other</option></select></label>
+            <label class="field" for="familyMemberBirthDate"><span>Birth Date <em class="required-mark">Required</em></span><input id="familyMemberBirthDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" autocomplete="bday" required /></label>
+            <label class="field" for="familyMemberRetireAge"><span>Retire age optional</span><input id="familyMemberRetireAge" type="number" min="0" step="0.1" /></label>
+            <label class="field family-member-comments" for="familyMemberComments"><span>Comments</span><textarea id="familyMemberComments" rows="3"></textarea></label>
+          </div>
+          <p id="familyMemberEditorStatus" class="status-line" role="alert" aria-live="polite"></p>
+          <div class="modal-toolbar">
+            <button id="saveFamilyMember" type="submit">Save person</button>
+            <button class="secondary" type="button" data-close>Cancel</button>
+          </div>
+        </form>
       </section>
     </div>
 

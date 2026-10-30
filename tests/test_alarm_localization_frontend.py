@@ -50,7 +50,9 @@ const noop = () => {};
 const refreshLocalizedFormOptions = noop, refreshBrokerSelects = noop,
   renderBrokersList = noop, renderLocalAccountsList = noop, renderImportSkippedAccounts = noop,
   renderFundAccountOwners = noop, ensureHierarchicalNav = noop, bindNavAccordion = noop,
-  renderCurrentUser = noop, renderMacroScenario = noop, refreshReportFilterOptions = noop,
+  renderCurrentUser = noop, renderFamilyMembers = noop, renderFamilyMemberEditor = noop,
+  refreshFamilyMemberSelects = noop, refreshFamilyAccountSelects = noop,
+  renderMacroScenario = noop, refreshReportFilterOptions = noop,
   applyAutoDirection = noop, mountModalHomeLink = noop;
 const paid = {id:'paid', type:'DIVIDEND', symbol:'TRIN', status:'processed',
   event_date:'2026-08-14', currency:'USD', gross_amount:2.72, tax_amount:0.68,
