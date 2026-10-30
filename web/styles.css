@@ -3529,12 +3529,17 @@ textarea.muted-control {
 
 .account-risk-metrics { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
 .account-risk-portfolio-share { display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 7px; border: 1px solid #374658; border-radius: 7px; background: #1c2633; color: #aeb9ca; font-size: 10px; line-height: 1.35; }
+.account-risk-metrics > .risk-badge,
+.account-risk-metrics > .account-risk-portfolio-share { box-sizing: border-box; flex: 0 0 84px; width: 84px; height: 38px; min-height: 38px; padding: 4px 7px; border-radius: 7px; justify-content: center; font-size: 11px; }
 .account-risk-portfolio-share > bdi { color: #edf3ff; font-size: 11px; font-weight: 800; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .account-risk-portfolio-share .account-share-ring, .account-share-ring-placeholder { flex: 0 0 28px; width: 28px; height: 28px; min-height: 0; }
 .account-share-ring { fill: none; stroke-width: 3; transform: rotate(-90deg); }
 .account-share-ring-track { stroke: #394657; }
 .account-share-ring-value { stroke: #79c8fa; }
 .account-share-ring-placeholder { display: grid; place-items: center; border: 3px solid #394657; border-radius: 50%; color: #aeb9ca; font-size: 11px; }
+.account-risk-portfolio-share .account-share-ring-placeholder { flex-basis: 14px; width: 14px; height: 14px; border-width: 2px; font-size: 9px; line-height: 1; }
+.account-risk-portfolio-share:has(.account-share-ring-placeholder) { gap: 4px; }
+.account-risk-portfolio-share:has(.account-share-ring-placeholder) > bdi { white-space: normal; overflow-wrap: anywhere; line-height: 1.1; }
 
 .account-risk-allocation-bar {
   display: flex;
