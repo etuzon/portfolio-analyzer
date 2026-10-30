@@ -183,12 +183,13 @@ nodes.tradeHistorySearch.value='STOCK24';exportTradeHistoryCsv();assert.equal(ou
 
 def test_positions_navigation_and_default_are_independent_from_reports():
     html = (ROOT / 'web/index.html').read_text()
-    nav = html[html.index('<nav class="nav">'):html.index('</nav>')]
+    nav = html[html.index('<nav id="appNavigation"'):html.index('</nav>')]
     portfolio_menu = nav[:nav.index('</details>')]
     assert 'data-modal="positionsModal">Positions</button>' in portfolio_menu
     run(functions('ensureHierarchicalNav') + """
 const assert=require('node:assert/strict');
 const nav={innerHTML:''};const document={querySelector:()=>nav};
+const $=()=>null;
 const NAV_MENU_ICONS={reports:''};
 const canAdmin=()=>false;
 const esc=value=>value;const t=value=>value;const navMenuSummary=(_icon,label)=>'<summary>'+label+'</summary>';

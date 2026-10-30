@@ -750,7 +750,10 @@ function setAppAuthenticationLock(locked) {
 function renderCurrentUser() {
   const user = currentUser();
   const name = [user?.first_name, user?.last_name].filter(Boolean).join(" ") || user?.username || "";
-  if ($("currentUserName")) $("currentUserName").textContent = name;
+  if ($("currentUserName")) {
+    $("currentUserName").textContent = name;
+    $("currentUserName").title = name;
+  }
   if ($("currentUserRole")) $("currentUserRole").textContent = user ? optionLabel(user.role) : "";
   applyRolePermissions();
 }
@@ -784,8 +787,11 @@ function showLogin(message = "") {
   requestAnimationFrame(() => $("loginUsername")?.focus());
 }
 
+let passwordChangeReturnFocus = null;
+
 function showPasswordChange({ forced = false } = {}) {
   state.auth.forcedPasswordChange = forced || Boolean(currentUser()?.must_change_password);
+  passwordChangeReturnFocus = state.auth.forcedPasswordChange ? null : document.activeElement;
   setAppAuthenticationLock(true);
   $("authOverlay").hidden = false;
   $("loginForm").hidden = true;
@@ -804,6 +810,9 @@ function showPasswordChange({ forced = false } = {}) {
 function hideAuthOverlay() {
   $("authOverlay").hidden = true;
   setAppAuthenticationLock(false);
+  const returnFocus = passwordChangeReturnFocus;
+  passwordChangeReturnFocus = null;
+  if (returnFocus?.isConnected) requestAnimationFrame(() => returnFocus.focus());
 }
 
 async function authResponse(response) {
@@ -1071,6 +1080,7 @@ function ensureHierarchicalNav() {
   // Top-level groups open as compact popovers, so keep the header uncluttered
   // until the user chooses a group.
   const defaultOpen = "";
+  const alarmCount = $("alarmsCount")?.textContent || "0";
   nav.innerHTML = `
     <details class="nav-menu"${defaultOpen}>
       ${navMenuSummary("portfolio", t("portfolioData"))}
@@ -1115,6 +1125,7 @@ function ensureHierarchicalNav() {
       </div>
     </details>
     <button class="nav-menu-link" type="button" data-modal="reportsModal"><span class="nav-menu-icon" aria-hidden="true">${NAV_MENU_ICONS.reports}</span><span class="nav-menu-label">${esc(t("reports"))}</span></button>
+    <button id="alarmsButton" class="nav-menu-link alarm-button${Number(alarmCount) > 0 ? " has-alarms" : ""}" type="button" data-modal="alarmsModal" title="${esc(t("Open portfolio alarms"))}"><span class="nav-menu-label">${esc(t("Alarms"))}</span><span id="alarmsCount">${esc(alarmCount)}</span></button>
     <details class="nav-menu">
       ${navMenuSummary("system", t("system"))}
       <div class="nav-children">
@@ -1140,6 +1151,12 @@ function bindNavAccordion() {
       });
     });
   });
+}
+
+function setMobileNavigation(expanded) {
+  $("appNavigation")?.classList.toggle("is-expanded", expanded);
+  $("navigationToggle")?.setAttribute("aria-expanded", String(expanded));
+  if (!expanded) document.querySelectorAll(".nav-menu[open]").forEach((menu) => { menu.open = false; });
 }
 
 function fmt(value, digits = 2) {
@@ -1479,9 +1496,7 @@ function applyLanguage() {
   document.title = t("appName");
   const brand = document.querySelector(".brand-name");
   if (brand) brand.textContent = t("brand");
-  const topEyebrow = document.querySelector(".topbar .eyebrow");
-  if (topEyebrow) topEyebrow.textContent = t("overview");
-  const topTitle = document.querySelector(".topbar h1");
+  const topTitle = $("dashboardTitle");
   if (topTitle) topTitle.textContent = t("appName");
   const marketEyebrow = document.querySelector(".ticker-panel .eyebrow");
   if (marketEyebrow) marketEyebrow.textContent = t("markets");
@@ -11296,7 +11311,7 @@ async function loadCacheStatus() {
   renderApiAccessSettings();
 }
 
-const SETTINGS_SECTIONS = new Set(["display", "table", "api", "data", "backup", "system"]);
+const SETTINGS_SECTIONS = new Set(["display", "security", "table", "api", "data", "backup", "system"]);
 
 function setSettingsSection(requestedSection = "display", { focus = false } = {}) {
   const allowedSection = requestedSection !== "api" || canAdmin();
@@ -11842,6 +11857,7 @@ function returnToDashboard() {
     modal.querySelector(".modal-home-link")?.remove();
   });
   modalReturnFocus.clear();
+  setMobileNavigation(false);
   state.returnToEmployeeOptionsAfterAccount = false;
   document.querySelectorAll(".nav-menu[open]").forEach((menu) => { menu.open = false; });
   window.scrollTo({ top: 0, behavior: "instant" });
@@ -11951,6 +11967,22 @@ function closeModal(modal) {
 }
 
 document.addEventListener("keydown", (event) => {
+  const authOverlay = $("authOverlay");
+  if (authOverlay && !authOverlay.hidden) {
+    if (event.key === "Escape" && !$("passwordChangeForm").hidden && !state.auth.forcedPasswordChange) {
+      event.preventDefault();
+      hideAuthOverlay();
+    } else if (event.key === "Tab") {
+      const controls = [...authOverlay.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled])')]
+        .filter((control) => control.getClientRects().length > 0);
+      const index = controls.indexOf(document.activeElement);
+      if (controls.length && (index === -1 || (event.shiftKey && index === 0) || (!event.shiftKey && index === controls.length - 1))) {
+        event.preventDefault();
+        controls[event.shiftKey ? controls.length - 1 : 0].focus();
+      }
+    }
+    return;
+  }
   if (event.target.id === "query" && event.key === "Enter") {
     event.preventDefault();
     applyFilter();
@@ -11973,7 +12005,21 @@ document.addEventListener("keydown", (event) => {
   }
 
   const activeModal = [...document.querySelectorAll(".modal:not([hidden])")].at(-1);
-  if (!activeModal) return;
+  if (!activeModal) {
+    if (event.key === "Escape") {
+      const menu = event.target.closest?.(".nav-menu[open]") || document.querySelector(".nav-menu[open]");
+      if (menu) {
+        event.preventDefault();
+        menu.open = false;
+        menu.querySelector("summary")?.focus();
+      } else if (window.matchMedia("(max-width: 760px)").matches && $("appNavigation")?.classList.contains("is-expanded")) {
+        event.preventDefault();
+        setMobileNavigation(false);
+        $("navigationToggle")?.focus();
+      }
+    }
+    return;
+  }
   if (event.key === "Escape") {
     event.preventDefault();
     closeModal(activeModal);
@@ -11997,6 +12043,10 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  if (event.target.closest("#navigationToggle")) {
+    setMobileNavigation($("navigationToggle").getAttribute("aria-expanded") !== "true");
+    return;
+  }
   if (event.target.closest("[data-dashboard-home]")) {
     event.preventDefault();
     returnToDashboard();
@@ -12044,10 +12094,12 @@ document.addEventListener("click", (event) => {
   if (modalId) {
     if (modalTrigger.dataset.researchSection) setResearchSection(modalTrigger.dataset.researchSection);
     if (modalId === "securitiesModal") setSecuritiesWorkflow(modalTrigger.dataset.securitiesWorkflow || "general");
-    openModal(modalId, modalTrigger, {
+    const mobileNavigation = modalTrigger.closest("#appNavigation") && window.matchMedia("(max-width: 760px)").matches;
+    openModal(modalId, mobileNavigation ? $("navigationToggle") : modalTrigger, {
       targetId: modalTrigger.dataset.modalTarget || "",
       focusId: modalTrigger.dataset.modalFocus || "",
     });
+    if (mobileNavigation) setMobileNavigation(false);
   }
 
   const userEnabledButton = event.target.closest("[data-user-enabled]");

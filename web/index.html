@@ -62,7 +62,8 @@
           <span class="brand-mark" aria-hidden="true"></span>
           <span class="brand-label"><span class="brand-name">Portfolio</span><span id="brandVersion" class="brand-version" aria-label="Application version" hidden></span></span>
         </a>
-        <nav class="nav">
+        <button id="navigationToggle" class="secondary navigation-toggle" type="button" aria-expanded="false" aria-controls="appNavigation">Menu</button>
+        <nav id="appNavigation" class="nav">
           <details class="nav-menu" open>
             <summary><span class="nav-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 7h18v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18M10 12v2h4v-2"/></svg></span><span class="nav-menu-label">Portfolio Data</span></summary>
             <div class="nav-children">
@@ -107,6 +108,7 @@
             </div>
           </details>
           <button class="nav-menu-link" type="button" data-modal="reportsModal"><span class="nav-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></span><span class="nav-menu-label">Reports</span></button>
+          <button id="alarmsButton" class="nav-menu-link alarm-button" type="button" data-modal="alarmsModal" title="Open portfolio alarms"><span class="nav-menu-label">Alarms</span><span id="alarmsCount">0</span></button>
           <details class="nav-menu">
             <summary><span class="nav-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg></span><span class="nav-menu-label">System</span></summary>
             <div class="nav-children">
@@ -122,25 +124,21 @@
             </div>
           </details>
         </nav>
-      </aside>
-
-      <main class="workspace">
-        <header class="topbar">
-          <div>
-            <h1 id="dashboardTitle" tabindex="-1">Portfolio analyzer</h1>
-            <p id="status" role="status" aria-live="polite">Preparing dashboard</p>
-          </div>
-          <div class="topbar-actions">
+          <div class="header-actions">
             <div class="user-session" aria-label="Current user">
               <span id="currentUserName" class="current-user-name" dir="auto"></span>
               <span id="currentUserRole" class="role-badge"></span>
-              <button id="changePasswordButton" class="secondary compact-button" type="button">Change Password</button>
               <button id="logoutButton" class="secondary compact-button" type="button">Logout</button>
             </div>
-            <button id="alarmsButton" class="secondary alarm-button" type="button" data-modal="alarmsModal" title="Open portfolio alarms">Alarms <span id="alarmsCount">0</span></button>
-            <button id="refresh" class="icon-button" title="Refresh" aria-label="Refresh">↻</button>
+            <button id="refresh" class="icon-button" type="button" title="Refresh" aria-label="Refresh">↻</button>
           </div>
-        </header>
+          <div class="header-status">
+            <h1 id="dashboardTitle" tabindex="-1">Portfolio analyzer</h1>
+            <p id="status" role="status" aria-live="polite">Preparing dashboard</p>
+          </div>
+      </aside>
+
+      <main class="workspace">
 
         <div id="readOnlyNotice" class="info-strip read-only-notice" role="status" hidden>Viewer access is read-only. You can inspect and filter data, but changes are disabled.</div>
 
@@ -2169,6 +2167,7 @@
         <div class="settings-layout">
           <nav class="settings-menu" aria-label="Settings sections">
             <button id="settingsNavDisplay" class="settings-menu-button active" type="button" data-settings-section="display" aria-controls="settingsPanelDisplay" aria-current="page">Display and language</button>
+            <button id="settingsNavSecurity" class="settings-menu-button" type="button" data-settings-section="security" aria-controls="settingsPanelSecurity">Account security</button>
             <button id="settingsNavTable" class="settings-menu-button" type="button" data-settings-section="table" aria-controls="settingsPanelTable">Table settings</button>
             <button id="settingsNavApi" class="settings-menu-button" type="button" data-settings-section="api" aria-controls="settingsPanelApi" data-admin-only hidden>REST API &amp; MCP</button>
             <div class="settings-menu-entry">
@@ -2197,6 +2196,11 @@
                 <label class="field"><span data-i18n="appLanguage">App language</span><select id="appLanguage"><option value="en">English</option><option value="he">עברית</option></select></label>
                 <button id="saveDisplaySettings" type="button" data-i18n="saveDisplaySettings">Save display settings</button>
               </div>
+            </section>
+
+            <section id="settingsPanelSecurity" class="settings-section settings-panel" data-settings-panel="security" aria-labelledby="settingsNavSecurity" hidden>
+              <div class="settings-section-title"><h3>Account security</h3></div>
+              <button id="changePasswordButton" class="secondary compact-button" type="button">Change Password</button>
             </section>
 
             <section id="settingsPanelTable" class="settings-section settings-panel" data-settings-panel="table" aria-labelledby="settingsNavTable" hidden>

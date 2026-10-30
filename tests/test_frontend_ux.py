@@ -319,10 +319,19 @@ def test_dashboard_header_does_not_repeat_overview_label():
     script = (ROOT / "web/app.js").read_text()
     i18n = (ROOT / "web/i18n.js").read_text()
 
-    topbar = html.split('<header class="topbar">', 1)[1].split("</header>", 1)[0]
-    assert '<p class="eyebrow">Overview</p>' not in topbar
-    assert "Portfolio analyzer" in topbar
     sidebar = html.split('<aside class="sidebar"', 1)[1].split('</aside>', 1)[0]
+    workspace = html.split('<main class="workspace">', 1)[1]
+    assert 'class="topbar"' not in workspace
+    assert 'id="dashboardTitle" tabindex="-1">Portfolio analyzer' in sidebar
+    assert 'id="status" role="status" aria-live="polite"' in sidebar
+    assert 'id="currentUserName"' in sidebar
+    assert 'id="logoutButton"' in sidebar
+    assert 'id="refresh"' in sidebar
+    assert 'id="alarmsButton"' in sidebar.split('</nav>', 1)[0]
+    assert 'id="changePasswordButton"' not in sidebar
+    security = html.split('id="settingsPanelSecurity"', 1)[1].split('</section>', 1)[0]
+    assert 'id="changePasswordButton"' in security
+    assert 'data-admin-only' not in security
     assert '>Home</button>' not in sidebar
     assert '<span class="nav-menu-label">Dashboard</span>' not in sidebar
     assert 'id="dashboardHome" href="/" data-dashboard-home' in sidebar
@@ -391,7 +400,7 @@ def test_help_menu_covers_every_navigation_group_with_accessible_submenus():
     assert 'max-height: calc(100dvh - 24px);' in responsive
     assert '.help-group-content,' in responsive
     assert 'grid-template-columns: 1fr;' in responsive
-    assert '.nav-menu summary {' in responsive
+    assert '.nav-menu summary' in responsive
     assert 'min-height: 44px;' in responsive
     assert '"Help": "עזרה"' in i18n
     assert '"Recommended setup order": "סדר הגדרה מומלץ"' in i18n
@@ -508,9 +517,9 @@ def test_settings_menu_is_keyboard_named_and_responsive():
 
     settings = html.split('id="settingsModal"', 1)[1].split('id="backupScheduleModal"', 1)[0]
     assert '<nav class="settings-menu" aria-label="Settings sections">' in settings
-    assert settings.count('data-settings-section=') == 6
-    assert settings.count('aria-controls="settingsPanel') == 6
-    assert settings.count('aria-labelledby="settingsNav') == 6
+    assert settings.count('data-settings-section=') == 7
+    assert settings.count('aria-controls="settingsPanel') == 7
+    assert settings.count('aria-labelledby="settingsNav') == 7
     assert 'summary aria-label="About portfolio data import and export"' in settings
     assert 'summary aria-label="About full backup and restore"' in settings
     assert 'id="settingsStatus" class="status-line" role="status" aria-live="polite"' in settings

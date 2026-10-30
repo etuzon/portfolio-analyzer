@@ -2,6 +2,7 @@
   "use strict";
 
   const HEBREW_TEXT = Object.freeze({
+    "Menu": "תפריט",
     "Saved data · awaiting update": "נתונים שמורים · ממתין לעדכון",
     "Saved data · updating": "נתונים שמורים · מתעדכן",
     "Awaiting update": "ממתין לעדכון",
