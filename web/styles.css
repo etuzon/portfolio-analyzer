@@ -517,37 +517,20 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
 .assistant-launcher {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 18px;
-  padding: 12px 14px;
-  min-width: 0;
-  border: 1px solid var(--ux-stroke);
-  border-radius: 12px;
-  background: var(--ux-panel);
-}
-
-.assistant-launcher-label {
-  flex: 0 0 auto;
-  color: var(--ux-text);
-  font-size: 12px;
-  font-weight: 700;
+  flex: 1 1 250px;
+  gap: 6px;
+  min-width: 200px;
+  max-width: 330px;
+  margin-inline-start: auto;
 }
 
 .assistant-launcher input {
-  flex: 1 1 240px;
-  min-width: 80px;
+  flex: 1 1 120px;
+  min-width: 0;
   width: 100%;
+  min-height: 36px;
+  font-size: 12px;
   background: var(--ux-bg);
-}
-
-.assistant-readonly {
-  flex: 0 0 auto;
-  padding: 4px 8px;
-  border: 1px solid #36584d;
-  border-radius: 999px;
-  color: #85dfb4;
-  font-size: 10px;
-  font-weight: 700;
 }
 
 .assistant-launcher button { flex: 0 0 auto; }
@@ -566,18 +549,6 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
 .assistant-card > .section-head > div { min-width: 0; }
 .assistant-card > .section-head > .icon-button { flex: 0 0 auto; margin: 0; }
 .assistant-card h2 { margin-bottom: 0; }
-
-.assistant-notice {
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 10px 12px;
-  border: 1px solid #2c453e;
-  border-radius: 8px;
-  background: #13211d;
-  color: #b4cec2;
-  font-size: 11px;
-  line-height: 1.6;
-}
 
 .assistant-layout {
   display: grid;
@@ -671,11 +642,8 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
 #assistantSettingsForm button { width: auto; }
 
 @media (max-width: 700px) {
-  .assistant-launcher { gap: 8px; flex-wrap: wrap; padding: 10px; }
-  .assistant-launcher-label { flex-basis: calc(100% - 78px); }
-  .assistant-launcher input { order: 3; flex-basis: calc(100% - 100px); }
-  .assistant-launcher .assistant-readonly { order: 2; }
-  .assistant-launcher button { order: 4; }
+  .assistant-launcher { flex-basis: 100%; max-width: none; margin-inline-start: 0; }
+  .assistant-launcher input { min-height: 44px; }
   #assistantModal { padding: 3dvh 10px; }
   .modal-card.wide.assistant-card { width: 96vw; height: 94dvh; max-height: 94dvh; padding: 14px; gap: 8px; }
   .assistant-layout { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 10px; }
@@ -684,7 +652,6 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
   .assistant-history .assistant-muted { margin: 4px 0; }
   .assistant-chat-list { flex-direction: row; max-height: 66px; }
   .assistant-chat-item { width: 155px; padding: 7px 9px; }
-  .assistant-notice { padding: 7px 10px; font-size: 10px; }
   .assistant-message { padding: 10px; }
   .assistant-message-content { font-size: 11px; }
   .assistant-composer textarea { max-height: 110px; }
@@ -696,7 +663,6 @@ html[dir="rtl"] .nav-menu:not([open]) summary::after {
   .assistant-history { max-height: 104px; }
   .assistant-history .assistant-chat-list { max-height: 46px; }
   .assistant-chat-item time { display: none; }
-  .assistant-notice { max-height: 42px; overflow: auto; }
   .assistant-composer textarea { min-height: 42px; height: 42px; }
 }
 

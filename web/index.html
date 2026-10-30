@@ -122,6 +122,11 @@
               <button class="nav-item" type="button" data-modal="helpModal">Help</button>
             </div>
           </details>
+          <div class="assistant-launcher" role="group" aria-label="Portfolio chat">
+            <label for="assistantLauncher" class="sr-only">Ask your portfolio</label>
+            <input id="assistantLauncher" type="text" maxlength="8000" autocomplete="off" placeholder="Type a question to open chat…" aria-haspopup="dialog" aria-controls="assistantModal" />
+            <button id="openAssistant" class="secondary compact-button" type="button" data-modal="assistantModal">Open chat</button>
+          </div>
         </nav>
           <div class="header-actions">
             <button id="alarmsButton" class="nav-menu-link alarm-button" type="button" data-modal="alarmsModal" title="Open portfolio alarms"><span class="nav-menu-label">Alarms</span><span id="alarmsCount">0</span></button>
@@ -139,13 +144,6 @@
       </aside>
 
       <main class="workspace">
-
-        <section class="assistant-launcher" aria-label="Portfolio chat">
-          <label for="assistantLauncher" class="assistant-launcher-label">Ask your portfolio</label>
-          <input id="assistantLauncher" type="text" maxlength="8000" autocomplete="off" placeholder="Type a question to open chat…" aria-haspopup="dialog" aria-controls="assistantModal" />
-          <span class="assistant-readonly">Read only</span>
-          <button id="openAssistant" class="secondary compact-button" type="button" data-modal="assistantModal">Open chat</button>
-        </section>
 
         <div id="readOnlyNotice" class="info-strip read-only-notice" role="status" hidden>Viewer access is read-only. You can inspect and filter data, but changes are disabled.</div>
 
@@ -273,12 +271,11 @@
 
     <div id="assistantModal" class="modal" hidden>
       <div class="modal-backdrop" data-close></div>
-      <section class="modal-card wide assistant-card" role="dialog" aria-modal="true" aria-labelledby="assistantTitle" aria-describedby="assistantReadOnlyNotice">
+      <section class="modal-card wide assistant-card" role="dialog" aria-modal="true" aria-labelledby="assistantTitle">
         <div class="section-head">
-          <div><p class="eyebrow">Read-only AI</p><h2 id="assistantTitle">Ask about your portfolio</h2></div>
+          <div><h2 id="assistantTitle">Ask about your portfolio</h2></div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
-        <p id="assistantReadOnlyNotice" class="assistant-notice">Read only. The assistant reads approved app data and cannot change your portfolio. Missing information is stated explicitly.</p>
         <div class="assistant-layout">
           <aside class="assistant-history" aria-labelledby="assistantHistoryTitle">
             <div class="assistant-history-head"><h3 id="assistantHistoryTitle">Your chats</h3><button id="newAssistantChat" class="secondary compact-button" type="button">New chat</button></div>
@@ -295,7 +292,7 @@
             <div class="assistant-status-row"><p id="assistantStatus" class="status-line" role="status" aria-live="polite"></p><button id="retryAssistant" class="secondary compact-button" type="button" hidden>Retry</button></div>
           </div>
         </div>
-        <details class="assistant-permissions"><summary>Approved read-only REST endpoints</summary><ul id="assistantReadTools"></ul></details>
+        <details class="assistant-permissions"><summary>Approved REST endpoints</summary><ul id="assistantReadTools"></ul></details>
       </section>
     </div>
 

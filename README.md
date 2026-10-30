@@ -64,7 +64,7 @@ Read tools expose access status, accounts, filtered reports, and account trends.
 
 ## Read-only LLM assistant
 
-Type in the chat box above the dashboard to open the assistant. Chats are private to the signed-in application user and survive reloads. Use **New chat** to start a separate conversation. **Settings → Portfolio assistant** controls the number retained (default `10`, range `1–100`). Creating a chat or lowering the limit removes conversations with the oldest last message; opening a conversation does not make it newer. Failed questions keep the draft and do not replace prior messages. Existing single-conversation context migrates once.
+Type in the chat box in the main menu to open the assistant. Chats are private to the signed-in application user and survive reloads. Use **New chat** to start a separate conversation. **Settings → Portfolio assistant** controls the number retained (default `10`, range `1–100`). Creating a chat or lowering the limit removes conversations with the oldest last message; opening a conversation does not make it newer. Failed questions keep the draft and do not replace prior messages. Existing single-conversation context migrates once.
 
 The default provider is the locally signed-in **Codex CLI**, so no API key is required. On the host, run:
 

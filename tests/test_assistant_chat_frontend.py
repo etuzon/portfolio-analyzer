@@ -203,6 +203,11 @@ assert.equal(ui.chat.id, 'new');
 
 def test_chat_controls_are_labeled_and_keyboard_submission_is_composition_safe():
     html = (ROOT / "web/index.html").read_text()
+    menu = html[html.index('<nav id="appNavigation"'):html.index('</nav>')]
+    assert 'id="assistantLauncher"' in menu
+    assert html.count('id="assistantLauncher"') == 1
+    assert 'class="assistant-readonly"' not in html
+    assert 'id="assistantReadOnlyNotice"' not in html
     assert 'for="assistantLauncher"' in html
     assert 'aria-haspopup="dialog" aria-controls="assistantModal"' in html
     assert 'role="log" aria-label="Chat messages"' in html

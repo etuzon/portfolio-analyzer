@@ -15,7 +15,7 @@
     "Enter to send. Shift + Enter for a new line.": "Enter לשליחה. Shift + Enter לשורה חדשה.",
     "Send": "שליחה",
     "Sending…": "שולח…",
-    "Approved read-only REST endpoints": "נקודות גישה מאושרות לקריאה בלבד ב־REST",
+    "Approved REST endpoints": "נקודות גישה מאושרות ב־REST",
     "Keep up to this many chats for your user. When the limit is exceeded, the chat with the oldest last message is removed. Opening a chat does not make it newer. Lowering the limit removes older chats immediately.": "זהו מספר השיחות המרבי שיישמרו עבור המשתמש שלכם. בחריגה מהמגבלה תוסר השיחה שההודעה האחרונה בה היא הישנה ביותר. פתיחת שיחה אינה משנה את סדר השיחות. הקטנת המגבלה מסירה שיחות ישנות מיד.",
     "Maximum saved chats": "מספר מרבי של שיחות שמורות",
     "Save chat settings": "שמירת הגדרות שיחה",

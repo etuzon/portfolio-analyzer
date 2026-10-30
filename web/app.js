@@ -1353,6 +1353,9 @@ function navMenuSummary(icon, label) {
 function ensureHierarchicalNav() {
   const nav = document.querySelector(".nav");
   if (!nav) return;
+  // Reuse the chat controls so language/role updates retain their listeners and draft.
+  const chatLauncher = nav.querySelector?.(".assistant-launcher");
+  const restoreChatFocus = chatLauncher?.contains(document.activeElement);
   // Top-level groups open as compact popovers, so keep the header uncluttered
   // until the user chooses a group.
   const defaultOpen = "";
@@ -1414,6 +1417,10 @@ function ensureHierarchicalNav() {
         <button class="nav-item" type="button" data-modal="helpModal">${esc(t("help"))}</button>
       </div>
     </details>`;
+  if (chatLauncher) {
+    nav.append(chatLauncher);
+    if (restoreChatFocus) $("assistantLauncher").focus();
+  }
 }
 
 function bindNavAccordion() {

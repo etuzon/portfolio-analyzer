@@ -26,7 +26,9 @@ def test_navigation_rebuild_preserves_external_alarm_count_and_role_permissions(
 const assert = require('node:assert/strict');
 let admin = false;
 const canAdmin = () => admin;
-const nav = {innerHTML: ''};
+const launcher = {contains: () => false};
+const nav = {innerHTML: '', querySelector: selector => selector === '.assistant-launcher' ? launcher : null,
+  append(node) { assert.equal(node, launcher); this.launcher = node; }};
 const nodes = {alarmsCount: {textContent: '28'}};
 const $ = id => nodes[id];
 const document = {querySelector: () => nav};
@@ -37,6 +39,7 @@ const NAV_MENU_ICONS = {reports: ''};
 for (const role of ['Viewer', 'Operator', 'Admin']) {
   admin = role === 'Admin';
   ensureHierarchicalNav();
+  assert.equal(nav.launcher, launcher, 'menu rebuild must retain the chat controls and their listeners');
   assert.equal(nodes.alarmsCount.textContent, '28');
   assert.ok(!nav.innerHTML.includes('id="alarmsCount"'));
   assert.ok(!nav.innerHTML.includes('data-modal="alarmsModal"'));
