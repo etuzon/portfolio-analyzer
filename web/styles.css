@@ -7435,6 +7435,22 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
   font-variant-numeric: tabular-nums;
 }
 
+#financeReportTable table {
+  min-width: 0;
+}
+
+#financeReportTable th {
+  width: auto;
+  min-width: 0;
+  text-align: center;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+#financeReportTable td {
+  min-width: 0;
+}
+
 .finance-report-table [title],
 .finance-report-summary [title] {
   cursor: var(--info-cursor);
