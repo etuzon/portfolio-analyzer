@@ -58,6 +58,7 @@ The Docker app is served at `https://localhost:6443`.
 
 - Keep the first screen as the actual dashboard, not a landing page.
 - Preserve the hierarchical sidebar navigation unless explicitly asked to change it.
+- Keep interface copy concise and useful. Omit decorative labels and eyebrow text that repeat a nearby heading or add no information needed for a decision or action; for example, do not put "Matches" / "התאמות" above "Active signals". Preserve meaningful field labels, instructions, statuses, and accessibility names.
 - User-facing dates in forms, tables, tooltips, and reports should use `dd/mm/yyyy`.
 - Loading behavior may be blocking only when explicitly requested; otherwise keep analytics loading lightweight and non-blocking.
 - Honor the active interface language completely. Keep API status values machine-readable, but localize every user-visible status, action, count label, error summary, badge, tooltip, and empty state. Hebrew UI must not show English operational labels, and English UI must not show Hebrew labels.

@@ -9127,7 +9127,7 @@ function companyOutlookEvaluationMessage(item) {
 
 function positionCompanyOutlookHelp(help) {
   const panel = help.querySelector(".outlook-pending-description");
-  if (!help.open || !panel) return;
+  if (!panel || panel.hidden) return;
   const header = help.closest(".outlook-history-head").getBoundingClientRect();
   const dialog = help.closest(".modal-card")?.getBoundingClientRect();
   const top = Math.max(8, (dialog?.top || 0) + 8);
@@ -9135,18 +9135,38 @@ function positionCompanyOutlookHelp(help) {
   const below = Math.max(0, bottom - header.bottom - 8);
   const above = Math.max(0, header.top - top - 8);
   const showAbove = panel.scrollHeight > below && above > below;
-  panel.style.insetBlockStart = showAbove ? "auto" : "calc(100% + 8px)";
-  panel.style.insetBlockEnd = showAbove ? "calc(100% + 8px)" : "auto";
+  panel.style.insetBlockStart = showAbove ? "auto" : "100%";
+  panel.style.insetBlockEnd = showAbove ? "100%" : "auto";
   panel.style.maxHeight = `${Math.max(40, showAbove ? above : below)}px`;
   panel.style.overflowY = "auto";
 }
 
-document.addEventListener("toggle", (event) => {
-  if (event.target.matches?.(".outlook-pending-help")) positionCompanyOutlookHelp(event.target);
-}, true);
+function setCompanyOutlookHelpVisible(help, visible) {
+  const panel = help.querySelector(".outlook-pending-description");
+  if (!panel) return;
+  panel.hidden = !visible;
+  if (visible) positionCompanyOutlookHelp(help);
+}
+
+for (const eventName of ["pointerover", "focusin"]) {
+  document.addEventListener(eventName, (event) => {
+    const help = event.target.closest?.(".outlook-pending-help");
+    if (help && !help.contains(event.relatedTarget)) setCompanyOutlookHelpVisible(help, true);
+  });
+}
+
+for (const eventName of ["pointerout", "focusout"]) {
+  document.addEventListener(eventName, (event) => {
+    const help = event.target.closest?.(".outlook-pending-help");
+    if (!help || help.contains(event.relatedTarget)) return;
+    if (eventName === "pointerout" && help.contains(document.activeElement)) return;
+    if (eventName === "focusout" && help.matches(":hover")) return;
+    setCompanyOutlookHelpVisible(help, false);
+  });
+}
 
 window.addEventListener("resize", () => {
-  document.querySelectorAll(".outlook-pending-help[open]").forEach(positionCompanyOutlookHelp);
+  document.querySelectorAll(".outlook-pending-description:not([hidden])").forEach((panel) => positionCompanyOutlookHelp(panel.closest(".outlook-pending-help")));
 });
 
 function updateCompanyOutlookEvaluationUi(predictionId) {
@@ -9175,8 +9195,8 @@ function renderCompanyOutlookHistory(data) {
   const focusedId = active?.closest?.("[data-company-outlook-prediction]")?.dataset.companyOutlookPrediction;
   const focusSelector = active?.dataset?.evaluateCompanyOutlook ? "[data-evaluate-company-outlook]"
     : active?.dataset?.deleteCompanyOutlook ? "[data-delete-company-outlook]"
-    : active?.matches?.(".outlook-pending-help summary") ? ".outlook-pending-help summary" : ".outlook-prediction-feedback";
-  const openedHelp = [...(history.querySelectorAll?.(".outlook-pending-help[open]") || [])]
+    : active?.matches?.(".outlook-pending-trigger") ? ".outlook-pending-trigger" : ".outlook-prediction-feedback";
+  const openedHelp = [...(history.querySelectorAll?.(".outlook-pending-description:not([hidden])") || [])]
     .map((help) => help.closest("[data-company-outlook-prediction]")?.dataset.companyOutlookPrediction);
   state.companyOutlookHistoryData = data;
   state.companyOutlookHistory = data.items || [];
@@ -9189,7 +9209,7 @@ function renderCompanyOutlookHistory(data) {
     ["Accuracy", scorecard.accuracy_percent == null ? "Not evaluated" : pct(scorecard.accuracy_percent)],
     ["Validation", qualityGate.passed ? "75% target met" : "Not validated"],
   ].map(([label, value]) => `<div class="stat"><b>${esc(t(String(value)))}</b><span>${esc(t(label))}</span></div>`).join("");
-  $("companyOutlookHistory").innerHTML = state.companyOutlookHistory.length ? state.companyOutlookHistory.map((item) => {
+  $("companyOutlookHistory").innerHTML = state.companyOutlookHistory.length ? state.companyOutlookHistory.map((item, index) => {
     const direction = item.actual_direction || "pending";
     const stateLabel = direction === "pending" ? "Pending" : direction.charAt(0).toUpperCase() + direction.slice(1);
     const ui = state.companyOutlookEvaluationUi?.[item.id] || {};
@@ -9202,8 +9222,8 @@ function renderCompanyOutlookHistory(data) {
             <b>${esc(item.symbol)} · ${fmt(item.score, 0)}/100</b>
             <span class="outlook-history-label">${esc(t(item.label || "Mixed"))}</span>
           </div>
-          <div class="outlook-history-status"><span class="outlook-history-state ${esc(direction)}">${esc(t(stateLabel))}</span>
-            ${direction === "pending" ? `<details class="outlook-pending-help"><summary aria-label="${esc(t("Why is this prediction pending?"))}" title="${esc(t(pendingHelp))}"><span aria-hidden="true">i</span></summary><div class="outlook-pending-description" role="note">${esc(t(pendingHelp))}</div></details>` : ""}
+          <div class="outlook-history-status">
+            ${direction === "pending" ? `<span class="outlook-pending-help"><span class="outlook-history-state pending outlook-pending-trigger" tabindex="0" aria-describedby="outlookPendingHelp${index}">${esc(t(stateLabel))}</span><span id="outlookPendingHelp${index}" class="outlook-pending-description" role="tooltip" hidden>${esc(t(pendingHelp))}</span></span>` : `<span class="outlook-history-state ${esc(direction)}">${esc(t(stateLabel))}</span>`}
           </div>
         </header>
         <div class="outlook-history-meta">
@@ -9224,7 +9244,7 @@ function renderCompanyOutlookHistory(data) {
   const cards = [...document.querySelectorAll("[data-company-outlook-prediction]")];
   for (const id of openedHelp) {
     const help = cards.find((card) => card.dataset.companyOutlookPrediction === id)?.querySelector(".outlook-pending-help");
-    if (help) help.open = true;
+    if (help) setCompanyOutlookHelpVisible(help, true);
   }
   if (focusedId) {
     const card = cards.find((node) => node.dataset.companyOutlookPrediction === focusedId);
@@ -13097,10 +13117,11 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
-  const pendingHelp = event.target.closest?.(".outlook-pending-help[open]");
-  if (pendingHelp && event.key === "Escape") {
+  const pendingHelp = event.target.closest?.(".outlook-pending-help")
+    || document.querySelector(".outlook-pending-description:not([hidden])")?.closest(".outlook-pending-help");
+  if (pendingHelp && !pendingHelp.querySelector(".outlook-pending-description").hidden && event.key === "Escape") {
     event.preventDefault();
-    pendingHelp.open = false;
+    setCompanyOutlookHelpVisible(pendingHelp, false);
     return;
   }
   const activeResearchTab = event.target.closest?.("[data-research-tab]");

@@ -8,7 +8,7 @@ SOURCE = (ROOT / "web/app.js").read_text()
 
 
 def run_js(body):
-    names = ("resetCompanyOutlookHistoryUi", "companyOutlookEvaluationMessage", "positionCompanyOutlookHelp", "updateCompanyOutlookEvaluationUi", "renderCompanyOutlookHistory", "loadCompanyOutlookHistory", "evaluateCompanyOutlookPrediction")
+    names = ("resetCompanyOutlookHistoryUi", "companyOutlookEvaluationMessage", "positionCompanyOutlookHelp", "setCompanyOutlookHelpVisible", "updateCompanyOutlookEvaluationUi", "renderCompanyOutlookHistory", "loadCompanyOutlookHistory", "evaluateCompanyOutlookPrediction")
     functions = []
     for name in names:
         start = re.search(rf"^(?:async )?function {name}\(", SOURCE, re.M).start()
@@ -111,14 +111,16 @@ def test_successful_evaluation_is_not_reported_as_failed_when_history_refresh_fa
 ''')
 
 
-def test_help_and_card_results_are_localized_and_unchecked_predictions_have_info_controls():
+def test_pending_badge_has_localized_tooltip_without_a_separate_info_control():
     run_js(r'''
 for(const language of ['he','en','he']){
  state.language=language;
  renderCompanyOutlookHistory(data([{...record(),evaluation:'No newer annual report is available yet.'}]));
  const html=nodes.companyOutlookHistory.innerHTML;
  const text=html.replace(/<[^>]*>/g,'');
- assert.ok(html.includes('<summary')&&html.includes('outlook-pending-description'));
+ assert.ok(html.includes('class="outlook-history-state pending outlook-pending-trigger" tabindex="0" aria-describedby="outlookPendingHelp0"'));
+ assert.ok(html.includes('role="tooltip" hidden'));
+ assert.ok(!html.includes('<summary')&&!html.includes('<details')&&!html.includes('>i<'));
  assert.ok(html.includes('role="status"')&&html.includes('aria-live="polite"'));
  assert.ok(text.includes('31/10/2026')&&text.includes('26/10/2027'));
  if(language==='he'){
@@ -171,25 +173,26 @@ def test_a_completed_check_preserves_keyboard_focus_and_open_help_on_another_car
 (async()=>{
  renderCompanyOutlookHistory(data());
  const p2=cards.get('p2'),originalQuery=p2.querySelector.bind(p2);
- const summary=makeNode();summary.dataset={};summary.closest=()=>p2;
- summary.matches=selector=>selector==='.outlook-pending-help summary';
- const help={open:false,closest:()=>p2};
- p2.querySelector=selector=>selector==='.outlook-pending-help summary'?summary:selector==='.outlook-pending-help'?help:originalQuery(selector);
- nodes.companyOutlookHistory.querySelectorAll=()=>help.open?[help]:[];
+ const trigger=makeNode();trigger.dataset={};trigger.closest=()=>p2;
+ trigger.matches=selector=>selector==='.outlook-pending-trigger';
+ const panel={hidden:true,style:{},scrollHeight:200,closest:()=>p2};
+ const help={querySelector:()=>panel,closest:()=>({getBoundingClientRect:()=>({top:50,bottom:950})})};
+ p2.querySelector=selector=>selector==='.outlook-pending-trigger'?trigger:selector==='.outlook-pending-help'?help:originalQuery(selector);
+ nodes.companyOutlookHistory.querySelectorAll=()=>panel.hidden?[]:[panel];
  let html=nodes.companyOutlookHistory.innerHTML;
  Object.defineProperty(nodes.companyOutlookHistory,'innerHTML',{
   get:()=>html,
-  set:value=>{html=value;document.activeElement=document.body;help.open=false},
+  set:value=>{html=value;document.activeElement=document.body;panel.hidden=true},
  });
  const checking=evaluateCompanyOutlookPrediction('p1');
- summary.focus();help.open=true;
+ trigger.focus();panel.hidden=false;
  const result={...record(),evaluation:'No newer annual report is available yet.'};
  requests[0].resolve(result);await flush();
- assert.equal(document.activeElement,summary,'another card retains keyboard focus after the POST update');
- assert.equal(help.open,true);
+ assert.equal(document.activeElement,trigger,'another card retains keyboard focus after the POST update');
+ assert.equal(panel.hidden,false);
  requests[1].resolve(data([result,record('p2')]));await checking;
- assert.equal(document.activeElement,summary,'completion must not steal focus from another card');
- assert.equal(help.open,true);
+ assert.equal(document.activeElement,trigger,'completion must not steal focus from another card');
+ assert.equal(panel.hidden,false);
 })().catch(error=>{console.error(error);process.exitCode=1});
 ''')
 
@@ -197,15 +200,17 @@ def test_a_completed_check_preserves_keyboard_focus_and_open_help_on_another_car
 def test_pending_help_uses_available_dialog_space_including_bottom_edge_and_long_text():
     run_js(r'''
 window.innerHeight=1000;
-const panel={scrollHeight:200,style:{}};
+const panel={hidden:true,scrollHeight:200,style:{}};
 let header={top:900,bottom:928};
-const help={open:true,querySelector:()=>panel,closest:selector=>({getBoundingClientRect:()=>selector==='.modal-card'?{top:50,bottom:950}:header})};
-positionCompanyOutlookHelp(help);
+const help={querySelector:()=>panel,closest:selector=>({getBoundingClientRect:()=>selector==='.modal-card'?{top:50,bottom:950}:header})};
+setCompanyOutlookHelpVisible(help,true);
+assert.equal(panel.hidden,false);
 assert.equal(panel.style.insetBlockStart,'auto','bottom-edge help must open upward');
-assert.equal(panel.style.insetBlockEnd,'calc(100% + 8px)');
+assert.equal(panel.style.insetBlockEnd,'100%');
 header={top:100,bottom:128};positionCompanyOutlookHelp(help);
-assert.equal(panel.style.insetBlockStart,'calc(100% + 8px)','top-edge help must open downward');
+assert.equal(panel.style.insetBlockStart,'100%','top-edge help must open downward');
 header={top:500,bottom:528};panel.scrollHeight=900;positionCompanyOutlookHelp(help);
 assert.equal(panel.style.maxHeight,'434px');
 assert.equal(panel.style.overflowY,'auto','long descriptions remain scrollable inside the available space');
+setCompanyOutlookHelpVisible(help,false);assert.equal(panel.hidden,true);
 ''')
