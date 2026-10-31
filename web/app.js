@@ -3115,12 +3115,6 @@ function technicalsCell(sr, movingAverage, currency, maPeriod) {
   </div>`;
 }
 
-function providerStatusText(providerStatus) {
-  return Object.entries(providerStatus || {})
-    .map(([provider, value]) => `${providerDisplayName(provider.split(".").pop())}: ${optionLabel(value)}`)
-    .join("; ");
-}
-
 function providerStatusHint(providerStatus) {
   const entries = Object.entries(providerStatus || {});
   const okProviders = [...new Set(entries
@@ -3144,6 +3138,29 @@ function providerStatusHint(providerStatus) {
   return "";
 }
 
+function dataGapTooltip(item) {
+  const reasons = (item.missing || []).map((label) => {
+    let reason = "";
+    const metric = item[{
+      income: "income_trend", profit: "profit_trend", dividend: "dividend_trend", "profit/market cap": "profit_market_cap_trend",
+    }[label]];
+    if (metric?.state === "error") reason = "Financial data could not be updated";
+    else if (metric?.state === "pending") reason = "Loading financial data";
+    else if (label === "dividend") reason = metric?.series?.length
+      ? "At least two years of dividend history are needed."
+      : "No dividend history was returned. This does not confirm a zero dividend.";
+    else if (label === "profit/market cap") reason = !item.market_cap
+      ? "Market capitalization is unavailable, so profit / market cap cannot be calculated."
+      : "At least two annual profit reports are needed.";
+    else if (label === "income") reason = "At least two annual revenue reports are needed.";
+    else if (label === "profit") reason = "At least two annual profit reports are needed.";
+    else if (label === "price history") reason = "No price history is available.";
+    else if (label === "industry") reason = "No industry classification is available.";
+    return `• ${optionLabel(label)}${reason ? `: ${t(reason)}` : ""}`;
+  });
+  return [t("Missing data"), ...reasons].join("\n");
+}
+
 function statusCell(item) {
   if (["queued", "updating"].includes(item.analytics_state)) {
     const saved = [item.income_trend, item.profit_trend, item.dividend_trend].some((metric) => ["ok", "partial", "stale"].includes(metric?.state));
@@ -3153,17 +3170,13 @@ function statusCell(item) {
   if (item.analytics_state === "refreshing" || item.analytics_state === "failed") {
     return `<div class="status-cell status-cell-compact"><span class="badge ${item.analytics_state === "failed" ? "partial" : "neutral"}">${esc(t(item.analytics_state === "failed" ? "Update failed" : "Updating analytics"))}</span></div>`;
   }
-  const providerText = providerStatusText(item.provider_status);
-  const providerHint = providerStatusHint(item.provider_status);
-  const localizedMissing = item.missing.map(optionLabel);
-  const detail = `${localizedMissing.join(", ")}${providerText ? `; ${providerText}` : ""}`;
   if (!item.missing.length) {
     return `<div class="status-cell status-cell-compact">
-      <span class="badge ok" title="${esc(providerHint || providerText || "All displayed metrics are available")}">All displayed data available</span>
+      <span class="badge ok" title="${esc(t("All displayed metrics are available"))}">${esc(t("All displayed data available"))}</span>
     </div>`;
   }
   return `<div class="status-cell status-cell-compact">
-    <strong title="${esc(detail || "Provider data is unavailable")}">${item.missing.length} data gaps</strong>
+    <strong tabindex="0" title="${esc(dataGapTooltip(item))}">${esc(t(`${item.missing.length} data gaps`))}</strong>
   </div>`;
 }
 

@@ -292,11 +292,59 @@ def test_data_gap_badges_and_provider_names_use_localized_display_labels():
     script = (ROOT / "web/app.js").read_text()
     i18n = (ROOT / "web/i18n.js").read_text()
 
-    assert "const localizedMissing = item.missing.map(optionLabel)" in script
     assert 'local_portfolio: "Local portfolio"' in script
     assert "optionLabel(names[key] || cleanSourceLabel(value))" in script
     assert '"income": "הכנסות"' in i18n
     assert '"Import DB": "מסד הייבוא"' in i18n
+
+    functions = []
+    for name in ("esc", "dataGapTooltip", "statusCell"):
+        start = re.search(rf"^function {name}\(", script, re.M).start()
+        end = re.search(r"^}", script[start:], re.M).end()
+        functions.append(script[start:start + end])
+    behavioral = "const window = {};\n" + i18n + "\n".join(functions) + """
+const assert = require('node:assert/strict');
+const state = {language:'he'};
+const t = text => window.PortfolioI18n.translate(text, state.language);
+const optionLabel = t;
+const item = {missing:['dividend','profit/market cap'],market_cap:null,
+ dividend_trend:{state:'missing',series:[]},profit_market_cap_trend:{state:'missing',series:[]},
+ provider_status:{'prices.stooq':'error: ConnectTimeout','fundamentals.sec_company_facts':'ok'}};
+for(const language of ['he','en']) {
+ state.language=language;
+ const detail=dataGapTooltip(item);
+ assert.equal(detail.split('\\n').length,3);
+ assert.ok(!detail.includes('ConnectTimeout')&&!detail.includes('stooq')&&!detail.includes('SEC'));
+ if(language==='he') {
+  assert.ok(!/[A-Za-z]/u.test(detail));
+  assert.ok(detail.includes('אין בכך אישור שהדיבידנד הוא אפס'));
+  assert.ok(detail.includes('שווי השוק אינו זמין'));
+  assert.ok(statusCell(item).includes('2 פערי נתונים'));
+ } else {
+  assert.ok(!/[א-ת]/u.test(detail));
+  assert.ok(detail.includes('does not confirm a zero dividend'));
+  assert.ok(detail.includes('Market capitalization is unavailable'));
+  assert.ok(statusCell(item).includes('2 data gaps'));
+ }
+ const partial={...item,market_cap:1000,dividend_trend:{state:'missing',series:[{date:'2025',value:1}]}};
+ assert.ok(dataGapTooltip(partial).includes(t('At least two years of dividend history are needed.')));
+ assert.ok(dataGapTooltip(partial).includes(t('At least two annual profit reports are needed.')));
+ assert.ok(!dataGapTooltip(partial).includes(t('Market capitalization is unavailable, so profit / market cap cannot be calculated.')));
+ for(const phase of ['pending','error']) {
+  const detail=dataGapTooltip({...item,dividend_trend:{state:phase}});
+  assert.ok(detail.includes(t(phase==='pending'?'Loading financial data':'Financial data could not be updated')));
+ }
+ for(const analytics_state of ['queued','updating','refreshing','failed']) {
+  const status=statusCell({...item,analytics_state});
+  assert.ok(!status.includes(t('All displayed data available')));
+  assert.ok(!status.includes('2 data gaps')&&!status.includes('2 פערי נתונים'));
+ }
+ const recovered=statusCell({...item,missing:[]});
+ assert.ok(recovered.includes(t('All displayed data available')));
+ assert.ok(!recovered.includes('ConnectTimeout'));
+}
+"""
+    subprocess.run(["node"], input=behavioral, text=True, capture_output=True, check=True)
 
 
 def test_populated_dashboard_values_are_localized_at_composition_time():
