@@ -7,7 +7,7 @@ import hashlib
 import pytest
 from app import main
 from app.local_portfolio import LocalPortfolioStore
-from app.providers import MarketDataHub, SqliteCache
+from app.providers import MarketDataHub, SqliteCache, SEC_FUNDAMENTALS_PARSER_VERSION
 from app.models import Ohlcv
 
 @pytest.fixture
@@ -26,9 +26,11 @@ def env(monkeypatch, tmp_path):
         for method in ('fundamentals','profile','dividends','prices'):
             monkeypatch.setattr(provider,method,offline)
     for symbol in ('FDUS','FMNB','UNB','BBDC','CMDB'):
-        reports = {'income_statement':{'annualReports':[
-            {'fiscalDateEnding':'2024-12-31','totalRevenue':100,'netIncome':10},
-            {'fiscalDateEnding':'2025-12-31','totalRevenue':200,'netIncome':20}]}}
+        # Seed a verified parsed snapshot, rather than pre-v2 period-ambiguous data.
+        reports = {'fundamentals_parser_version': SEC_FUNDAMENTALS_PARSER_VERSION,
+            'income_statement':{'annualReports':[
+            {'fiscalDateEnding':'2024-12-31','periodStart':'2024-01-01','filingDate':'2025-03-01','totalRevenue':100,'netIncome':10},
+            {'fiscalDateEnding':'2025-12-31','periodStart':'2025-01-01','filingDate':'2026-03-01','totalRevenue':200,'netIncome':20}]}}
         hub.cache.set_security_snapshot('sec_company_facts',symbol,'fundamentals',reports)
         if symbol != 'CMDB':
             hub.cache.set_security_snapshot('yahoo_finance',symbol,'dividends',[

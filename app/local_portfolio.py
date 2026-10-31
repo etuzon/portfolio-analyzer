@@ -4,7 +4,7 @@ import sqlite3
 from contextlib import nullcontext
 from threading import RLock
 from dataclasses import asdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 import hashlib
 import json
 import math
@@ -19,6 +19,7 @@ import yaml
 from .config import data_dir
 from .metrics import moving_averages, price_range_metrics, support_resistance, technical_signals, volume_metrics
 from .models import Holding, Ohlcv, SymbolAnalysis, Trend
+from .outlook_scoring import OUTLOOK_EVALUATION_VERSION, OUTLOOK_MODEL_VERSION
 
 
 ACCOUNT_TYPES = ["Investment", "Long-Term Savings", "Bank", "ESOP"]
@@ -207,6 +208,7 @@ EXPORT_TABLES = {
         "company_name",
         "industry",
         "created_at",
+        "recorded_at",
         "horizon_date",
         "model_version",
         "score",
@@ -512,6 +514,7 @@ class LocalPortfolioStore:
                         company_name text not null default '',
                         industry text not null default '',
                         created_at text not null,
+                        recorded_at text not null default '',
                         horizon_date text not null,
                         model_version text not null,
                         score real not null,
@@ -538,6 +541,7 @@ class LocalPortfolioStore:
                 conn.execute("create index if not exists idx_company_report_predictions_symbol on company_report_predictions(symbol, created_at desc)")
                 self._ensure_column(conn, "accounts", "persons", "text not null default '[]'")
                 self._ensure_column(conn, "company_report_predictions", "checked_at", "text not null default ''")
+                self._ensure_column(conn, "company_report_predictions", "recorded_at", "text not null default ''")
                 self._ensure_column(conn, "family_members", "first_name", "text not null default ''")
                 self._ensure_column(conn, "family_members", "last_name", "text not null default ''")
                 self._ensure_column(conn, "funds", "birth_date", "text not null default ''")
@@ -810,6 +814,16 @@ class LocalPortfolioStore:
                 table: [_dict(row) for row in conn.execute(f"select {', '.join(columns)} from {table}").fetchall()]
                 for table, columns in EXPORT_TABLES.items()
             }
+        for record in data["company_report_predictions"]:
+            invalid_values = {}
+            for field in ("score", "accuracy_score"):
+                raw = record.get(field)
+                if raw is not None and _outlook_bounded_number(raw) is None:
+                    invalid_values[field] = str(raw)
+                    record[field] = None
+            if invalid_values:
+                record["invalid_financial_fields"] = sorted(invalid_values)
+                record["invalid_financial_values"] = invalid_values
         return {
             "version": 3,
             "exported_at": _now(),
@@ -914,6 +928,17 @@ class LocalPortfolioStore:
             record["accuracy_score"] = _number(record.get("accuracy_score"), 0)
         if "checked_at" in record:
             record["checked_at"] = str(record.get("checked_at") or "")
+        if "recorded_at" in record:
+            record["recorded_at"] = str(record.get("recorded_at") or "")
+        if columns == EXPORT_TABLES["company_report_predictions"]:
+            # Standard JSON cannot encode an invalid legacy numeric value.
+            # Retain its explicit text annotation on restore; readers expose it
+            # as unavailable instead of silently turning it into a score of 0.
+            invalid_values = row.get("invalid_financial_values")
+            if isinstance(invalid_values, dict):
+                for field in ("score", "accuracy_score"):
+                    if field in invalid_values and _outlook_bounded_number(invalid_values[field]) is None:
+                        record[field] = str(invalid_values[field])
         return record
 
     def list_company_report_predictions(self, symbol: str = "") -> list[dict[str, Any]]:
@@ -921,11 +946,11 @@ class LocalPortfolioStore:
         with self._connect() as conn:
             if symbol_key:
                 rows = conn.execute(
-                    "select * from company_report_predictions where symbol = ? order by created_at desc",
+                    "select * from company_report_predictions where symbol = ? order by created_at desc, rowid asc",
                     (symbol_key,),
                 ).fetchall()
             else:
-                rows = conn.execute("select * from company_report_predictions order by created_at desc").fetchall()
+                rows = conn.execute("select * from company_report_predictions order by created_at desc, rowid asc").fetchall()
         return [self._company_report_prediction_out(row) for row in rows]
 
     def company_report_prediction_for_batch(self, batch_id: str, symbol: str) -> dict[str, Any] | None:
@@ -950,25 +975,32 @@ class LocalPortfolioStore:
         confidence = str(payload.get("confidence") or "Low").title()
         if confidence not in {"High", "Medium", "Low"}:
             raise ValueError("Prediction confidence must be High, Medium, or Low")
-        score = max(0, min(100, _number(payload.get("score"), 0)))
+        score = _outlook_bounded_number(payload.get("score", 0))
+        if score is None:
+            raise ValueError("Prediction score must be a finite number from 0 to 100")
+        grade = _outlook_bounded_number(payload.get("accuracy_score"))
+        if payload.get("accuracy_score") is not None and grade is None:
+            raise ValueError("Prediction grade must be a finite number from 0 to 100")
+        recorded_at = _now()
         record = {
             "id": str(payload.get("id") or uuid4()),
             "symbol": symbol,
             "company_name": str(payload.get("company_name") or "").strip(),
             "industry": str(payload.get("industry") or "").strip(),
-            "created_at": str(payload.get("created_at") or _now()),
+            "created_at": str(payload.get("created_at") or recorded_at),
+            "recorded_at": recorded_at,
             "horizon_date": _date_string(payload.get("horizon_date") or date.today() + timedelta(days=365)),
             "model_version": str(payload.get("model_version") or "report-outlook-v1"),
             "score": score,
             "label": str(payload.get("label") or "Mixed").strip(),
             "direction": direction,
             "confidence": confidence,
-            "baseline": json.dumps(payload.get("baseline") if isinstance(payload.get("baseline"), dict) else {}, default=str),
+            "baseline": json.dumps(payload.get("baseline") if isinstance(payload.get("baseline"), dict) else {}, default=str, allow_nan=False),
             "thesis": str(payload.get("thesis") or "").strip(),
             "mermaid": str(payload.get("mermaid") or "").strip(),
-            "actual": json.dumps(payload.get("actual") if isinstance(payload.get("actual"), dict) else {}, default=str),
+            "actual": json.dumps(payload.get("actual") if isinstance(payload.get("actual"), dict) else {}, default=str, allow_nan=False),
             "actual_direction": str(payload.get("actual_direction") or "pending").lower(),
-            "accuracy_score": payload.get("accuracy_score"),
+            "accuracy_score": grade,
             "evaluation": str(payload.get("evaluation") or "").strip(),
             "evaluated_at": str(payload.get("evaluated_at") or ""),
             "checked_at": str(payload.get("checked_at") or ""),
@@ -977,9 +1009,9 @@ class LocalPortfolioStore:
             conn.execute(
                 """
                 insert into company_report_predictions
-                  (id, symbol, company_name, industry, created_at, horizon_date, model_version, score, label, direction, confidence, baseline, thesis, mermaid, actual, actual_direction, accuracy_score, evaluation, evaluated_at, checked_at)
+                  (id, symbol, company_name, industry, created_at, recorded_at, horizon_date, model_version, score, label, direction, confidence, baseline, thesis, mermaid, actual, actual_direction, accuracy_score, evaluation, evaluated_at, checked_at)
                 values
-                  (:id, :symbol, :company_name, :industry, :created_at, :horizon_date, :model_version, :score, :label, :direction, :confidence, :baseline, :thesis, :mermaid, :actual, :actual_direction, :accuracy_score, :evaluation, :evaluated_at, :checked_at)
+                  (:id, :symbol, :company_name, :industry, :created_at, :recorded_at, :horizon_date, :model_version, :score, :label, :direction, :confidence, :baseline, :thesis, :mermaid, :actual, :actual_direction, :accuracy_score, :evaluation, :evaluated_at, :checked_at)
                 on conflict(id) do update set
                   actual = excluded.actual,
                   actual_direction = excluded.actual_direction,
@@ -997,6 +1029,9 @@ class LocalPortfolioStore:
         direction = str(actual_direction or "pending").lower()
         if direction not in {"positive", "neutral", "negative", "pending", "inconclusive"}:
             raise ValueError("Invalid actual direction")
+        grade = _outlook_bounded_number(accuracy_score)
+        if accuracy_score is not None and grade is None:
+            raise ValueError("Prediction grade must be a finite number from 0 to 100")
         with self._connect() as conn:
             row = conn.execute("select * from company_report_predictions where id = ?", (prediction_id,)).fetchone()
             if not row:
@@ -1009,9 +1044,9 @@ class LocalPortfolioStore:
                 where id = ?
                 """,
                 (
-                    json.dumps(actual if isinstance(actual, dict) else {}, default=str),
+                    json.dumps(actual if isinstance(actual, dict) else {}, default=str, allow_nan=False),
                     direction,
-                    accuracy_score,
+                    grade,
                     str(evaluation or "").strip(),
                     checked_at if direction not in {"pending", "inconclusive"} else "",
                     checked_at,
@@ -1033,7 +1068,8 @@ class LocalPortfolioStore:
         return self._company_report_prediction_out(row)
 
     def company_report_scorecard(self, prediction_ids: set[str] | None = None) -> dict[str, Any]:
-        stored_rows = self.list_company_report_predictions()
+        all_stored_rows = self.list_company_report_predictions()
+        stored_rows = all_stored_rows
         if prediction_ids is not None:
             stored_rows = [item for item in stored_rows if item.get("id") in prediction_ids]
         rows = []
@@ -1050,7 +1086,12 @@ class LocalPortfolioStore:
             if batch_id:
                 seen_batch_symbols.add(key)
             rows.append(item)
-        evaluated = [item for item in rows if item.get("accuracy_score") is not None]
+        evaluated = [item for item in rows if _outlook_bounded_number(item.get("accuracy_score")) is not None]
+        invalid_grade_records = sum(
+            "accuracy_score" in item.get("invalid_financial_fields", [])
+            or (item.get("accuracy_score") is not None and _outlook_bounded_number(item["accuracy_score"]) is None)
+            for item in stored_rows
+        )
         average = round(sum(float(item["accuracy_score"]) for item in evaluated) / len(evaluated), 1) if evaluated else None
         by_symbol: dict[str, list[float]] = {}
         by_industry: dict[str, list[float]] = {}
@@ -1076,11 +1117,7 @@ class LocalPortfolioStore:
             {"name": name, "evaluated": len(scores), "accuracy_percent": round(sum(scores) / len(scores), 1)}
             for name, scores in sorted(groups.items())
         ]
-        validation_passed = bool(
-            len(evaluated) >= COMPANY_OUTLOOK_MIN_EVALUATED_PREDICTIONS
-            and average is not None
-            and average >= COMPANY_OUTLOOK_ACCURACY_TARGET_PERCENT
-        )
+        validation_gate = _outlook_validation_gate(all_stored_rows, prediction_ids)
         return {
             "total": len(rows),
             "stored_total": len(stored_rows),
@@ -1088,12 +1125,8 @@ class LocalPortfolioStore:
             "evaluated": len(evaluated),
             "pending": len([item for item in rows if item.get("actual_direction") == "pending"]),
             "accuracy_percent": average,
-            "quality_gate": {
-                "target_accuracy_percent": COMPANY_OUTLOOK_ACCURACY_TARGET_PERCENT,
-                "minimum_evaluated_predictions": COMPANY_OUTLOOK_MIN_EVALUATED_PREDICTIONS,
-                "passed": validation_passed,
-                "status": "validated" if validation_passed else "not validated",
-            },
+            "invalid_grade_records": invalid_grade_records,
+            "quality_gate": validation_gate,
             "by_symbol": aggregate(by_symbol),
             "by_industry": aggregate(by_industry),
             "by_model_version": aggregate(by_model_version),
@@ -1104,14 +1137,22 @@ class LocalPortfolioStore:
 
     def _company_report_prediction_out(self, row: Any) -> dict[str, Any]:
         item = _dict(row)
+        invalid_fields = []
         for key in ["baseline", "actual"]:
             try:
                 item[key] = json.loads(item.get(key) or "{}")
             except (TypeError, json.JSONDecodeError):
                 item[key] = {}
-        item["score"] = float(item.get("score") or 0)
-        if item.get("accuracy_score") is not None:
-            item["accuracy_score"] = float(item["accuracy_score"])
+            item[key], invalid = _outlook_safe_json(item[key])
+            if invalid:
+                invalid_fields.append(key)
+        for key in ("score", "accuracy_score"):
+            value = _outlook_bounded_number(item.get(key))
+            if value is None and (key == "score" or item.get(key) is not None):
+                invalid_fields.append(key)
+            item[key] = value
+        if invalid_fields:
+            item["invalid_financial_fields"] = sorted(invalid_fields)
         return item
 
     def backup_dir(self) -> Path:
@@ -4676,6 +4717,196 @@ def _source_account_key(account: Any, currency: Any) -> tuple[str, str]:
 
 def _is_external_import_source(value: Any) -> bool:
     return str(value or "").strip().lower().endswith("_import")
+
+
+def _outlook_bounded_number(value: Any) -> float | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+        return number if math.isfinite(number) and 0 <= number <= 100 else None
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _outlook_safe_json(value: Any) -> tuple[Any, bool]:
+    if isinstance(value, float) and not math.isfinite(value):
+        return None, True
+    if isinstance(value, dict):
+        converted = {key: _outlook_safe_json(child) for key, child in value.items()}
+        return {key: child[0] for key, child in converted.items()}, any(child[1] for child in converted.values())
+    if isinstance(value, list):
+        converted = [_outlook_safe_json(child) for child in value]
+        return [child[0] for child in converted], any(child[1] for child in converted)
+    return value, False
+
+
+def _outlook_date(value: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(value or "")[:10])
+    except (ValueError, OverflowError):
+        return None
+
+
+def _outlook_recorded_time(value: Any) -> datetime | None:
+    try:
+        text = str(value or "")
+        if "T" not in text:
+            return None
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
+    except (ValueError, OverflowError):
+        return None
+
+
+def _outlook_validation_gate(all_rows: list[dict[str, Any]], prediction_ids: set[str] | None) -> dict[str, Any]:
+    """Validate distinct frozen forecasts, never selected retrospective retries."""
+    scoped_rows = [row for row in all_rows if prediction_ids is None or row.get("id") in prediction_ids]
+    excluded: dict[str, int] = {}
+    eligible: list[bool] = []
+
+    def reject(reason: str) -> None:
+        excluded[reason] = excluded.get(reason, 0) + 1
+
+    def filing_dates(value: Any) -> list[date | None]:
+        result = []
+        if isinstance(value, dict):
+            for key, child in value.items():
+                result.extend([_outlook_date(child)] if key == "filing_date" else filing_dates(child))
+        elif isinstance(value, list):
+            for child in value:
+                result.extend(filing_dates(child))
+        return result
+
+    def forecast_error(row: dict[str, Any]) -> str | None:
+        baseline = row.get("baseline") if isinstance(row.get("baseline"), dict) else {}
+        target = baseline.get("target") if isinstance(baseline.get("target"), dict) else {}
+        contract = baseline.get("evaluation_contract") if isinstance(baseline.get("evaluation_contract"), dict) else {}
+        evidence = baseline.get("validation_evidence") if isinstance(baseline.get("validation_evidence"), dict) else {}
+        if row.get("model_version") != OUTLOOK_MODEL_VERSION:
+            return "legacy_model"
+        if baseline.get("batch"):
+            return "batch_or_backtest"
+        if baseline.get("score_status") != "scored" or _outlook_bounded_number(row.get("score")) is None:
+            return "not_scored"
+        if evidence.get("mode") != "prospective":
+            return "not_prospective"
+        if contract.get("version") != OUTLOOK_EVALUATION_VERSION:
+            return "evaluation_contract_mismatch"
+        recorded = _outlook_recorded_time(row.get("recorded_at"))
+        if recorded is None:
+            return "unverified_recording_time"
+        if (_outlook_date(row.get("created_at")) != recorded.date()
+                or _outlook_date(evidence.get("as_of_date")) != recorded.date()):
+            return "prediction_date_mismatch"
+        baseline_period = _outlook_date(target.get("fiscal_date"))
+        if not baseline_period or baseline_period > recorded.date():
+            return "invalid_baseline_period"
+        peers = baseline.get("peers") if isinstance(baseline.get("peers"), list) else []
+        dates = filing_dates(baseline)
+        if (not _outlook_date(target.get("filing_date")) or len(peers) < 2
+                or any(not isinstance(peer, dict) or not _outlook_date(peer.get("filing_date")) for peer in peers)
+                or not dates or any(day is None for day in dates)):
+            return "unavailable_baseline_filings"
+        if any(day > recorded.date() for day in dates if day is not None):
+            return "baseline_filing_after_recorded"
+        return None
+
+    # Source rows use insertion order to resolve equal server timestamps. Neither
+    # grading nor the caller's selected IDs may choose the successful repeat.
+    first_forecast: dict[tuple[str, str, str], str] = {}
+    first_outcome: dict[tuple[str, str, str], str] = {}
+    for row in sorted(all_rows, key=lambda item: (
+        _outlook_recorded_time(item.get("recorded_at")) or datetime.max.replace(tzinfo=timezone.utc),
+        str(item.get("created_at") or ""),
+    )):
+        if forecast_error(row):
+            continue
+        baseline_period = _outlook_date(row["baseline"]["target"]["fiscal_date"])
+        identity = (str(row.get("symbol") or ""), baseline_period.isoformat(), OUTLOOK_EVALUATION_VERSION)
+        first_forecast.setdefault(identity, str(row.get("id") or ""))
+        actual = row.get("actual") if isinstance(row.get("actual"), dict) else {}
+        actual_period = _outlook_date(actual.get("fiscal_date"))
+        if actual_period:
+            outcome = (identity[0], actual_period.isoformat(), OUTLOOK_EVALUATION_VERSION)
+            first_outcome.setdefault(outcome, str(row.get("id") or ""))
+
+    for row in scoped_rows:
+        reason = forecast_error(row)
+        if reason:
+            reject(reason)
+            continue
+        baseline = row["baseline"]
+        target = baseline["target"]
+        baseline_period = _outlook_date(target["fiscal_date"])
+        recorded = _outlook_recorded_time(row["recorded_at"])
+        actual = row.get("actual") if isinstance(row.get("actual"), dict) else {}
+        identity = (str(row.get("symbol") or ""), baseline_period.isoformat(), OUTLOOK_EVALUATION_VERSION)
+        if first_forecast.get(identity) != row.get("id"):
+            reject("duplicate_economic_outcome")
+            continue
+        if row.get("actual_direction") not in {"positive", "neutral", "negative"}:
+            reject("not_evaluated")
+            continue
+        if actual.get("evaluation_contract_version") != OUTLOOK_EVALUATION_VERSION:
+            reject("evaluation_contract_mismatch")
+            continue
+        actual_period = _outlook_date(actual.get("fiscal_date"))
+        if not actual_period or not 335 <= (actual_period - baseline_period).days <= 395:
+            reject("invalid_actual_period")
+            continue
+        actual_filing = _outlook_date(actual.get("filing_date"))
+        evaluated = _outlook_recorded_time(row.get("evaluated_at"))
+        if not actual_filing or actual_filing <= recorded.date():
+            reject("actual_filing_not_after_recorded")
+            continue
+        if evaluated is None or actual_filing > evaluated.date():
+            reject("actual_not_observed")
+            continue
+        grade = row.get("accuracy_score")
+        matched = row.get("direction") == row.get("actual_direction")
+        if (row.get("direction") not in {"positive", "neutral", "negative"}
+                or isinstance(grade, bool) or grade not in (0, 100) or grade != (100 if matched else 0)):
+            reject("non_binary_or_inconsistent_grade")
+            continue
+        key = (identity[0], actual_period.isoformat(), OUTLOOK_EVALUATION_VERSION)
+        if first_outcome.get(key) != row.get("id"):
+            reject("duplicate_economic_outcome")
+            continue
+        eligible.append(matched)
+
+    count = len(eligible)
+    probability = sum(eligible) / count if count else None
+    lower = None
+    if probability is not None:
+        z = 1.959963984540054
+        lower = max(0.0, min(1.0,
+            (probability + z*z/(2*count) - z*math.sqrt(probability*(1-probability)/count + z*z/(4*count*count))) / (1 + z*z/count)
+        ))
+    failed_reasons = []
+    if count < COMPANY_OUTLOOK_MIN_EVALUATED_PREDICTIONS:
+        failed_reasons.append("insufficient_observations")
+    if probability is not None and probability * 100 < COMPANY_OUTLOOK_ACCURACY_TARGET_PERCENT:
+        failed_reasons.append("accuracy_below_target")
+    if lower is not None and lower * 100 < COMPANY_OUTLOOK_ACCURACY_TARGET_PERCENT:
+        failed_reasons.append("confidence_bound_below_target")
+    return {
+        "target_accuracy_percent": COMPANY_OUTLOOK_ACCURACY_TARGET_PERCENT,
+        "minimum_evaluated_predictions": COMPANY_OUTLOOK_MIN_EVALUATED_PREDICTIONS,
+        "passed": not failed_reasons,
+        "status": "not_validated" if failed_reasons else "validated",
+        "eligible_count": count,
+        "current_model_version": OUTLOOK_MODEL_VERSION,
+        "evaluation_contract_version": OUTLOOK_EVALUATION_VERSION,
+        "legacy_count": excluded.get("legacy_model", 0),
+        "excluded_count": sum(excluded.values()),
+        "excluded_counts": excluded,
+        "validation_accuracy_percent": round(probability * 100, 2) if probability is not None else None,
+        "accuracy_lower_bound_percent": round(lower * 100, 2) if lower is not None else None,
+        "confidence_level_percent": 95.0,
+        "validation_method": "prospective",
+        "failed_reasons": failed_reasons,
+    }
 
 
 def _now() -> str:

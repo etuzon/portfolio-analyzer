@@ -8,7 +8,7 @@ SOURCE = (ROOT / "web/app.js").read_text()
 
 
 def run_js(body):
-    names = ("resetCompanyOutlookHistoryUi", "companyOutlookEvaluationMessage", "companyOutlookCheckStatus", "companyOutlookScoreHelp", "companyOutlookConfidenceHelp", "companyOutlookHistoryThesis", "formatBackupDateTime", "positionCompanyOutlookHelp", "setCompanyOutlookHelpVisible", "updateCompanyOutlookEvaluationUi", "renderCompanyOutlookHistory", "loadCompanyOutlookHistory", "evaluateCompanyOutlookPrediction")
+    names = ("resetCompanyOutlookHistoryUi", "companyOutlookEvaluationMessage", "companyOutlookCheckStatus", "companyOutlookCanCheck", "companyOutlookUsesCurrentFormula", "companyOutlookHasScore", "companyOutlookEvidenceReason", "companyOutlookRankText", "companyOutlookEvaluationHelp", "companyOutlookScoreHelp", "companyOutlookConfidenceHelp", "companyOutlookDataCoverage", "companyOutlookNarrative", "companyOutlookHistoryThesis", "outlookScoreText", "formatBackupDateTime", "positionCompanyOutlookHelp", "setCompanyOutlookHelpVisible", "updateCompanyOutlookEvaluationUi", "renderCompanyOutlookHistory", "loadCompanyOutlookHistory", "evaluateCompanyOutlookPrediction")
     functions = []
     for name in names:
         start = re.search(rf"^(?:async )?function {name}\(", SOURCE, re.M).start()
@@ -23,7 +23,7 @@ const esc=value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;'
 const formatDate=value=>String(value).slice(0,10).split('-').reverse().join('/');
 const document={documentElement:{dir:'rtl'},body:{},activeElement:{},querySelectorAll:()=>[...cards.values()]};
 const makeNode=()=>({textContent:'',disabled:false,hidden:false,classList:{toggle(){}},focus(){document.activeElement=this}});
-const cards=new Map(['p1','p2'].map(id=>{
+const cards=new Map(['p1','p2','p3'].map(id=>{
  const feedback=makeNode(),button=makeNode(),remove=makeNode(),badge=makeNode(),help=makeNode();
  return [id,{dataset:{companyOutlookPrediction:id},setAttribute(key,value){this[key]=value},querySelector(selector){
   return selector==='.outlook-prediction-feedback'?feedback:selector==='[data-evaluate-company-outlook]'?button:selector==='[data-delete-company-outlook]'?remove:selector==='.outlook-pending-trigger'?badge:selector==='.outlook-pending-description'?help:null;
@@ -31,7 +31,7 @@ const cards=new Map(['p1','p2'].map(id=>{
 }));
 const nodes={companyOutlookHistory:{innerHTML:''},companyOutlookScorecard:{innerHTML:''},outlookSymbol:{value:'NEWT'}};
 const $=id=>nodes[id];
-const record=(id='p1')=>({id,symbol:'NEWT',created_at:'2026-10-31T00:00:00Z',horizon_date:'2027-10-26',score:45,label:'Weak',confidence:'High',actual_direction:'pending',baseline:{target:{fiscal_date:'2025-12-31'}}});
+const record=(id='p1')=>({id,symbol:id==='p2'?'NREF':'NEWT',created_at:'2026-10-31T00:00:00Z',horizon_date:'2027-10-26',score:45,label:'Weak',confidence:'High',actual_direction:'pending',baseline:{target:{fiscal_date:'2025-12-31'}}});
 const data=(items=[record(),record('p2')])=>({items,scorecard:{total:items.length,pending:items.length}});
 const requests=[],timers=new Map();let timerId=0;
 const setTimeout=callback=>{timers.set(++timerId,callback);return timerId};
@@ -94,7 +94,7 @@ def test_failure_and_timeout_are_visible_and_retry_can_finish_successfully():
  const result={...record(),actual_direction:'positive',accuracy_score:100,evaluation:'Revenue growth and net margin both improved or held.'};
  requests[2].resolve(result);await flush();requests[3].resolve(data([result,record('p2')]));await retry;
  assert.equal(state.companyOutlookHistory[0].actual_direction,'positive');
- assert.ok(nodes.companyOutlookHistory.innerHTML.includes('100%'));
+ assert.ok(nodes.companyOutlookHistory.innerHTML.includes('100/100'));
  assert.ok(!nodes.companyOutlookHistory.innerHTML.includes('data-evaluate-company-outlook="p1"'));
  assert.ok(card.querySelector('.outlook-prediction-feedback').textContent.includes('השתפרו'));
 })().catch(error=>{console.error(error);process.exitCode=1});
@@ -244,7 +244,7 @@ for(const language of ['he','en']){
   html=nodes.companyOutlookHistory.innerHTML;
   assert.ok(!html.includes('outlook-pending-trigger'));
   assert.ok(html.includes(t(direction.charAt(0).toUpperCase()+direction.slice(1))));
-  assert.equal(html.includes('100%'),direction!=='inconclusive');
+  assert.equal(html.includes('100/100'),direction!=='inconclusive');
  }
 }
 """)
@@ -267,12 +267,14 @@ for(const language of ['he','en']){
   assert.ok(html.includes(language==='he'?'כבר נותח ליצירת התחזית':'was already analyzed to create this forecast'));
   for(const kind of ['Score','Confidence','Pending'])assert.ok(html.includes(`aria-describedby="outlook${kind}Help0"`));
   assert.equal((html.match(/role="tooltip"/g)||[]).length,3);
+  assert.ok(html.includes(t('Analysis data coverage'))&&html.includes(t('Broad')));
+  assert.ok(!/רמת ביטחון|רמת הביטחון|Confidence describes/.test(html.replace(/<[^>]*>/g,'')));
   assert.ok(html.includes('data-outlook-help="score" tabindex="0"'));
   assert.ok(html.includes('data-outlook-help="confidence" tabindex="0"'));
   const score=companyOutlookScoreHelp(item),confidence=companyOutlookConfidenceHelp(item);
   assert.ok(score.includes(language==='he'?'נמוך מ־50':'below 50'));
   assert.ok(confidence.includes(language==='he'?'לפחות 3 שנות דוחות':'at least 3 annual report years'));
-  assert.ok(confidence.includes(language==='he'?'אינה מבטיחה':'does not guarantee'));
+  assert.ok(confidence.includes(language==='he'?'אינו מבטיח':'does not guarantee'));
   if(language==='he'){
    assert.ok(!/Confidence|Strong|Weak|Industry|Place|Checks/.test(html.replace(/<[^>]*>/g,'')));
   }else{
@@ -301,4 +303,42 @@ renderCompanyOutlookHistory(data([item]));
 const text=nodes.companyOutlookHistory.innerHTML.replace(/<[^>]*>/g,'');
 assert.ok(text.includes('מצב הענף: יציב'));
 assert.ok(!/Stable|High|Weak|Confidence|Industry|Place/.test(text));
+""")
+
+
+def test_check_updates_company_group_and_blocks_duplicate_company_clicks():
+    run_js(r"""
+(async()=>{
+ const siblings=[record(),{...record('p2'),symbol:'NEWT'}, {...record('p3'),symbol:'OTHER'}];
+ renderCompanyOutlookHistory(data(siblings));
+ const checking=evaluateCompanyOutlookPrediction('p1');
+ assert.equal(cards.get('p1').querySelector('[data-evaluate-company-outlook]').disabled,true);
+ assert.equal(cards.get('p2').querySelector('[data-evaluate-company-outlook]').disabled,true);
+ assert.equal(cards.get('p3').querySelector('[data-evaluate-company-outlook]').disabled,false);
+ await evaluateCompanyOutlookPrediction('p2');assert.equal(requests.length,1);
+ const checked=siblings.slice(0,2).map(item=>({...item,evaluation:'No newer annual report is available yet.',checked_at:'2026-10-31T14:25:00Z'}));
+ requests[0].resolve({...checked[0],checked_predictions:checked,failed_prediction_ids:[]});await flush();
+ requests[1].resolve(data([...checked,siblings[2]]));await checking;
+ for(const id of ['p1','p2'])assert.equal(cards.get(id).querySelector('.outlook-pending-trigger').textContent,'נבדק — אין דוח חדש');
+ assert.equal(state.companyOutlookHistory[2].checked_at,undefined);
+ assert.equal(timers.size,0);
+})().catch(error=>{console.error(error);process.exitCode=1});
+""")
+
+
+def test_partial_company_check_failure_preserves_prior_result_and_explains_retry():
+    run_js(r"""
+(async()=>{
+ const prior={...record(),checked_at:'2026-01-01T00:00:00Z',evaluation:'No newer annual report is available yet.'};
+ const sibling={...record('p2'),symbol:'NEWT'};
+ renderCompanyOutlookHistory(data([prior,sibling]));
+ const checking=evaluateCompanyOutlookPrediction('p1');
+ const checked={...sibling,checked_at:'2026-10-31T14:25:00Z',evaluation:'No newer annual report is available yet.'};
+ requests[0].resolve({...prior,checked_predictions:[checked],failed_prediction_ids:['p1']});await flush();
+ requests[1].resolve(data([prior,checked]));await checking;
+ assert.equal(cards.get('p1').querySelector('.outlook-pending-trigger').textContent,'הבדיקה נכשלה');
+ assert.equal(cards.get('p1').querySelector('[data-evaluate-company-outlook]').textContent,'ניסיון נוסף');
+ assert.equal(state.companyOutlookHistory[0].checked_at,prior.checked_at);
+ assert.equal(cards.get('p2').querySelector('.outlook-pending-trigger').textContent,'נבדק — אין דוח חדש');
+})().catch(error=>{console.error(error);process.exitCode=1});
 """)

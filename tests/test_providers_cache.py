@@ -51,7 +51,7 @@ def test_sec_metadata_outage_preserves_financial_statements(monkeypatch, tmp_pat
     provider = SecCompanyFactsProvider({}, SqliteCache(tmp_path / "cache.sqlite3", ttl_hours=24))
     monkeypatch.setattr(provider, "_ticker_row", lambda symbol: {"cik": "0001109354", "title": "BRUKER CORP"})
     monkeypatch.setattr(provider, "_company_facts", lambda cik: {"facts": {"us-gaap": {
-        "Revenues": {"units": {"USD": [{"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "end": "2025-12-31", "val": 1000}]}}
+        "Revenues": {"units": {"USD": [{"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "start": "2025-01-01", "end": "2025-12-31", "val": 1000}]}}
     }}})
 
     def unavailable(cik):
@@ -533,16 +533,16 @@ def test_sec_company_facts_maps_net_income_revenue_and_shares(monkeypatch, tmp_p
                     "Revenues": {
                         "units": {
                             "USD": [
-                                {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-02-01", "end": "2024-12-31", "val": 1000},
-                                {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "end": "2025-12-31", "val": 1200},
+                                {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-02-01", "start": "2024-01-01", "end": "2024-12-31", "val": 1000},
+                                {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "start": "2025-01-01", "end": "2025-12-31", "val": 1200},
                             ]
                         }
                     },
                     "NetIncomeLoss": {
                         "units": {
                             "USD": [
-                                {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-02-01", "end": "2024-12-31", "val": 100},
-                                {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "end": "2025-12-31", "val": 180},
+                                {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-02-01", "start": "2024-01-01", "end": "2024-12-31", "val": 100},
+                                {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "start": "2025-01-01", "end": "2025-12-31", "val": 180},
                             ]
                         }
                     },
@@ -579,10 +579,10 @@ def test_sec_company_facts_maps_investment_company_income_as_revenue(monkeypatch
             "facts": {
                 "us-gaap": {
                     "GrossInvestmentIncomeOperating": {"units": {"USD": [
-                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "end": "2025-12-31", "val": 125000000}
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "start": "2025-01-01", "end": "2025-12-31", "val": 125000000}
                     ]}},
                     "NetIncomeLoss": {"units": {"USD": [
-                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "end": "2025-12-31", "val": 82000000}
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "start": "2025-01-01", "end": "2025-12-31", "val": 82000000}
                     ]}},
                 },
                 "dei": {},
@@ -619,16 +619,16 @@ def test_sec_company_facts_derives_financial_revenue_from_net_interest_and_other
             "facts": {
                 "us-gaap": {
                     "InterestIncomeExpenseNet": {"units": {"USD": [
-                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-03-01", "end": "2024-12-31", "val": 40_305_000},
-                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-01", "end": "2025-12-31", "val": 59_885_000},
+                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-03-01", "start": "2024-01-01", "end": "2024-12-31", "val": 40_305_000},
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-01", "start": "2025-01-01", "end": "2025-12-31", "val": 59_885_000},
                     ]}},
                     other_income_concept: {"units": {"USD": [
-                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-03-01", "end": "2024-12-31", "val": 217_312_000},
-                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-01", "end": "2025-12-31", "val": other_income},
+                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-03-01", "start": "2024-01-01", "end": "2024-12-31", "val": 217_312_000},
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-01", "start": "2025-01-01", "end": "2025-12-31", "val": other_income},
                     ]}},
                     "NetIncomeLoss": {"units": {"USD": [
-                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-03-01", "end": "2024-12-31", "val": 50_853_000},
-                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-01", "end": "2025-12-31", "val": 60_512_000},
+                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-03-01", "start": "2024-01-01", "end": "2024-12-31", "val": 50_853_000},
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-01", "start": "2025-01-01", "end": "2025-12-31", "val": 60_512_000},
                     ]}},
                 },
                 "dei": {},
@@ -654,13 +654,13 @@ def test_sec_company_facts_prefers_reported_revenue_over_financial_components(mo
             "facts": {
                 "us-gaap": {
                     "Revenues": {"units": {"USD": [
-                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "end": "2025-12-31", "val": 500_000_000}
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "start": "2025-01-01", "end": "2025-12-31", "val": 500_000_000}
                     ]}},
                     "InterestIncomeExpenseNet": {"units": {"USD": [
-                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "end": "2025-12-31", "val": 60_000_000}
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "start": "2025-01-01", "end": "2025-12-31", "val": 60_000_000}
                     ]}},
                     "NoninterestIncome": {"units": {"USD": [
-                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "end": "2025-12-31", "val": 225_000_000}
+                        {"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-02-01", "start": "2025-01-01", "end": "2025-12-31", "val": 225_000_000}
                     ]}},
                 },
                 "dei": {},
@@ -684,13 +684,13 @@ def test_sec_company_facts_as_of_uses_filing_available_at_historical_cutoff(monk
             "facts": {
                 "us-gaap": {
                     "Revenues": {"units": {"USD": [
-                        {"fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-09-01", "end": "2023-07-29", "val": 100},
-                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2024-09-01", "end": "2023-07-29", "val": 101},
-                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2024-09-01", "end": "2024-07-27", "val": 120},
+                        {"fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-09-01", "start": "2022-07-31", "end": "2023-07-29", "val": 100},
+                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2024-09-01", "start": "2022-07-31", "end": "2023-07-29", "val": 101},
+                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2024-09-01", "start": "2023-07-30", "end": "2024-07-27", "val": 120},
                     ]}},
                     "NetIncomeLoss": {"units": {"USD": [
-                        {"fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-09-01", "end": "2023-07-29", "val": 10},
-                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2024-09-01", "end": "2024-07-27", "val": 12},
+                        {"fy": 2023, "fp": "FY", "form": "10-K", "filed": "2023-09-01", "start": "2022-07-31", "end": "2023-07-29", "val": 10},
+                        {"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2024-09-01", "start": "2023-07-30", "end": "2024-07-27", "val": 12},
                     ]}},
                 },
                 "dei": {},
@@ -700,4 +700,4 @@ def test_sec_company_facts_as_of_uses_filing_available_at_historical_cutoff(monk
 
     reports = provider.fundamentals_as_of("EXM", date(2024, 8, 5))["income_statement"]["annualReports"]
 
-    assert reports == [{"fiscalDateEnding": "2023-07-29", "totalRevenue": 100.0, "filingDate": "2023-09-01", "netIncome": 10.0}]
+    assert reports == [{"fiscalDateEnding": "2023-07-29", "periodStart": "2022-07-31", "totalRevenue": 100.0, "filingDate": "2023-09-01", "netIncome": 10.0}]

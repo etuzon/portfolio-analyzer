@@ -9034,13 +9034,13 @@ function financeReportMetricTooltip(metric, row, previous) {
     "Fiscal date": "The fiscal year-end date of this annual report; it is not the filing date or today's date.",
     "Latest revenue": "Total revenue reported for the latest available fiscal year.",
     "Revenue": "Total revenue reported for this fiscal year.",
-    "Revenue growth": "Change in annual revenue compared with the previous available annual report.",
+    "Revenue growth": "Change in annual revenue between comparable annual periods. Missing years or nonpositive prior revenue leave growth unavailable.",
     "Net income": "Annual net income after expenses and taxes, as reported by the company.",
-    "Net income growth": "Change in annual net income compared with the previous available annual report.",
+    "Net income growth": "Change in annual net income between comparable annual periods. Missing years or nonpositive prior income leave growth unavailable.",
     "Net margin": "Annual net income divided by annual revenue, multiplied by 100. Both amounts are from the same fiscal year.",
     "Free cash flow": "Annual operating cash flow minus capital expenditures from the same fiscal year.",
-    "Long-term debt": "Long-term debt reported at fiscal year-end. Total debt or net debt may be used when long-term debt is unavailable.",
-    "Debt": "Long-term debt reported at fiscal year-end. Total debt or net debt may be used when long-term debt is unavailable.",
+    "Long-term debt": "Long-term borrowing at fiscal year-end, including the portion due within one year when reported.",
+    "Debt": "Long-term borrowing at fiscal year-end, including the portion due within one year when reported.",
   };
   const parts = [t(definitions[metric] || metric)];
   if (metric === "Years") return parts[0];
@@ -9057,8 +9057,10 @@ function financeReportMetricTooltip(metric, row, previous) {
       parts.push(t("Previous amount: {previous}. Current amount: {current}.")
         .replace("{previous}", fmt(prior, 0)).replace("{current}", fmt(row[field], 0)));
     }
-    parts.push(t(prior === 0 ? "Growth is unavailable because the previous amount is zero."
-      : "Formula: (current amount − previous amount) / absolute previous amount × 100."));
+    parts.push(t(row.growth_comparable === false ? "Growth is unavailable because the reporting periods or currencies are not comparable."
+      : prior === 0 ? "Growth is unavailable because the previous amount is zero."
+      : prior < 0 ? "Growth is unavailable because the previous amount is negative."
+      : "Formula: (current amount − previous amount) / previous amount × 100, when the previous amount is positive."));
   }
   return parts.join(" ");
 }
@@ -9129,36 +9131,112 @@ function companyOutlookCheckStatus(item) {
   const ui = state.companyOutlookEvaluationUi?.[item.id] || {};
   if (ui.status === "checking") return { label: "Checking…", help: "Checking for a newer annual report…", className: "pending" };
   if (ui.status === "error") return { label: "Check failed", help: "Could not check this prediction. Try again.", className: "pending" };
+  if (item.actual?.retryable) return { label: "Comparison data unavailable", help: item.evaluation || "A newer company report was found, but there is not enough comparable peer data to evaluate this forecast. Check company reports again when the missing reports are available.", className: "pending" };
   if (item.evaluation === "No newer annual report is available yet.") {
     return { label: "Checked — no new report", help: "The last check found no newer annual report. Check again after the next annual report is published. Checks are manual.", className: "checked" };
   }
   if (item.checked_at || item.evaluation) return { label: "Checked", help: item.evaluation || "Prediction evaluated", className: "checked" };
-  return { label: "Not compared with a newer report", help: "The baseline annual report was already analyzed to create this forecast. Select Evaluate next report to compare it with a newer annual report. Checks are manual.", className: "pending" };
+  return { label: "Not compared with a newer report", help: "The baseline annual report was already analyzed to create this forecast. Check company reports compares all pending forecasts for this company, each against its own baseline and report cutoff. Checks are manual.", className: "pending" };
+}
+
+function companyOutlookCanCheck(item) {
+  return (item.actual_direction || "pending") === "pending" || item.actual?.retryable === true;
+}
+
+function companyOutlookUsesCurrentFormula(item) {
+  return item.model_version === "report-outlook-v5" || item.baseline?.model_version === "report-outlook-v5";
+}
+
+function companyOutlookHasScore(item) {
+  return (item.score_status || item.baseline?.score_status) !== "insufficient" && item.score != null && Number.isFinite(Number(item.score));
+}
+
+function companyOutlookEvidenceReason(item) {
+  const coverage = item.coverage || item.baseline?.coverage || {};
+  const reasons = {
+    industry_model_required: "This industry needs a specialized scoring model. Its reports remain available for review.",
+    insufficient_peers: "At least two companies with comparable annual reports are required.",
+    stale_reports: "The latest annual report is too old for a current forecast.",
+    missing_metrics: "Required financial measurements are missing from the company or its comparison group.",
+  };
+  return t(reasons[coverage.reason] || "");
+}
+
+function companyOutlookRankText(item) {
+  const rank = item.rank ?? item.baseline?.rank;
+  const coverage = item.coverage || item.baseline?.coverage || {};
+  const count = item.ranked_company_count ?? item.baseline?.ranked_company_count ?? Number(coverage.usable_peer_count ?? 0) + 1;
+  if (rank == null || !Number.isFinite(Number(rank)) || !(count >= 2)) return t("Comparison unavailable");
+  return t(item.rank_tied || item.baseline?.rank_tied ? "Tied {rank}/{count}" : "{rank}/{count}")
+    .replace("{rank}", fmt(rank, 0)).replace("{count}", fmt(count, 0));
+}
+
+function companyOutlookEvaluationHelp(item) {
+  const contract = item.evaluation_contract || item.baseline?.evaluation_contract;
+  if (contract?.version === "peer-revenue-margin-v1") return `${t("The next annual report is compared with peers using revenue growth and net margin. The comparison rule stays the same when reports are missing.")} ${t("Revenue-growth tolerance: {revenue} percentage points. Net-margin tolerance: {margin} percentage points. At least {count} usable peers are required.")
+    .replace("{revenue}", fmt(contract.revenue_tolerance_pp, 1)).replace("{margin}", fmt(contract.margin_tolerance_pp, 1)).replace("{count}", fmt(contract.minimum_peers, 0))} ${contract.require_full_cohort ? `${t("All comparison companies saved with this forecast must have usable reports.")} ` : ""}${t("The evaluation grade measures agreement on that report outcome. It does not test stock returns or every driver of the financial score.")}`;
+  return t("This saved forecast retains the earlier scoring and evaluation rules. Its evaluation grade is not independent evidence for the current formula.");
 }
 
 function companyOutlookScoreHelp(item) {
+  if (companyOutlookUsesCurrentFormula(item)) {
+    if (!companyOutlookHasScore(item)) return `${t("There is not enough comparable financial evidence to assign an outlook score.")} ${companyOutlookConfidenceHelp(item)}`;
+    const band = { Strong: "Strong: 80–100.", Good: "Good: 65 to below 80.", Mixed: "Mixed: 35 to below 65.", Weak: "Weak: below 35." };
+    return `${t("The score compares annual growth, profitability, cash flow and balance-sheet measures with comparable companies. Industry and related-company information is context and does not add points.")} ${t(band[item.label] || "")} ${t("The score is not a probability of investment gains.")}`;
+  }
   const band = { Strong: "Strong: 80–100.", Good: "Good: 65 to below 80.", Mixed: "Mixed: 50 to below 65.", Weak: "Weak: below 50." };
-  return `${t("Outlook score: {score}/100. Higher scores mean a stronger outlook based on company reports, the comparison group and industry conditions.").replace("{score}", fmt(item.score, 1))} ${t(band[item.label] || "")} ${t("Confidence describes the supporting data, not whether the outlook is positive.")}`;
+  return `${t("Outlook score: {score}/100. Higher scores mean a stronger outlook based on company reports, the comparison group and industry conditions.").replace("{score}", fmt(item.score, 1))} ${t(band[item.label] || "")} ${t("Data coverage describes the supporting reports, not whether the outlook is positive.")} ${t("This score was saved under an earlier formula and has not been recalculated.")}`;
+}
+
+function companyOutlookDataCoverage(confidence) {
+  return t(({ High: "Broad", Medium: "Moderate", Low: "Limited" })[confidence || "Low"] || "Not available");
+}
+
+function companyOutlookNarrative(text) {
+  return t(text || "")
+    .replace("missing statement evidence lowers confidence.", t("Missing report data limits the analysis."))
+    .replace(/Confidence: (High|Medium|Low)\./gu, (_match, level) => `${t("Analysis data coverage")}: ${companyOutlookDataCoverage(level)}.`);
 }
 
 function companyOutlookConfidenceHelp(item) {
+  const coverage = item.coverage || item.baseline?.coverage;
+  if (coverage) {
+    const labels = {
+      revenue_growth_percent: "Revenue growth", net_income_growth_percent: "Net income growth",
+      profit_margin_percent: "Net margin", net_margin_percent: "Net margin",
+      free_cash_flow_margin_percent: "FCF margin", cash_conversion_percent: "Cash conversion",
+      debt_to_revenue_percent: "Debt / revenue", current_ratio: "Current ratio",
+      net_margin_change_percent: "Net-margin change", cash_quality: "Cash quality",
+    };
+    const parts = [t("Comparable financial coverage: {percent}%. Usable comparison companies: {count}.")
+      .replace("{percent}", fmt(coverage.percent ?? 0, 0)).replace("{count}", fmt(coverage.usable_peer_count ?? 0, 0)),
+    t("Missing measurements are not scaled up to a full score.")];
+    if (coverage.missing_metrics?.length) parts.push(`${t("Missing or limited")}: ${coverage.missing_metrics.map((metric) => t(labels[metric] || "Other financial measurements")).join(", ")}.`);
+    if (companyOutlookEvidenceReason(item)) parts.push(companyOutlookEvidenceReason(item));
+    return parts.join(" ");
+  }
   const levels = {
-    High: "High: at least 3 annual report years and at least 4 comparison companies.",
-    Medium: "Medium: at least 2 annual report years and at least 2 comparison companies.",
-    Low: "Low: fewer than 2 annual report years or fewer than 2 comparison companies.",
+    High: "Broad: at least 3 annual report years and at least 4 comparison companies.",
+    Medium: "Moderate: at least 2 annual report years and at least 2 comparison companies.",
+    Low: "Limited: fewer than 2 annual report years or fewer than 2 comparison companies.",
   };
-  return `${t("Confidence describes the report history and comparison-group coverage. It does not guarantee accuracy or a positive outcome.")} ${t(levels[item.confidence || "Low"] || "")}`;
+  return `${t("Data coverage describes how many annual report years and comparison companies support the analysis. It does not guarantee accuracy or a positive outcome.")} ${t(levels[item.confidence || "Low"] || "")}`;
 }
 
 function companyOutlookHistoryThesis(item) {
+  if (companyOutlookUsesCurrentFormula(item)) {
+    if (!companyOutlookHasScore(item)) return t("There is not enough comparable financial evidence to assign an outlook score.");
+    const rank = companyOutlookRankText(item);
+    return `${item.symbol}: ${rank}. ${rank === t("Comparison unavailable") ? "" : `${t("1 is strongest in this comparison group.")} `}${t("The score uses comparable annual financial measurements. Report checks compare revenue growth and net margin with peers under the saved evaluation rule.")}`;
+  }
   const source = item.thesis || "No report-backed summary was stored for this prediction.";
   const match = source.match(/^(.+) ranks (\d+) of (\d+) on available report growth signals\.\s*(.*)$/u);
-  if (!match) return t(source);
+  if (!match) return companyOutlookNarrative(source);
   const rank = Number(match[2]), count = Number(match[3]);
   const ranking = count <= 1 ? t("No other companies were available for comparison.")
     : t("Place {rank} of {count} in this comparison group (1 = strongest; {count} = weakest).")
       .replace("{rank}", fmt(rank, 0)).replaceAll("{count}", fmt(count, 0));
-  return `${match[1]}: ${ranking} ${t(match[4])}`;
+  return `${match[1]}: ${ranking} ${companyOutlookNarrative(match[4])}`;
 }
 
 function positionCompanyOutlookHelp(help) {
@@ -9233,7 +9311,7 @@ function updateCompanyOutlookEvaluationUi(predictionId) {
   const button = card.querySelector("[data-evaluate-company-outlook]");
   if (button) {
     button.disabled = busy;
-    button.textContent = t(busy ? "Checking…" : ui.status === "error" ? "Retry" : "Evaluate next report");
+    button.textContent = t(busy ? "Checking…" : ui.status === "error" ? "Retry" : "Check company reports");
   }
   const remove = card.querySelector("[data-delete-company-outlook]");
   if (remove) remove.disabled = busy;
@@ -9252,17 +9330,29 @@ function renderCompanyOutlookHistory(data) {
   state.companyOutlookHistory = data.items || [];
   const scorecard = data.scorecard || {};
   const qualityGate = scorecard.quality_gate || {};
+  const gradeHelp = t("Average evaluation grade for the displayed forecasts. A grade measures agreement with a report outcome, not the probability of investment gains.");
+  const validationCounts = qualityGate.eligible_count == null ? "" : t("Distinct report checks: {count}/{minimum}.")
+    .replace("{count}", fmt(qualityGate.eligible_count, 0)).replace("{minimum}", fmt(qualityGate.minimum_evaluated_predictions || 30, 0));
+  const failureLabels = {
+    insufficient_observations: "More distinct later-report outcomes are needed.",
+    accuracy_below_target: "The evaluation grade is below the validation target.",
+    confidence_bound_below_target: "The statistical confidence bound is below the validation target.",
+  };
+  const validationHelp = [t("Validation applies to the current formula using distinct prospective report outcomes. Repeated observations, earlier formulas and calibration runs do not establish validation."), validationCounts,
+    qualityGate.legacy_count == null ? "" : t("Earlier forecasts excluded: {count}.").replace("{count}", fmt(qualityGate.legacy_count, 0)),
+    ...(qualityGate.failed_reasons || []).map((reason) => t(failureLabels[reason] || "Validation evidence is incomplete."))].filter(Boolean).join(" ");
   $("companyOutlookScorecard").innerHTML = [
     ["Predictions", scorecard.total || 0],
     ["Evaluated", scorecard.evaluated || 0],
     ["Awaiting a newer report", scorecard.pending || 0],
-    ["Accuracy", scorecard.accuracy_percent == null ? "Not evaluated" : pct(scorecard.accuracy_percent)],
-    ["Validation", qualityGate.passed ? "75% target met" : "Not validated"],
-  ].map(([label, value]) => `<div class="stat"><b>${esc(t(String(value)))}</b><span>${esc(t(label))}</span></div>`).join("");
+    ["Evaluation grade", scorecard.accuracy_percent == null ? "Not evaluated" : outlookScoreText(scorecard.accuracy_percent), gradeHelp],
+    ["Validation", qualityGate.passed ? "Validation criteria met" : "Not validated", validationHelp],
+  ].map(([label, value, help]) => `<div class="stat"${help ? ` tabindex="0" title="${esc(help)}"` : ""}><b>${esc(t(String(value)))}</b><span>${esc(t(label))}</span>${label === "Validation" && validationCounts ? `<small>${esc(validationCounts)}</small>` : ""}</div>`).join("");
   $("companyOutlookHistory").innerHTML = state.companyOutlookHistory.length ? state.companyOutlookHistory.map((item, index) => {
     const direction = item.actual_direction || "pending";
+    const canCheck = companyOutlookCanCheck(item);
     const checkStatus = companyOutlookCheckStatus(item);
-    const stateLabel = direction === "pending" ? checkStatus.label : direction.charAt(0).toUpperCase() + direction.slice(1);
+    const stateLabel = canCheck ? checkStatus.label : direction.charAt(0).toUpperCase() + direction.slice(1);
     const ui = state.companyOutlookEvaluationUi?.[item.id] || {};
     const busy = ui.status === "checking";
     const checkedAt = item.checked_at || item.evaluated_at;
@@ -9270,25 +9360,25 @@ function renderCompanyOutlookHistory(data) {
       <article class="stack-item management-item outlook-history-item" data-company-outlook-prediction="${esc(item.id)}" aria-busy="${busy}">
         <header class="outlook-history-head outlook-help-anchor">
           <div class="outlook-history-identity">
-            <b>${esc(item.symbol)} · ${fmt(item.score, 0)}/100</b>
-            <span class="outlook-help outlook-history-label outlook-help-trigger" data-outlook-help="score" tabindex="0" aria-describedby="outlookScoreHelp${index}">${esc(t(item.label || "Mixed"))}<span id="outlookScoreHelp${index}" class="outlook-help-description" role="tooltip" hidden>${esc(companyOutlookScoreHelp(item))}</span></span>
+            <b><bdi dir="ltr">${esc(item.symbol)}</bdi> · ${companyOutlookHasScore(item) ? `<bdi dir="ltr">${esc(outlookScoreText(item.score))}</bdi>` : esc(t("Unscored"))}</b>
+            <span class="outlook-help outlook-history-label outlook-help-trigger" data-outlook-band="${companyOutlookHasScore(item) ? esc((item.label || "Mixed").toLowerCase()) : "insufficient"}" data-outlook-help="score" tabindex="0" aria-describedby="outlookScoreHelp${index}">${esc(t(companyOutlookHasScore(item) ? item.label || "Mixed" : "Insufficient data"))}<span id="outlookScoreHelp${index}" class="outlook-help-description" role="tooltip" hidden>${esc(companyOutlookScoreHelp(item))}</span></span>
           </div>
           <div class="outlook-history-status">
-            ${direction === "pending" ? `<span class="outlook-pending-help outlook-help" data-outlook-help="status"><span class="outlook-history-state ${checkStatus.className} outlook-pending-trigger outlook-help-trigger" data-outlook-help="status" tabindex="0" aria-describedby="outlookPendingHelp${index}">${esc(t(stateLabel))}</span><span id="outlookPendingHelp${index}" class="outlook-pending-description outlook-help-description" role="tooltip" hidden>${esc(t(checkStatus.help))}</span></span>` : `<span class="outlook-history-state ${esc(direction)}">${esc(t(stateLabel))}</span>`}
+            ${canCheck ? `<span class="outlook-pending-help outlook-help" data-outlook-help="status"><span class="outlook-history-state ${checkStatus.className} outlook-pending-trigger outlook-help-trigger" data-outlook-help="status" tabindex="0" aria-describedby="outlookPendingHelp${index}">${esc(t(stateLabel))}</span><span id="outlookPendingHelp${index}" class="outlook-pending-description outlook-help-description" role="tooltip" hidden>${esc(t(checkStatus.help))}</span></span>` : `<span class="outlook-history-state ${esc(direction)}">${esc(t(stateLabel))}</span>`}
           </div>
         </header>
         <div class="outlook-history-meta outlook-help-anchor">
           <span><small>${esc(t("Created"))}</small><b>${esc(formatDate(String(item.created_at || "").slice(0, 10)))}</b></span>
           <span><small>${esc(t("Analyzed annual report"))}</small><b>${esc(item.baseline?.target?.fiscal_date ? formatDate(item.baseline.target.fiscal_date) : t("Not available"))}</b></span>
           <span><small>${esc(t("Evaluate after"))}</small><b>${esc(formatDate(item.horizon_date))}</b></span>
-          <span class="outlook-help outlook-help-trigger" data-outlook-help="confidence" tabindex="0" aria-describedby="outlookConfidenceHelp${index}"><small>${esc(t("Confidence"))}</small><b>${esc(t(item.confidence || "Low"))}</b><span id="outlookConfidenceHelp${index}" class="outlook-help-description" role="tooltip" hidden>${esc(companyOutlookConfidenceHelp(item))}</span></span>
+          <span class="outlook-help outlook-help-trigger" data-outlook-help="confidence" tabindex="0" aria-describedby="outlookConfidenceHelp${index}"><small>${esc(t("Analysis data coverage"))}</small><b>${esc(companyOutlookDataCoverage(item.confidence))}</b><span id="outlookConfidenceHelp${index}" class="outlook-help-description" role="tooltip" hidden>${esc(companyOutlookConfidenceHelp(item))}</span></span>
           ${checkedAt ? `<span><small>${esc(t("Last checked"))}</small><time datetime="${esc(checkedAt)}">${esc(formatBackupDateTime(checkedAt))}</time></span>` : ""}
         </div>
         <p class="outlook-history-thesis">${esc(companyOutlookHistoryThesis(item))}</p>
-        ${direction === "pending" || item.accuracy_score == null ? "" : `<p class="outlook-history-evaluation">${esc(t("Accuracy"))} ${fmt(item.accuracy_score, 0)}%</p>`}
+        ${direction === "pending" || item.accuracy_score == null ? "" : `<p class="outlook-history-evaluation" tabindex="0" title="${esc(companyOutlookEvaluationHelp(item))}">${esc(t("Evaluation grade"))} ${esc(outlookScoreText(item.accuracy_score))}</p>`}
         <p class="outlook-prediction-feedback${ui.status === "error" ? " is-error" : ""}" role="status" aria-live="polite" tabindex="-1">${esc(companyOutlookEvaluationMessage(item))}</p>
         <footer class="row-actions outlook-history-actions">
-          ${direction === "pending" ? `<button class="secondary compact-button" type="button" data-evaluate-company-outlook="${esc(item.id)}"${busy ? " disabled" : ""}>${esc(t(busy ? "Checking…" : ui.status === "error" ? "Retry" : "Evaluate next report"))}</button>` : ""}
+          ${canCheck ? `<button class="secondary compact-button" type="button" title="${esc(companyOutlookUsesCurrentFormula(item) ? companyOutlookEvaluationHelp(item) : t("Checks all pending forecasts for this company using each forecast's own baseline and report cutoff."))}" data-evaluate-company-outlook="${esc(item.id)}"${busy ? " disabled" : ""}>${esc(t(busy ? "Checking…" : ui.status === "error" ? "Retry" : "Check company reports"))}</button>` : ""}
           <button class="secondary compact-button" type="button" data-delete-company-outlook="${esc(item.id)}" data-prediction-symbol="${esc(item.symbol)}"${busy ? " disabled" : ""}>${esc(t("Remove"))}</button>
         </footer>
       </article>
@@ -9384,35 +9474,52 @@ function renderCompanyOutlook(outlook) {
   $("companyOutlookResults").hidden = false;
   const industry = outlook.industry || {};
   const components = outlook.score_components || {};
-  $("companyOutlookStatus").textContent = `${outlook.symbol} · ${t(outlook.label || "Mixed")} · ${t("Confidence")}: ${t(outlook.confidence || "Low")} · ${t(outlook.peer_source || "")}`;
-  $("companyOutlookSummary").innerHTML = [
+  const currentFormula = companyOutlookUsesCurrentFormula(outlook);
+  const hasScore = companyOutlookHasScore(outlook);
+  const componentMaximum = outlook.score_component_limits?.company_fundamentals || (currentFormula ? 100 : 45);
+  const finalLabel = hasScore ? outlook.label || "Mixed" : "Insufficient data";
+  $("companyOutlookStatus").textContent = `${outlook.symbol} · ${t(finalLabel)} · ${t("Analysis data coverage")}: ${companyOutlookDataCoverage(outlook.confidence)} · ${t(outlook.peer_source || "")}`;
+  const summary = currentFormula ? [
+    ["Final score", hasScore ? outlookScoreText(outlook.score) : t("Insufficient data"), companyOutlookScoreHelp(outlook)],
+    ["Peer rank — 1 is strongest", companyOutlookRankText(outlook), t("Ranks only companies with comparable financial measurements. Tied companies share the same rank.")],
+    ["Analysis data coverage", `${fmt(outlook.coverage?.percent ?? 0, 0)}%`, companyOutlookConfidenceHelp(outlook)],
+    ["Industry", industry.health || "Not available", t("Industry and related-company information provides context and does not change the financial score.")],
+    ["Related companies", fmt((outlook.related_industries || []).length, 0), t("Industry and related-company information provides context and does not change the financial score.")],
+  ] : [
     ["Final score", outlookScoreText(outlook.score), "Final outlook score on a 0–100 scale. Combines company fundamentals, industry outlook, related-industry effects, peer rank and data quality."],
     ["Peer rank — 1 is strongest", (outlook.ranked_company_count ?? (outlook.companies || []).length) <= 1 ? "No comparison group" : `${outlook.rank || 1}/${outlook.ranked_company_count ?? outlook.companies.length}`],
     ["Industry", industry.health || "Not available"],
     ["Industry score", outlookScoreText(industry.score, 25), "Industry score on a 0–100 scale. Contributes up to 25 points to the final outlook score."],
     ["Company signals", outlookScoreText(components.company_fundamentals, 45), "Company fundamentals on a 0–100 scale. Contributes up to 45 points to the final outlook score."],
     ["Related effect", outlookScoreText(components.related_industry_effect, 15), "Related-industry effect on a 0–100 scale. Contributes up to 15 points to the final outlook score."],
-  ].map(([label, value, tooltip]) => `<div class="stat"${tooltip ? ` title="${esc(t(tooltip))}"` : ""}><b>${esc(t(value))}</b><span>${esc(t(label))}</span></div>`).join("");
+  ];
+  $("companyOutlookSummary").innerHTML = summary.map(([label, value, tooltip]) => `<div class="stat${label === "Final score" ? " outlook-result-score" : ""}"${label === "Final score" ? ` data-outlook-band="${hasScore ? esc((outlook.label || "Mixed").toLowerCase()) : "insufficient"}"` : ""}${tooltip ? ` tabindex="0" title="${esc(t(tooltip))}"` : ""}><b>${esc(t(value))}</b><span>${esc(t(label))}</span></div>`).join("");
+  const words = currentFormula
+    ? hasScore ? t("The score uses comparable annual financial measurements. Report checks compare revenue growth and net margin with peers under the saved evaluation rule.")
+      : `${t("There is not enough comparable financial evidence to assign an outlook score.")} ${companyOutlookEvidenceReason(outlook)} ${t("No forecast was saved. The available reports and missing measurements are shown below.")}`
+    : companyOutlookNarrative(outlook.simple_words || "");
   $("companyOutlookWords").innerHTML = `
-    <p>${esc(t(outlook.simple_words || ""))}</p>
+    <p>${esc(words)}</p>
     ${outlook.missing?.length ? `<div class="sub">${t("Missing or limited")}: ${esc(outlook.missing.map((item) => t(item)).join(", "))}</div>` : ""}
   `;
   const companies = outlook.companies || [];
-  const fundamentalsTooltip = t("Company fundamentals score, out of 100. Compares growth, profitability, cash flow and balance-sheet metrics with the peer group. This component contributes up to 45 points to the final outlook score shown above.");
+  const fundamentalsTooltip = currentFormula
+    ? t("Company financial score, out of 100. Uses comparable growth, profitability, cash-flow and balance-sheet measurements. Missing or unsupported evidence remains unscored.")
+    : t("Company fundamentals score, out of 100. Compares growth, profitability, cash flow and balance-sheet metrics with the peer group. This component contributes up to 45 points to the final outlook score shown above.");
   $("companyOutlookTable").innerHTML = companies.length ? `
     <table class="holdings-table compact-report-table outlook-table">
       <thead><tr>${["Company", "Industry", "Fiscal date", "Revenue growth", "Operating margin", "Net margin", "FCF margin", "Current ratio", "Company signals"].map((label) => `<th${label === "Company signals" ? ` title="${esc(fundamentalsTooltip)}"` : ""}>${esc(t(label))}</th>`).join("")}</tr></thead>
       <tbody>${companies.map((company) => `
         <tr>
-          <td data-label="Company"><b>${esc(company.symbol)}</b><div class="sub">${esc(company.name || "")}</div></td>
-          <td data-label="Industry">${esc(t(company.industry || "Not available"))}</td>
-          <td data-label="Fiscal date">${esc(formatDate(company.fiscal_date))}</td>
-          <td data-label="Revenue growth">${pct(company.revenue_growth_percent)}</td>
-          <td data-label="Operating margin">${pct(company.operating_margin_percent)}</td>
-          <td data-label="Net margin">${pct(company.net_margin_percent)}</td>
-          <td data-label="FCF margin">${pct(company.free_cash_flow_margin_percent)}</td>
-          <td data-label="Current ratio">${fmt(company.current_ratio, 2)}</td>
-          <td data-label="${esc(t("Company signals"))}" title="${esc(fundamentalsTooltip)}">${outlookScoreText(company.symbol === outlook.symbol ? components.company_fundamentals ?? company.score : company.score, 45)}</td>
+          <td data-label="${esc(t("Company"))}"><b>${esc(company.symbol)}</b><div class="sub">${esc(company.name || "")}</div></td>
+          <td data-label="${esc(t("Industry"))}">${esc(t(company.industry || "Not available"))}</td>
+          <td data-label="${esc(t("Fiscal date"))}">${esc(formatDate(company.fiscal_date))}</td>
+          <td data-label="${esc(t("Revenue growth"))}">${pct(company.revenue_growth_percent)}</td>
+          <td data-label="${esc(t("Operating margin"))}">${pct(company.operating_margin_percent)}</td>
+          <td data-label="${esc(t("Net margin"))}">${pct(company.net_margin_percent)}</td>
+          <td data-label="${esc(t("FCF margin"))}">${pct(company.free_cash_flow_margin_percent)}</td>
+          <td data-label="${esc(t("Current ratio"))}">${fmt(company.current_ratio, 2)}</td>
+          <td data-label="${esc(t("Company signals"))}" title="${esc(fundamentalsTooltip)}">${outlookScoreText(company.symbol === outlook.symbol ? currentFormula && !hasScore ? null : components.company_fundamentals ?? company.score : company.score, componentMaximum)}</td>
         </tr>
       `).join("")}</tbody>
     </table>
@@ -9502,9 +9609,11 @@ async function loadCompanyOutlookBacktest() {
     renderCompanyOutlook(result.analysis || {});
     const evaluation = result.evaluation || {};
     const actual = evaluation.actual_direction || "pending";
+    const actualLabel = t(actual.charAt(0).toUpperCase() + actual.slice(1));
+    const backtestDate = t("Backtest from {date}").replace("{date}", formatDate(result.as_of_date));
     $("companyOutlookStatus").textContent = evaluation.accuracy_score == null
-      ? `Backtest from ${formatDate(result.as_of_date)}: ${actual}. ${evaluation.evaluation || ""}`
-      : `Backtest from ${formatDate(result.as_of_date)}: prediction accuracy ${fmt(evaluation.accuracy_score, 0)}% (${actual}).`;
+      ? `${backtestDate}: ${actualLabel}. ${companyOutlookNarrative(evaluation.evaluation || "")}`
+      : `${backtestDate}: ${t("Evaluation grade")} ${outlookScoreText(evaluation.accuracy_score)} (${actualLabel}).`;
     await loadCompanyOutlookHistory(symbol);
   } finally {
     setCompanyOutlookBusy();
@@ -9513,13 +9622,16 @@ async function loadCompanyOutlookBacktest() {
 
 async function evaluateCompanyOutlookPrediction(predictionId) {
   const evaluations = state.companyOutlookEvaluationUi ||= {};
-  if (evaluations[predictionId]?.status === "checking") return;
-  const ui = { status: "checking" };
-  evaluations[predictionId] = ui;
-  const isCurrent = () => state.companyOutlookEvaluationUi === evaluations && evaluations[predictionId] === ui;
+  const selected = state.companyOutlookHistory.find((item) => item.id === predictionId);
+  if (!selected) return;
+  const ids = state.companyOutlookHistory.filter((item) => item.id === predictionId || (item.symbol === selected.symbol && companyOutlookCanCheck(item))).map((item) => item.id);
+  if (ids.some((id) => evaluations[id]?.status === "checking")) return;
+  const updates = new Map(ids.map((id) => [id, { status: "checking" }]));
+  updates.forEach((ui, id) => { evaluations[id] = ui; });
+  const isCurrent = () => state.companyOutlookEvaluationUi === evaluations && evaluations[predictionId] === updates.get(predictionId);
   const filter = state.companyOutlookHistorySymbol || "";
   const returnFocus = document.activeElement;
-  updateCompanyOutlookEvaluationUi(predictionId);
+  ids.forEach(updateCompanyOutlookEvaluationUi);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 60000);
   try {
@@ -9527,20 +9639,26 @@ async function evaluateCompanyOutlookPrediction(predictionId) {
       method: "POST", body: "{}", signal: controller.signal,
     });
     if (!isCurrent()) return;
-    ui.status = "done";
-    const items = state.companyOutlookHistory.map((item) => item.id === predictionId ? { ...item, ...result } : item);
+    const { checked_predictions = [], failed_prediction_ids = [], ...primary } = result;
+    const checked = new Map([primary, ...checked_predictions].filter((item) => !failed_prediction_ids.includes(item.id)).map((item) => [item.id, item]));
+    updates.forEach((ui, id) => {
+      if (failed_prediction_ids.includes(id)) ui.status = "error";
+      else if (checked.has(id)) ui.status = "done";
+      else delete evaluations[id];
+    });
+    const items = state.companyOutlookHistory.map((item) => checked.has(item.id) ? { ...item, ...checked.get(item.id) } : item);
     renderCompanyOutlookHistory({ ...(state.companyOutlookHistoryData || {}), items });
     try {
       if (filter === state.companyOutlookHistorySymbol) await loadCompanyOutlookHistory(filter, { signal: controller.signal });
     } catch {
-      if (isCurrent()) ui.refreshFailed = true;
+      if (isCurrent()) updates.forEach((ui) => { if (ui.status === "done") ui.refreshFailed = true; });
     }
   } catch {
-    if (isCurrent()) ui.status = "error";
+    if (isCurrent()) updates.forEach((ui) => { ui.status = "error"; });
   } finally {
     clearTimeout(timeout);
     if (isCurrent()) {
-      updateCompanyOutlookEvaluationUi(predictionId);
+      ids.forEach(updateCompanyOutlookEvaluationUi);
       if (document.activeElement === returnFocus || document.activeElement === document.body) {
         const card = [...document.querySelectorAll("[data-company-outlook-prediction]")]
           .find((node) => node.dataset.companyOutlookPrediction === predictionId);

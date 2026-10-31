@@ -66,6 +66,7 @@ The Docker app is served at `https://localhost:6443`.
 
 ## Implementation Notes
 
+- For financial score, report normalization, or forecast evaluation changes, read [.agents/skills/company-outlook-model/SKILL.md](.agents/skills/company-outlook-model/SKILL.md) and keep its implemented formula aligned with code.
 - Prefer existing patterns in `app/local_portfolio.py`, `app/main.py`, and `web/app.js`.
 - Use provider/cache abstractions already present in `app/providers.py`.
 - Keep changes scoped; the worktree may contain unrelated user edits.

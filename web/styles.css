@@ -7707,7 +7707,7 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 }
 
 .outlook-summary {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   margin: 0;
 }
 
@@ -7715,6 +7715,11 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
   grid-template-columns: repeat(5, minmax(0, 1fr));
   margin: 0;
 }
+
+.outlook-summary .stat,
+.outlook-scorecard .stat { min-width: 0; overflow-wrap: anywhere; }
+.outlook-summary .stat b,
+.outlook-scorecard .stat b { line-height: 1.25; }
 
 .outlook-words {
   border: 1px solid rgba(33, 167, 255, 0.2);
@@ -7845,6 +7850,14 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
   background: rgba(240, 216, 106, 0.08);
   color: #f0d86a;
 }
+
+[data-outlook-band="weak"] { --outlook-band-text: #ff9aa6; --outlook-band-bg: #3d232b; --outlook-band-border: #9c4f60; }
+[data-outlook-band="mixed"] { --outlook-band-text: #f4d17c; --outlook-band-bg: #3a3320; --outlook-band-border: #947535; }
+[data-outlook-band="good"] { --outlook-band-text: #7de4d3; --outlook-band-bg: #183b35; --outlook-band-border: #378f7e; }
+[data-outlook-band="strong"] { --outlook-band-text: #98f1ac; --outlook-band-bg: #1d3927; --outlook-band-border: #4a995f; }
+.outlook-history-label[data-outlook-band],
+.outlook-result-score[data-outlook-band] { color: var(--outlook-band-text, #bcc6d4); background: var(--outlook-band-bg, #1b2028); border-color: var(--outlook-band-border, #3b414b); }
+.outlook-result-score[data-outlook-band] b { color: var(--outlook-band-text, #eef5ff); }
 
 .outlook-history-state.checked {
   border-color: #465266;

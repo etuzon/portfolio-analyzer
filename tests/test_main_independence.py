@@ -622,11 +622,13 @@ def test_report_growth_keeps_actual_comparison_when_prior_row_is_outside_display
     latest = main._annual_report_rows(fundamentals, 1)[0]
     assert latest["comparison_fiscal_date"] == "2024-06-29"
     assert latest["previous_net_income"] == -25
-    assert latest["net_income_growth_percent"] == 300
+    # A loss-to-profit turnaround is not a comparable positive-base growth rate.
+    assert latest["net_income_growth_percent"] is None
     assert latest["revenue_growth_percent"] is None
     historical = main._annual_report_rows(fundamentals, 1, date(2024, 12, 31))[0]
     assert historical["comparison_fiscal_date"] == "2022-06-25"
-    assert historical["net_income_growth_percent"] == 50
+    assert historical["net_income_growth_percent"] is None
+    assert historical["growth_comparable"] is False
 
 
 def test_finance_report_backtest_cutoff_uses_filing_date(monkeypatch):
@@ -762,6 +764,13 @@ def test_company_outlook_compares_peer_reports_saves_prediction_and_has_no_feedb
             },
         },
     }
+
+    for company in reports.values():
+        for index, row in enumerate(company["income_statement"]["annualReports"]):
+            year = 2023 + index
+            row.update({"fiscalDateEnding": f"{year}-12-31", "filingDate": f"{year + 1}-03-01",
+                "operatingCashFlow": 20, "capitalExpenditures": 5,
+                "longTermDebt": 40, "totalCurrentAssets": 20, "totalCurrentLiabilities": 10})
 
     class Hub:
         def fundamentals(self, symbol):

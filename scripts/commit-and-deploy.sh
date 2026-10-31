@@ -49,7 +49,9 @@ git diff --check -- "${files[@]}"
 bash -n "$0"
 
 echo "Running tests..."
-./.venv/bin/python -m pytest
+release_test_data_dir=$(mktemp -d "${TMPDIR:-/tmp}/portfolio-release-tests.XXXXXX")
+trap 'rm -rf -- "$release_test_data_dir"' EXIT
+DATA_DIR="$release_test_data_dir" CONFIG_PATH="$repo_dir/config.example.yaml" ./.venv/bin/python -m pytest
 
 echo "Checking the local assistant bridge..."
 if command -v codex >/dev/null && codex login status >/dev/null 2>&1; then

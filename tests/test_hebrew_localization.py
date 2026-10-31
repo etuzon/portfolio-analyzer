@@ -67,7 +67,7 @@ def test_alert_progress_and_run_history_follow_active_language():
 def test_company_outlook_localizes_mermaid_labels_missing_data_and_report_copy():
     source = (ROOT / "web/app.js").read_text()
     functions = []
-    for name in ("t", "companyOutlookDiagramSource", "renderCompanyOutlook", "renderCompanyOutlookDiagramFallback", "outlookScoreText"):
+    for name in ("t", "companyOutlookDiagramSource", "renderCompanyOutlook", "companyOutlookUsesCurrentFormula", "companyOutlookHasScore", "companyOutlookEvidenceReason", "companyOutlookRankText", "companyOutlookScoreHelp", "companyOutlookConfidenceHelp", "companyOutlookDataCoverage", "companyOutlookNarrative", "renderCompanyOutlookDiagramFallback", "outlookScoreText"):
         start = source.index(f"function {name}(")
         end = re.search(r"\n(?:async )?function ", source[start + 1:])
         functions.append(source[start:start + 1 + end.start()])
@@ -236,13 +236,15 @@ def test_finance_report_localizes_summary_source_and_mobile_labels():
       assert.ok(!/[A-Za-z]/u.test(tooltip));
       assert.ok(financeReportMetricTooltip('Net income growth', {fiscal_date: '2024-07-27'}).includes('אין דוח שנתי מוקדם יותר'));
       assert.ok(financeReportMetricTooltip('Net income growth', {...growth, previous_net_income: 0}).includes('הסכום הקודם הוא אפס'));
+      assert.ok(financeReportMetricTooltip('Net income growth', {...growth, previous_net_income: -10}).includes('הסכום הקודם שלילי'));
+      assert.ok(financeReportMetricTooltip('Revenue growth', {...growth, growth_comparable: false}).includes('תקופות הדיווח או המטבעות אינם בני השוואה'));
       renderFinanceReport({...report, reports: [growth]});
       assert.ok(nodes.financeReportTable.innerHTML.includes('title="השינוי ברווח הנקי השנתי'));
       assert.ok(nodes.financeReportTable.innerHTML.includes('27/07/2024'));
       state.language = 'en';
       tooltip = financeReportMetricTooltip('Net income growth', growth);
       assert.ok(tooltip.includes('26/07/2025') && tooltip.includes('27/07/2024'));
-      assert.ok(tooltip.includes('previous available annual report'));
+      assert.ok(tooltip.includes('comparable annual periods'));
       assert.ok(!/[א-ת]/u.test(tooltip));
     """
     subprocess.run(["node"], input=script, check=True, capture_output=True, text=True)

@@ -9,9 +9,9 @@ from app.providers import MarketDataHub, SqliteCache
 
 
 def sec_facts(include_new=False):
-    reports = [{"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-03-01", "end": "2024-12-31", "val": 100}]
+    reports = [{"fy": 2024, "fp": "FY", "form": "10-K", "filed": "2025-03-01", "start": "2024-01-01", "end": "2024-12-31", "val": 100}]
     if include_new:
-        reports.append({"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-01", "end": "2025-12-31", "val": 120})
+        reports.append({"fy": 2025, "fp": "FY", "form": "10-K", "filed": "2026-03-01", "start": "2025-01-01", "end": "2025-12-31", "val": 120})
     return {"facts": {"us-gaap": {"Revenues": {"units": {"USD": reports}}}}}
 
 

@@ -5,6 +5,7 @@ import hmac
 import io
 import json
 import logging
+import math
 import traceback
 import os
 import sqlite3
@@ -45,6 +46,7 @@ from .llm_assistant import AssistantError, PortfolioAssistant, assistant_setting
 from .metrics import analyze_holding, moving_averages, screen, support_resistance, technical_signals, to_dict, volume_metrics
 from .mcp_server import create_portfolio_mcp_server
 from .models import Ohlcv
+from .outlook_scoring import OUTLOOK_MODEL_VERSION, OUTLOOK_EVALUATION_VERSION, OUTLOOK_FISCAL_ALIGNMENT_DAYS, OUTLOOK_MINIMUM_PEERS, OUTLOOK_MINIMUM_RANK_WEIGHT, OUTLOOK_METRICS, OUTLOOK_TOTAL_WEIGHT, evaluation_contract
 from .providers import MarketDataHub
 from .portfolio_refresh import attach_market_analysis, refresh_positions, security_key
 from .report_pdf import build_portfolio_report_pdf
@@ -584,17 +586,18 @@ def _safe_symbol(value: Any) -> str:
 
 def _number_or_none(value: Any) -> float | None:
     try:
-        if value in (None, "", "None"):
+        if isinstance(value, bool) or value in (None, "", "None"):
             return None
-        return float(value)
-    except (TypeError, ValueError):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
 def _percent_change(current: float | None, previous: float | None) -> float | None:
     if current is None or previous in (None, 0):
         return None
-    return (current - previous) / abs(previous) * 100
+    return _number_or_none((current - previous) / abs(previous) * 100)
 
 
 def _report_date(value: Any) -> str:
@@ -635,50 +638,75 @@ def _annual_report_rows(fundamentals: dict[str, Any], limit: int, as_of: date | 
         current_liabilities = _report_value(row, ["totalCurrentLiabilities", "currentLiabilities"])
         accounts_receivable = _report_value(row, ["netReceivables", "accountsReceivable"])
         inventory = _report_value(row, ["inventory"])
-        long_term_debt = _report_value(row, ["longTermDebt", "totalDebt", "netDebt"])
+        # Net debt and total debt are not interchangeable with long-term debt.
+        long_term_debt = _report_value(row, ["longTermDebt"])
         interest_expense = _report_value(row, ["interestExpense", "interest_expense"])
-        if not fiscal_date or (revenue is None and net_income is None):
+        fiscal_day = _parse_query_date(fiscal_date)
+        filed_day = _parse_query_date(filing_date)
+        period_start = _report_date(row.get("periodStart") or row.get("startDate") or row.get("start"))
+        start_day = _parse_query_date(period_start)
+        if not fiscal_day or (revenue is None and net_income is None):
             continue
-        available_date = _parse_query_date(filing_date) or _parse_query_date(fiscal_date)
-        if as_of and available_date and available_date > as_of:
+        if period_start and (not start_day or not 335 <= (fiscal_day - start_day).days + 1 <= 395):
+            continue
+        # A fiscal year end cannot establish when a report became public.
+        today = datetime.now(timezone.utc).date()
+        known_cutoff = min(as_of, today) if as_of else today
+        if fiscal_day > known_cutoff or (filed_day and filed_day > known_cutoff) or (as_of and not filed_day):
             continue
         free_cash_flow = operating_cash_flow - abs(capital_expenditures) if operating_cash_flow is not None and capital_expenditures is not None else None
         rows.append(
             {
                 "fiscal_date": fiscal_date,
-                "filing_date": filing_date or None,
+                "filing_date": filing_date if filed_day else None,
+                "period_start": period_start or None,
+                "currency": row.get("reportedCurrency") or row.get("currency"),
                 "fiscal_year": int(fiscal_date[:4]) if fiscal_date[:4].isdigit() else None,
                 "revenue": revenue,
                 "net_income": net_income,
                 "gross_profit": gross_profit,
-                "gross_margin_percent": (gross_profit / revenue * 100) if revenue not in (None, 0) and gross_profit is not None else None,
+                "gross_margin_percent": (gross_profit / revenue * 100) if revenue is not None and revenue > 0 and gross_profit is not None else None,
                 "operating_income": operating_income,
-                "operating_margin_percent": (operating_income / revenue * 100) if revenue not in (None, 0) and operating_income is not None else None,
-                "net_margin_percent": (net_income / revenue * 100) if revenue not in (None, 0) and net_income is not None else None,
+                "operating_margin_percent": (operating_income / revenue * 100) if revenue is not None and revenue > 0 and operating_income is not None else None,
+                "net_margin_percent": (net_income / revenue * 100) if revenue is not None and revenue > 0 and net_income is not None else None,
                 "operating_cash_flow": operating_cash_flow,
                 "capital_expenditures": capital_expenditures,
                 "free_cash_flow": free_cash_flow,
-                "free_cash_flow_margin_percent": (free_cash_flow / revenue * 100) if free_cash_flow is not None and revenue not in (None, 0) else None,
-                "cash_conversion_percent": (free_cash_flow / net_income * 100) if free_cash_flow is not None and net_income not in (None, 0) else None,
+                "free_cash_flow_margin_percent": (free_cash_flow / revenue * 100) if free_cash_flow is not None and revenue is not None and revenue > 0 else None,
+                "cash_conversion_percent": (free_cash_flow / net_income * 100) if free_cash_flow is not None and net_income is not None and net_income > 0 else None,
                 "cash": cash,
                 "current_assets": current_assets,
                 "current_liabilities": current_liabilities,
-                "current_ratio": (current_assets / current_liabilities) if current_assets is not None and current_liabilities not in (None, 0) else None,
+                "current_ratio": (current_assets / current_liabilities) if current_assets is not None and current_assets >= 0 and current_liabilities is not None and current_liabilities > 0 else None,
                 "accounts_receivable": accounts_receivable,
                 "inventory": inventory,
                 "long_term_debt": long_term_debt,
-                "debt_to_revenue_percent": (long_term_debt / revenue * 100) if long_term_debt is not None and revenue not in (None, 0) else None,
+                "debt_to_revenue_percent": (long_term_debt / revenue * 100) if long_term_debt is not None and long_term_debt >= 0 and revenue is not None and revenue > 0 else None,
                 "interest_expense": interest_expense,
             }
         )
-    rows.sort(key=lambda item: item["fiscal_date"])
+    # Select the last eligible revision once per fiscal period before growth.
+    by_period: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        old = by_period.get(row["fiscal_date"])
+        if old is None or str(row.get("filing_date") or "") > str(old.get("filing_date") or ""):
+            by_period[row["fiscal_date"]] = row
+    rows = sorted(by_period.values(), key=lambda item: item["fiscal_date"])
     previous: dict[str, Any] | None = None
     for row in rows:
         row["comparison_fiscal_date"] = previous.get("fiscal_date") if previous else None
         row["previous_revenue"] = previous.get("revenue") if previous else None
         row["previous_net_income"] = previous.get("net_income") if previous else None
-        row["revenue_growth_percent"] = _percent_change(row.get("revenue"), previous.get("revenue") if previous else None)
-        row["net_income_growth_percent"] = _percent_change(row.get("net_income"), previous.get("net_income") if previous else None)
+        gap = (_parse_query_date(row["fiscal_date"]) - _parse_query_date(previous["fiscal_date"])).days if previous else None
+        comparable = bool(gap and 335 <= gap <= 395 and (not row.get("currency") or not previous.get("currency") or row["currency"] == previous["currency"]))
+        row["growth_period_days"] = gap
+        row["growth_comparable"] = comparable
+        row["revenue_growth_percent"] = _percent_change(row.get("revenue"), previous.get("revenue")) if comparable and previous.get("revenue") is not None and previous["revenue"] > 0 else None
+        row["net_income_growth_percent"] = _percent_change(row.get("net_income"), previous.get("net_income")) if comparable and previous.get("net_income") is not None and previous["net_income"] > 0 else None
+        # Finite raw facts can still overflow during arithmetic.
+        for key, value in row.items():
+            if isinstance(value, float) and not math.isfinite(value):
+                row[key] = None
         previous = row
     rows.reverse()
     return rows[:limit]
@@ -690,6 +718,8 @@ def _finance_report_payload(symbol: str, limit: int = 6, as_of_date: str = "") -
     as_of = _parse_query_date(as_of_date)
     if as_of_date and not as_of:
         raise ValueError("As-of date must use dd/mm/yyyy or yyyy-mm-dd")
+    if as_of:
+        as_of = min(as_of, datetime.now(timezone.utc).date())
     provider_hub = hub()
     if as_of and callable(getattr(provider_hub, "fundamentals_as_of", None)):
         fundamentals, status = provider_hub.fundamentals_as_of(normalized_symbol, as_of)
@@ -721,8 +751,8 @@ def _finance_report_payload(symbol: str, limit: int = 6, as_of_date: str = "") -
             missing.append("free cash flow")
         if latest.get("long_term_debt") is None:
             missing.append("long-term debt")
-    if as_of and any(not row.get("filing_date") for row in reports):
-        missing.append("filing dates unavailable; fiscal-date cutoff used for some reports")
+    if as_of and not reports:
+        missing.append("historically available filing dates required")
     return {
         "symbol": normalized_symbol,
         "profile": profile,
@@ -754,7 +784,6 @@ def _finance_report_payload(symbol: str, limit: int = 6, as_of_date: str = "") -
     }
 
 
-OUTLOOK_MODEL_VERSION = "report-outlook-v4"
 OUTLOOK_BATCH_MAX_COMPANIES = 10
 
 
@@ -763,11 +792,11 @@ def _clamp(value: float, lower: float, upper: float) -> float:
 
 
 def _median(values: list[float | None]) -> float | None:
-    numbers = sorted(value for value in values if value is not None)
+    numbers = sorted(number for value in values if (number := _number_or_none(value)) is not None)
     if not numbers:
         return None
     middle = len(numbers) // 2
-    return numbers[middle] if len(numbers) % 2 else (numbers[middle - 1] + numbers[middle]) / 2
+    return numbers[middle] if len(numbers) % 2 else numbers[middle - 1] / 2 + numbers[middle] / 2
 
 
 def _symbol_list(value: Any, maximum: int = 6) -> list[str]:
@@ -802,6 +831,7 @@ def _outlook_company(symbol: str, payload: dict[str, Any], target_industry: str 
         "symbol": symbol,
         "name": str(profile.get("name") or symbol),
         "industry": industry,
+        "sector": str(profile.get("sector") or "").strip(),
         "fiscal_date": latest.get("fiscal_date"),
         "filing_date": latest.get("filing_date"),
         "revenue": latest.get("revenue"),
@@ -811,11 +841,11 @@ def _outlook_company(symbol: str, payload: dict[str, Any], target_industry: str 
         "gross_margin_percent": latest.get("gross_margin_percent"),
         "operating_margin_percent": latest.get("operating_margin_percent"),
         "net_margin_percent": latest.get("net_margin_percent"),
-        "profit_margin_percent": latest.get("operating_margin_percent") if latest.get("operating_margin_percent") is not None else latest.get("net_margin_percent"),
-        "profit_margin_source": "operating margin" if latest.get("operating_margin_percent") is not None else "net margin",
+        "profit_margin_percent": latest.get("net_margin_percent"),
+        "profit_margin_source": "net margin",
         "net_margin_change_percent": (
             latest["net_margin_percent"] - previous["net_margin_percent"]
-            if latest.get("net_margin_percent") is not None and previous.get("net_margin_percent") is not None
+            if latest.get("growth_comparable") and latest.get("net_margin_percent") is not None and previous.get("net_margin_percent") is not None
             else None
         ),
         "free_cash_flow": latest.get("free_cash_flow"),
@@ -838,6 +868,7 @@ def _outlook_company(symbol: str, payload: dict[str, Any], target_industry: str 
 
 
 def _relative_points(value: float | None, median: float | None, maximum: float, spread: float) -> float:
+    value, median = _number_or_none(value), _number_or_none(median)
     if value is None or median is None:
         return 0.0
     return round(_clamp(maximum / 2 + (value - median) / max(spread, 0.1) * (maximum / 2), 0, maximum), 1)
@@ -852,37 +883,23 @@ def _fundamental_score(
     median_cash_conversion: float | None,
     median_debt_to_revenue: float | None,
     median_current_ratio: float | None,
+    median_margin_change: float | None = 0,
+    metric_mask: set[str] | None = None,
 ) -> float:
+    medians = dict(zip((metric[0] for metric in OUTLOOK_METRICS), (
+        median_revenue_growth, median_income_growth, median_margin,
+        median_free_cash_flow_margin, median_debt_to_revenue,
+        median_current_ratio, median_margin_change,
+    )))
     score = 0.0
-    available_weight = 0.0
-    for value, median, maximum, spread in [
-        (company.get("revenue_growth_percent"), median_revenue_growth, 12, 20),
-        (company.get("net_income_growth_percent"), median_income_growth, 10, 30),
-        (company.get("profit_margin_percent"), median_margin, 10, 20),
-    ]:
-        if value is None or median is None:
+    for key, maximum, spread, reverse in OUTLOOK_METRICS:
+        if metric_mask is not None and key not in metric_mask:
             continue
-        score += _relative_points(value, median, maximum, spread)
-        available_weight += maximum
-    cash_quality_points = []
-    if company.get("free_cash_flow_margin_percent") is not None and median_free_cash_flow_margin is not None:
-        cash_quality_points.append(_relative_points(company["free_cash_flow_margin_percent"], median_free_cash_flow_margin, 5, 15))
-    if company.get("cash_conversion_percent") is not None and median_cash_conversion is not None:
-        cash_quality_points.append(_relative_points(company["cash_conversion_percent"], median_cash_conversion, 5, 40))
-    if cash_quality_points:
-        score += sum(cash_quality_points) / len(cash_quality_points)
-        available_weight += 5
-    if company.get("debt_to_revenue_percent") is not None and median_debt_to_revenue is not None:
-        score += _relative_points(median_debt_to_revenue, company["debt_to_revenue_percent"], 2, 30)
-        available_weight += 2
-    if company.get("current_ratio") is not None and median_current_ratio is not None:
-        score += _relative_points(company["current_ratio"], median_current_ratio, 1, 0.8)
-        available_weight += 1
-    margin_change = company.get("net_margin_change_percent")
-    if margin_change is not None:
-        score += 5 if margin_change >= 0 else 1
-        available_weight += 5
-    return round(score / available_weight * 45, 1) if available_weight else 0.0
+        value, median = company.get(key), medians[key]
+        score += _relative_points(median, value, maximum, spread) if reverse else _relative_points(value, median, maximum, spread)
+    # Missing weights are never redistributed. Cash conversion is descriptive;
+    # FCF margin supplies the consistent cash-quality measure, including losses.
+    return round(score, 1)
 
 
 def _score_band(score: float) -> tuple[str, str]:
@@ -890,7 +907,7 @@ def _score_band(score: float) -> tuple[str, str]:
         return "Strong", "positive"
     if score >= 65:
         return "Good", "positive"
-    if score >= 50:
+    if score >= 35:
         return "Mixed", "neutral"
     return "Weak", "negative"
 
@@ -903,7 +920,8 @@ def _pct_label(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.1f}%"
 
 
-def _outlook_mermaid(target: dict[str, Any], industry: dict[str, Any], peers: list[dict[str, Any]], related: list[dict[str, Any]], score: float) -> tuple[dict[str, Any], str]:
+def _outlook_mermaid(target: dict[str, Any], industry: dict[str, Any], peers: list[dict[str, Any]], related: list[dict[str, Any]], score: float | None) -> tuple[dict[str, Any], str]:
+    score_text = f"{score:.1f}/100" if score is not None else "Insufficient data"
     nodes = [
         {"id": "target", "label": target["symbol"], "type": "target"},
         {"id": "industry", "label": industry["name"], "type": "industry"},
@@ -911,15 +929,16 @@ def _outlook_mermaid(target: dict[str, Any], industry: dict[str, Any], peers: li
     edges = [{"from": "target", "to": "industry", "label": "competes in"}]
     lines = [
         "flowchart LR",
-        f'  T["{_mermaid_label(target["symbol"])}<br/>Revenue growth: {_pct_label(target.get("revenue_growth_percent"))}<br/>Net margin: {_pct_label(target.get("net_margin_percent"))}<br/>Final score: {score:.1f}/100"]:::target',
-        f'  I["{_mermaid_label(industry["name"])}<br/>Median revenue growth: {_pct_label(industry.get("median_revenue_growth_percent"))}<br/>Industry score: {industry.get("score", 0) / 25 * 100:.1f}/100<br/>Health: {_mermaid_label(industry["health"])}"]:::industry',
+        f'  T["{_mermaid_label(target["symbol"])}<br/>Revenue growth: {_pct_label(target.get("revenue_growth_percent"))}<br/>Net margin: {_pct_label(target.get("net_margin_percent"))}<br/>Final score: {score_text}"]:::target',
+        f'  I["{_mermaid_label(industry["name"])}<br/>Median revenue growth: {_pct_label(industry.get("median_revenue_growth_percent"))}<br/>Health: {_mermaid_label(industry["health"])}"]:::industry',
         '  T -->|"competes in"| I',
     ]
     for index, peer in enumerate(peers[:6], 1):
         node_id = f"peer{index}"
         nodes.append({"id": node_id, "label": peer["symbol"], "type": "peer"})
         edges.append({"from": node_id, "to": "industry", "label": "same industry"})
-        lines.append(f'  P{index}["{_mermaid_label(peer["symbol"])}<br/>Company signals: {peer.get("score", 0) / 45 * 100:.1f}/100<br/>Revenue growth: {_pct_label(peer.get("revenue_growth_percent"))}"]:::peer')
+        peer_score = f"{peer['score']:.1f}/100" if peer.get("score") is not None else "Insufficient data"
+        lines.append(f'  P{index}["{_mermaid_label(peer["symbol"])}<br/>Company signals: {peer_score}<br/>Revenue growth: {_pct_label(peer.get("revenue_growth_percent"))}"]:::peer')
         lines.append(f'  P{index} -->|"same industry"| I')
     for index, item in enumerate(related[:4], 1):
         node_id = f"related{index}"
@@ -958,10 +977,34 @@ def _related_company_specs(payload: dict[str, Any]) -> list[dict[str, str]]:
     return result
 
 
+def _outlook_periods_align(left: dict[str, Any], right: dict[str, Any], tolerance: int = OUTLOOK_FISCAL_ALIGNMENT_DAYS) -> bool:
+    left_day = _parse_query_date(str(left.get("fiscal_date") or ""))
+    right_day = _parse_query_date(str(right.get("fiscal_date") or ""))
+    return bool(left_day and right_day and abs((left_day - right_day).days) <= tolerance)
+
+
+def _outlook_report_is_current(company: dict[str, Any], analysis_day: date) -> bool:
+    fiscal_day = _parse_query_date(str(company.get("fiscal_date") or ""))
+    return bool(fiscal_day and 0 <= (analysis_day - fiscal_day).days <= 550)
+
+
+def _outlook_industry_supported(industry: str) -> bool:
+    # These businesses need capital/credit/funding or property-specific models.
+    # Missing domain measures cannot be replaced by industrial-company ratios.
+    text = industry.casefold()
+    return not any(term in text for term in (
+        "bank", "insurance", "insurer", "reit", "real estate investment",
+        "financial", "mortgage", "credit", "capital markets", "asset management",
+        "investment management", "broker", "financing",
+    ))
+
+
 def _company_outlook_payload(symbol: str, request: dict[str, Any] | None = None) -> dict[str, Any]:
     request = request or {}
     target_symbol = _safe_symbol(symbol)
     as_of_date = str(request.get("as_of_date") or "").strip()
+    today = datetime.now(timezone.utc).date()
+    analysis_day = min(_parse_query_date(as_of_date) or today, today)
     manual_industry = str(request.get("industry") or "").strip()[:80]
     target_report = _finance_report_payload(target_symbol, 6, as_of_date)
     target = _outlook_company(target_symbol, target_report)
@@ -986,7 +1029,12 @@ def _company_outlook_payload(symbol: str, request: dict[str, Any] | None = None)
         peer for peer in peer_reports
         if peer.get("same_industry") or peer_source in {"provider industry screener", "explicit industry cohort"}
     ]
-    score_peers = comparable_peers or peer_reports
+    score_peers = [peer for peer in comparable_peers if (
+        _outlook_periods_align(target, peer)
+        and _outlook_report_is_current(peer, analysis_day)
+        and _outlook_industry_supported(peer["industry"]) and _outlook_industry_supported(peer["sector"])
+        and all(_number_or_none(peer.get(key)) is not None for key in ("revenue_growth_percent", "profit_margin_percent"))
+    )]
     median_revenue_growth = _median([peer.get("revenue_growth_percent") for peer in score_peers])
     median_income_growth = _median([peer.get("net_income_growth_percent") for peer in score_peers])
     median_margin = _median([peer.get("profit_margin_percent") for peer in score_peers])
@@ -994,87 +1042,90 @@ def _company_outlook_payload(symbol: str, request: dict[str, Any] | None = None)
     median_cash_conversion = _median([peer.get("cash_conversion_percent") for peer in score_peers])
     median_debt_to_revenue = _median([peer.get("debt_to_revenue_percent") for peer in score_peers])
     median_current_ratio = _median([peer.get("current_ratio") for peer in score_peers])
-    industry_score = (
+    median_margin_change = _median([peer.get("net_margin_change_percent") for peer in score_peers])
+    industry_raw = (
         _relative_points(median_revenue_growth, 0, 8, 20)
         + _relative_points(median_income_growth, 0, 6, 25)
         + _relative_points(median_margin, 0, 5, 20)
-        + (2 if len(score_peers) >= 3 else 0)
     )
-    has_peer_metrics = any(value is not None for value in (median_revenue_growth, median_income_growth, median_margin))
-    industry_health = ("Pressure" if industry_score < 9 else "Stable" if industry_score < 15 else "Supportive") if has_peer_metrics else "Not available"
+    industry_score = round(industry_raw / 19 * 100, 1)
+    has_peer_metrics = all(value is not None for value in (median_revenue_growth, median_income_growth, median_margin))
+    industry_health = ("Pressure" if industry_score < 40 else "Stable" if industry_score < 65 else "Supportive") if has_peer_metrics and len(score_peers) >= OUTLOOK_MINIMUM_PEERS else "Not available"
     industry = {
         "name": industry_name,
         "source": industry_source,
         "median_revenue_growth_percent": median_revenue_growth,
         "median_net_income_growth_percent": median_income_growth,
         "median_net_margin_percent": median_margin,
-        "score": round(industry_score, 1),
+        "score": industry_score if industry_health != "Not available" else None,
+        "included_in_final_score": False,
         "health": industry_health,
         "issues": ([] if score_peers else ["No comparable peer reports were available"]),
         "peer_count": len(score_peers),
     }
-    company_score = _fundamental_score(
-        target,
-        median_revenue_growth,
-        median_income_growth,
-        median_margin,
-        median_free_cash_flow_margin,
-        median_cash_conversion,
-        median_debt_to_revenue,
-        median_current_ratio,
-    )
-    for peer in peer_reports:
-        peer["score"] = _fundamental_score(
-            peer,
-            median_revenue_growth,
-            median_income_growth,
-            median_margin,
-            median_free_cash_flow_margin,
-            median_cash_conversion,
-            median_debt_to_revenue,
-            median_current_ratio,
-        )
+    cohort = [target, *score_peers]
+    metric_mask = {
+        key for key, *_ in OUTLOOK_METRICS
+        if all(_number_or_none(company.get(key)) is not None for company in cohort)
+    } if len(score_peers) >= OUTLOOK_MINIMUM_PEERS else set()
+    available_weight = sum(weight for key, weight, *_ in OUTLOOK_METRICS if key in metric_mask)
+
+    def company_points(company: dict[str, Any]) -> float:
+        return _fundamental_score(company, median_revenue_growth, median_income_growth,
+            median_margin, median_free_cash_flow_margin, median_cash_conversion,
+            median_debt_to_revenue, median_current_ratio, median_margin_change, metric_mask)
+
+    company_score = company_points(target)
+    complete = available_weight == OUTLOOK_TOTAL_WEIGHT
+    for company in [target, *peer_reports]:
+        comparison = round(company_points(company) / OUTLOOK_TOTAL_WEIGHT * 100, 1)
+        company["comparison_score"] = comparison if company in cohort and available_weight >= OUTLOOK_MINIMUM_RANK_WEIGHT else None
+        company["score"] = comparison if complete and company in cohort else None
     related = []
-    related_score = 0.0
     for spec in _related_company_specs(request):
         relation_report = _finance_report_payload(spec["symbol"], 4, as_of_date)
         company = _outlook_company(spec["symbol"], relation_report)
-        item = {**company, "relation": spec["relation"]}
+        item = {**company, "relation": spec["relation"], "included_in_final_score": False}
         related.append(item)
-        growth = item.get("revenue_growth_percent")
-        if growth is not None:
-            if spec["relation"].casefold() in {"demand support", "customer demand", "complement"}:
-                related_score += 5 if growth > 0 else 1
-            elif spec["relation"].casefold() in {"cost pressure", "supplier pressure", "substitute"}:
-                related_score += 1 if growth > 0 else 4
-            else:
-                related_score += 2.5
-    related_score = min(15.0, related_score)
     target["same_industry"] = True
-    preliminary = company_score + industry_score + related_score
-    target["score"] = company_score
-    ranked = sorted([target, *score_peers], key=lambda item: item.get("score") if item.get("score") is not None else -10_000, reverse=True)
-    rank = next((index + 1 for index, item in enumerate(ranked) if item["symbol"] == target_symbol), 1)
-    rank_score = 0.0 if len(ranked) <= 1 else round((len(ranked) - rank) / (len(ranked) - 1) * 8, 1)
-    source_score = 4 if target["report_years"] >= 3 and len(score_peers) >= 3 else 2 if target["report_years"] >= 2 and score_peers else 0
+    rankable = available_weight >= OUTLOOK_MINIMUM_RANK_WEIGHT and len(score_peers) >= OUTLOOK_MINIMUM_PEERS
+    ranked = sorted(cohort, key=lambda item: item.get("comparison_score") or 0, reverse=True) if rankable else []
+    rank = 1 + sum(item["comparison_score"] > target["comparison_score"] for item in ranked) if rankable else None
+    rank_tied = rankable and sum(item["comparison_score"] == target["comparison_score"] for item in ranked) > 1
     missing = list(target_report.get("missing") or [])
     if not score_peers:
         missing.append("same-industry peer reports")
     if not related:
         missing.append("related-industry reports")
-    confidence = "High" if target["report_years"] >= 3 and len(score_peers) >= 4 else "Medium" if target["report_years"] >= 2 and len(score_peers) >= 2 else "Low"
-    data_quality = 3 if confidence == "High" else 2 if confidence == "Medium" else 0
-    final_score = round(_clamp(preliminary + rank_score + source_score + data_quality, 0, 100), 1)
-    label, direction = _score_band(final_score)
+    missing_metrics = [key for key, *_ in OUTLOOK_METRICS if key not in metric_mask]
+    fresh = _outlook_report_is_current(target, analysis_day)
+    supported = all(_outlook_industry_supported(value) for value in (industry_name, target["industry"], target["sector"]))
+    reason = "industry_model_required" if not supported else "insufficient_peers" if len(score_peers) < OUTLOOK_MINIMUM_PEERS else "stale_reports" if not fresh else "missing_metrics" if not complete else "complete"
+    score_status = "scored" if reason == "complete" else "insufficient"
+    coverage = {"available_weight": available_weight, "total_weight": OUTLOOK_TOTAL_WEIGHT,
+        "percent": round(available_weight / OUTLOOK_TOTAL_WEIGHT * 100, 1),
+        "usable_peer_count": len(score_peers), "missing_metrics": missing_metrics, "reason": reason}
+    confidence = "High" if complete and fresh and supported and target["report_years"] >= 3 and len(score_peers) >= 4 else "Medium" if supported and fresh and available_weight >= OUTLOOK_MINIMUM_RANK_WEIGHT else "Low"
+    final_score = round(company_score / OUTLOOK_TOTAL_WEIGHT * 100, 1) if score_status == "scored" else None
+    score_range = {"lower": round(company_score / OUTLOOK_TOTAL_WEIGHT * 100, 1), "upper": round((company_score + OUTLOOK_TOTAL_WEIGHT - available_weight) / OUTLOOK_TOTAL_WEIGHT * 100, 1)} if supported and fresh and len(score_peers) >= OUTLOOK_MINIMUM_PEERS else None
+    label, direction = _score_band(final_score) if final_score is not None else ("Insufficient data", "inconclusive")
+    if not supported:
+        rank, rank_tied = None, False
+        ranked = []
+        for company in cohort:
+            company["score"] = None
+            company["comparison_score"] = None
+    contract = evaluation_contract()
+    contract["baseline_comparable"] = final_score is not None
     graph, mermaid = _outlook_mermaid(target, industry, peer_reports, related, final_score)
     thesis = (
-        f"{target_symbol} ranks {rank} of {len(ranked)} on available report growth signals. "
+        (f"{target_symbol} ranks {'joint ' if rank_tied else ''}{rank} of {len(ranked)} on shared financial measures. " if rank else f"{target_symbol} has insufficient comparable financial evidence. ") +
         f"Industry conditions appear {industry_health.casefold()}. "
-        f"Cash-flow and balance-sheet measures are included when filed; missing statement evidence lowers confidence."
+        "The forecast tests next-annual revenue growth and net margin against the saved peer group. "
+        "Industry and related-company context do not add score points."
     )
     simple_words = (
-        f"{target_symbol} scores {final_score:.1f}/100. It ranks {rank} out of {len(ranked)} companies using available annual report numbers. "
-        f"The {industry_name} outlook looks {industry_health.casefold()}. {thesis.split('. ')[-1]} Confidence: {confidence}."
+        (f"{target_symbol} scores {final_score:.1f}/100. " if final_score is not None else f"{target_symbol}: insufficient data for a financial score. ") + thesis
     )
     payload = {
         "symbol": target_symbol,
@@ -1087,13 +1138,20 @@ def _company_outlook_payload(symbol: str, request: dict[str, Any] | None = None)
         "label": label,
         "direction": direction,
         "rank": rank,
+        "rank_tied": bool(rank_tied),
         "ranked_company_count": len(ranked),
+        "model_version": OUTLOOK_MODEL_VERSION,
+        "score_status": score_status,
+        "score_range": score_range,
+        "coverage": coverage,
+        "evaluation_contract": contract,
+        "score_component_limits": {"company_fundamentals": 100},
         "score_components": {
-            "company_fundamentals": round(company_score, 1),
-            "industry_outlook": round(industry_score, 1),
-            "related_industry_effect": round(related_score, 1),
-            "relative_rank": rank_score,
-            "source_and_confidence": round(source_score + data_quality, 1),
+            "company_fundamentals": final_score,
+            "industry_outlook": 0,
+            "related_industry_effect": 0,
+            "relative_rank": 0,
+            "source_and_confidence": 0,
         },
         "confidence": confidence,
         "conclusion": thesis,
@@ -1103,16 +1161,19 @@ def _company_outlook_payload(symbol: str, request: dict[str, Any] | None = None)
         "provider_status": {"target": target_report.get("provider_status") or {}, "peer_screener": screener_status},
         "peer_source": peer_source or "No peer source available",
     }
-    if request.get("save_prediction", True):
+    payload["prediction_record"] = None
+    if request.get("save_prediction", True) and final_score is None:
+        payload["prediction_not_saved_reason"] = "insufficient_data"
+    if request.get("save_prediction", True) and final_score is not None:
         horizon_months = int(request.get("horizon_months") or 12)
         horizon_months = max(3, min(horizon_months, 48))
-        prediction_date = _parse_query_date(as_of_date) or date.today()
+        prediction_date = analysis_day
         record = local_store.save_company_report_prediction(
             {
                 "symbol": target_symbol,
                 "company_name": target["name"],
                 "industry": industry_name,
-                "created_at": prediction_date.isoformat() + "T00:00:00Z",
+                "created_at": prediction_date.isoformat() + "T00:00:00Z" if as_of_date else datetime.now(timezone.utc).isoformat(),
                 "horizon_date": (prediction_date + timedelta(days=horizon_months * 30)).isoformat(),
                 "model_version": OUTLOOK_MODEL_VERSION,
                 "score": final_score,
@@ -1121,10 +1182,19 @@ def _company_outlook_payload(symbol: str, request: dict[str, Any] | None = None)
                 "confidence": confidence,
                 "baseline": {
                     "target": target,
-                    "peers": [{"symbol": peer["symbol"], "fiscal_date": peer.get("fiscal_date")} for peer in score_peers],
+                    "peers": [{"symbol": peer["symbol"], "fiscal_date": peer.get("fiscal_date"), "filing_date": peer.get("filing_date")} for peer in score_peers],
                     "industry": industry,
                     "related_industries": related,
                     "score_components": payload["score_components"],
+                    "model_version": OUTLOOK_MODEL_VERSION,
+                    "score_status": score_status,
+                    "score_range": score_range,
+                    "coverage": coverage,
+                    "rank": rank,
+                    "rank_tied": bool(rank_tied),
+                    "ranked_company_count": len(ranked),
+                    "evaluation_contract": contract,
+                    "validation_evidence": {"mode": "prospective" if not as_of_date and not request.get("batch") else "historical", "as_of_date": prediction_date.isoformat()},
                     "batch": request.get("batch") if isinstance(request.get("batch"), dict) else {},
                 },
                 "thesis": thesis,
@@ -1135,14 +1205,32 @@ def _company_outlook_payload(symbol: str, request: dict[str, Any] | None = None)
     return payload
 
 
-def _evaluate_prediction(prediction: dict[str, Any]) -> dict[str, Any]:
+def _evaluate_prediction(prediction: dict[str, Any], report_cache: dict | None = None) -> dict[str, Any]:
     baseline = prediction.get("baseline") if isinstance(prediction.get("baseline"), dict) else {}
     baseline_target = baseline.get("target") if isinstance(baseline.get("target"), dict) else {}
+    contract = baseline.get("evaluation_contract") if isinstance(baseline.get("evaluation_contract"), dict) else {}
+    current_method = prediction.get("model_version") == OUTLOOK_MODEL_VERSION
+    if current_method and (contract.get("version") != OUTLOOK_EVALUATION_VERSION or not contract.get("baseline_comparable")):
+        raise HTTPException(status_code=422, detail="This prediction has no supported, comparable evaluation contract.")
     baseline_date = str(baseline_target.get("fiscal_date") or "")
     if not baseline_date:
         raise HTTPException(status_code=422, detail="This prediction has no baseline report to compare.")
     horizon_date = _parse_query_date(str(prediction.get("horizon_date") or ""))
-    report = _finance_report_payload(prediction["symbol"], 6, horizon_date.isoformat() if horizon_date else "")
+    cutoff = (min(horizon_date, datetime.now(timezone.utc).date()).isoformat() if horizon_date else datetime.now(timezone.utc).date().isoformat()) if current_method else horizon_date.isoformat() if horizon_date else ""
+    report_cache = report_cache if report_cache is not None else {}
+
+    def report_for(symbol: str) -> dict[str, Any]:
+        key = (symbol, cutoff)
+        if key not in report_cache:
+            try:
+                report_cache[key] = _finance_report_payload(symbol, 6, cutoff)
+            except Exception as exc:
+                report_cache[key] = exc
+        if isinstance(report_cache[key], Exception):
+            raise report_cache[key]
+        return report_cache[key]
+
+    report = report_for(prediction["symbol"])
 
     def newer_report(rows: list[dict[str, Any]], since_date: str) -> dict[str, Any] | None:
         eligible = []
@@ -1151,14 +1239,23 @@ def _evaluate_prediction(prediction: dict[str, Any]) -> dict[str, Any]:
             available_date = str(row.get("filing_date") or fiscal_date)
             if fiscal_date <= since_date:
                 continue
+            if current_method:
+                since_day = _parse_query_date(since_date)
+                fiscal_day = _parse_query_date(fiscal_date)
+                if not since_day or not fiscal_day or not 335 <= (fiscal_day - since_day).days <= 395 or not _parse_query_date(str(row.get("filing_date") or "")):
+                    continue
             if horizon_date and available_date > horizon_date.isoformat():
                 continue
             eligible.append(row)
-        return eligible[0] if eligible else None
+        return min(eligible, key=lambda row: row["fiscal_date"]) if current_method and eligible else eligible[0] if eligible else None
 
     reports = report.get("reports") or []
     actual = newer_report(reports, baseline_date)
     if not actual:
+        if current_method and any(str(row.get("fiscal_date") or "") > baseline_date for row in reports):
+            return local_store.evaluate_company_report_prediction(prediction["id"],
+                {"retryable": True, "evaluation_contract_version": OUTLOOK_EVALUATION_VERSION}, "inconclusive", None,
+                "The next annual report is missing a comparable period or verified filing date. Check again when the missing report data is available.")
         # Saved reports remain useful evidence, but an unavailable provider
         # cannot establish that no newer annual report has been published.
         statuses = (report.get("provider_status") or {}).values()
@@ -1171,9 +1268,14 @@ def _evaluate_prediction(prediction: dict[str, Any]) -> dict[str, Any]:
     for peer in peer_rows[:6]:
         if not isinstance(peer, dict) or not peer.get("symbol"):
             continue
-        peer_report = _finance_report_payload(str(peer["symbol"]), 6, horizon_date.isoformat() if horizon_date else "")
+        try:
+            peer_report = report_for(str(peer["symbol"]))
+        except Exception:
+            if current_method:
+                continue
+            raise
         row = newer_report(peer_report.get("reports") or [], str(peer.get("fiscal_date") or ""))
-        if row and row.get("revenue_growth_percent") is not None and row.get("net_margin_percent") is not None:
+        if row and _number_or_none(row.get("revenue_growth_percent")) is not None and _number_or_none(row.get("net_margin_percent")) is not None and (not current_method or _outlook_periods_align(actual, row, int(contract.get("fiscal_alignment_days", OUTLOOK_FISCAL_ALIGNMENT_DAYS)))):
             peer_actuals.append({"symbol": peer["symbol"], **row})
 
     revenue_growth = actual.get("revenue_growth_percent")
@@ -1188,6 +1290,30 @@ def _evaluate_prediction(prediction: dict[str, Any]) -> dict[str, Any]:
         "peer_median_revenue_growth_percent": peer_median_revenue_growth,
         "peer_median_net_margin_percent": peer_median_margin,
     }
+
+    if current_method:
+        actual["evaluation_contract_version"] = OUTLOOK_EVALUATION_VERSION
+        full_cohort_available = len(peer_actuals) == len(peer_rows) and len({str(row.get("symbol")) for row in peer_rows if isinstance(row, dict)}) == len(peer_rows)
+        if not full_cohort_available or len(peer_actuals) < int(contract.get("minimum_peers", OUTLOOK_MINIMUM_PEERS)) or _number_or_none(revenue_growth) is None or _number_or_none(actual.get("net_margin_percent")) is None:
+            actual["retryable"] = True
+            return local_store.evaluate_company_report_prediction(prediction["id"], actual, "inconclusive", None,
+                "The newer annual report is available, but comparable revenue growth, net margin or peer reports are incomplete. Check again when the missing data is available.")
+        revenue_relative = revenue_growth - peer_median_revenue_growth
+        margin_relative = actual["net_margin_percent"] - peer_median_margin
+        revenue_tolerance = float(contract["revenue_tolerance_pp"])
+        margin_tolerance = float(contract["margin_tolerance_pp"])
+        if revenue_relative > revenue_tolerance and margin_relative > margin_tolerance:
+            direction = "positive"
+            evaluation = "Next-annual revenue growth and net margin both exceeded peer medians beyond the saved tolerances."
+        elif revenue_relative < -revenue_tolerance and margin_relative < -margin_tolerance:
+            direction = "negative"
+            evaluation = "Next-annual revenue growth and net margin both fell below peer medians beyond the saved tolerances."
+        else:
+            direction = "neutral"
+            evaluation = "Next-annual revenue growth and net margin were mixed or within the saved peer tolerances."
+        actual["retryable"] = False
+        return local_store.evaluate_company_report_prediction(prediction["id"], actual, direction,
+            100 if prediction["direction"] == direction else 0, evaluation)
 
     if len(peer_actuals) >= 2 and revenue_growth is not None and actual.get("net_margin_percent") is not None:
         revenue_relative = revenue_growth - peer_median_revenue_growth
@@ -1233,7 +1359,12 @@ def _company_outlook_backtest(symbol: str, request: dict[str, Any] | None = None
     if as_of >= date.today():
         raise ValueError("The historical as-of date must be before today")
     analysis = _company_outlook_payload(symbol, {**request, "as_of_date": as_of.isoformat(), "save_prediction": True})
-    prediction_id = analysis.get("prediction_record", {}).get("id")
+    prediction_id = (analysis.get("prediction_record") or {}).get("id")
+    if not prediction_id:
+        return {"as_of_date": as_of.isoformat(), "analysis": analysis,
+            "evaluation": {"symbol": _safe_symbol(symbol), "actual_direction": "inconclusive", "accuracy_score": None,
+                "evaluation": "No forecast was issued because comparable baseline evidence is incomplete."},
+            "scorecard": local_store.company_report_scorecard()}
     prediction = next((item for item in local_store.list_company_report_predictions() if item["id"] == prediction_id), None)
     if not prediction:
         raise ValueError("Backtest prediction was not saved")
@@ -1324,7 +1455,7 @@ def _company_outlook_backtest_batch(request: dict[str, Any] | None = None) -> di
             failures.append({"symbol": str(spec.get("symbol") or "").upper().strip(), "error": str(getattr(exc, "detail", exc))})
     predictions = [item["evaluation"] for item in results if isinstance(item.get("evaluation"), dict)]
     prediction_ids = {
-        str(item.get("analysis", {}).get("prediction_record", {}).get("id") or "")
+        str((item.get("analysis", {}).get("prediction_record") or {}).get("id") or "")
         for item in results
     }
     prediction_ids.discard("")
@@ -3239,10 +3370,28 @@ def delete_company_outlook_prediction(prediction_id: str):
 
 @app.post("/api/company-outlook/predictions/{prediction_id}/evaluate")
 def evaluate_company_outlook_prediction(prediction_id: str):
-    prediction = next((item for item in local_store.list_company_report_predictions() if item["id"] == prediction_id), None)
+    predictions = local_store.list_company_report_predictions()
+    prediction = next((item for item in predictions if item["id"] == prediction_id), None)
     if not prediction:
         raise HTTPException(status_code=404, detail="Prediction not found")
-    return _evaluate_prediction(prediction)
+    report_cache = {}
+    checked = []
+    failed = []
+    selected_error = None
+    related = [prediction, *(item for item in predictions if item["id"] != prediction_id and item.get("symbol") == prediction["symbol"] and (item.get("actual_direction") == "pending" or (item.get("actual_direction") == "inconclusive" and (item.get("actual") or {}).get("retryable"))))]
+    for other in related:
+        try:
+            # Reuse provider-cached reports, but compare every saved forecast
+            # against its own baseline, cutoff and predicted direction.
+            checked.append(_evaluate_prediction(other, report_cache))
+        except Exception as exc:
+            failed.append(other["id"])
+            if other["id"] == prediction_id:
+                selected_error = exc
+    if not checked and selected_error:
+        raise selected_error
+    selected = next((item for item in checked if item["id"] == prediction_id), prediction)
+    return {**selected, "checked_predictions": checked, "failed_prediction_ids": failed}
 
 
 @app.get("/api/company-outlook/scorecard")

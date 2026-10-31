@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import sqlite3
 import time
 import xml.etree.ElementTree as ET
@@ -27,6 +28,17 @@ PERSISTENT_CACHE_PREFIXES = (
     "yahoo:dividends:",
     "yahoo:chart:div:",
 )
+
+SEC_FUNDAMENTALS_PARSER_VERSION = "sec-periods-v2"
+
+
+def _usable_fundamentals_snapshot(provider: Any, saved: Any) -> Any | None:
+    # Reparse retained raw SEC facts after a parser change instead of serving
+    # ratios built by an earlier period/debt interpretation during an outage.
+    if getattr(provider, "name", "") == "sec_company_facts":
+        if not isinstance(saved, dict) or saved.get("fundamentals_parser_version") != SEC_FUNDAMENTALS_PARSER_VERSION:
+            return None
+    return saved
 
 
 def _provider_symbol_candidates(
@@ -164,7 +176,7 @@ class MarketDataHub:
             provider_saved: dict[str, Any] | None = None
             errors: list[Exception] = []
             for provider_symbol in _provider_symbol_candidates(provider.name, symbol, secondary_symbol, stock_market):
-                saved = self.cache.get_security_snapshot(provider.name, provider_symbol, "fundamentals")
+                saved = _usable_fundamentals_snapshot(provider, self.cache.get_security_snapshot(provider.name, provider_symbol, "fundamentals"))
                 provider_saved = provider_saved or saved
                 try:
                     data = provider.fundamentals(provider_symbol)
@@ -207,7 +219,7 @@ class MarketDataHub:
             provider_saved: dict[str, Any] | None = None
             errors: list[Exception] = []
             for provider_symbol in _provider_symbol_candidates(provider.name, symbol, secondary_symbol, stock_market):
-                saved = self.cache.get_security_snapshot(provider.name, provider_symbol, data_type)
+                saved = _usable_fundamentals_snapshot(provider, self.cache.get_security_snapshot(provider.name, provider_symbol, data_type))
                 provider_saved = provider_saved or saved
                 try:
                     data = provider.fundamentals_as_of(provider_symbol, as_of)
@@ -457,6 +469,10 @@ class CachedMarketDataHub:
         for provider in self.hub.providers:
             for candidate in self._candidates(provider, symbol, secondary_symbol, stock_market):
                 saved = self.hub.cache.get_security_snapshot(provider.name, candidate, kind)
+                if kind == "fundamentals":
+                    saved = _usable_fundamentals_snapshot(provider, saved)
+                    if saved is None and callable(getattr(provider, "cached_fundamentals", None)):
+                        saved = provider.cached_fundamentals(candidate)
                 if saved:
                     return saved, {provider.name: "cached"}
         return ([] if kind == "dividends" else {}), {"cache": "pending"}
@@ -1310,7 +1326,8 @@ class SecCompanyFactsProvider(MarketDataProvider):
         if not cik:
             return {}
         facts = self._company_facts(cik)
-        return self._fundamentals_from_facts(facts, self.profile(symbol), as_of)
+        data = self._fundamentals_from_facts(facts, self.profile(symbol), as_of)
+        return data if data["income_statement"]["annualReports"] else {}
 
     def cached_fundamentals(self, symbol: str, as_of: date | None = None) -> dict[str, Any]:
         """Rebuild a requested cutoff from retained evidence after a failed refresh."""
@@ -1341,34 +1358,29 @@ class SecCompanyFactsProvider(MarketDataProvider):
             as_of,
         )
         financial_revenue = _sec_financial_revenue(us_gaap, as_of)
-        for year, row in financial_revenue.items():
-            revenue.setdefault(year, row)
+        for period_end, row in financial_revenue.items():
+            revenue.setdefault(period_end, row)
         net_income = _sec_annual_facts(us_gaap, ["NetIncomeLoss", "ProfitLoss", "NetIncomeLossAvailableToCommonStockholdersBasic"], as_of)
         gross_profit = _sec_annual_facts(us_gaap, ["GrossProfit"], as_of)
         operating_income = _sec_annual_facts(us_gaap, ["OperatingIncomeLoss"], as_of)
         operating_cash_flow = _sec_annual_facts(us_gaap, ["NetCashProvidedByUsedInOperatingActivities"], as_of)
         capital_expenditures = _sec_annual_facts(us_gaap, ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"], as_of)
-        cash = _sec_annual_facts(us_gaap, ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"], as_of)
-        current_assets = _sec_annual_facts(us_gaap, ["AssetsCurrent"], as_of)
-        current_liabilities = _sec_annual_facts(us_gaap, ["LiabilitiesCurrent"], as_of)
-        accounts_receivable = _sec_annual_facts(us_gaap, ["AccountsReceivableNetCurrent", "AccountsNotesAndLoansReceivableNetCurrent"], as_of)
-        inventory = _sec_annual_facts(us_gaap, ["InventoryNet", "InventoryFinishedGoodsNetOfReserves"], as_of)
-        long_term_debt = _sec_annual_facts(us_gaap, ["LongTermDebtCurrent", "LongTermDebtNoncurrent", "LongTermDebt"], as_of)
+        cash = _sec_annual_facts(us_gaap, ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"], as_of, instant=True)
+        current_assets = _sec_annual_facts(us_gaap, ["AssetsCurrent"], as_of, instant=True)
+        current_liabilities = _sec_annual_facts(us_gaap, ["LiabilitiesCurrent"], as_of, instant=True)
+        accounts_receivable = _sec_annual_facts(us_gaap, ["AccountsReceivableNetCurrent", "AccountsNotesAndLoansReceivableNetCurrent"], as_of, instant=True)
+        inventory = _sec_annual_facts(us_gaap, ["InventoryNet", "InventoryFinishedGoodsNetOfReserves"], as_of, instant=True)
+        long_term_debt = _sec_long_term_debt(us_gaap, as_of)
         interest_expense = _sec_annual_facts(us_gaap, ["InterestExpenseNonoperating", "InterestExpenseDebt"], as_of)
-        reports_by_year: dict[int, dict[str, Any]] = {}
-        for year, row in revenue.items():
-            report = reports_by_year.setdefault(year, {"fiscalDateEnding": row.get("end") or str(year)})
-            report["totalRevenue"] = row["val"]
-            if row.get("filed"):
-                report["filingDate"] = row["filed"]
-        for year, row in net_income.items():
-            report = reports_by_year.setdefault(year, {"fiscalDateEnding": row.get("end") or str(year)})
-            report["netIncome"] = row["val"]
-            if row.get("end"):
-                report["fiscalDateEnding"] = row["end"]
-            if row.get("filed") and str(row["filed"]) > str(report.get("filingDate") or ""):
-                report["filingDate"] = row["filed"]
+        reports_by_period: dict[str, dict[str, Any]] = {}
+        # Only an observed annual income period establishes an annual report.
+        # Standalone interim balance-sheet facts must not create extra years.
+        for period_end in sorted(set(revenue) | set(net_income)):
+            anchor = revenue.get(period_end) or net_income[period_end]
+            reports_by_period[period_end] = {"fiscalDateEnding": period_end, "periodStart": anchor["start"]}
         for field, rows in [
+            ("totalRevenue", revenue),
+            ("netIncome", net_income),
             ("grossProfit", gross_profit),
             ("operatingIncome", operating_income),
             ("operatingCashFlow", operating_cash_flow),
@@ -1381,15 +1393,16 @@ class SecCompanyFactsProvider(MarketDataProvider):
             ("longTermDebt", long_term_debt),
             ("interestExpense", interest_expense),
         ]:
-            for year, row in rows.items():
-                report = reports_by_year.setdefault(year, {"fiscalDateEnding": row.get("end") or str(year)})
+            for period_end, row in rows.items():
+                report = reports_by_period.get(period_end)
+                if report is None or (row.get("start") and row["start"] != report["periodStart"]):
+                    continue
                 report[field] = row["val"]
-                if row.get("end"):
-                    report["fiscalDateEnding"] = row["end"]
                 if row.get("filed") and str(row["filed"]) > str(report.get("filingDate") or ""):
                     report["filingDate"] = row["filed"]
-        reports = [reports_by_year[year] for year in sorted(reports_by_year)]
-        return {"income_statement": {"annualReports": reports}, "profile": profile}
+        reports = [reports_by_period[period_end] for period_end in sorted(reports_by_period)]
+        return {"income_statement": {"annualReports": reports}, "profile": profile,
+                "fundamentals_parser_version": SEC_FUNDAMENTALS_PARSER_VERSION}
 
     def profile(self, symbol: str) -> dict[str, Any]:
         ticker = self._ticker_row(symbol)
@@ -1712,10 +1725,11 @@ class UnsupportedProvider(MarketDataProvider):
 
 def _float_or_none(value: Any) -> float | None:
     try:
-        if value in (None, "", "None"):
+        if isinstance(value, bool) or value in (None, "", "None"):
             return None
-        return float(value)
-    except (TypeError, ValueError):
+        number = float(value)
+        return number if math.isfinite(number) else None
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -1775,48 +1789,95 @@ def _provider_date(value: Any) -> date | None:
         return None
 
 
-def _sec_annual_facts(us_gaap: dict[str, Any], concepts: list[str], as_of: date | None = None) -> dict[int, dict[str, Any]]:
-    by_year: dict[int, dict[str, Any]] = {}
-    for concept in concepts:
+def _sec_fact_rows(
+    us_gaap: dict[str, Any], concepts: list[str], as_of: date | None = None, *, instant: bool = False,
+) -> list[dict[str, Any]]:
+    """Return valid monetary facts with their actual period and filing context."""
+    selected = []
+    for priority, concept in enumerate(concepts):
         units = us_gaap.get(concept, {}).get("units", {})
-        rows = units.get("USD") or units.get("usd") or []
-        for row in rows:
+        for row in units.get("USD") or units.get("usd") or []:
             if row.get("fp") != "FY" or row.get("form") not in {"10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A"}:
                 continue
             filed = _provider_date(row.get("filed"))
-            if as_of and (not filed or filed > as_of):
-                continue
             end = _provider_date(row.get("end"))
-            year = end.year if end else row.get("fy")
+            if not filed or not end or filed < end or (as_of and filed > as_of):
+                continue
+            start = _provider_date(row.get("start"))
+            if instant:
+                if row.get("start") not in (None, ""):
+                    continue
+            elif not start or not 335 <= (end - start).days + 1 <= 395:
+                # A fact in an annual filing may cover a quarter, a transition
+                # period, or several years. FY alone does not prove duration.
+                continue
             value = _float_or_none(row.get("val"))
-            if not year or value is None:
+            if value is None:
                 continue
-            year = int(year)
-            existing = by_year.get(year)
-            if existing and str(existing.get("filed") or "") >= str(row.get("filed") or ""):
-                continue
-            by_year[year] = {"val": value, "end": row.get("end"), "filed": row.get("filed"), "concept": concept}
-    return by_year
+            selected.append({"val": value, "start": start.isoformat() if start else None,
+                             "end": end.isoformat(), "filed": filed.isoformat(),
+                             "concept": concept, "accn": str(row.get("accn") or ""), "priority": priority})
+    return selected
 
 
-def _sec_financial_revenue(us_gaap: dict[str, Any], as_of: date | None = None) -> dict[int, dict[str, Any]]:
-    """Build revenue-like annual income for banks, lenders, and mortgage REITs."""
-    net_interest = _sec_annual_facts(us_gaap, ["InterestIncomeExpenseNet"], as_of)
-    other_income = _sec_annual_facts(us_gaap, ["NoninterestIncome", "NonoperatingIncomeExpense"], as_of)
-    combined: dict[int, dict[str, Any]] = {}
-    for year in sorted(set(net_interest) | set(other_income)):
-        interest_row = net_interest.get(year)
-        other_row = other_income.get(year)
-        if not interest_row:
+def _sec_annual_facts(
+    us_gaap: dict[str, Any], concepts: list[str], as_of: date | None = None, *, instant: bool = False,
+) -> dict[str, dict[str, Any]]:
+    by_period: dict[str, dict[str, Any]] = {}
+    for row in _sec_fact_rows(us_gaap, concepts, as_of, instant=instant):
+        existing = by_period.get(row["end"])
+        selection = (row["filed"], -row["priority"], row["accn"])
+        previous = (existing["filed"], -existing["priority"], existing["accn"]) if existing else None
+        if previous is None or selection > previous:
+            by_period[row["end"]] = row
+    return by_period
+
+
+def _sec_matched_components(
+    us_gaap: dict[str, Any], left_concepts: list[str], right_concepts: list[str],
+    as_of: date | None = None, *, instant: bool = False, nonnegative: bool = False,
+) -> dict[str, dict[str, Any]]:
+    """Combine only observations from one period and filing, retaining revisions."""
+    sides = []
+    for concepts in (left_concepts, right_concepts):
+        side = {}
+        for row in _sec_fact_rows(us_gaap, concepts, as_of, instant=instant):
+            key = (row["start"], row["end"], row["filed"], row["accn"])
+            if key not in side or row["priority"] < side[key]["priority"]:
+                side[key] = row
+        sides.append(side)
+    combined: dict[str, dict[str, Any]] = {}
+    for key in sides[0].keys() & sides[1].keys():
+        left, right = sides[0][key], sides[1][key]
+        if nonnegative and (left["val"] < 0 or right["val"] < 0):
             continue
-        components = [interest_row, *([other_row] if other_row else [])]
-        combined[year] = {
-            "val": sum(float(row["val"]) for row in components),
-            "end": interest_row.get("end") or (other_row or {}).get("end"),
-            "filed": max(str(row.get("filed") or "") for row in components),
-            "concept": "+".join(str(row.get("concept") or "") for row in components),
-        }
+        total = _float_or_none(left["val"] + right["val"])
+        if total is None:
+            continue
+        candidate = {**left, "val": total, "concept": left["concept"] + "+" + right["concept"]}
+        existing = combined.get(left["end"])
+        if existing is None or (candidate["filed"], candidate["accn"]) > (existing["filed"], existing["accn"]):
+            combined[left["end"]] = candidate
     return combined
+
+
+def _sec_long_term_debt(us_gaap: dict[str, Any], as_of: date | None = None) -> dict[str, dict[str, Any]]:
+    # LongTermDebt includes current and noncurrent maturities. Do not add
+    # components to that total, or substitute only the current maturities.
+    totals = _sec_annual_facts(us_gaap, ["LongTermDebt"], as_of, instant=True)
+    components = _sec_matched_components(us_gaap, ["LongTermDebtCurrent"], ["LongTermDebtNoncurrent"], as_of, instant=True, nonnegative=True)
+    for period_end, candidate in components.items():
+        existing = totals.get(period_end)
+        if existing is None or candidate["filed"] > existing["filed"]:
+            totals[period_end] = candidate
+    return {period_end: row for period_end, row in totals.items() if row["val"] >= 0}
+
+
+def _sec_financial_revenue(us_gaap: dict[str, Any], as_of: date | None = None) -> dict[str, dict[str, Any]]:
+    """Build reported annual bank income only from matched financial components."""
+    return _sec_matched_components(
+        us_gaap, ["InterestIncomeExpenseNet"], ["NoninterestIncome", "NonoperatingIncomeExpense"], as_of,
+    )
 
 
 def _sec_latest_fact(facts: dict[str, Any], concepts: list[str], unit_names: list[str]) -> float | None:
