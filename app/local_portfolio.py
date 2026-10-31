@@ -221,6 +221,7 @@ EXPORT_TABLES = {
         "accuracy_score",
         "evaluation",
         "evaluated_at",
+        "checked_at",
     ],
 }
 
@@ -524,7 +525,8 @@ class LocalPortfolioStore:
                         actual_direction text not null default 'pending',
                         accuracy_score real,
                         evaluation text not null default '',
-                        evaluated_at text not null default ''
+                        evaluated_at text not null default '',
+                        checked_at text not null default ''
                     )
                     """
                 )
@@ -535,6 +537,7 @@ class LocalPortfolioStore:
                 conn.execute("create index if not exists idx_equity_transitions_source on equity_transitions(source_security_id, effective_date)")
                 conn.execute("create index if not exists idx_company_report_predictions_symbol on company_report_predictions(symbol, created_at desc)")
                 self._ensure_column(conn, "accounts", "persons", "text not null default '[]'")
+                self._ensure_column(conn, "company_report_predictions", "checked_at", "text not null default ''")
                 self._ensure_column(conn, "family_members", "first_name", "text not null default ''")
                 self._ensure_column(conn, "family_members", "last_name", "text not null default ''")
                 self._ensure_column(conn, "funds", "birth_date", "text not null default ''")
@@ -909,6 +912,8 @@ class LocalPortfolioStore:
             record["updated_at"] = str(record.get("created_at") or _now())
         if "accuracy_score" in record and record.get("accuracy_score") is not None:
             record["accuracy_score"] = _number(record.get("accuracy_score"), 0)
+        if "checked_at" in record:
+            record["checked_at"] = str(record.get("checked_at") or "")
         return record
 
     def list_company_report_predictions(self, symbol: str = "") -> list[dict[str, Any]]:
@@ -966,20 +971,22 @@ class LocalPortfolioStore:
             "accuracy_score": payload.get("accuracy_score"),
             "evaluation": str(payload.get("evaluation") or "").strip(),
             "evaluated_at": str(payload.get("evaluated_at") or ""),
+            "checked_at": str(payload.get("checked_at") or ""),
         }
         with self._connect() as conn:
             conn.execute(
                 """
                 insert into company_report_predictions
-                  (id, symbol, company_name, industry, created_at, horizon_date, model_version, score, label, direction, confidence, baseline, thesis, mermaid, actual, actual_direction, accuracy_score, evaluation, evaluated_at)
+                  (id, symbol, company_name, industry, created_at, horizon_date, model_version, score, label, direction, confidence, baseline, thesis, mermaid, actual, actual_direction, accuracy_score, evaluation, evaluated_at, checked_at)
                 values
-                  (:id, :symbol, :company_name, :industry, :created_at, :horizon_date, :model_version, :score, :label, :direction, :confidence, :baseline, :thesis, :mermaid, :actual, :actual_direction, :accuracy_score, :evaluation, :evaluated_at)
+                  (:id, :symbol, :company_name, :industry, :created_at, :horizon_date, :model_version, :score, :label, :direction, :confidence, :baseline, :thesis, :mermaid, :actual, :actual_direction, :accuracy_score, :evaluation, :evaluated_at, :checked_at)
                 on conflict(id) do update set
                   actual = excluded.actual,
                   actual_direction = excluded.actual_direction,
                   accuracy_score = excluded.accuracy_score,
                   evaluation = excluded.evaluation,
-                  evaluated_at = excluded.evaluated_at
+                  evaluated_at = excluded.evaluated_at,
+                  checked_at = excluded.checked_at
                 """,
                 record,
             )
@@ -994,10 +1001,11 @@ class LocalPortfolioStore:
             row = conn.execute("select * from company_report_predictions where id = ?", (prediction_id,)).fetchone()
             if not row:
                 raise ValueError("Prediction not found")
+            checked_at = _now()
             conn.execute(
                 """
                 update company_report_predictions
-                set actual = ?, actual_direction = ?, accuracy_score = ?, evaluation = ?, evaluated_at = ?
+                set actual = ?, actual_direction = ?, accuracy_score = ?, evaluation = ?, evaluated_at = ?, checked_at = ?
                 where id = ?
                 """,
                 (
@@ -1005,7 +1013,8 @@ class LocalPortfolioStore:
                     direction,
                     accuracy_score,
                     str(evaluation or "").strip(),
-                    _now() if direction not in {"pending", "inconclusive"} else "",
+                    checked_at if direction not in {"pending", "inconclusive"} else "",
+                    checked_at,
                     prediction_id,
                 ),
             )

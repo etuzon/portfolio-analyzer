@@ -8,7 +8,7 @@ SOURCE = (ROOT / "web/app.js").read_text()
 
 
 def run_js(body):
-    names = ("resetCompanyOutlookHistoryUi", "companyOutlookEvaluationMessage", "positionCompanyOutlookHelp", "setCompanyOutlookHelpVisible", "updateCompanyOutlookEvaluationUi", "renderCompanyOutlookHistory", "loadCompanyOutlookHistory", "evaluateCompanyOutlookPrediction")
+    names = ("resetCompanyOutlookHistoryUi", "companyOutlookEvaluationMessage", "companyOutlookCheckStatus", "formatBackupDateTime", "positionCompanyOutlookHelp", "setCompanyOutlookHelpVisible", "updateCompanyOutlookEvaluationUi", "renderCompanyOutlookHistory", "loadCompanyOutlookHistory", "evaluateCompanyOutlookPrediction")
     functions = []
     for name in names:
         start = re.search(rf"^(?:async )?function {name}\(", SOURCE, re.M).start()
@@ -24,9 +24,9 @@ const formatDate=value=>String(value).slice(0,10).split('-').reverse().join('/')
 const document={body:{},activeElement:{},querySelectorAll:()=>[...cards.values()]};
 const makeNode=()=>({textContent:'',disabled:false,hidden:false,classList:{toggle(){}},focus(){document.activeElement=this}});
 const cards=new Map(['p1','p2'].map(id=>{
- const feedback=makeNode(),button=makeNode(),remove=makeNode();
+ const feedback=makeNode(),button=makeNode(),remove=makeNode(),badge=makeNode(),help=makeNode();
  return [id,{dataset:{companyOutlookPrediction:id},setAttribute(key,value){this[key]=value},querySelector(selector){
-  return selector==='.outlook-prediction-feedback'?feedback:selector==='[data-evaluate-company-outlook]'?button:remove;
+  return selector==='.outlook-prediction-feedback'?feedback:selector==='[data-evaluate-company-outlook]'?button:selector==='[data-delete-company-outlook]'?remove:selector==='.outlook-pending-trigger'?badge:selector==='.outlook-pending-description'?help:null;
  }}];
 }));
 const nodes={companyOutlookHistory:{innerHTML:''},companyOutlookScorecard:{innerHTML:''},outlookSymbol:{value:'NEWT'}};
@@ -54,10 +54,11 @@ def test_check_gives_immediate_per_card_feedback_and_preserves_no_new_report_res
  const checking=evaluateCompanyOutlookPrediction('p1');
  const card=cards.get('p1');
  assert.equal(card.querySelector('[data-evaluate-company-outlook]').disabled,true);
+ assert.equal(card.querySelector('.outlook-pending-trigger').textContent,'בודק…');
  assert.ok(card.querySelector('.outlook-prediction-feedback').textContent.includes('בודק'));
  assert.equal(cards.get('p2').querySelector('[data-evaluate-company-outlook]').disabled,false);
  await evaluateCompanyOutlookPrediction('p1');assert.equal(requests.length,1,'duplicate clicks must not submit twice');
- const result={...record(),evaluation:'No newer annual report is available yet.'};
+ const result={...record(),checked_at:'2026-10-31T14:25:00Z',evaluation:'No newer annual report is available yet.'};
  requests[0].resolve(result);await flush();
  assert.equal(requests[1].path,'/api/company-outlook/predictions','preserve current history filter, not the ticker input');
  requests[1].resolve(data([result,record('p2')]));await checking;
@@ -68,6 +69,9 @@ def test_check_gives_immediate_per_card_feedback_and_preserves_no_new_report_res
  state.companyOutlookEvaluationUi={};renderCompanyOutlookHistory(data([result]));
  assert.ok(nodes.companyOutlookHistory.innerHTML.includes('עדיין אין דוח שנתי חדש יותר'),'persisted pending explanation remains visible after reload');
  assert.equal(timers.size,0);
+ assert.equal(card.querySelector('.outlook-pending-trigger').textContent,'נבדק — אין דוח חדש');
+ assert.ok(nodes.companyOutlookHistory.innerHTML.includes('31/10/2026'));
+ assert.ok(nodes.companyOutlookHistory.innerHTML.includes('נבדק לאחרונה'));
 })().catch(error=>{console.error(error);process.exitCode=1});
 ''')
 
@@ -79,6 +83,7 @@ def test_failure_and_timeout_are_visible_and_retry_can_finish_successfully():
  const checking=evaluateCompanyOutlookPrediction('p1');
  requests[0].reject(new Error('private provider credentials'));await checking;
  const card=cards.get('p1');
+ assert.equal(card.querySelector('.outlook-pending-trigger').textContent,'הבדיקה נכשלה');
  assert.ok(card.querySelector('.outlook-prediction-feedback').textContent.includes('לא ניתן לבדוק'));
  assert.ok(!card.querySelector('.outlook-prediction-feedback').textContent.includes('private'));
  assert.equal(card.querySelector('[data-evaluate-company-outlook]').textContent,'ניסיון נוסף');
@@ -118,16 +123,16 @@ for(const language of ['he','en','he']){
  renderCompanyOutlookHistory(data([{...record(),evaluation:'No newer annual report is available yet.'}]));
  const html=nodes.companyOutlookHistory.innerHTML;
  const text=html.replace(/<[^>]*>/g,'');
- assert.ok(html.includes('class="outlook-history-state pending outlook-pending-trigger" tabindex="0" aria-describedby="outlookPendingHelp0"'));
+ assert.ok(html.includes('class="outlook-history-state checked outlook-pending-trigger" tabindex="0" aria-describedby="outlookPendingHelp0"'));
  assert.ok(html.includes('role="tooltip" hidden'));
  assert.ok(!html.includes('<summary')&&!html.includes('<details')&&!html.includes('>i<'));
  assert.ok(html.includes('role="status"')&&html.includes('aria-live="polite"'));
  assert.ok(text.includes('31/10/2026')&&text.includes('26/10/2027'));
  if(language==='he'){
-  assert.ok(text.includes('הערכת הדוח הבא')&&text.includes('אינו מפעיל בדיקה אוטומטית'));
+  assert.ok(text.includes('נבדק — אין דוח חדש')&&text.includes('הבדיקה מתבצעת ידנית'));
   assert.ok(!/Pending|Evaluate|Confidence|Created|No newer|Accuracy|High|Weak/.test(text));
  }else{
-  assert.ok(text.includes('Select Evaluate next report to check'));
+  assert.ok(text.includes('The last check found no newer annual report'));
   assert.ok(!/[א-ת]/.test(text));
  }
 }
@@ -186,7 +191,7 @@ def test_a_completed_check_preserves_keyboard_focus_and_open_help_on_another_car
  });
  const checking=evaluateCompanyOutlookPrediction('p1');
  trigger.focus();panel.hidden=false;
- const result={...record(),evaluation:'No newer annual report is available yet.'};
+ const result={...record(),checked_at:'2026-10-31T14:25:00Z',evaluation:'No newer annual report is available yet.'};
  requests[0].resolve(result);await flush();
  assert.equal(document.activeElement,trigger,'another card retains keyboard focus after the POST update');
  assert.equal(panel.hidden,false);
@@ -214,3 +219,32 @@ assert.equal(panel.style.maxHeight,'434px');
 assert.equal(panel.style.overflowY,'auto','long descriptions remain scrollable inside the available space');
 setCompanyOutlookHelpVisible(help,false);assert.equal(panel.hidden,true);
 ''')
+
+
+def test_reload_distinguishes_unchecked_legacy_checked_and_dated_checked_predictions():
+    run_js(r"""
+for(const language of ['he','en']){
+ state.language=language;
+ const statuses=language==='he'?['טרם נבדק','נבדק — אין דוח חדש']:['Not checked yet','Checked — no new report'];
+ renderCompanyOutlookHistory(data([record()]));
+ let html=nodes.companyOutlookHistory.innerHTML;
+ assert.ok(html.includes(statuses[0]));assert.ok(!html.includes('<time'));
+ const result={...record(),evaluation:'No newer annual report is available yet.'};
+ renderCompanyOutlookHistory(data([result]));
+ html=nodes.companyOutlookHistory.innerHTML;
+ assert.ok(html.includes(statuses[1]));assert.ok(!html.includes('<time'),'legacy checks must not fabricate dates');
+ result.checked_at='2026-10-31T14:25:00Z';
+ renderCompanyOutlookHistory(data([result]));
+ html=nodes.companyOutlookHistory.innerHTML;
+ assert.ok(html.includes(statuses[1])&&html.includes('<time datetime="2026-10-31T14:25:00Z">'));
+ assert.ok(html.includes(formatBackupDateTime(result.checked_at)));
+ assert.match(formatBackupDateTime(result.checked_at),/^31\/10\/2026 \d{2}:\d{2}$/);
+ for(const direction of ['positive','neutral','negative','inconclusive']){
+  renderCompanyOutlookHistory(data([{...result,actual_direction:direction,accuracy_score:direction==='inconclusive'?null:100}]));
+  html=nodes.companyOutlookHistory.innerHTML;
+  assert.ok(!html.includes('outlook-pending-trigger'));
+  assert.ok(html.includes(t(direction.charAt(0).toUpperCase()+direction.slice(1))));
+  assert.equal(html.includes('100%'),direction!=='inconclusive');
+ }
+}
+""")

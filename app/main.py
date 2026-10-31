@@ -1138,6 +1138,8 @@ def _evaluate_prediction(prediction: dict[str, Any]) -> dict[str, Any]:
     baseline = prediction.get("baseline") if isinstance(prediction.get("baseline"), dict) else {}
     baseline_target = baseline.get("target") if isinstance(baseline.get("target"), dict) else {}
     baseline_date = str(baseline_target.get("fiscal_date") or "")
+    if not baseline_date:
+        raise HTTPException(status_code=422, detail="This prediction has no baseline report to compare.")
     horizon_date = _parse_query_date(str(prediction.get("horizon_date") or ""))
     report = _finance_report_payload(prediction["symbol"], 6, horizon_date.isoformat() if horizon_date else "")
 
@@ -1153,8 +1155,14 @@ def _evaluate_prediction(prediction: dict[str, Any]) -> dict[str, Any]:
             eligible.append(row)
         return eligible[0] if eligible else None
 
-    actual = newer_report(report.get("reports") or [], baseline_date)
-    if not baseline_date or not actual:
+    reports = report.get("reports") or []
+    actual = newer_report(reports, baseline_date)
+    if not actual:
+        # Saved reports remain useful evidence, but an unavailable provider
+        # cannot establish that no newer annual report has been published.
+        statuses = (report.get("provider_status") or {}).values()
+        if not reports or not any(status == "ok" for status in statuses):
+            raise HTTPException(status_code=503, detail="Could not verify whether a newer annual report is available. Try again.")
         return local_store.evaluate_company_report_prediction(prediction["id"], {}, "pending", None, "No newer annual report is available yet.")
 
     peer_rows = baseline.get("peers") if isinstance(baseline.get("peers"), list) else []

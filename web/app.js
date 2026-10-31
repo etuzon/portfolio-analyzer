@@ -9125,6 +9125,17 @@ function companyOutlookEvaluationMessage(item) {
   return ui.refreshFailed ? `${message} ${t("The check finished, but the history totals could not be refreshed.")}` : message;
 }
 
+function companyOutlookCheckStatus(item) {
+  const ui = state.companyOutlookEvaluationUi?.[item.id] || {};
+  if (ui.status === "checking") return { label: "Checking…", help: "Checking for a newer annual report…", className: "pending" };
+  if (ui.status === "error") return { label: "Check failed", help: "Could not check this prediction. Try again.", className: "pending" };
+  if (item.evaluation === "No newer annual report is available yet.") {
+    return { label: "Checked — no new report", help: "The last check found no newer annual report. Check again after the next annual report is published. Checks are manual.", className: "checked" };
+  }
+  if (item.checked_at || item.evaluation) return { label: "Checked", help: item.evaluation || "Prediction evaluated", className: "checked" };
+  return { label: "Not checked yet", help: "Select Evaluate next report to check for a newer annual report. Checks are manual.", className: "pending" };
+}
+
 function positionCompanyOutlookHelp(help) {
   const panel = help.querySelector(".outlook-pending-description");
   if (!panel || panel.hidden) return;
@@ -9180,6 +9191,15 @@ function updateCompanyOutlookEvaluationUi(predictionId) {
   const feedback = card.querySelector(".outlook-prediction-feedback");
   feedback.textContent = companyOutlookEvaluationMessage(item);
   feedback.classList.toggle("is-error", ui.status === "error");
+  const checkStatus = companyOutlookCheckStatus(item);
+  const badge = card.querySelector(".outlook-pending-trigger");
+  if (badge) {
+    badge.textContent = t(checkStatus.label);
+    badge.classList.toggle("checked", checkStatus.className === "checked");
+    badge.classList.toggle("pending", checkStatus.className === "pending");
+  }
+  const help = card.querySelector(".outlook-pending-description");
+  if (help) help.textContent = t(checkStatus.help);
   const button = card.querySelector("[data-evaluate-company-outlook]");
   if (button) {
     button.disabled = busy;
@@ -9205,16 +9225,17 @@ function renderCompanyOutlookHistory(data) {
   $("companyOutlookScorecard").innerHTML = [
     ["Predictions", scorecard.total || 0],
     ["Evaluated", scorecard.evaluated || 0],
-    ["Pending", scorecard.pending || 0],
+    ["Awaiting a newer report", scorecard.pending || 0],
     ["Accuracy", scorecard.accuracy_percent == null ? "Not evaluated" : pct(scorecard.accuracy_percent)],
     ["Validation", qualityGate.passed ? "75% target met" : "Not validated"],
   ].map(([label, value]) => `<div class="stat"><b>${esc(t(String(value)))}</b><span>${esc(t(label))}</span></div>`).join("");
   $("companyOutlookHistory").innerHTML = state.companyOutlookHistory.length ? state.companyOutlookHistory.map((item, index) => {
     const direction = item.actual_direction || "pending";
-    const stateLabel = direction === "pending" ? "Pending" : direction.charAt(0).toUpperCase() + direction.slice(1);
+    const checkStatus = companyOutlookCheckStatus(item);
+    const stateLabel = direction === "pending" ? checkStatus.label : direction.charAt(0).toUpperCase() + direction.slice(1);
     const ui = state.companyOutlookEvaluationUi?.[item.id] || {};
     const busy = ui.status === "checking";
-    const pendingHelp = "This forecast has not been evaluated against a newer annual report. Select Evaluate next report to check. If no newer report is available, try again after the next annual report is published. The forecast horizon does not schedule an automatic check.";
+    const checkedAt = item.checked_at || item.evaluated_at;
     return `
       <article class="stack-item management-item outlook-history-item" data-company-outlook-prediction="${esc(item.id)}" aria-busy="${busy}">
         <header class="outlook-history-head">
@@ -9223,13 +9244,14 @@ function renderCompanyOutlookHistory(data) {
             <span class="outlook-history-label">${esc(t(item.label || "Mixed"))}</span>
           </div>
           <div class="outlook-history-status">
-            ${direction === "pending" ? `<span class="outlook-pending-help"><span class="outlook-history-state pending outlook-pending-trigger" tabindex="0" aria-describedby="outlookPendingHelp${index}">${esc(t(stateLabel))}</span><span id="outlookPendingHelp${index}" class="outlook-pending-description" role="tooltip" hidden>${esc(t(pendingHelp))}</span></span>` : `<span class="outlook-history-state ${esc(direction)}">${esc(t(stateLabel))}</span>`}
+            ${direction === "pending" ? `<span class="outlook-pending-help"><span class="outlook-history-state ${checkStatus.className} outlook-pending-trigger" tabindex="0" aria-describedby="outlookPendingHelp${index}">${esc(t(stateLabel))}</span><span id="outlookPendingHelp${index}" class="outlook-pending-description" role="tooltip" hidden>${esc(t(checkStatus.help))}</span></span>` : `<span class="outlook-history-state ${esc(direction)}">${esc(t(stateLabel))}</span>`}
           </div>
         </header>
         <div class="outlook-history-meta">
           <span><small>${esc(t("Created"))}</small><b>${esc(formatDate(String(item.created_at || "").slice(0, 10)))}</b></span>
           <span><small>${esc(t("Evaluate after"))}</small><b>${esc(formatDate(item.horizon_date))}</b></span>
           <span><small>${esc(t("Confidence"))}</small><b>${esc(t(item.confidence || "Low"))}</b></span>
+          ${checkedAt ? `<span><small>${esc(t("Last checked"))}</small><time datetime="${esc(checkedAt)}">${esc(formatBackupDateTime(checkedAt))}</time></span>` : ""}
         </div>
         <p class="outlook-history-thesis">${esc(t(item.thesis || "No report-backed summary was stored for this prediction."))}</p>
         ${direction === "pending" || item.accuracy_score == null ? "" : `<p class="outlook-history-evaluation">${esc(t("Accuracy"))} ${fmt(item.accuracy_score, 0)}%</p>`}
