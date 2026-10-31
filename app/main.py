@@ -553,12 +553,15 @@ def _security_history_response(
     volume = volume_metrics(prices)
     signal_ma_metrics = moving_averages(level_source)
     signal_volume = volume_metrics(level_source)
+    status_values = [str(value).lower() for value in (status or {}).values()]
+    failed = any(value.startswith("error:") or (value.startswith("stale (") and ";" in value) for value in status_values)
     return {
         "symbol": symbol,
         "stock_market": stock_market,
         "period": period,
         "source": source,
         "status": status or {},
+        "state": "ok" if prices else "error" if failed else "missing",
         "points": [_security_history_point(row) for row in prices],
         "moving_averages": ma_metrics,
         "support_resistance": level_metrics,
@@ -3652,15 +3655,30 @@ def security_history(symbol: str, stock_market: str = "", period: str = "1y", da
     secondary_symbol = str((security or {}).get("secondary_symbol") or "").strip()
     if known_manual and not secondary_symbol:
         return _security_history_response(symbol, stock_market, period, "manual", local_chart_prices, local_prices)
-    prices, status = hub().prices(
+    market_hub = hub()
+    price_context = {
+        "secondary_symbol": secondary_symbol,
+        "stock_market": (security or {}).get("stock_market") or stock_market,
+    }
+    cached_reader = getattr(market_hub, "cached_prices", None)
+    saved_prices, saved_status = (
+        cached_reader(primary_symbol, fetch_from_date, to_date, **price_context) if cached_reader else ([], {})
+    )
+    if any(row.date >= from_date for row in saved_prices):
+        by_date = {row.date.isoformat(): row for row in saved_prices}
+        by_date.update({row.date.isoformat(): row for row in local_prices})
+        merged = [by_date[day] for day in sorted(by_date)]
+        chart_prices = [row for row in merged if row.date >= from_date]
+        source = "merged" if local_prices else "cached"
+        return _security_history_response(symbol, stock_market, period, source, chart_prices, merged, saved_status)
+    prices, status = market_hub.prices(
         primary_symbol,
         fetch_from_date,
         to_date,
-        secondary_symbol=secondary_symbol,
-        stock_market=(security or {}).get("stock_market") or stock_market,
+        **price_context,
     )
     if len(local_prices) >= len(prices):
-        return _security_history_response(symbol, stock_market, period, "local", local_chart_prices, local_prices)
+        return _security_history_response(symbol, stock_market, period, "local", local_chart_prices, local_prices, status)
     by_date = {row.date.isoformat(): row for row in prices}
     by_date.update({row.date.isoformat(): row for row in local_prices})
     merged = [by_date[day] for day in sorted(by_date)]

@@ -8323,6 +8323,11 @@ html[dir="rtl"] .signal-condition-help::after {
 .trade-plan-issues li > div { flex: 1 1 240px; min-width: 0; }
 .trade-plan-issues li > button { width: auto; flex: 0 0 auto; }
 
+.security-chart-load-status { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.security-chart-load-status .status-line { flex: 1 1 240px; margin: 8px 0; }
+.security-chart-load-status .status-line:empty { display: none; }
+.security-chart-load-status button { flex: 0 0 auto; width: auto; }
+
 @media (max-width: 420px) {
   .trade-planner-form, .trade-plan-facts { grid-template-columns: minmax(0, 1fr); }
 }

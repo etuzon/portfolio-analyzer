@@ -146,6 +146,11 @@ class MarketDataHub:
                 status[provider.name] = "missing"
         return best_prices, status or {"providers": "none configured"}
 
+    def cached_prices(
+        self, symbol: str, from_date: date, to_date: date, *, secondary_symbol: str = "", stock_market: str = "",
+    ) -> tuple[list[Ohlcv], dict[str, str]]:
+        return CachedMarketDataHub(self).prices(symbol, from_date, to_date, secondary_symbol, stock_market)
+
     def fundamentals(
         self,
         symbol: str,

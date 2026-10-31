@@ -3,6 +3,10 @@
 
   const HEBREW_TEXT = Object.freeze({
     "Account recommendation": "המלצת חשבון",
+    "Could not load price history. Retry to load the chart.": "לא ניתן לטעון את היסטוריית המחירים. נסו שוב כדי להציג את הגרף.",
+    "Could not load transaction history.": "לא ניתן לטעון את היסטוריית הפעולות.",
+    "Could not load saved prices.": "לא ניתן לטעון את המחירים השמורים.",
+    "Some transaction or saved-price details could not be loaded. Retry to load them.": "לא ניתן לטעון חלק מפרטי הפעולות או המחירים השמורים. נסו שוב כדי לטעון אותם.",
     "Update the holdings listed below before calculating a trade amount.": "יש לעדכן את נתוני ההחזקות המפורטות להלן לפני חישוב סכום עסקה.",
     "No saved price": "אין מחיר שמור",
     "The saved price has no date": "למחיר השמור חסר תאריך",

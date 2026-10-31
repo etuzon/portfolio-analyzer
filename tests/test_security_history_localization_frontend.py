@@ -89,6 +89,19 @@ assert.equal(securityTransactionCommentText({comments: ''}), '');
 state.localTransactions = [];
 renderSecurityDetail();
 assert.ok(nodes.securityDetailTransactions.innerHTML.includes('אין פעולות בנייר הערך הזה'));
+state.securityDetailLoad={history:'ready',transactions:'loading',prices:'loading'};
+renderSecurityDetail();
+assert.ok(nodes.securityDetailTransactions.innerHTML.includes('טוען היסטוריית פעולות'));
+assert.ok(nodes.securityDetailPrices.innerHTML.includes('טוען היסטוריית מחירים'));
+state.securityDetailLoad={history:'error',transactions:'loading',prices:'error'};
+renderSecurityDetail();
+assert.ok(nodes.securityDetailPrices.innerHTML.includes('לא ניתן לטעון את המחירים השמורים'));
+assert.equal(nodes.retrySecurityHistory.hidden,false);
+assert.equal(nodes.retrySecurityHistory.disabled,false,'chart recovery must not wait for transactions');
+state.language='en';renderSecurityDetail();
+assert.ok(nodes.securityDetailTransactions.innerHTML.includes('Loading transaction history'));
+assert.ok(nodes.securityDetailPrices.innerHTML.includes('Could not load saved prices.'));
+assert.ok(!/[א-ת]/u.test(nodes.securityChartStatus.textContent));
 """
     result = subprocess.run(["node"], input=script, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr

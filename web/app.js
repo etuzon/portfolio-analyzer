@@ -44,6 +44,7 @@ const state = {
   securityChartStartDate: HISTORY_START_DATE,
   securityHistory: [],
   securityHistoryMeta: {},
+  securityDetailLoad: null,
   securityChartZoom: null,
   localFunds: [],
   activeReportFilters: null,
@@ -6540,6 +6541,9 @@ async function openSecurityDetail(dataset, returnFocus = document.activeElement)
     currency: dataset.securityDetailCurrency || h.currency || "USD",
     location: dataset.securityDetailLocation || h.country || h.location || "USA",
   };
+  state.securityHistory = [];
+  state.securityHistoryMeta = {};
+  state.securityDetailLoad = null;
   state.securityChartStartDate = clampedHistoryDate(state.securityChartStartDate);
   resetSecurityChartZoom({ render: false });
   setDateField("securityChartStartDate", state.securityChartStartDate);
@@ -6560,16 +6564,37 @@ async function loadSecurityDetail() {
   });
   if (state.securityChartLevelPeriods?.length) params.set("level_periods", state.securityChartLevelPeriods.join(","));
   if (state.securityChartStartDate) params.set("date_from", state.securityChartStartDate);
-  const [transactions, prices, history] = await Promise.all([
-    api("/api/local/securities"),
-    api("/api/local/prices"),
-    api(`/api/security/history?${params}`),
-  ]);
-  state.localTransactions = transactions.items || [];
-  state.localPrices = prices.items || [];
-  state.securityHistory = history.points || [];
-  state.securityHistoryMeta = history;
+  const load = { history: "loading", transactions: "loading", prices: "loading" };
+  state.securityDetailLoad = load;
+  const isCurrent = () => state.securityDetail === detail && state.securityDetailLoad === load;
+  const fetchPart = async (part, path, apply) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    try {
+      const data = await api(path, { signal: controller.signal });
+      if (!isCurrent()) return;
+      apply(data);
+      load[part] = "ready";
+    } catch {
+      if (!isCurrent()) return;
+      load[part] = "error";
+    } finally {
+      clearTimeout(timeout);
+      if (isCurrent()) renderSecurityDetail();
+    }
+  };
   renderSecurityDetail();
+  await Promise.all([
+    fetchPart("transactions", "/api/local/securities", (data) => { state.localTransactions = data.items || []; }),
+    fetchPart("prices", "/api/local/prices", (data) => { state.localPrices = data.items || []; }),
+    fetchPart("history", `/api/security/history?${params}`, (data) => {
+      if (data.state === "error" || (!data.points?.length && Object.values(data.status || {}).some((status) => /^error\b/i.test(String(status))))) {
+        throw new Error("Price history unavailable");
+      }
+      state.securityHistory = data.points || [];
+      state.securityHistoryMeta = data;
+    }),
+  ]);
 }
 
 function securityTransactionCommentText(tx) {
@@ -6596,6 +6621,7 @@ function renderSecurityDetail() {
   const detail = state.securityDetail;
   if (!detail) return;
   const h = detail.item?.holding || {};
+  const load = state.securityDetailLoad || {};
   $("securityDetailTitle").textContent = t(`${detail.symbol}${detail.secondary_symbol ? ` · ${detail.secondary_symbol}` : ""} overview`);
   $("securityDetailOverview").innerHTML = [
     ["Name", h.name || detail.symbol],
@@ -6629,7 +6655,8 @@ function renderSecurityDetail() {
       <div class="sub">${metadata.map((value) => `<bdi>${esc(value)}</bdi>`).join(" · ")}</div>
     </div>
   `;
-  }).join("") : `<div class="empty">${esc(t("No transactions for this security"))}</div>`;
+  }).join("") : `<div class="empty">${esc(t(load.transactions === "loading" ? "Loading transaction history…"
+    : load.transactions === "error" ? "Could not load transaction history." : "No transactions for this security"))}</div>`;
   const prices = state.localPrices.filter((price) => priceMatchesSecurity(price, detail));
   $("securityDetailPrices").innerHTML = prices.length ? prices.map((price) => `
     <div class="stack-item management-item">
@@ -6638,14 +6665,28 @@ function renderSecurityDetail() {
       <button class="secondary compact-button" type="button" data-delete-price="${esc(price.id)}">${esc(t("Remove"))}</button>
       <div class="sub">${esc(optionLabel(price.asset_class))} · ${esc(countryDisplayLabel(price.location))}${price.comments ? ` · ${esc(price.comments)}` : ""}</div>
     </div>
-  `).join("") : `<div class="empty">${esc(t("No saved price history for this security"))}</div>`;
+  `).join("") : `<div class="empty">${esc(t(load.prices === "loading" ? "Loading price history"
+    : load.prices === "error" ? "Could not load saved prices." : "No saved price history for this security"))}</div>`;
   renderSecurityTechnicalSignal();
   renderSecurityChart();
+  const failed = Object.values(load).includes("error");
+  const message = load.history === "loading" ? "Loading price history"
+    : load.history === "error" ? "Could not load price history. Retry to load the chart."
+    : failed ? "Some transaction or saved-price details could not be loaded. Retry to load them." : "";
+  if ($("securityChartStatus")) $("securityChartStatus").textContent = t(message);
+  if ($("retrySecurityHistory")) {
+    $("retrySecurityHistory").hidden = !failed;
+    $("retrySecurityHistory").disabled = load.history === "loading";
+  }
 }
 
 function renderSecurityTechnicalSignal() {
   const frame = $("securityTechnicalSignal");
   if (!frame) return;
+  if (["loading", "error"].includes(state.securityDetailLoad?.history)) {
+    frame.innerHTML = `<p>${esc(t(state.securityDetailLoad.history === "loading" ? "Loading price history" : "Price history could not be updated"))}</p>`;
+    return;
+  }
   const signal = state.securityHistoryMeta?.technical_signals?.confirmed_breakout || {};
   const missing = signal.state !== "ok";
   const triggered = signal.state === "ok" && signal.triggered === true;
@@ -6833,12 +6874,15 @@ function renderSecurityChart() {
   });
   setDateField("securityChartStartDate", clampedHistoryDate(state.securityChartStartDate));
   const frame = $("securityDetailChart");
+  frame.setAttribute?.("aria-busy", String(state.securityDetailLoad?.history === "loading"));
   const allPoints = securityChartPoints();
   const zoomWindow = securityChartZoomWindow(allPoints.length);
   renderSecurityChartZoomControls(allPoints, zoomWindow);
   const points = allPoints.slice(zoomWindow.start, zoomWindow.end + 1);
   if (!allPoints.length) {
-    frame.innerHTML = `<div class="empty">${esc(t("No price history for this period"))}</div>`;
+    const message = state.securityDetailLoad?.history === "loading" ? "Loading price history"
+      : state.securityDetailLoad?.history === "error" ? "Could not load price history. Retry to load the chart." : "No price history for this period";
+    frame.innerHTML = `<div class="empty" role="status">${esc(t(message))}</div>`;
     return;
   }
   const meta = state.securityHistoryMeta || {};
@@ -13196,6 +13240,7 @@ document.addEventListener("click", (event) => {
   }
 
   const securityChartPeriod = event.target.closest("[data-security-chart-period]")?.dataset.securityChartPeriod;
+  if (event.target.closest("#retrySecurityHistory")) loadSecurityDetail();
   if (securityChartPeriod) {
     state.securityChartPeriod = securityChartPeriod;
     state.securityChartStartDate = startDateForPeriod(securityChartPeriod);
