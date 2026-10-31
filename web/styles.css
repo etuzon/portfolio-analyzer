@@ -8671,19 +8671,9 @@ html[dir="rtl"] .signal-condition-help::after {
   width: 46px;
   height: 46px;
   border-radius: 13px;
-  background: linear-gradient(145deg, var(--ux-purple), var(--ux-blue));
+  background: url("/assets/portfolio-vault/icon-48.png?v=1") center / contain no-repeat;
+  background-image: image-set(url("/assets/portfolio-vault/icon-48.png?v=1") 1x, url("/assets/portfolio-vault/icon-96.png?v=1") 2x, url("/assets/portfolio-vault/icon-192.png?v=1") 3x);
   box-shadow: 0 10px 28px rgba(95, 103, 255, 0.3);
-}
-
-.about-product-mark::after {
-  content: "";
-  display: block;
-  width: 18px;
-  height: 18px;
-  margin: 14px;
-  border: 3px solid #fff;
-  border-top-color: transparent;
-  border-radius: 50%;
 }
 
 .about-product-heading {
@@ -9747,12 +9737,6 @@ html[dir="rtl"] .settings-menu-button.active {
     width: 38px;
     height: 38px;
     border-radius: 11px;
-  }
-
-  .about-product-mark::after {
-    width: 16px;
-    height: 16px;
-    margin: 11px;
   }
 
   .settings-layout {

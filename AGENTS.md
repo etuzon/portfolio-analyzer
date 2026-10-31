@@ -62,6 +62,7 @@ The Docker app is served at `https://localhost:6443`.
 - User-facing dates in forms, tables, tooltips, and reports should use `dd/mm/yyyy`.
 - Loading behavior may be blocking only when explicitly requested; otherwise keep analytics loading lightweight and non-blocking.
 - Honor the active interface language completely. Keep API status values machine-readable, but localize every user-visible status, action, count label, error summary, badge, tooltip, and empty state. Hebrew UI must not show English operational labels, and English UI must not show Hebrew labels.
+- Every added, changed, or removed functionality must update the affected in-app Help in `web/index.html` and Hebrew translations in `web/i18n.js` in the same task, before completion or release. Verify navigation, prerequisites, units, usage steps, results, permissions, and relevant loading/cache/error/retry behavior against the implementation. Audit all Help sections and navigation/settings coverage when asked for a full Help review; cosmetic-only changes require an accuracy check without filler text.
 - For form and table fields, especially numeric amount/percent/age/factor inputs, use stable min-widths or fixed column widths so entered values are visible and not clipped.
 
 ## Implementation Notes

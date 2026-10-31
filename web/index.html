@@ -20,7 +20,7 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/assets/portfolio-vault/icon-48.png?v=1" />
     <link rel="shortcut icon" href="/assets/portfolio-vault/favicon.ico?v=1" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.16" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.17" />
   </head>
   <body>
     <div id="authOverlay" class="auth-overlay">
@@ -913,7 +913,6 @@
       <section class="modal-card about-card" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Application</p>
             <h2 id="aboutTitle">About</h2>
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
@@ -944,11 +943,17 @@
               <article class="help-feature">
                 <h3>Home</h3>
                 <p>Select the portfolio title or logo to return to the dashboard.</p>
-                <p>Use Area to choose the part of the portfolio and View to switch between compact, full, and editing modes. Cards show value, holdings, long-term savings, and data-quality warnings.</p>
+                <p>Use Area to choose investments, long-term savings, employee equity, or all areas. View switches between Glance and Full; Edit lets you arrange, resize, or hide cards.</p>
+                <p>Analytics refresh in the background. Hover or focus a data-gap count to see which input is unavailable; unavailable dividend history does not confirm zero dividends. Currency tooltips use symbols and retain the converted base-currency value.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Portfolio alarms</h3>
+                <p>Open the bell to review vesting and dividend notices. Use Events to scan held securities for dividends. Clearing notices hides the alerts; it does not delete grants or transactions.</p>
               </article>
               <article class="help-feature">
                 <h3>Reports</h3>
-                <p>Review account value, profit, allocation, and saved history. Filter by account, account type, location, and date range before comparing trends or exporting a PDF.</p>
+                <p>Choose people, account category, account, and location, then Generate report. Current balances use the latest recorded values; the history dates affect only Account history. Download PDF exports the displayed report, so regenerate it after changing scope filters.</p>
+                <p>Use Update history for the selected date range. Balance changes may include deposits and withdrawals, and historical amounts use current exchange rates. Manage history records to add or correct a dated balance; saving the same account and date replaces that record.</p>
               </article>
               <article class="help-feature help-feature-wide help-risk-formula">
                 <h3>Investment risk formula</h3>
@@ -979,7 +984,7 @@
             <div class="help-group-content">
               <article class="help-feature">
                 <h3>Accounts</h3>
-                <p>Create investment, cash, and long-term savings accounts. Select the managing institution here, then assign the account owner under People.</p>
+                <p>Create Investment, Bank, Long-Term Savings, or ESOP accounts. Choose the broker and attach existing family members before saving. Every account requires a person; Long-Term Savings and ESOP require exactly one.</p>
               </article>
               <article class="help-feature">
                 <h3>Brokers</h3>
@@ -987,11 +992,21 @@
               </article>
               <article class="help-feature">
                 <h3>Employee Stock Options</h3>
-                <p>Record grants, vesting dates, quantities, and exercise terms. Add public-share details when the underlying stock can be valued in the market.</p>
+                <p>Choose an ESOP account, record the grant and vesting schedule, and set exercise terms. For a listed company, add the public symbol and market; for a private company, maintain local valuations. Review vesting alerts before recording an exercise.</p>
               </article>
               <article class="help-feature">
                 <h3>Securities</h3>
-                <p>Create instruments and maintain positions through their transaction history. Check the account, symbol, market, asset class, quantity, and price before saving.</p>
+                <p>Select the account, symbol, market, asset class, and action. Buy, sell, and short transactions affect account cash; adding or removing a security does not. Enter US equity prices in dollars, US bond prices in cents, and Israeli security prices in agorot.</p>
+                <p>Open a security for its price chart, moving averages, and support/resistance; use Retry after a chart-loading failure. Exposure edits maintain a local economic-currency profile, distinct from the trading currency. Correct recorded transactions through Positions.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Positions</h3>
+                <p>Review open and fully sold positions, filter by person, account, security, or status, and export CSV. Open a position for its recorded transactions and edit corrections there. Closing and reopening creates a separate holding period; imported snapshots may not contain full trade history.</p>
+                <p>Annualized monetary profit is total profit divided by calendar days held, multiplied by 365. It is an amount in the position currency, not a percentage return; missing opening dates or zero elapsed days leave it unavailable.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Account recommendation</h3>
+                <p>In Securities, choose a stock and buy or short action. Leave the amount empty for a suggested size, then review account cash, risk, and horizon assumptions. A recommendation is a simulation; it does not submit an order.</p>
               </article>
               <article class="help-feature">
                 <h3>Prices</h3>
@@ -1009,11 +1024,11 @@
             <div class="help-group-content">
               <article class="help-feature">
                 <h3>Family Members</h3>
-                <p>Add each person before linking financial accounts or creating an individual retirement projection.</p>
+                <p>Add each person with a birth date and retirement age before linking accounts or preparing retirement scenarios. Enter dates as dd/mm/yyyy; these details also affect investment-horizon risk estimates.</p>
               </article>
               <article class="help-feature">
                 <h3>Account Ownership</h3>
-                <p>Attach accounts to the correct people and set ownership percentages. Accurate ownership prevents household and personal totals from being misrepresented.</p>
+                <p>Select an account and an existing family member, then Attach account. Investment and Bank accounts can have multiple people. Long-Term Savings and ESOP have one owner; attaching another person replaces that owner.</p>
               </article>
             </div>
           </details>
@@ -1023,11 +1038,11 @@
             <div class="help-group-content">
               <article class="help-feature">
                 <h3>Pensions &amp; Funds</h3>
-                <p>Link each pension or fund to its long-term account, then maintain balances, deposits, contributions, and fees. The owner is inherited from the linked account.</p>
+                <p>Link each pension, provident fund, or savings fund to a Long-Term Savings account. Its single owner is inherited from that account. Maintain the saved amount and dated balance history; salary and return assumptions belong in Retirement Projections.</p>
               </article>
               <article class="help-feature">
                 <h3>Retirement Projections</h3>
-                <p>Compare retirement ages using salary and deposit periods, return and inflation assumptions, fees, and the pension factor. Enter a zero-income period for a career break; all results are estimates.</p>
+                <p>Create scenarios for a person and complete salary/deposit and annual-return schedules through retirement without gaps or overlaps. Enter returns after fees and costs, and zero salary and deposits for career breaks. Compare estimated balances and monthly pensions using the selected pension factor.</p>
               </article>
             </div>
           </details>
@@ -1037,15 +1052,19 @@
             <div class="help-group-content">
               <article class="help-feature">
                 <h3>Company Reports</h3>
-                <p>Review company financial statements, fundamentals, dividends, and valuation history. Data availability depends on the selected company and provider.</p>
+                <p>Enter a ticker and Get company report to review annual revenue, net income, growth, net margin, free cash flow, and long-term debt when available. Fiscal dates are report year-ends; hover or focus a value for its definition and comparison period.</p>
+                <p>Reports are cached locally. Fresh data is reused until the configured refresh interval expires; a refresh may download the complete provider dataset rather than only missing years. Saved evidence can remain available if an online refresh fails.</p>
               </article>
               <article class="help-feature">
                 <h3>Company Outlook</h3>
-                <p>Compare a company with peers and related industries, then review the score, supporting evidence, risks, and prior prediction accuracy.</p>
+                <p>Analyze a ticker against comparable industry peers. A complete score requires the shared financial measurements and at least two usable peers; incomplete analyses show available evidence without saving a directional forecast. Financial companies require a specialized model. Related industries provide context rather than extra score points.</p>
+                <p>Scored analyses save their original forecast and report baseline. Check company reports manually compares pending forecasts with newer annual reports using each saved peer group and cutoff. The current evaluation measures revenue growth and net margin versus peers, not stock-price returns. A no-new-report check receives no accuracy grade; failed or incomplete checks can be retried.</p>
+                <p>Comparison options let you supply peer tickers and related companies. For a historical backtest, choose an as-of date; only reports filed by that date can support the analysis. Historical backtests and calibration runs do not establish prospective forecast accuracy.</p>
               </article>
               <article class="help-feature">
                 <h3>Portfolio Signals</h3>
-                <p>Define rules and evaluate them across holdings to find items that need attention. A signal is an investigation prompt, not an investment recommendation.</p>
+                <p>Create and enable rules for securities already held, choose whether all or any conditions must match, and save. Rules run daily; Run rules now starts a manual check. Review Active signals and Run history, and open Graph for price context. Matches and account recommendations do not place trades.</p>
+                <p>Dismiss hides the same stock and signal type across rules for the configured period. Change that period in Settings for new dismissals; existing dismissals keep their original expiry. A failed rule run is different from a successful run with no matches.</p>
               </article>
             </div>
           </details>
@@ -1055,11 +1074,11 @@
             <div class="help-group-content">
               <article class="help-feature">
                 <h3>Market Screener</h3>
-                <p>Search and filter market instruments, then open a result for deeper price and signal analysis before deciding whether it belongs in the portfolio.</p>
+                <p>Search by ticker or company and filter by exchange, industry, and financial metrics. Statement filters use the latest annual report; monetary filter fields marked $M use USD millions. Include rows missing a filtered value only when you want unavailable values retained. Open results for charts or company research.</p>
               </article>
               <article class="help-feature">
                 <h3>US–Israel Scenarios</h3>
-                <p>Set Fed and domestic trigger probabilities, inspect the dependency graph, and adjust conditional assumptions for sectors, bonds, funds, commodities, and technology themes.</p>
+                <p>Set the Fed raise, cut, and unchanged probabilities to total 100%. Country and global triggers can overlap and do not need to total 100%. Select a trigger, inspect its dependency network, and adjust conditional assumptions; results describe your scenario assumptions, not guaranteed forecasts.</p>
               </article>
               <article class="help-feature">
                 <h3>Market Banner</h3>
@@ -1079,7 +1098,8 @@
               </article>
               <article class="help-feature">
                 <h3>Settings</h3>
-                <p>Manage language and table display, portable portfolio import and export, full backup and restore, schedules, and cache status. Full backups contain sensitive application state and must be stored securely.</p>
+                <p>Manage language, account security, table display, signal-dismissal periods, saved-chat limits, and cache status. Portable JSON import replaces portable portfolio records; full backup/restore covers application state and offers automatic backup scheduling. Restoring a full backup replaces current state after a safety backup. Keep full backups secure.</p>
+                <p>Admins also manage log rotation and independent REST API and MCP access modes: Off, Read only, or Read and write. Viewer access stays read-only. Review the enabled mode and token permissions before connecting an external client.</p>
               </article>
             </div>
           </details>
@@ -1087,6 +1107,10 @@
           <details class="help-group">
             <summary><span>Help</span><small>Understand the product and use it safely on any screen.</small></summary>
             <div class="help-group-content">
+              <article class="help-feature">
+                <h3>Portfolio chat</h3>
+                <p>Type a question in the header or Open chat to ask about available portfolio and market data. The assistant uses approved read tools and cannot edit your portfolio. Chats are saved separately for each user; select a saved chat to continue, or New chat to start again. Change the saved-chat limit in Settings.</p>
+              </article>
               <article class="help-feature">
                 <h3>About</h3>
                 <p>Shows the installed product version, its purpose, and the important privacy and decision-support boundaries.</p>
