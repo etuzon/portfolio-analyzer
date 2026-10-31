@@ -4292,9 +4292,11 @@ function renderDonut(groups, title, centerLabel, total, centerSub = null, extraC
   const localizedTitle = optionLabel(title);
   const groupLabel = (label) => extraClass === "currency-allocation-card" && label !== "Unknown" && label !== "Other currencies"
     ? currencyDisplayLabel(label) : optionLabel(label);
+  const tooltipLabel = (label) => extraClass === "currency-allocation-card" && label !== "Unknown" && label !== "Other currencies"
+    ? currencySymbol(label) : optionLabel(label);
   const requestedCenterSub = centerSub || (state.language === "he" ? ["נכס", "מוביל"] : ["TOP", "ASSET"]);
   const centerSubLines = requestedCenterSub.filter(Boolean).map(groupLabel);
-  const centerSubText = `<foreignObject x="45" y="66" width="40" height="18" aria-hidden="true"><div xmlns="http://www.w3.org/1999/xhtml" class="donut-center-caption" dir="auto" title="${esc(centerSubLines.join(" "))}">${centerSubLines.slice(0, 2).map((line) => `<span>${esc(line)}</span>`).join("")}</div></foreignObject>`;
+  const centerSubText = `<foreignObject x="45" y="66" width="40" height="18" aria-hidden="true"><div xmlns="http://www.w3.org/1999/xhtml" class="donut-center-caption" dir="auto" title="${esc(requestedCenterSub.filter(Boolean).map(tooltipLabel).join(" "))}">${centerSubLines.slice(0, 2).map((line) => `<span>${esc(line)}</span>`).join("")}</div></foreignObject>`;
   return `
     <div class="chart-card donut-card ${esc(extraClass)}">
       <div class="chart-title">${esc(localizedTitle)}</div>
@@ -4303,7 +4305,7 @@ function renderDonut(groups, title, centerLabel, total, centerSub = null, extraC
         ${visibleGroups.map((group, index) => {
           const dash = total ? (group.value / total) * circumference : 0;
           const percent = total ? Math.round(group.value / total * 100) : 0;
-          const tooltip = `${groupLabel(group.label)}\n${money(group.value, state.baseCurrency, 0)}\n${percent}%`;
+          const tooltip = `${tooltipLabel(group.label)}\n${money(group.value, state.baseCurrency, 0)}\n${percent}%`;
           const circle = `<circle cx="65" cy="65" r="42" fill="none" stroke="${colorAt(index)}" stroke-width="14" stroke-dasharray="${dash.toFixed(1)} ${(circumference - dash).toFixed(1)}" stroke-dashoffset="${(-offset).toFixed(1)}" transform="rotate(-90 65 65)"><title>${esc(tooltip)}</title></circle>`;
           offset += dash;
           return circle;
@@ -4316,7 +4318,7 @@ function renderDonut(groups, title, centerLabel, total, centerSub = null, extraC
         ${visibleGroups.map((group, index) => {
           const percent = total ? Math.round(group.value / total * 100) : 0;
           const cashAmount = group.label === "Cash" ? ` · ${money(group.value, state.baseCurrency, 0)}` : "";
-          const tooltip = `${groupLabel(group.label)} · ${money(group.value, state.baseCurrency, 0)} · ${percent}%`;
+          const tooltip = `${tooltipLabel(group.label)} · ${money(group.value, state.baseCurrency, 0)} · ${percent}%`;
           return `<span title="${esc(tooltip)}"><i style="background:${colorAt(index)}"></i>${esc(groupLabel(group.label))} ${percent}%${cashAmount}</span>`;
         }).join("")}
       </div>
@@ -4370,7 +4372,7 @@ function renderCashByCurrencyBars() {
         ${rows.map((row, index) => {
           const width = Math.max(row.baseValue / max * 100, 2);
           const amount = fmt(row.amount, 0);
-          const tooltip = `${currencyDisplayLabel(row.currency)}\n${amount}\n${optionLabel("Base equivalent")}: ${money(row.baseValue, state.baseCurrency, 0)}`;
+          const tooltip = `${bidiIsolate(`${amount}${currencySymbol(row.currency)}`, "ltr")}\n${optionLabel("Base equivalent")}: ${money(row.baseValue, state.baseCurrency, 0)}`;
           return `
             <div class="cash-currency-row" title="${esc(tooltip)}">
               <div class="cash-currency-label">
@@ -4432,7 +4434,7 @@ function renderBondsByCurrency(items) {
           const width = Math.max(Math.abs(row.baseValue) / max * 100, 2);
           const amount = fmt(row.amount, 0);
           const rowPositionLabel = optionLabel(row.positions === 1 ? "bond position" : "bond positions");
-          const tooltip = `${currencyDisplayLabel(row.currency)}\n${money(row.amount, row.currency, 0)}\n${row.positions} ${rowPositionLabel}\n${optionLabel("Base equivalent")}: ${money(row.baseValue, state.baseCurrency, 0)}`;
+          const tooltip = `${bidiIsolate(`${amount}${currencySymbol(row.currency)}`, "ltr")}\n${row.positions} ${rowPositionLabel}\n${optionLabel("Base equivalent")}: ${money(row.baseValue, state.baseCurrency, 0)}`;
           return `
             <div class="bond-currency-row" title="${esc(tooltip)}">
               <div class="bond-currency-label">
