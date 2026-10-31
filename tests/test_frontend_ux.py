@@ -52,7 +52,7 @@ def test_portfolio_signal_rules_explain_each_selected_financial_measure():
     assert 'id="newAlertRule"' in html
     assert 'id="alertConditionCount"' in html
     assert 'data-add-alert-condition' in html
-    assert "Save rule &amp; start another" in html
+    assert '<button id="saveAlert" type="button">Save rule</button>' in html
     assert "function alertMetricGuidance(metricKey)" in script
     assert "function updateAlertConditionGuidance(row)" in script
     assert 'class="ux-tooltip signal-condition-help"' in script

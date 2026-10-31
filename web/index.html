@@ -20,7 +20,7 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/assets/portfolio-vault/icon-48.png?v=1" />
     <link rel="shortcut icon" href="/assets/portfolio-vault/favicon.ico?v=1" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.11" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.12" />
   </head>
   <body>
     <div id="authOverlay" class="auth-overlay">
@@ -1655,25 +1655,29 @@
             <div id="alertConditions" class="signal-conditions"></div>
             <button class="signal-add-condition" type="button" data-add-alert-condition>+ Add another condition</button>
             <div class="form-actions signal-form-actions">
-              <button id="saveAlert" type="button">Save rule &amp; start another</button>
+              <button id="saveAlert" type="button">Save rule</button>
               <button id="cancelAlertEdit" class="secondary" type="button" hidden>Cancel edit</button>
             </div>
             <p id="alertStatus" class="status-line" role="status" aria-live="polite"></p>
           </section>
 
           <section class="signal-section" aria-labelledby="activeSignalsTitle">
-            <div class="section-head compact-head"><div><p class="eyebrow">Matches</p><h4 id="activeSignalsTitle">Active signals</h4><p class="section-note">Open a company investigation before making a decision.</p></div></div>
+            <div class="section-head compact-head"><div><p class="eyebrow">Matches</p><h4 id="activeSignalsTitle">Active signals</h4><p class="section-note">Open a company investigation before making a decision.</p></div><button class="secondary compact-button" type="button" data-show-saved-rules>Go to saved rules</button></div>
+            <div class="signal-filter-bar">
+              <label class="management-field" for="alertRuleFilter"><span>Filter by rule</span><select id="alertRuleFilter"><option value="">All rules</option></select></label>
+              <p id="alertSignalFilterCount" class="status-line" role="status" aria-live="polite"></p>
+            </div>
             <p id="alertSignalStatus" class="status-line" role="status" aria-live="polite" tabindex="-1"></p>
-            <div id="alertsSignals" class="signal-card-list"></div>
+            <div id="alertsSignals" class="signal-card-list" role="region" aria-labelledby="activeSignalsTitle" tabindex="0"></div>
           </section>
 
           <div class="signal-lower-grid">
             <section class="signal-section" aria-labelledby="savedRulesTitle">
-              <div class="section-head compact-head"><div><p class="eyebrow">Automation</p><h4 id="savedRulesTitle">Saved rules</h4></div></div>
+              <div class="section-head compact-head"><div><h4 id="savedRulesTitle" tabindex="-1">Saved rules</h4></div></div>
               <div id="alertsList" class="signal-card-list"></div>
             </section>
             <section class="signal-section" aria-labelledby="ruleHistoryTitle">
-              <div class="section-head compact-head"><div><p class="eyebrow">Audit trail</p><h4 id="ruleHistoryTitle">Run history</h4></div></div>
+              <div class="section-head compact-head"><div><h4 id="ruleHistoryTitle">Run history</h4></div></div>
               <div id="alertRunHistory" class="signal-card-list"></div>
             </section>
           </div>
@@ -2432,11 +2436,11 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="/i18n.js?v=1.2.11"></script>
+  <script src="/i18n.js?v=1.2.12"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
   <script src="/trade-planner.js?v=2"></script>
   <script src="/trade-planner-ui.js?v=3"></script>
-  <script src="/app.js?v=0.9.10"></script>
+  <script src="/app.js?v=0.9.11"></script>
   </body>
 </html>

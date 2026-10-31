@@ -7807,6 +7807,7 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 }
 
 .outlook-history-head {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -7842,6 +7843,17 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
   background: rgba(240, 216, 106, 0.08);
   color: #f0d86a;
 }
+
+.outlook-history-status { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; }
+.outlook-pending-help { position: static; }
+.outlook-pending-help summary { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #465266; border-radius: 50%; background: #1b2028; color: #d4e4fa; cursor: pointer; list-style: none; }
+.outlook-pending-help summary::-webkit-details-marker { display: none; }
+.outlook-pending-help summary:focus-visible { outline: 2px solid #72c4ff; outline-offset: 3px; }
+.outlook-pending-description { position: absolute; z-index: 40; inset-block-start: calc(100% + 8px); inset-inline-end: 0; width: min(320px, 100%); padding: 12px; border: 1px solid #465266; border-radius: 8px; background: #232a34; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42); color: #eef5ff; font-size: 12px; font-weight: 500; line-height: 1.6; text-align: start; }
+.outlook-prediction-feedback { margin: 0; color: #bad7ef; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.outlook-prediction-feedback:empty { display: none; }
+.outlook-prediction-feedback.is-error { color: #ffb4bd; }
+.outlook-prediction-feedback:focus-visible { outline: 2px solid #72c4ff; outline-offset: 3px; border-radius: 3px; }
 
 .outlook-history-meta {
   display: flex;
@@ -8140,6 +8152,24 @@ html[dir="rtl"] .signal-condition-help::after {
   display: grid;
   gap: 8px;
   margin-top: 10px;
+}
+
+#alertsSignals {
+  max-height: min(65vh, 720px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding-inline-end: 6px;
+}
+
+.signal-filter-bar { display: flex; align-items: end; flex-wrap: wrap; gap: 10px 16px; }
+.signal-filter-bar .management-field { flex: 1 1 240px; min-width: 0; max-width: 420px; }
+.signal-filter-bar select { width: 100%; min-width: 0; }
+.signal-filter-bar .status-line { margin: 0 0 8px; }
+
+#alertsSignals:focus-visible,
+#savedRulesTitle:focus-visible {
+  outline: 2px solid #72c4ff;
+  outline-offset: 3px;
 }
 
 .signal-card {

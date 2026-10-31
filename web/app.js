@@ -91,9 +91,14 @@ const state = {
   financeReport: null,
   companyOutlook: null,
   companyOutlookHistory: [],
+  companyOutlookHistoryData: null,
+  companyOutlookHistorySymbol: "",
+  companyOutlookHistoryVersion: 0,
+  companyOutlookEvaluationUi: {},
   researchSection: "finance",
   macroScenarioSettings: null,
   alertData: null,
+  alertRuleFilter: "",
   alertRefreshTimer: null,
   alertDismissPending: [],
   alertClientDismissals: [],
@@ -1238,7 +1243,10 @@ function renderCurrentUser() {
 }
 
 function setAuthenticatedSession(payload) {
-  if (state.auth.user?.id !== payload?.user?.id && typeof resetTradePlannerViews === "function") resetTradePlannerViews();
+  if (state.auth.user?.id !== payload?.user?.id) {
+    if (typeof resetTradePlannerViews === "function") resetTradePlannerViews();
+    resetCompanyOutlookHistoryUi();
+  }
   state.auth.user = payload?.user || null;
   state.auth.csrfToken = String(payload?.csrf_token || "");
   state.auth.forcedPasswordChange = Boolean(payload?.user?.must_change_password);
@@ -1248,6 +1256,7 @@ function setAuthenticatedSession(payload) {
 }
 
 function showLogin(message = "") {
+  resetCompanyOutlookHistoryUi();
   if (typeof resetTradePlannerViews === "function") resetTradePlannerViews();
   state.portfolioRefreshPending = false;
   state.portfolioLoadVersion = (state.portfolioLoadVersion || 0) + 1;
@@ -2024,6 +2033,7 @@ function applyLanguage() {
   renderLoggingSettings();
   renderAlertDismissalSettings();
   if (state.companyOutlook) renderCompanyOutlook(state.companyOutlook);
+  if (state.companyOutlookHistoryData) renderCompanyOutlookHistory(state.companyOutlookHistoryData);
   if (state.financeReport) renderFinanceReport(state.financeReport);
   if (state.activeReport) renderReportSummary(state.activeReport);
   if (state.activeReportTrend) renderAccountTrend(state.activeReportTrend);
@@ -9095,7 +9105,80 @@ function renderFinanceReport(report) {
     </table>`;
 }
 
+function resetCompanyOutlookHistoryUi() {
+  state.companyOutlookEvaluationUi = {};
+  state.companyOutlookHistoryVersion = (state.companyOutlookHistoryVersion || 0) + 1;
+  state.companyOutlookHistoryData = null;
+  state.companyOutlookHistory = [];
+  state.companyOutlookHistorySymbol = "";
+  if ($("companyOutlookHistory")) $("companyOutlookHistory").innerHTML = "";
+  if ($("companyOutlookScorecard")) $("companyOutlookScorecard").innerHTML = "";
+}
+
+function companyOutlookEvaluationMessage(item) {
+  const ui = state.companyOutlookEvaluationUi?.[item.id] || {};
+  if (ui.status === "checking") return t("Checking for a newer annual report…");
+  if (ui.status === "error") return t("Could not check this prediction. Try again.");
+  const evaluation = item.evaluation ? t(item.evaluation) : "";
+  const message = ui.status === "done"
+    ? `${t("Check complete")}: ${evaluation || t("Prediction evaluated")}` : evaluation;
+  return ui.refreshFailed ? `${message} ${t("The check finished, but the history totals could not be refreshed.")}` : message;
+}
+
+function positionCompanyOutlookHelp(help) {
+  const panel = help.querySelector(".outlook-pending-description");
+  if (!help.open || !panel) return;
+  const header = help.closest(".outlook-history-head").getBoundingClientRect();
+  const dialog = help.closest(".modal-card")?.getBoundingClientRect();
+  const top = Math.max(8, (dialog?.top || 0) + 8);
+  const bottom = Math.min(window.innerHeight - 8, dialog ? dialog.bottom - 8 : window.innerHeight - 8);
+  const below = Math.max(0, bottom - header.bottom - 8);
+  const above = Math.max(0, header.top - top - 8);
+  const showAbove = panel.scrollHeight > below && above > below;
+  panel.style.insetBlockStart = showAbove ? "auto" : "calc(100% + 8px)";
+  panel.style.insetBlockEnd = showAbove ? "calc(100% + 8px)" : "auto";
+  panel.style.maxHeight = `${Math.max(40, showAbove ? above : below)}px`;
+  panel.style.overflowY = "auto";
+}
+
+document.addEventListener("toggle", (event) => {
+  if (event.target.matches?.(".outlook-pending-help")) positionCompanyOutlookHelp(event.target);
+}, true);
+
+window.addEventListener("resize", () => {
+  document.querySelectorAll(".outlook-pending-help[open]").forEach(positionCompanyOutlookHelp);
+});
+
+function updateCompanyOutlookEvaluationUi(predictionId) {
+  const item = state.companyOutlookHistory.find((prediction) => prediction.id === predictionId);
+  const card = [...document.querySelectorAll("[data-company-outlook-prediction]")]
+    .find((node) => node.dataset.companyOutlookPrediction === predictionId);
+  if (!item || !card) return;
+  const ui = state.companyOutlookEvaluationUi?.[predictionId] || {};
+  const busy = ui.status === "checking";
+  card.setAttribute("aria-busy", String(busy));
+  const feedback = card.querySelector(".outlook-prediction-feedback");
+  feedback.textContent = companyOutlookEvaluationMessage(item);
+  feedback.classList.toggle("is-error", ui.status === "error");
+  const button = card.querySelector("[data-evaluate-company-outlook]");
+  if (button) {
+    button.disabled = busy;
+    button.textContent = t(busy ? "Checking…" : ui.status === "error" ? "Retry" : "Evaluate next report");
+  }
+  const remove = card.querySelector("[data-delete-company-outlook]");
+  if (remove) remove.disabled = busy;
+}
+
 function renderCompanyOutlookHistory(data) {
+  const history = $("companyOutlookHistory");
+  const active = document.activeElement;
+  const focusedId = active?.closest?.("[data-company-outlook-prediction]")?.dataset.companyOutlookPrediction;
+  const focusSelector = active?.dataset?.evaluateCompanyOutlook ? "[data-evaluate-company-outlook]"
+    : active?.dataset?.deleteCompanyOutlook ? "[data-delete-company-outlook]"
+    : active?.matches?.(".outlook-pending-help summary") ? ".outlook-pending-help summary" : ".outlook-prediction-feedback";
+  const openedHelp = [...(history.querySelectorAll?.(".outlook-pending-help[open]") || [])]
+    .map((help) => help.closest("[data-company-outlook-prediction]")?.dataset.companyOutlookPrediction);
+  state.companyOutlookHistoryData = data;
   state.companyOutlookHistory = data.items || [];
   const scorecard = data.scorecard || {};
   const qualityGate = scorecard.quality_gate || {};
@@ -9105,39 +9188,58 @@ function renderCompanyOutlookHistory(data) {
     ["Pending", scorecard.pending || 0],
     ["Accuracy", scorecard.accuracy_percent == null ? "Not evaluated" : pct(scorecard.accuracy_percent)],
     ["Validation", qualityGate.passed ? "75% target met" : "Not validated"],
-  ].map(([label, value]) => `<div class="stat"><b>${esc(value)}</b><span>${esc(label)}</span></div>`).join("");
+  ].map(([label, value]) => `<div class="stat"><b>${esc(t(String(value)))}</b><span>${esc(t(label))}</span></div>`).join("");
   $("companyOutlookHistory").innerHTML = state.companyOutlookHistory.length ? state.companyOutlookHistory.map((item) => {
     const direction = item.actual_direction || "pending";
     const stateLabel = direction === "pending" ? "Pending" : direction.charAt(0).toUpperCase() + direction.slice(1);
+    const ui = state.companyOutlookEvaluationUi?.[item.id] || {};
+    const busy = ui.status === "checking";
+    const pendingHelp = "This forecast has not been evaluated against a newer annual report. Select Evaluate next report to check. If no newer report is available, try again after the next annual report is published. The forecast horizon does not schedule an automatic check.";
     return `
-      <article class="stack-item management-item outlook-history-item">
+      <article class="stack-item management-item outlook-history-item" data-company-outlook-prediction="${esc(item.id)}" aria-busy="${busy}">
         <header class="outlook-history-head">
           <div class="outlook-history-identity">
             <b>${esc(item.symbol)} · ${fmt(item.score, 0)}/100</b>
-            <span class="outlook-history-label">${esc(item.label || "Mixed")}</span>
+            <span class="outlook-history-label">${esc(t(item.label || "Mixed"))}</span>
           </div>
-          <span class="outlook-history-state ${esc(direction)}">${esc(stateLabel)}</span>
+          <div class="outlook-history-status"><span class="outlook-history-state ${esc(direction)}">${esc(t(stateLabel))}</span>
+            ${direction === "pending" ? `<details class="outlook-pending-help"><summary aria-label="${esc(t("Why is this prediction pending?"))}" title="${esc(t(pendingHelp))}"><span aria-hidden="true">i</span></summary><div class="outlook-pending-description" role="note">${esc(t(pendingHelp))}</div></details>` : ""}
+          </div>
         </header>
         <div class="outlook-history-meta">
-          <span><small>Created</small><b>${esc(formatDate(String(item.created_at || "").slice(0, 10)))}</b></span>
-          <span><small>Evaluate after</small><b>${esc(formatDate(item.horizon_date))}</b></span>
-          <span><small>Confidence</small><b>${esc(item.confidence || "Low")}</b></span>
+          <span><small>${esc(t("Created"))}</small><b>${esc(formatDate(String(item.created_at || "").slice(0, 10)))}</b></span>
+          <span><small>${esc(t("Evaluate after"))}</small><b>${esc(formatDate(item.horizon_date))}</b></span>
+          <span><small>${esc(t("Confidence"))}</small><b>${esc(t(item.confidence || "Low"))}</b></span>
         </div>
-        <p class="outlook-history-thesis">${esc(item.thesis || "No report-backed summary was stored for this prediction.")}</p>
-        ${direction === "pending" ? "" : `<p class="outlook-history-evaluation">${item.accuracy_score == null ? esc(item.evaluation || "Inconclusive") : `Accuracy ${fmt(item.accuracy_score, 0)}% · ${esc(item.evaluation || "")}`}</p>`}
+        <p class="outlook-history-thesis">${esc(t(item.thesis || "No report-backed summary was stored for this prediction."))}</p>
+        ${direction === "pending" || item.accuracy_score == null ? "" : `<p class="outlook-history-evaluation">${esc(t("Accuracy"))} ${fmt(item.accuracy_score, 0)}%</p>`}
+        <p class="outlook-prediction-feedback${ui.status === "error" ? " is-error" : ""}" role="status" aria-live="polite" tabindex="-1">${esc(companyOutlookEvaluationMessage(item))}</p>
         <footer class="row-actions outlook-history-actions">
-          ${direction === "pending" ? `<button class="secondary compact-button" type="button" data-evaluate-company-outlook="${esc(item.id)}">Evaluate next report</button>` : ""}
-          <button class="secondary compact-button" type="button" data-delete-company-outlook="${esc(item.id)}" data-prediction-symbol="${esc(item.symbol)}">Remove</button>
+          ${direction === "pending" ? `<button class="secondary compact-button" type="button" data-evaluate-company-outlook="${esc(item.id)}"${busy ? " disabled" : ""}>${esc(t(busy ? "Checking…" : ui.status === "error" ? "Retry" : "Evaluate next report"))}</button>` : ""}
+          <button class="secondary compact-button" type="button" data-delete-company-outlook="${esc(item.id)}" data-prediction-symbol="${esc(item.symbol)}"${busy ? " disabled" : ""}>${esc(t("Remove"))}</button>
         </footer>
       </article>
     `;
   }).join("") : '<div class="empty">No saved company predictions yet</div>';
+  const cards = [...document.querySelectorAll("[data-company-outlook-prediction]")];
+  for (const id of openedHelp) {
+    const help = cards.find((card) => card.dataset.companyOutlookPrediction === id)?.querySelector(".outlook-pending-help");
+    if (help) help.open = true;
+  }
+  if (focusedId) {
+    const card = cards.find((node) => node.dataset.companyOutlookPrediction === focusedId);
+    const target = card?.querySelector(focusSelector);
+    (target && !target.disabled ? target : card?.querySelector(".outlook-prediction-feedback"))?.focus({ preventScroll: true });
+  }
 }
 
-async function loadCompanyOutlookHistory(symbol = "") {
+async function loadCompanyOutlookHistory(symbol = "", options = {}) {
+  const version = (state.companyOutlookHistoryVersion || 0) + 1;
+  state.companyOutlookHistoryVersion = version;
+  state.companyOutlookHistorySymbol = symbol;
   const query = symbol ? `?symbol=${encodeURIComponent(symbol)}` : "";
-  const data = await api(`/api/company-outlook/predictions${query}`);
-  renderCompanyOutlookHistory(data);
+  const data = await api(`/api/company-outlook/predictions${query}`, options);
+  if (version === state.companyOutlookHistoryVersion) renderCompanyOutlookHistory(data);
 }
 
 let companyOutlookDiagramSequence = 0;
@@ -9337,9 +9439,42 @@ async function loadCompanyOutlookBacktest() {
 }
 
 async function evaluateCompanyOutlookPrediction(predictionId) {
-  const result = await api(`/api/company-outlook/predictions/${encodeURIComponent(predictionId)}/evaluate`, { method: "POST", body: "{}" });
-  $("companyOutlookStatus").textContent = result.actual_direction === "pending" ? "No newer annual report is available for that prediction yet" : `Prediction evaluated: ${result.actual_direction}`;
-  await loadCompanyOutlookHistory(valueOf("outlookSymbol"));
+  const evaluations = state.companyOutlookEvaluationUi ||= {};
+  if (evaluations[predictionId]?.status === "checking") return;
+  const ui = { status: "checking" };
+  evaluations[predictionId] = ui;
+  const isCurrent = () => state.companyOutlookEvaluationUi === evaluations && evaluations[predictionId] === ui;
+  const filter = state.companyOutlookHistorySymbol || "";
+  const returnFocus = document.activeElement;
+  updateCompanyOutlookEvaluationUi(predictionId);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60000);
+  try {
+    const result = await api(`/api/company-outlook/predictions/${encodeURIComponent(predictionId)}/evaluate`, {
+      method: "POST", body: "{}", signal: controller.signal,
+    });
+    if (!isCurrent()) return;
+    ui.status = "done";
+    const items = state.companyOutlookHistory.map((item) => item.id === predictionId ? { ...item, ...result } : item);
+    renderCompanyOutlookHistory({ ...(state.companyOutlookHistoryData || {}), items });
+    try {
+      if (filter === state.companyOutlookHistorySymbol) await loadCompanyOutlookHistory(filter, { signal: controller.signal });
+    } catch {
+      if (isCurrent()) ui.refreshFailed = true;
+    }
+  } catch {
+    if (isCurrent()) ui.status = "error";
+  } finally {
+    clearTimeout(timeout);
+    if (isCurrent()) {
+      updateCompanyOutlookEvaluationUi(predictionId);
+      if (document.activeElement === returnFocus || document.activeElement === document.body) {
+        const card = [...document.querySelectorAll("[data-company-outlook-prediction]")]
+          .find((node) => node.dataset.companyOutlookPrediction === predictionId);
+        card?.querySelector(".outlook-prediction-feedback")?.focus({ preventScroll: true });
+      }
+    }
+  }
 }
 
 async function deleteCompanyOutlookPrediction(predictionId, symbol) {
@@ -11311,7 +11446,7 @@ function resetAlertForm() {
   $("alertSignal").value = "buy";
   $("alertMatchMode").value = "all";
   $("alertEnabled").checked = true;
-  $("saveAlert").textContent = t("Save rule & start another");
+  $("saveAlert").textContent = t("Save rule");
   $("cancelAlertEdit").hidden = true;
   renderAlertConditions();
 }
@@ -11387,23 +11522,47 @@ function alertRunProgressText(progress) {
   return total ? `${label} ${fmt(completed, 0)}/${fmt(total, 0)}` : label;
 }
 
-function renderAlerts(data) {
+function renderAlerts(data, { signalsOnly = false } = {}) {
   const wasRunning = alertRunIsActive(state.alertData);
   state.alertData = data;
   state.alertOptions = data.options || state.alertOptions;
-  if (!state.alertConditions.length) resetAlertForm();
-  else renderAlertConditions();
+  if (!signalsOnly) {
+    if (!state.alertConditions.length) resetAlertForm();
+    else renderAlertConditions();
+  }
 
   const rules = data.rules || [];
   const locallyDismissed = (state.alertClientDismissals || []).filter((entry) => Date.parse(entry.expires_at) > Date.now());
-  const signals = (data.active_signals || []).filter((signal) => !locallyDismissed.some((entry) => entry.symbol === String(signal.symbol || "").toUpperCase() && entry.signal === signal.signal));
+  const activeSignals = (data.active_signals || []).filter((signal) => !locallyDismissed.some((entry) => entry.symbol === String(signal.symbol || "").toUpperCase() && entry.signal === signal.signal));
+  const ruleKey = (signal) => signal.rule_id ? `rule:${signal.rule_id}` : signal.rule_name ? `name:${signal.rule_name}` : "unassigned";
+  const filterRules = new Map(rules.filter((rule) => rule.id).map((rule) => [`rule:${rule.id}`, rule.name || t("Rule")]));
+  for (const signal of activeSignals) {
+    if (!filterRules.has(ruleKey(signal))) filterRules.set(ruleKey(signal), signal.rule_name || t("Unknown rule"));
+  }
+  const nameCounts = new Map(), nameOrdinals = new Map();
+  for (const name of filterRules.values()) nameCounts.set(name, (nameCounts.get(name) || 0) + 1);
+  const filterLabels = new Map([...filterRules].map(([id, name]) => {
+    const ordinal = (nameOrdinals.get(name) || 0) + 1;
+    nameOrdinals.set(name, ordinal);
+    return [id, nameCounts.get(name) > 1 ? `${name} (${ordinal})` : name];
+  }));
+  if (state.alertRuleFilter && !filterRules.has(state.alertRuleFilter)) state.alertRuleFilter = "";
+  const selectedRule = state.alertRuleFilter || "";
+  const signals = selectedRule ? activeSignals.filter((signal) => ruleKey(signal) === selectedRule) : activeSignals;
+  const filter = $("alertRuleFilter");
+  if (filter) {
+    filter.innerHTML = `<option value="">${esc(t("All rules"))}</option>${[...filterLabels].map(([id, name]) => `<option value="${esc(id)}">${esc(name)}</option>`).join("")}`;
+    filter.value = selectedRule;
+  }
+  if ($("alertSignalFilterCount")) $("alertSignalFilterCount").textContent = t("Signals shown: {shown} of {total}")
+    .replace("{shown}", fmt(signals.length, 0)).replace("{total}", fmt(activeSignals.length, 0));
   const runs = data.runs || [];
   const dismissalDays = Number.isInteger(Number(data.dismissal_days)) && Number(data.dismissal_days) >= 1 ? Number(data.dismissal_days) : 60;
   if ($("alertSignalStatus")) {
     const message = state.alertDismissStatus;
     $("alertSignalStatus").textContent = message ? Object.entries(message.values || {}).reduce((text, [key, value]) => text.replaceAll(`{${key}}`, value), t(message.template)) : "";
   }
-  $("alertActiveSummary").textContent = fmt(signals.length, 0);
+  $("alertActiveSummary").textContent = fmt(activeSignals.length, 0);
   $("alertRuleSummary").textContent = `${rules.filter((rule) => rule.enabled).length} of ${rules.length}`;
   $("alertScheduleSummary").textContent = data.schedule?.next_run ? formatDateTime(data.schedule.next_run) : t("Not scheduled");
   $("alertRunSummary").textContent = runs[0]?.run_at
@@ -11416,12 +11575,12 @@ function renderAlerts(data) {
     const missing = (signal.missing || []).filter(Boolean);
     const missingRuleMetrics = (signal.missing_metrics || []).map((metric) => alertMetric(metric).label);
     const dismissing = (state.alertDismissPending || []).includes(`${String(signal.symbol || "").toUpperCase()}|${signalType}`);
-    return `<article class="signal-card signal-match-card signal-${esc(signalType)}">
+    return `<article class="signal-card signal-match-card signal-${esc(signalType)}" data-signal-rule="${esc(ruleKey(signal))}">
       <div class="signal-card-head">
         <div><span class="signal-badge">${esc(t(`${signalType[0].toUpperCase()}${signalType.slice(1)} signal`))}</span><h5>${esc(signal.symbol)} <small>${esc(signal.name || "")}</small></h5></div>
         <span class="signal-time">${esc(formatDateTime(signal.matched_at))}</span>
       </div>
-      <p class="signal-rule-name">Matched “${esc(signal.rule_name || "Rule")}”</p>
+      <p class="signal-rule-name">${esc(t(`Matched “${filterLabels.get(ruleKey(signal)) || signal.rule_name || t("Rule")}”`))}</p>
       ${reasons ? `<ul class="signal-reasons">${reasons}</ul>` : ""}
       ${missingRuleMetrics.length ? `<p class="signal-missing">Rule data unavailable: ${esc(missingRuleMetrics.join(", "))}</p>` : ""}
       ${missing.length ? `<p class="signal-missing">Some provider data is unavailable: ${esc(missing.join(", "))}</p>` : ""}
@@ -11433,7 +11592,9 @@ function renderAlerts(data) {
       </div>
       ${typeof tradePlannerSignalPanel === "function" ? tradePlannerSignalPanel(signal, index) : ""}
     </article>`;
-  }).join("") : '<div class="empty signal-empty">No current matches. Run the rules now or wait for the next daily check.</div>';
+  }).join("") : `<div class="empty signal-empty">${esc(t(selectedRule ? "No signals match the selected rule." : "No current matches. Run the rules now or wait for the next daily check."))}</div>`;
+
+  if (signalsOnly) return;
 
   $("alertsList").innerHTML = rules.length ? rules.map((rule) => {
     const conditions = rule.conditions || [];
@@ -11443,7 +11604,7 @@ function renderAlerts(data) {
     const isRunning = rule.last_status === "Running";
     return `<article class="signal-card saved-rule-card${rule.enabled ? "" : " is-disabled"}${isRunning ? " is-running" : ""}">
       <div class="signal-card-head">
-        <div><span class="signal-badge signal-${esc(rule.signal || "watch")}">${esc(rule.signal || "watch")}</span><h5>${esc(rule.name)}</h5></div>
+        <div><span class="signal-badge signal-${esc(rule.signal || "watch")}">${esc(rule.signal || "watch")}</span><h5>${esc(filterLabels.get(`rule:${rule.id}`) || rule.name)}</h5></div>
         <span class="rule-state">${isRunning ? t("Running…") : rule.enabled ? t("Daily") : t("Paused")}</span>
       </div>
       <p>${esc(conditionText)}</p>
@@ -12936,6 +13097,12 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
+  const pendingHelp = event.target.closest?.(".outlook-pending-help[open]");
+  if (pendingHelp && event.key === "Escape") {
+    event.preventDefault();
+    pendingHelp.open = false;
+    return;
+  }
   const activeResearchTab = event.target.closest?.("[data-research-tab]");
   if (activeResearchTab && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
     const tabs = [...document.querySelectorAll("[data-research-tab]")];
@@ -12990,6 +13157,11 @@ document.addEventListener("keydown", (event) => {
 });
 
 document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-show-saved-rules]")) {
+    $("savedRulesTitle").scrollIntoView({ block: "start" });
+    $("savedRulesTitle").focus({ preventScroll: true });
+    return;
+  }
   if (event.target.closest("#navigationToggle")) {
     setMobileNavigation($("navigationToggle").getAttribute("aria-expanded") !== "true");
     return;
@@ -13516,6 +13688,12 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  if (event.target.id === "alertRuleFilter") {
+    state.alertRuleFilter = event.target.value;
+    if (state.alertData) renderAlerts(state.alertData, { signalsOnly: true });
+    $("alertsSignals").scrollTop = 0;
+    return;
+  }
   const alertMetricSelect = event.target.closest("[data-alert-condition-metric]");
   if (alertMetricSelect) updateAlertConditionGuidance(alertMetricSelect.closest("[data-alert-condition]"));
   if (["macroPriorIncrease", "macroPriorDecrease", "macroPriorUnchanged", "macroLocalTrigger"].includes(event.target.id)
