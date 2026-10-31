@@ -67,8 +67,16 @@ function tradePlannerResultHtml(view) {
     sector_account_limit: "Account sector limit", sector_portfolio_limit: "Portfolio sector limit", risk_sizing: "Risk-adjusted sizing", requested_amount: "Requested amount", risk_limit: "Projected risk" }[rec.limit]);
   const alternatives = (result.alternatives || []).map((item) => `<li><bdi>${esc(tradePlannerAccountName(item.account))}</bdi>: <bdi>${esc(money(item.amount, item.currency))}</bdi> · ${esc(t("Projected risk"))} <bdi>${item.riskAfter}/100</bdi></li>`).join("");
   return `<div class="trade-plan-heading" role="status"><span>${esc(t(short ? "Conditional short estimate" : "Suggested purchase"))}</span>
-    <strong><bdi>${esc(tradePlannerAccountName(rec.account))}</bdi> · ${cash(rec.amount)}</strong>
-    <span><bdi>${esc(result.symbol)}</bdi> · ${esc(fmt(rec.quantity, 0))} ${esc(t("whole shares"))} · ${esc(t("Quote date"))}: <bdi>${esc(formatDate(result.quote.date))}</bdi> · ${esc(currencyDisplayLabel(rec.currency))}</span></div>
+    <dl class="trade-plan-summary">
+      <div class="trade-plan-summary-amount"><dt>${esc(t("Recommended trade amount"))}</dt><dd><strong>${cash(rec.amount)}</strong></dd></div>
+      <div class="trade-plan-summary-account"><dt>${esc(t("Recommended account"))}</dt><dd><bdi>${esc(tradePlannerAccountName(rec.account))}</bdi></dd></div>
+    </dl>
+    <dl class="trade-plan-quote-facts">
+      ${fact("Security", `<bdi dir="ltr">${esc(result.symbol)}</bdi>`)}
+      ${fact("Quantity", `<bdi dir="ltr">${esc(fmt(rec.quantity, 0))}</bdi> ${esc(t("whole shares"))}`)}
+      ${fact("Quote date", `<bdi dir="ltr">${esc(formatDate(result.quote.date))}</bdi>`)}
+      ${fact("Currency", esc(currencyDisplayLabel(rec.currency)))}
+    </dl></div>
     ${warnings}
     ${result.requested !== null ? `<p>${esc(t("Requested amount"))}: ${cash(result.requested)}${rec.amount < result.requested ? ` · ${esc(t("Reduced to fit the limits and whole shares."))}` : ""}</p>` : ""}
     <dl class="trade-plan-facts">

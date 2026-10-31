@@ -53,6 +53,8 @@
     "Accounts checked": "חשבונות שנבדקו",
     "Conditional short estimate": "אומדן מותנה למכירה בחסר",
     "Suggested purchase": "קנייה מוצעת",
+    "Recommended trade amount": "סכום מומלץ לעסקה",
+    "Recommended account": "חשבון מומלץ לביצוע העסקה",
     "whole shares": "מניות שלמות",
     "Quote date": "תאריך המחיר",
     "Requested amount": "סכום מבוקש",
