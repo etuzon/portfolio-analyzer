@@ -3516,7 +3516,7 @@ function renderPortfolioValueDashboard(items) {
           <div class="summary">${statsHtml}</div>
         </details>
         <div class="currency-strip">${accountsHtml}</div>
-        ${accountRiskAllocationsHtml ? `<section class="account-risk-allocations" aria-label="${esc(optionLabel("Account risk allocation"))}"><div class="account-risk-allocations-title"><span>${esc(optionLabel("Account risk allocation"))}</span><small>${esc(optionLabel("Split by current account value"))}</small></div><div class="account-risk-allocations-grid">${accountRiskAllocationsHtml}</div></section>` : ""}
+        ${accountRiskAllocationsHtml ? `<section class="account-risk-allocations" aria-label="${esc(optionLabel("Account risk allocation"))}"><div class="account-risk-allocations-title"><span>${esc(optionLabel("Account risk allocation"))}</span></div><div class="account-risk-allocations-grid">${accountRiskAllocationsHtml}</div></section>` : ""}
       </div>
     </div>
   `;
