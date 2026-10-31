@@ -8,7 +8,7 @@ SOURCE = (ROOT / "web/app.js").read_text()
 
 
 def run_js(body):
-    names = ("resetCompanyOutlookHistoryUi", "companyOutlookEvaluationMessage", "companyOutlookCheckStatus", "formatBackupDateTime", "positionCompanyOutlookHelp", "setCompanyOutlookHelpVisible", "updateCompanyOutlookEvaluationUi", "renderCompanyOutlookHistory", "loadCompanyOutlookHistory", "evaluateCompanyOutlookPrediction")
+    names = ("resetCompanyOutlookHistoryUi", "companyOutlookEvaluationMessage", "companyOutlookCheckStatus", "companyOutlookScoreHelp", "companyOutlookConfidenceHelp", "companyOutlookHistoryThesis", "formatBackupDateTime", "positionCompanyOutlookHelp", "setCompanyOutlookHelpVisible", "updateCompanyOutlookEvaluationUi", "renderCompanyOutlookHistory", "loadCompanyOutlookHistory", "evaluateCompanyOutlookPrediction")
     functions = []
     for name in names:
         start = re.search(rf"^(?:async )?function {name}\(", SOURCE, re.M).start()
@@ -21,7 +21,7 @@ const t=text=>window.PortfolioI18n.translate(text,state.language);
 const fmt=value=>String(value),pct=value=>`${value}%`;
 const esc=value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
 const formatDate=value=>String(value).slice(0,10).split('-').reverse().join('/');
-const document={body:{},activeElement:{},querySelectorAll:()=>[...cards.values()]};
+const document={documentElement:{dir:'rtl'},body:{},activeElement:{},querySelectorAll:()=>[...cards.values()]};
 const makeNode=()=>({textContent:'',disabled:false,hidden:false,classList:{toggle(){}},focus(){document.activeElement=this}});
 const cards=new Map(['p1','p2'].map(id=>{
  const feedback=makeNode(),button=makeNode(),remove=makeNode(),badge=makeNode(),help=makeNode();
@@ -123,7 +123,7 @@ for(const language of ['he','en','he']){
  renderCompanyOutlookHistory(data([{...record(),evaluation:'No newer annual report is available yet.'}]));
  const html=nodes.companyOutlookHistory.innerHTML;
  const text=html.replace(/<[^>]*>/g,'');
- assert.ok(html.includes('class="outlook-history-state checked outlook-pending-trigger" tabindex="0" aria-describedby="outlookPendingHelp0"'));
+ assert.ok(html.includes('class="outlook-history-state checked outlook-pending-trigger outlook-help-trigger" data-outlook-help="status" tabindex="0" aria-describedby="outlookPendingHelp0"'));
  assert.ok(html.includes('role="tooltip" hidden'));
  assert.ok(!html.includes('<summary')&&!html.includes('<details')&&!html.includes('>i<'));
  assert.ok(html.includes('role="status"')&&html.includes('aria-live="polite"'));
@@ -178,11 +178,11 @@ def test_a_completed_check_preserves_keyboard_focus_and_open_help_on_another_car
 (async()=>{
  renderCompanyOutlookHistory(data());
  const p2=cards.get('p2'),originalQuery=p2.querySelector.bind(p2);
- const trigger=makeNode();trigger.dataset={};trigger.closest=()=>p2;
+ const trigger=makeNode();trigger.dataset={outlookHelp:'status'};trigger.closest=()=>p2;
  trigger.matches=selector=>selector==='.outlook-pending-trigger';
- const panel={hidden:true,style:{},scrollHeight:200,closest:()=>p2};
- const help={querySelector:()=>panel,closest:()=>({getBoundingClientRect:()=>({top:50,bottom:950})})};
- p2.querySelector=selector=>selector==='.outlook-pending-trigger'?trigger:selector==='.outlook-pending-help'?help:originalQuery(selector);
+ const panel={hidden:true,style:{},scrollHeight:200,closest:selector=>selector==='.outlook-help'?help:p2};
+ const help={dataset:{outlookHelp:'status'},getBoundingClientRect:()=>({top:100,bottom:128,left:20,right:100}),querySelector:()=>panel,closest:selector=>({getBoundingClientRect:()=>selector==='.modal-card'?{top:50,bottom:950}:{top:100,bottom:128,left:20,right:500,width:480}})};
+ p2.querySelector=selector=>selector==='.outlook-pending-trigger'||selector===`.outlook-help-trigger[data-outlook-help="status"]`?trigger:selector===`.outlook-help[data-outlook-help="status"]`?help:originalQuery(selector);
  nodes.companyOutlookHistory.querySelectorAll=()=>panel.hidden?[]:[panel];
  let html=nodes.companyOutlookHistory.innerHTML;
  Object.defineProperty(nodes.companyOutlookHistory,'innerHTML',{
@@ -207,13 +207,13 @@ def test_pending_help_uses_available_dialog_space_including_bottom_edge_and_long
 window.innerHeight=1000;
 const panel={hidden:true,scrollHeight:200,style:{}};
 let header={top:900,bottom:928};
-const help={querySelector:()=>panel,closest:selector=>({getBoundingClientRect:()=>selector==='.modal-card'?{top:50,bottom:950}:header})};
+const help={getBoundingClientRect:()=>({...header,left:20,right:80}),querySelector:()=>panel,closest:selector=>({getBoundingClientRect:()=>selector==='.modal-card'?{top:50,bottom:950}:{...header,left:20,right:500,width:480}})};
 setCompanyOutlookHelpVisible(help,true);
 assert.equal(panel.hidden,false);
 assert.equal(panel.style.insetBlockStart,'auto','bottom-edge help must open upward');
-assert.equal(panel.style.insetBlockEnd,'100%');
+assert.equal(panel.style.insetBlockEnd,'28px');
 header={top:100,bottom:128};positionCompanyOutlookHelp(help);
-assert.equal(panel.style.insetBlockStart,'100%','top-edge help must open downward');
+assert.equal(panel.style.insetBlockStart,'28px','top-edge help must open downward');
 header={top:500,bottom:528};panel.scrollHeight=900;positionCompanyOutlookHelp(help);
 assert.equal(panel.style.maxHeight,'434px');
 assert.equal(panel.style.overflowY,'auto','long descriptions remain scrollable inside the available space');
@@ -225,7 +225,7 @@ def test_reload_distinguishes_unchecked_legacy_checked_and_dated_checked_predict
     run_js(r"""
 for(const language of ['he','en']){
  state.language=language;
- const statuses=language==='he'?['טרם נבדק','נבדק — אין דוח חדש']:['Not checked yet','Checked — no new report'];
+ const statuses=language==='he'?['טרם הושווה לדוח חדש','נבדק — אין דוח חדש']:['Not compared with a newer report','Checked — no new report'];
  renderCompanyOutlookHistory(data([record()]));
  let html=nodes.companyOutlookHistory.innerHTML;
  assert.ok(html.includes(statuses[0]));assert.ok(!html.includes('<time'));
@@ -247,4 +247,58 @@ for(const language of ['he','en']){
   assert.equal(html.includes('100%'),direction!=='inconclusive');
  }
 }
+""")
+
+
+def test_cards_explain_analyzed_report_rank_direction_score_and_confidence_without_mutation():
+    run_js(r"""
+for(const language of ['he','en']){
+ state.language=language;
+ for(const rank of [1,4,7]){
+  const item={...record(),thesis:`NEWT ranks ${rank} of 7 on available report growth signals. Industry conditions appear stable. Cash-flow and balance-sheet measures are included when filed; missing statement evidence lowers confidence.`};
+  const original=JSON.stringify(item);
+  renderCompanyOutlookHistory(data([item]));
+  const html=nodes.companyOutlookHistory.innerHTML;
+  assert.equal(JSON.stringify(item),original,'rendering must not rewrite stored prediction evidence');
+  assert.ok(html.includes(language==='he'?'הדוח השנתי שנותח':'Analyzed annual report'));
+  assert.ok(html.includes('31/12/2025'));
+  assert.ok(html.includes(language==='he'?`מקום ${rank} מתוך 7`:`Place ${rank} of 7`));
+  assert.ok(html.includes(language==='he'?'1 = החזקה ביותר; 7 = החלשה ביותר':'1 = strongest; 7 = weakest'));
+  assert.ok(html.includes(language==='he'?'כבר נותח ליצירת התחזית':'was already analyzed to create this forecast'));
+  for(const kind of ['Score','Confidence','Pending'])assert.ok(html.includes(`aria-describedby="outlook${kind}Help0"`));
+  assert.equal((html.match(/role="tooltip"/g)||[]).length,3);
+  assert.ok(html.includes('data-outlook-help="score" tabindex="0"'));
+  assert.ok(html.includes('data-outlook-help="confidence" tabindex="0"'));
+  const score=companyOutlookScoreHelp(item),confidence=companyOutlookConfidenceHelp(item);
+  assert.ok(score.includes(language==='he'?'נמוך מ־50':'below 50'));
+  assert.ok(confidence.includes(language==='he'?'לפחות 3 שנות דוחות':'at least 3 annual report years'));
+  assert.ok(confidence.includes(language==='he'?'אינה מבטיחה':'does not guarantee'));
+  if(language==='he'){
+   assert.ok(!/Confidence|Strong|Weak|Industry|Place|Checks/.test(html.replace(/<[^>]*>/g,'')));
+  }else{
+   assert.ok(!/[א-ת]/.test(html));
+  }
+ }
+ const single={...record(),thesis:'NEWT ranks 1 of 1 on available report growth signals. Industry conditions appear stable. Cash-flow and balance-sheet measures are included when filed; missing statement evidence lowers confidence.'};
+ assert.ok(companyOutlookHistoryThesis(single).includes(t('No other companies were available for comparison.')));
+ assert.ok(!companyOutlookHistoryThesis(single).includes('1 ='));
+}
+""")
+
+
+def test_switching_from_english_to_hebrew_localizes_rank_narrative_before_document_update():
+    run_js(r"""
+global.Element=class {};
+global.Document=class {};
+global.DocumentFragment=class {};
+global.Node={TEXT_NODE:3};global.NodeFilter={SHOW_ELEMENT:1,SHOW_TEXT:4};
+Object.setPrototypeOf(document,Document.prototype);
+document.createTreeWalker=()=>({nextNode:()=>null});document.querySelectorAll=()=>[];
+window.PortfolioI18n.applyToDocument('en');
+state.language='he';
+const item={...record(),thesis:'NEWT ranks 7 of 7 on available report growth signals. Industry conditions appear stable. Cash-flow and balance-sheet measures are included when filed; missing statement evidence lowers confidence.'};
+renderCompanyOutlookHistory(data([item]));
+const text=nodes.companyOutlookHistory.innerHTML.replace(/<[^>]*>/g,'');
+assert.ok(text.includes('מצב הענף: יציב'));
+assert.ok(!/Stable|High|Weak|Confidence|Industry|Place/.test(text));
 """)

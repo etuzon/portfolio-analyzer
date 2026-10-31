@@ -26,6 +26,7 @@ const document = {
   activeElement: null,
   addEventListener(type, callback) { if (type === 'keydown') keydown = callback; },
   querySelectorAll(selector) {
+    if (selector === '.outlook-help-description:not([hidden])') return [];
     assert.equal(selector, '.modal:not([hidden])');
     return order.filter(modal => !modal.hidden);
   },

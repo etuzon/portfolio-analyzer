@@ -783,6 +783,7 @@ def test_company_outlook_compares_peer_reports_saves_prediction_and_has_no_feedb
     assert result["industry"]["name"] == "Networking"
     assert result["industry"]["peer_count"] == 2
     assert result["rank"] == 1
+    assert result["ranked_company_count"] == 3
     assert result["prediction_record"]["status"] == "pending"
     assert result["graph"]["feedback_loops"] == 0
     assert result["mermaid"].startswith("flowchart LR")

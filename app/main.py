@@ -1087,6 +1087,7 @@ def _company_outlook_payload(symbol: str, request: dict[str, Any] | None = None)
         "label": label,
         "direction": direction,
         "rank": rank,
+        "ranked_company_count": len(ranked),
         "score_components": {
             "company_fundamentals": round(company_score, 1),
             "industry_outlook": round(industry_score, 1),

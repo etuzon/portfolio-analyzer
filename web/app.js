@@ -9133,27 +9133,57 @@ function companyOutlookCheckStatus(item) {
     return { label: "Checked — no new report", help: "The last check found no newer annual report. Check again after the next annual report is published. Checks are manual.", className: "checked" };
   }
   if (item.checked_at || item.evaluation) return { label: "Checked", help: item.evaluation || "Prediction evaluated", className: "checked" };
-  return { label: "Not checked yet", help: "Select Evaluate next report to check for a newer annual report. Checks are manual.", className: "pending" };
+  return { label: "Not compared with a newer report", help: "The baseline annual report was already analyzed to create this forecast. Select Evaluate next report to compare it with a newer annual report. Checks are manual.", className: "pending" };
+}
+
+function companyOutlookScoreHelp(item) {
+  const band = { Strong: "Strong: 80–100.", Good: "Good: 65 to below 80.", Mixed: "Mixed: 50 to below 65.", Weak: "Weak: below 50." };
+  return `${t("Outlook score: {score}/100. Higher scores mean a stronger outlook based on company reports, the comparison group and industry conditions.").replace("{score}", fmt(item.score, 1))} ${t(band[item.label] || "")} ${t("Confidence describes the supporting data, not whether the outlook is positive.")}`;
+}
+
+function companyOutlookConfidenceHelp(item) {
+  const levels = {
+    High: "High: at least 3 annual report years and at least 4 comparison companies.",
+    Medium: "Medium: at least 2 annual report years and at least 2 comparison companies.",
+    Low: "Low: fewer than 2 annual report years or fewer than 2 comparison companies.",
+  };
+  return `${t("Confidence describes the report history and comparison-group coverage. It does not guarantee accuracy or a positive outcome.")} ${t(levels[item.confidence || "Low"] || "")}`;
+}
+
+function companyOutlookHistoryThesis(item) {
+  const source = item.thesis || "No report-backed summary was stored for this prediction.";
+  const match = source.match(/^(.+) ranks (\d+) of (\d+) on available report growth signals\.\s*(.*)$/u);
+  if (!match) return t(source);
+  const rank = Number(match[2]), count = Number(match[3]);
+  const ranking = count <= 1 ? t("No other companies were available for comparison.")
+    : t("Place {rank} of {count} in this comparison group (1 = strongest; {count} = weakest).")
+      .replace("{rank}", fmt(rank, 0)).replaceAll("{count}", fmt(count, 0));
+  return `${match[1]}: ${ranking} ${t(match[4])}`;
 }
 
 function positionCompanyOutlookHelp(help) {
-  const panel = help.querySelector(".outlook-pending-description");
+  const panel = help.querySelector(".outlook-help-description");
   if (!panel || panel.hidden) return;
-  const header = help.closest(".outlook-history-head").getBoundingClientRect();
+  const container = help.closest(".outlook-help-anchor").getBoundingClientRect();
+  const anchor = help.getBoundingClientRect();
   const dialog = help.closest(".modal-card")?.getBoundingClientRect();
   const top = Math.max(8, (dialog?.top || 0) + 8);
   const bottom = Math.min(window.innerHeight - 8, dialog ? dialog.bottom - 8 : window.innerHeight - 8);
-  const below = Math.max(0, bottom - header.bottom - 8);
-  const above = Math.max(0, header.top - top - 8);
+  const width = Math.min(320, container.width);
+  panel.style.width = `${width}px`;
+  const desiredLeft = document.documentElement.dir === "rtl" ? anchor.right - width : anchor.left;
+  panel.style.left = `${Math.max(container.left, Math.min(desiredLeft, container.right - width)) - container.left}px`;
+  const below = Math.max(0, bottom - anchor.bottom - 8);
+  const above = Math.max(0, anchor.top - top - 8);
   const showAbove = panel.scrollHeight > below && above > below;
-  panel.style.insetBlockStart = showAbove ? "auto" : "100%";
-  panel.style.insetBlockEnd = showAbove ? "100%" : "auto";
+  panel.style.insetBlockStart = showAbove ? "auto" : `${anchor.bottom - container.top}px`;
+  panel.style.insetBlockEnd = showAbove ? `${container.bottom - anchor.top}px` : "auto";
   panel.style.maxHeight = `${Math.max(40, showAbove ? above : below)}px`;
   panel.style.overflowY = "auto";
 }
 
 function setCompanyOutlookHelpVisible(help, visible) {
-  const panel = help.querySelector(".outlook-pending-description");
+  const panel = help.querySelector(".outlook-help-description");
   if (!panel) return;
   panel.hidden = !visible;
   if (visible) positionCompanyOutlookHelp(help);
@@ -9161,14 +9191,14 @@ function setCompanyOutlookHelpVisible(help, visible) {
 
 for (const eventName of ["pointerover", "focusin"]) {
   document.addEventListener(eventName, (event) => {
-    const help = event.target.closest?.(".outlook-pending-help");
+    const help = event.target.closest?.(".outlook-help");
     if (help && !help.contains(event.relatedTarget)) setCompanyOutlookHelpVisible(help, true);
   });
 }
 
 for (const eventName of ["pointerout", "focusout"]) {
   document.addEventListener(eventName, (event) => {
-    const help = event.target.closest?.(".outlook-pending-help");
+    const help = event.target.closest?.(".outlook-help");
     if (!help || help.contains(event.relatedTarget)) return;
     if (eventName === "pointerout" && help.contains(document.activeElement)) return;
     if (eventName === "focusout" && help.matches(":hover")) return;
@@ -9177,7 +9207,7 @@ for (const eventName of ["pointerout", "focusout"]) {
 }
 
 window.addEventListener("resize", () => {
-  document.querySelectorAll(".outlook-pending-description:not([hidden])").forEach((panel) => positionCompanyOutlookHelp(panel.closest(".outlook-pending-help")));
+  document.querySelectorAll(".outlook-help-description:not([hidden])").forEach((panel) => positionCompanyOutlookHelp(panel.closest(".outlook-help")));
 });
 
 function updateCompanyOutlookEvaluationUi(predictionId) {
@@ -9215,9 +9245,9 @@ function renderCompanyOutlookHistory(data) {
   const focusedId = active?.closest?.("[data-company-outlook-prediction]")?.dataset.companyOutlookPrediction;
   const focusSelector = active?.dataset?.evaluateCompanyOutlook ? "[data-evaluate-company-outlook]"
     : active?.dataset?.deleteCompanyOutlook ? "[data-delete-company-outlook]"
-    : active?.matches?.(".outlook-pending-trigger") ? ".outlook-pending-trigger" : ".outlook-prediction-feedback";
-  const openedHelp = [...(history.querySelectorAll?.(".outlook-pending-description:not([hidden])") || [])]
-    .map((help) => help.closest("[data-company-outlook-prediction]")?.dataset.companyOutlookPrediction);
+    : active?.dataset?.outlookHelp ? `.outlook-help-trigger[data-outlook-help="${active.dataset.outlookHelp}"]` : ".outlook-prediction-feedback";
+  const openedHelp = [...(history.querySelectorAll?.(".outlook-help-description:not([hidden])") || [])]
+    .map((panel) => ({ id: panel.closest("[data-company-outlook-prediction]")?.dataset.companyOutlookPrediction, kind: panel.closest(".outlook-help")?.dataset.outlookHelp }));
   state.companyOutlookHistoryData = data;
   state.companyOutlookHistory = data.items || [];
   const scorecard = data.scorecard || {};
@@ -9238,22 +9268,23 @@ function renderCompanyOutlookHistory(data) {
     const checkedAt = item.checked_at || item.evaluated_at;
     return `
       <article class="stack-item management-item outlook-history-item" data-company-outlook-prediction="${esc(item.id)}" aria-busy="${busy}">
-        <header class="outlook-history-head">
+        <header class="outlook-history-head outlook-help-anchor">
           <div class="outlook-history-identity">
             <b>${esc(item.symbol)} · ${fmt(item.score, 0)}/100</b>
-            <span class="outlook-history-label">${esc(t(item.label || "Mixed"))}</span>
+            <span class="outlook-help outlook-history-label outlook-help-trigger" data-outlook-help="score" tabindex="0" aria-describedby="outlookScoreHelp${index}">${esc(t(item.label || "Mixed"))}<span id="outlookScoreHelp${index}" class="outlook-help-description" role="tooltip" hidden>${esc(companyOutlookScoreHelp(item))}</span></span>
           </div>
           <div class="outlook-history-status">
-            ${direction === "pending" ? `<span class="outlook-pending-help"><span class="outlook-history-state ${checkStatus.className} outlook-pending-trigger" tabindex="0" aria-describedby="outlookPendingHelp${index}">${esc(t(stateLabel))}</span><span id="outlookPendingHelp${index}" class="outlook-pending-description" role="tooltip" hidden>${esc(t(checkStatus.help))}</span></span>` : `<span class="outlook-history-state ${esc(direction)}">${esc(t(stateLabel))}</span>`}
+            ${direction === "pending" ? `<span class="outlook-pending-help outlook-help" data-outlook-help="status"><span class="outlook-history-state ${checkStatus.className} outlook-pending-trigger outlook-help-trigger" data-outlook-help="status" tabindex="0" aria-describedby="outlookPendingHelp${index}">${esc(t(stateLabel))}</span><span id="outlookPendingHelp${index}" class="outlook-pending-description outlook-help-description" role="tooltip" hidden>${esc(t(checkStatus.help))}</span></span>` : `<span class="outlook-history-state ${esc(direction)}">${esc(t(stateLabel))}</span>`}
           </div>
         </header>
-        <div class="outlook-history-meta">
+        <div class="outlook-history-meta outlook-help-anchor">
           <span><small>${esc(t("Created"))}</small><b>${esc(formatDate(String(item.created_at || "").slice(0, 10)))}</b></span>
+          <span><small>${esc(t("Analyzed annual report"))}</small><b>${esc(item.baseline?.target?.fiscal_date ? formatDate(item.baseline.target.fiscal_date) : t("Not available"))}</b></span>
           <span><small>${esc(t("Evaluate after"))}</small><b>${esc(formatDate(item.horizon_date))}</b></span>
-          <span><small>${esc(t("Confidence"))}</small><b>${esc(t(item.confidence || "Low"))}</b></span>
+          <span class="outlook-help outlook-help-trigger" data-outlook-help="confidence" tabindex="0" aria-describedby="outlookConfidenceHelp${index}"><small>${esc(t("Confidence"))}</small><b>${esc(t(item.confidence || "Low"))}</b><span id="outlookConfidenceHelp${index}" class="outlook-help-description" role="tooltip" hidden>${esc(companyOutlookConfidenceHelp(item))}</span></span>
           ${checkedAt ? `<span><small>${esc(t("Last checked"))}</small><time datetime="${esc(checkedAt)}">${esc(formatBackupDateTime(checkedAt))}</time></span>` : ""}
         </div>
-        <p class="outlook-history-thesis">${esc(t(item.thesis || "No report-backed summary was stored for this prediction."))}</p>
+        <p class="outlook-history-thesis">${esc(companyOutlookHistoryThesis(item))}</p>
         ${direction === "pending" || item.accuracy_score == null ? "" : `<p class="outlook-history-evaluation">${esc(t("Accuracy"))} ${fmt(item.accuracy_score, 0)}%</p>`}
         <p class="outlook-prediction-feedback${ui.status === "error" ? " is-error" : ""}" role="status" aria-live="polite" tabindex="-1">${esc(companyOutlookEvaluationMessage(item))}</p>
         <footer class="row-actions outlook-history-actions">
@@ -9264,8 +9295,8 @@ function renderCompanyOutlookHistory(data) {
     `;
   }).join("") : '<div class="empty">No saved company predictions yet</div>';
   const cards = [...document.querySelectorAll("[data-company-outlook-prediction]")];
-  for (const id of openedHelp) {
-    const help = cards.find((card) => card.dataset.companyOutlookPrediction === id)?.querySelector(".outlook-pending-help");
+  for (const { id, kind } of openedHelp) {
+    const help = cards.find((card) => card.dataset.companyOutlookPrediction === id)?.querySelector(`.outlook-help[data-outlook-help="${kind}"]`);
     if (help) setCompanyOutlookHelpVisible(help, true);
   }
   if (focusedId) {
@@ -9356,7 +9387,7 @@ function renderCompanyOutlook(outlook) {
   $("companyOutlookStatus").textContent = `${outlook.symbol} · ${t(outlook.label || "Mixed")} · ${t("Confidence")}: ${t(outlook.confidence || "Low")} · ${t(outlook.peer_source || "")}`;
   $("companyOutlookSummary").innerHTML = [
     ["Final score", outlookScoreText(outlook.score), "Final outlook score on a 0–100 scale. Combines company fundamentals, industry outlook, related-industry effects, peer rank and data quality."],
-    ["Peer rank", `${outlook.rank || 1}/${(outlook.companies || []).length || 1}`],
+    ["Peer rank — 1 is strongest", (outlook.ranked_company_count ?? (outlook.companies || []).length) <= 1 ? "No comparison group" : `${outlook.rank || 1}/${outlook.ranked_company_count ?? outlook.companies.length}`],
     ["Industry", industry.health || "Not available"],
     ["Industry score", outlookScoreText(industry.score, 25), "Industry score on a 0–100 scale. Contributes up to 25 points to the final outlook score."],
     ["Company signals", outlookScoreText(components.company_fundamentals, 45), "Company fundamentals on a 0–100 scale. Contributes up to 45 points to the final outlook score."],
@@ -13139,12 +13170,13 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
-  const pendingHelp = event.target.closest?.(".outlook-pending-help")
-    || document.querySelector(".outlook-pending-description:not([hidden])")?.closest(".outlook-pending-help");
-  if (pendingHelp && !pendingHelp.querySelector(".outlook-pending-description").hidden && event.key === "Escape") {
-    event.preventDefault();
-    setCompanyOutlookHelpVisible(pendingHelp, false);
-    return;
+  if (event.key === "Escape") {
+    const openHelp = [...document.querySelectorAll(".outlook-help-description:not([hidden])")];
+    if (openHelp.length) {
+      event.preventDefault();
+      openHelp.forEach((panel) => setCompanyOutlookHelpVisible(panel.closest(".outlook-help"), false));
+      return;
+    }
   }
   const activeResearchTab = event.target.closest?.("[data-research-tab]");
   if (activeResearchTab && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
