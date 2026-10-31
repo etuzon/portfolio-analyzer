@@ -9,7 +9,7 @@ function tradePlannerReason(reason) {
     ambiguous_listing: "This symbol has multiple listings. Choose its market in Securities.",
     listing_unverified: "The stock listing could not be verified. Check the symbol and market.",
     unsupported_instrument: "The planner supports listed stocks and ETFs only.",
-    price_unavailable: "A dated price from the last 7 days is required. Refresh analytics or add a recent local price, then retry.",
+    price_unavailable: "A valid saved price with its actual date is required. Refresh analytics or add a local price, then retry.",
     valuation_unavailable: "Update the holdings listed below before calculating a trade amount.",
     fx_unavailable: "A required exchange rate is unavailable. Check display currencies and refresh.",
     cash_unverified: "Spendable cash cannot be verified from the ledger. Check balances and transactions in other currencies.",
@@ -48,7 +48,7 @@ function tradePlannerIssuesHtml(issues) {
       ? `<button class="secondary compact-button" type="button" data-price-history-symbol="${esc(issue.symbol)}" data-price-history-market="${esc(issue.stock_market)}" data-price-history-asset="${esc(issue.asset_class)}" data-price-history-currency="${esc(issue.currency)}" data-price-history-location="${esc(issue.location)}">${esc(t("Update saved price"))}</button>` : "";
     return `<li><div><bdi><b>${esc(issue.symbol)}</b></bdi>${account}<br>${esc(label)}${day}</div>${repair}</li>`;
   }).join("");
-  return `<ul class="trade-plan-issues">${list}</ul>${issues.some((issue) => issue.manual) ? `<p>${esc(t("Manual securities need a recent price entered in Prices. Refresh does not fetch prices for them. Save a real quote with its actual date, then recalculate."))}</p>` : `<p>${esc(t("Refresh analytics, then recalculate. A missing price date cannot be inferred from the cache update time."))}</p>`}`;
+  return `<ul class="trade-plan-issues">${list}</ul>${issues.some((issue) => issue.manual) ? `<p>${esc(t("For manual securities, update the price and its actual date in Prices, then recalculate. Refresh does not fetch their prices."))}</p>` : `<p>${esc(t("Refresh analytics, then recalculate. A missing price date cannot be inferred from the cache update time."))}</p>`}`;
 }
 
 function tradePlannerResultHtml(view) {
@@ -57,8 +57,9 @@ function tradePlannerResultHtml(view) {
   if (view.status === "error") return `<p role="status" class="signal-missing">${esc(t("Could not calculate an account suggestion. Your inputs are kept. Try again."))}</p>`;
   if (view.status === "stale") return `<p role="status">${esc(t("Portfolio inputs changed. Recalculate the account suggestion."))}</p>`;
   const result = view.result;
+  const warnings = result.warnings?.length ? `<div class="trade-plan-warning"><p class="signal-missing">${esc(t("This estimate uses saved prices older than 7 days. Update prices for a more current recommendation."))}</p>${tradePlannerIssuesHtml(result.warnings)}</div>` : "";
   const exclusions = (result.excluded || []).map(({ account, reason }) => `<li><bdi>${esc(tradePlannerAccountName(account))}</bdi>: ${esc(tradePlannerReason(reason))}</li>`).join("");
-  if (result.status !== "ok") return `<p role="status" class="signal-missing">${esc(tradePlannerReason(result.reason))}</p>${tradePlannerIssuesHtml(result.issues)}${exclusions ? `<details><summary>${esc(t("Accounts checked"))}</summary><ul>${exclusions}</ul></details>` : ""}`;
+  if (result.status !== "ok") return `<p role="status" class="signal-missing">${esc(tradePlannerReason(result.reason))}</p>${tradePlannerIssuesHtml(result.issues)}${warnings}${exclusions ? `<details><summary>${esc(t("Accounts checked"))}</summary><ul>${exclusions}</ul></details>` : ""}`;
   const rec = result.recommendation, short = result.action === "SHORT";
   const cash = (amount) => `<bdi>${esc(money(amount, rec.currency))}</bdi>`;
   const fact = (label, value) => `<div><dt>${esc(t(label))}</dt><dd>${value}</dd></div>`;
@@ -68,6 +69,7 @@ function tradePlannerResultHtml(view) {
   return `<div class="trade-plan-heading" role="status"><span>${esc(t(short ? "Conditional short estimate" : "Suggested purchase"))}</span>
     <strong><bdi>${esc(tradePlannerAccountName(rec.account))}</bdi> · ${cash(rec.amount)}</strong>
     <span><bdi>${esc(result.symbol)}</bdi> · ${esc(fmt(rec.quantity, 0))} ${esc(t("whole shares"))} · ${esc(t("Quote date"))}: <bdi>${esc(formatDate(result.quote.date))}</bdi> · ${esc(currencyDisplayLabel(rec.currency))}</span></div>
+    ${warnings}
     ${result.requested !== null ? `<p>${esc(t("Requested amount"))}: ${cash(result.requested)}${rec.amount < result.requested ? ` · ${esc(t("Reduced to fit the limits and whole shares."))}` : ""}</p>` : ""}
     <dl class="trade-plan-facts">
       ${fact("Recorded cash", cash(rec.cash))}${fact("Cash reserve", cash(rec.reserve))}
@@ -84,7 +86,7 @@ function tradePlannerResultHtml(view) {
       <p>${esc(t("Starting trade size is the smallest of 5% of account value, 2% of portfolio value and 25% of cash. Higher risk, volatility, shorts, unknown sector or missing/short retirement horizon reduce it. Modeled risk may rise by at most 5 points and may not exceed 75/100."))}</p>
       <p>${esc(t("For a cash-only account, the first position may raise modeled risk by up to 25 points because industry, issuer and volatility risk components start with the first holding. The 75/100 ceiling still applies."))}</p>
       <p>${esc(t("Retirement horizon is a proxy, not your stated investment goal or risk tolerance. Recorded cash is not confirmed broker buying power. Quotes and FX are saved estimates; taxes and actual broker fees are not modeled."))}</p>
-      <p>${esc(t("Holdings are valued using their recent saved quotes for this estimate; the recorded portfolio is unchanged."))}</p>
+      <p>${esc(t("Holdings are valued using their latest available saved quotes for this estimate; the recorded portfolio is unchanged."))}</p>
       ${rec.unknownSector ? `<p class="signal-missing">${esc(t("Sector is unknown; the proposed amount was reduced."))}</p>` : ""}
       ${rec.horizon === null ? `<p>${esc(t("Account horizon is unknown; the proposed amount was reduced."))}</p>` : ""}
       ${alternatives ? `<p>${esc(t("Other eligible accounts"))}</p><ul>${alternatives}</ul>` : ""}

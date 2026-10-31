@@ -49,14 +49,15 @@
   }
   function quote(item, now) {
     const ranges = item.price_ranges || {};
+    let latest = null;
     for (const period of ["1m", "6m", "1y", "3y", "5y"]) {
       const range = ranges[period] || {};
       const price = number(range.current);
       const day = /^\d{4}-\d{2}-\d{2}$/.test(range.current_date || "") ? Date.parse(`${range.current_date}T00:00:00Z`) : NaN;
       const age = (now - day) / 86400000;
-      if (price !== null && price > 0 && age >= 0 && age <= POLICY.maxPriceAgeDays) return { price, date: range.current_date };
+      if (price !== null && price > 0 && age >= 0 && (!latest || range.current_date > latest.date)) latest = { price, date: range.current_date };
     }
-    return null;
+    return latest;
   }
   function priceIssue(item, now, accounts = []) {
     const holding = item.holding || {};
@@ -90,8 +91,15 @@
   function plan(context, request, adapters) {
     const now = Date.parse(context.calculated_at);
     const action = upper(request.action || "BUY");
+    const warnings = [];
+    const warnIfStale = (item, currentQuote) => {
+      if (!currentQuote || (now - Date.parse(`${currentQuote.date}T00:00:00Z`)) / 86400000 <= POLICY.maxPriceAgeDays) return;
+      const issue = { ...priceIssue(item, now, context.accounts), reason: "price_stale", price_date: currentQuote.date };
+      if (!warnings.some((saved) => saved.symbol === issue.symbol && saved.stock_market === issue.stock_market
+          && saved.currency === issue.currency && saved.account?.id === issue.account?.id)) warnings.push(issue);
+    };
     let requested = request.amount === "" || request.amount === null || request.amount === undefined ? null : number(request.amount);
-    const blocked = (reason, excluded = [], issues = []) => ({ status: "unavailable", reason, excluded, issues, action, requested, policy: POLICY });
+    const blocked = (reason, excluded = [], issues = []) => ({ status: "unavailable", reason, excluded, issues, warnings, action, requested, policy: POLICY });
     if (!["BUY", "SHORT"].includes(action) || (request.amount !== "" && request.amount != null && (requested === null || requested <= 0))) return blocked("invalid_request");
     const security = context.security;
     if (!security) return blocked(context.reason || "listing_unverified");
@@ -101,6 +109,7 @@
     if (!listing) return blocked("listing_unverified");
     const current = quote(security, now);
     if (!current) return blocked("price_unavailable", [], [priceIssue(security, now, context.accounts)]);
+    warnIfStale(security, current);
     const base = upper(context.base_currency), currency = upper(h.currency);
     const convert = converter(context.fx_quotes, base);
     if (requested !== null && request.amountCurrency) {
@@ -118,6 +127,7 @@
       const issue = priceIssue(item, now, accounts);
       if (quantity === null || amount === null || Math.sign(quantity) !== Math.sign(amount)) return [{ ...issue, reason: "invalid_valuation" }];
       if (value(item) === null) return [{ ...issue, reason: "fx_unavailable" }];
+      if (quantity !== 0) warnIfStale(item, currentQuote);
       return quantity !== 0 && !currentQuote ? [issue] : [];
     });
     if (issues.length) return blocked("valuation_unavailable", [], issues);
@@ -214,7 +224,7 @@
     candidates.sort((a, b) => a.score - b.score || b.amount - a.amount || String(a.account.id).localeCompare(String(b.account.id)));
     return { status: candidates.length ? "ok" : "unavailable", reason: candidates.length ? null : "no_suitable_account",
       recommendation: candidates[0] || null, alternatives: candidates.slice(1), excluded: exclusions,
-      action, requested, policy: POLICY, symbol, quote: current, calculatedAt: context.calculated_at,
+      action, requested, policy: POLICY, symbol, quote: current, warnings, calculatedAt: context.calculated_at,
       refreshPending: context.refresh_pending };
   }
   return { plan, converter, quote, cashBalance, listingCountry, POLICY };

@@ -108,3 +108,38 @@ for(const language of ['he','en']){
  }else assert.ok(!/[א-ת]/.test(text));
 }
 ''')
+
+
+def test_old_prices_show_account_amount_and_optional_price_updates_in_both_languages():
+    run_ui('''
+ctx.security.price_ranges['1m'].current_date='2026-07-31';
+ctx.items=['BONDQA','BONDQB','BONDQC'].map(symbol=>({
+ holding:{symbol,account_id:'one',quantity:10,market_value:1000,currency:'USD',
+ stock_market:'MANUAL',asset_class:'BOND',data_source:'MANUAL'},
+ price_ranges:{'1m':{current:100,current_date:'2026-07-31'}}}));
+const result=window.PortfolioTradePlanner.plan(ctx,{action:'BUY',amount:''},
+ {risk:riskScoreForItems,horizon:accountHorizonYears,industry:industryLabel,volatility:volatilityProxy,derivative:derivativeHolding});
+assert.equal(result.status,'ok',JSON.stringify(result));
+assert.equal(result.warnings.length,4);
+for(const language of ['he','en','he']) {
+ state.language=language;
+ const html=tradePlannerResultHtml({status:'ready',result});
+ const text=html.replace(/<[^>]*>/g,'');
+ assert.ok(html.includes(money(result.recommendation.amount,'USD')));
+ assert.ok(text.includes('A1')&&text.includes('31/07/2026'));
+ assert.ok(html.indexOf('trade-plan-heading')<html.indexOf('trade-plan-warning'));
+ for(const symbol of ['BONDQA','BONDQB','BONDQC'])assert.ok(html.includes(`data-price-history-symbol="${symbol}"`));
+ assert.ok(!/undefined|NaN/.test(text));
+ if(language==='he') {
+  assert.ok(text.includes('קנייה מוצעת'));
+  assert.ok(text.includes('מומלץ לעדכן מחירים'));
+  assert.ok(!/Update|saved|days|estimate|Suggested|manual|price/i.test(text));
+  assert.ok(!text.includes('לפני חישוב סכום עסקה'));
+ } else {
+  assert.ok(text.includes('Suggested purchase'));
+  assert.ok(text.includes('Update prices for a more current recommendation.'));
+  assert.ok(!text.includes('before calculating a trade amount'));
+  assert.ok(!/[א-ת]/.test(text));
+ }
+}
+''')

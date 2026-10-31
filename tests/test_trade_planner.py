@@ -87,11 +87,10 @@ assert.equal(planner.plan(context(),{action:'BUY',amount:10},adapters).status,'u
 ''')
 
 
-def test_missing_stale_and_ambiguous_data_never_becomes_zero_or_buying_power():
+def test_missing_and_ambiguous_data_never_becomes_zero_or_buying_power():
     run_planner_js('''
 const ctx=context();
-ctx.security.price_ranges['1m'].current_date='2026-01-01';
-ctx.security.price_ranges['1y'].current_date='2026-01-01';
+ctx.security.price_ranges={};
 assert.equal(planner.plan(ctx,request,adapters).reason,'price_unavailable');
 ctx.security=stock('NEW'); ctx.security.exchange=''; ctx.security.holding.stock_market='YAHOO';
 assert.equal(planner.plan(ctx,request,adapters).reason,'listing_unverified');
@@ -102,7 +101,7 @@ assert.equal(planner.plan(ctx,request,adapters).reason,'cash_unverified');
 ''')
 
 
-def test_stale_manual_holding_names_the_security_and_date_and_recovers_after_price_update():
+def test_stale_manual_holding_keeps_recommendation_and_warning_clears_after_price_update():
     run_planner_js('''
 const ctx=context();ctx.accounts.push(account('bank','USA',10000,'USD','Bank'));
 const bond=stock('BONDQA',1000,'bank');
@@ -110,16 +109,51 @@ bond.holding.asset_class='BOND';bond.holding.stock_market='MANUAL';bond.holding.
 for(const range of Object.values(bond.price_ranges))range.current_date='2026-07-31';
 ctx.items=[bond];
 const before=JSON.stringify(ctx);
-const blocked=planner.plan(ctx,request,adapters);
-assert.equal(blocked.reason,'valuation_unavailable');
-assert.equal(blocked.issues.length,1);
-assert.equal(blocked.issues[0].symbol,'BONDQA');
-assert.equal(blocked.issues[0].price_date,'2026-07-31');
-assert.equal(blocked.issues[0].reason,'price_stale');
-assert.equal(blocked.issues[0].manual,true);
+const result=planner.plan(ctx,request,adapters);
+assert.equal(result.status,'ok',JSON.stringify(result));
+assert.ok(result.recommendation.amount>0);
+assert.equal(result.warnings.length,1);
+assert.equal(result.warnings[0].symbol,'BONDQA');
+assert.equal(result.warnings[0].price_date,'2026-07-31');
+assert.equal(result.warnings[0].reason,'price_stale');
+assert.equal(result.warnings[0].manual,true);
 assert.equal(JSON.stringify(ctx),before);
 for(const range of Object.values(bond.price_ranges))range.current_date='2026-10-29';
-assert.equal(planner.plan(ctx,request,adapters).status,'ok');
+const updated=planner.plan(ctx,request,adapters);
+assert.equal(updated.status,'ok');
+assert.deepEqual(updated.warnings,[]);
+''')
+
+
+def test_stale_target_price_supports_buy_and_short_estimates_without_mutating_saved_data():
+    run_planner_js('''
+for(const action of ['BUY','SHORT']) {
+ const ctx=context();
+ for(const range of Object.values(ctx.security.price_ranges))range.current_date='2026-07-31';
+ const before=JSON.stringify(ctx);
+ const result=planner.plan(ctx,{action,amount:1000},adapters);
+ assert.equal(result.status,'ok',JSON.stringify(result));
+ assert.equal(result.quote.date,'2026-07-31');
+ assert.equal(result.recommendation.quantity*result.quote.price,result.recommendation.amount);
+ assert.ok(result.recommendation.amount>0&&result.recommendation.amount<=1000);
+ assert.ok(result.recommendation.cashRemaining>=result.recommendation.reserve);
+ assert.equal(result.warnings.length,1);
+ assert.equal(result.warnings[0].symbol,'NEW');
+ assert.equal(JSON.stringify(ctx),before);
+}
+''')
+
+
+def test_quote_uses_latest_valid_saved_price_and_future_or_undated_prices_still_block():
+    run_planner_js('''
+const ctx=context(), now=Date.parse(ctx.calculated_at);
+ctx.security.price_ranges['1m']={current:90,current_date:'2026-01-01'};
+ctx.security.price_ranges['1y']={current:100,current_date:'2026-07-31'};
+assert.deepEqual(planner.quote(ctx.security,now),{price:100,date:'2026-07-31'});
+for(const current_date of [null,'','invalid','2027-01-01']) {
+ for(const range of Object.values(ctx.security.price_ranges))range.current_date=current_date;
+ assert.equal(planner.plan(ctx,request,adapters).reason,'price_unavailable');
+}
 ''')
 
 
