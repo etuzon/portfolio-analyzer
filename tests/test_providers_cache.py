@@ -16,7 +16,9 @@ def test_sec_profile_and_industry_peers_use_cached_official_metadata(monkeypatch
         "1": {"ticker": "A", "title": "AGILENT", "cik_str": 1090872},
         "2": {"ticker": "OTHER", "title": "OTHER", "cik_str": 99},
     })
-    cache.set("sec:companyfacts:0001109354", {})
+    cache.set("sec:companyfacts:0001109354", {"facts": {"dei": {
+        "EntityCommonStockSharesOutstanding": {"units": {"shares": []}},
+    }}})
     calls = []
 
     def respond(request):

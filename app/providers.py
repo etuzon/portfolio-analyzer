@@ -170,6 +170,9 @@ class MarketDataHub:
                     data = provider.fundamentals(provider_symbol)
                 except Exception as exc:
                     errors.append(exc)
+                    cached_reader = getattr(provider, "cached_fundamentals", None)
+                    if provider_saved is None and callable(cached_reader):
+                        provider_saved = cached_reader(provider_symbol) or None
                     continue
                 if data:
                     status[provider.name] = "ok"
@@ -210,6 +213,9 @@ class MarketDataHub:
                     data = provider.fundamentals_as_of(provider_symbol, as_of)
                 except Exception as exc:
                     errors.append(exc)
+                    cached_reader = getattr(provider, "cached_fundamentals", None)
+                    if provider_saved is None and callable(cached_reader):
+                        provider_saved = cached_reader(provider_symbol, as_of) or None
                     continue
                 if data:
                     status[provider.name] = "ok"
@@ -563,14 +569,18 @@ class SqliteCache:
                 """
             )
 
-    def get(self, key: str) -> Any | None:
+    def get(self, key: str, *, require_fresh: bool = False) -> Any | None:
         with self._connect() as conn:
             row = conn.execute("select created_at, value from cache where key = ?", (key,)).fetchone()
             if not row:
                 return None
             created_at, value = row
-            if not _persistent_cache_key(key) and time.time() - float(created_at) > self.ttl_seconds:
-                conn.execute("delete from cache where key = ?", (key,))
+            persistent = _persistent_cache_key(key)
+            if time.time() - float(created_at) > self.ttl_seconds and (require_fresh or not persistent):
+                # Retained evidence stays available to local/offline readers;
+                # online providers must still check its refresh interval.
+                if not persistent:
+                    conn.execute("delete from cache where key = ?", (key,))
                 return None
         try:
             return json.loads(value)
@@ -1227,13 +1237,15 @@ class SecCompanyTickerProvider(MarketDataProvider):
             return []
         limit = int(criteria.get("limit") or 50)
         cache_key = "sec:company-tickers"
-        data = self.cache.get(cache_key)
-        if data is None:
+        data = self.cache.get(cache_key, require_fresh=True)
+        if not _valid_sec_tickers(data):
             headers = {"User-Agent": "portfolio-analyzer/1.0 contact@example.local", "Accept": "application/json"}
             with httpx.Client(timeout=20, follow_redirects=True, headers=headers) as client:
                 response = client.get(self.base)
                 response.raise_for_status()
                 data = response.json()
+            if not _valid_sec_tickers(data):
+                raise ProviderError("SEC ticker data unavailable")
             self.cache.set(cache_key, data)
         rows = data.values() if isinstance(data, dict) else data
         matches = []
@@ -1269,12 +1281,14 @@ class SecCompanyFactsProvider(MarketDataProvider):
 
     def _ticker_row(self, symbol: str) -> dict[str, Any]:
         cache_key = "sec:company-tickers"
-        data = self.cache.get(cache_key)
-        if data is None:
+        data = self.cache.get(cache_key, require_fresh=True)
+        if not _valid_sec_tickers(data):
             with httpx.Client(timeout=20, follow_redirects=True, headers=self._headers()) as client:
                 response = client.get(self.tickers_url)
                 response.raise_for_status()
                 data = response.json()
+            if not _valid_sec_tickers(data):
+                raise ProviderError("SEC ticker data unavailable")
             self.cache.set(cache_key, data)
         rows = data.values() if isinstance(data, dict) else data
         target = symbol.upper()
@@ -1296,6 +1310,24 @@ class SecCompanyFactsProvider(MarketDataProvider):
         if not cik:
             return {}
         facts = self._company_facts(cik)
+        return self._fundamentals_from_facts(facts, self.profile(symbol), as_of)
+
+    def cached_fundamentals(self, symbol: str, as_of: date | None = None) -> dict[str, Any]:
+        """Rebuild a requested cutoff from retained evidence after a failed refresh."""
+        tickers = self.cache.get("sec:company-tickers") or {}
+        if not _valid_sec_tickers(tickers):
+            return {}
+        rows = tickers.values() if isinstance(tickers, dict) else tickers
+        ticker = next((row for row in rows if str(row.get("ticker") or "").upper() == symbol.upper()), {})
+        cik = str(ticker.get("cik_str") or "").zfill(10)
+        facts = self.cache.get(f"sec:companyfacts:{cik}")
+        if not ticker or not _valid_sec_company_facts(facts):
+            return {}
+        profile = self.cache.get_security_snapshot(self.name, symbol, "profile") or {"name": ticker.get("title")}
+        data = self._fundamentals_from_facts(facts, profile, as_of)
+        return data if data["income_statement"]["annualReports"] else {}
+
+    def _fundamentals_from_facts(self, facts: dict[str, Any], profile: dict[str, Any], as_of: date | None) -> dict[str, Any]:
         us_gaap = facts.get("facts", {}).get("us-gaap", {})
         revenue = _sec_annual_facts(
             us_gaap,
@@ -1357,7 +1389,7 @@ class SecCompanyFactsProvider(MarketDataProvider):
                 if row.get("filed") and str(row["filed"]) > str(report.get("filingDate") or ""):
                     report["filingDate"] = row["filed"]
         reports = [reports_by_year[year] for year in sorted(reports_by_year)]
-        return {"income_statement": {"annualReports": reports}, "profile": self.profile(symbol)}
+        return {"income_statement": {"annualReports": reports}, "profile": profile}
 
     def profile(self, symbol: str) -> dict[str, Any]:
         ticker = self._ticker_row(symbol)
@@ -1422,13 +1454,15 @@ class SecCompanyFactsProvider(MarketDataProvider):
 
     def _company_facts(self, cik: str) -> dict[str, Any]:
         cache_key = f"sec:companyfacts:{cik}"
-        cached = self.cache.get(cache_key)
-        if cached is not None:
+        cached = self.cache.get(cache_key, require_fresh=True)
+        if _valid_sec_company_facts(cached):
             return cached
         with httpx.Client(timeout=20, follow_redirects=True, headers=self._headers()) as client:
             response = client.get(f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json")
             response.raise_for_status()
             data = response.json()
+        if not _valid_sec_company_facts(data):
+            raise ProviderError("SEC company facts unavailable")
         self.cache.set(cache_key, data)
         return data
 
@@ -1696,6 +1730,30 @@ def _price_score(prices: list[Ohlcv], from_date: date, to_date: date) -> tuple[i
 
 def _persistent_cache_key(key: str) -> bool:
     return any(key.startswith(prefix) for prefix in PERSISTENT_CACHE_PREFIXES)
+
+
+def _valid_sec_tickers(data: Any) -> bool:
+    if not isinstance(data, (dict, list)) or not data:
+        return False
+    rows = data.values() if isinstance(data, dict) else data
+    return all(isinstance(row, dict) and isinstance(row.get("ticker"), str) and row["ticker"].strip()
+               and str(row.get("cik_str") or "").isdigit() for row in rows)
+
+
+def _valid_sec_company_facts(data: Any) -> bool:
+    facts = data.get("facts") if isinstance(data, dict) else None
+    if not isinstance(facts, dict) or not facts or not any(facts.values()):
+        return False
+    for taxonomy in facts.values():
+        if not isinstance(taxonomy, dict):
+            return False
+        for fact in taxonomy.values():
+            units = fact.get("units") if isinstance(fact, dict) else None
+            if not isinstance(units, dict):
+                return False
+            if any(not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows) for rows in units.values()):
+                return False
+    return True
 
 
 def _yahoo_raw(value: Any) -> float | None:
