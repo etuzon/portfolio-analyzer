@@ -8343,6 +8343,34 @@ html[dir="rtl"] .signal-condition-help::after {
   align-items: end;
 }
 
+.trade-simulator-form, .trade-simulator-row-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); gap: 12px; align-items: end; }
+.trade-simulator-form .management-field, .trade-simulator-row-fields .management-field { min-width: 0; }
+.trade-simulator-form input, .trade-simulator-form select, .trade-simulator-row-fields input, .trade-simulator-row-fields select { width: 100%; min-width: 0; box-sizing: border-box; }
+.trade-simulator-form input[type="number"], .trade-simulator-row-fields input[type="number"] { min-width: 140px; font-variant-numeric: tabular-nums; }
+.trade-simulator-form > button { width: auto; min-height: 40px; justify-self: start; }
+.trade-simulator-basket-heading, .trade-simulator-row-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.trade-simulator-basket-heading { margin: 20px 0 12px; }
+.trade-simulator-rows, .trade-simulator-results { display: grid; gap: 14px; min-width: 0; }
+.trade-simulator-row, .trade-simulator-comparison { padding: 14px; border: 1px solid #374653; border-radius: 8px; background: #141c24; min-width: 0; }
+.trade-simulator-row-heading { margin-bottom: 12px; }
+.trade-simulator-row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.trade-simulator-row-actions button, .trade-simulator-basket-heading button { width: auto; }
+.trade-simulator-row-error { color: #ff9099; margin: 10px 0 0; }
+.trade-simulator-comparison h3 { margin: 0 0 12px; overflow-wrap: anywhere; }
+.trade-simulator-comparison h3 small { font-size: 12px; font-weight: 400; color: #a5b5c7; }
+.trade-simulator-total { border-color: #7e79c7; }
+.trade-simulator-before-after { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.trade-simulator-before-after > section { min-width: 0; }
+.trade-simulator-before-after h4 { margin: 0 0 10px; color: #a5b5c7; }
+.trade-simulator-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); gap: 12px; margin: 0; }
+.trade-simulator-facts > div { min-width: 0; }
+.trade-simulator-facts dt { color: #a5b5c7; font-size: 12px; }
+.trade-simulator-facts dd { margin: 4px 0 0; font-weight: 600; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.trade-simulator-execution { padding: 12px; border: 1px solid #374653; border-radius: 8px; }
+.trade-simulator-execution summary { cursor: pointer; }
+.trade-simulator-execution li { margin-top: 8px; overflow-wrap: anywhere; }
+@media (max-width: 600px) { .trade-simulator-before-after { grid-template-columns: minmax(0, 1fr); } }
+
 .trade-planner-form .management-field,
 .trade-planner-form input,
 .trade-planner-form select {

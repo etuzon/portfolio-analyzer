@@ -20,7 +20,7 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/assets/portfolio-vault/icon-48.png?v=1" />
     <link rel="shortcut icon" href="/assets/portfolio-vault/favicon.ico?v=1" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.17" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.17-simulation" />
   </head>
   <body>
     <div id="authOverlay" class="auth-overlay">
@@ -76,6 +76,7 @@
               <button class="nav-item" type="button" data-modal="securitiesModal" data-securities-workflow="employee-options">Employee Stock Options</button>
               <button class="nav-item" type="button" data-modal="securitiesModal">Securities</button>
               <button class="nav-item" type="button" data-modal="positionsModal">Positions</button>
+              <button class="nav-item" type="button" data-modal="tradeSimulatorModal">Trade Simulation</button>
               <button class="nav-item" type="button" data-modal="pricesModal">Prices</button>
               <button class="nav-item" type="button" data-modal="eventsModal">Events</button>
             </div>
@@ -495,6 +496,33 @@
             <button class="secondary" type="button" data-close>Cancel</button>
           </div>
         </form>
+      </section>
+    </div>
+
+    <div id="tradeSimulatorModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="tradeSimulatorTitle">
+        <div class="section-head"><div><h2 id="tradeSimulatorTitle">Trade Simulation</h2><p class="section-note">Combine buys, sells and shorts across accounts. Preview cash, value and risk without changing your portfolio.</p></div><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <p id="tradeSimulatorAccountNotice" class="signal-missing" role="status" hidden>Create an investment account in Accounts before adding simulated trades.</p>
+        <p id="tradeSimulatorStatus" class="status-line" role="status"></p>
+        <form id="tradeSimulatorForm" class="trade-simulator-form">
+          <label class="management-field"><span>Account</span><select id="tradeSimulatorAccount" required></select></label>
+          <label class="management-field"><span>Security symbol</span><input id="tradeSimulatorSymbol" maxlength="80" required placeholder="Ticker" autocomplete="off" spellcheck="false" dir="ltr" /></label>
+          <label class="management-field"><span>Stock market (optional)</span><input id="tradeSimulatorMarket" list="marketOptions" placeholder="NASDAQ, NYSE, TASE…" autocomplete="off" /></label>
+          <label class="management-field"><span>Action</span><select id="tradeSimulatorAction"><option value="BUY">Buy</option><option value="SELL">Sell</option><option value="SHORT">Short</option></select></label>
+          <label class="management-field"><span>Quantity</span><input id="tradeSimulatorQuantity" type="number" min="0.00000001" step="any" inputmode="decimal" required /></label>
+          <label class="management-field"><span>Execution price (optional)</span><input id="tradeSimulatorPrice" type="number" min="0.00000001" step="any" inputmode="decimal" placeholder="Saved quote" /></label>
+          <label class="management-field"><span>Fee in account currency</span><input id="tradeSimulatorFee" type="number" min="0" step="any" inputmode="decimal" value="0" required /></label>
+          <button id="addTradeSimulatorRow" type="submit">Add trade</button>
+        </form>
+        <p class="section-note">Price units: US shares in dollars, US bonds in cents, Israeli securities in agorot. Leave execution price empty to use the latest saved quote. Buy covers an existing short first; Sell only reduces a long holding.</p>
+        <div class="trade-simulator-basket-heading"><b id="tradeSimulatorCount">Trades in scenario: 0</b><button id="clearTradeSimulator" type="button" class="secondary compact-button" disabled>Clear scenario</button></div>
+        <p class="section-note">Add up to 100 trades per scenario.</p>
+        <div id="tradeSimulatorRows" class="trade-simulator-rows"></div>
+        <div class="modal-toolbar"><button id="runTradeSimulator" type="button" disabled>Simulate trades</button></div>
+        <p class="section-note">Cash includes short-sale proceeds. Buying power is unverified when shorts or derivatives are present. Fees are entered explicitly; taxes, borrowing costs and interest are excluded.</p>
+        <p class="section-note">Totals include managed account cash and securities. Separate fund records and private grants outside this snapshot are excluded. Risk is the app's 0–100 heuristic, not a probability of loss.</p>
+        <section id="tradeSimulatorResults" class="trade-simulator-results" aria-live="polite" aria-busy="false" aria-label="Simulation results"></section>
       </section>
     </div>
 
@@ -1007,6 +1035,15 @@
               <article class="help-feature">
                 <h3>Account recommendation</h3>
                 <p>In Securities, choose a stock and buy or short action. Leave the amount empty for a suggested size, then review account cash, risk, and horizon assumptions. A recommendation is a simulation; it does not submit an order.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Trade Simulation</h3>
+                <p>Add up to 100 trades per scenario.</p>
+                <p>Open Portfolio Data → Trade Simulation. Choose an investment account, security symbol and listing, then add a Buy, Sell or Short with a positive quantity. Add multiple trades in one or more accounts; duplicate a row to reuse a security in another account. Edit account, action, quantity, execution price or fee in the scenario, or remove a row. Simulate trades evaluates rows in their displayed order using shared cash and projected holdings.</p>
+                <p>Leave execution price empty for the latest dated saved quote, or enter your own execution price: US shares in dollars, US bonds in cents, Israeli securities in agorot. Fees are in account currency and default to zero. Account and security currencies must match; no currency exchange is performed. Buy covers existing shorts first and may then open a long; Sell cannot exceed the projected long holding; Short requires the projected long holding to be closed first. Derivatives cannot be added as simulated trades.</p>
+                <p>Results compare cash, net value, gross security exposure, short exposure and the existing 0–100 risk estimate before and after, per account and across all managed accounts. Account amounts use account currency; totals use dashboard currency and saved exchange rates. Net value is cash plus signed security value; gross exposure uses absolute security values. Saved quotes value holdings; an execution-price override changes the trade cash flow. Fund records and private employee grants outside the security snapshot are excluded from these totals.</p>
+                <p>Cash includes short-sale proceeds and is not broker buying power. Available cash is unknown when shorts or derivatives may require collateral; no broker margin rule is assumed. Taxes, borrowing costs and interest are excluded. Missing prices, exchange rates or unverifiable ledger cash leave affected results unavailable; negative cash also leaves risk unavailable. Update Prices or account transactions and retry. Stale saved quotes are flagged. Analytics loading is non-blocking; simulate again after updates. Editing the scenario or portfolio marks prior results stale. Drafts remain during the session; Clear scenario or signing out removes them. Simulation never records transactions or places orders.</p>
+                <p>Accounts with future-dated security trades cannot be simulated because the recorded position snapshot does not establish current quantities. Review transaction dates in Positions, then retry. Other accounts remain available; combined valuation and risk remain unavailable while an account is uncertain.</p>
               </article>
               <article class="help-feature">
                 <h3>Prices</h3>
@@ -2457,11 +2494,13 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="/i18n.js?v=1.2.15"></script>
+  <script src="/i18n.js?v=1.2.15-simulation"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
   <script src="/trade-planner.js?v=2"></script>
   <script src="/trade-planner-ui.js?v=3"></script>
-  <script src="/app.js?v=0.9.15"></script>
+  <script src="/trade-simulator.js?v=1"></script>
+  <script src="/trade-simulator-ui.js?v=1"></script>
+  <script src="/app.js?v=0.9.15-simulation"></script>
   </body>
 </html>

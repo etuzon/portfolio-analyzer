@@ -6,6 +6,7 @@ import io
 import json
 import logging
 import math
+import re
 import traceback
 import os
 import sqlite3
@@ -224,6 +225,7 @@ VIEWER_READ_ONLY_POST_PATHS = {
     "/api/banner/resolve",
     "/api/local/backups/inspect",
     "/api/local/pension-simulate",
+    "/api/trade-simulator/context",
     "/api/market/screener",
 }
 ADMIN_ONLY_API_PREFIXES = ("/api/auth/users", "/api/local/backups")
@@ -4851,6 +4853,44 @@ def trade_planner_context(
             "base_currency": str(config.dashboard.get("base_currency") or "ILS").upper(),
             "signature": signature, "calculated_at": datetime.now(timezone.utc).isoformat(),
             "refresh_pending": payload.get("refresh_pending", False)}
+
+
+@app.post("/api/trade-simulator/context")
+def trade_simulator_context(payload: dict[str, Any]):
+    """One consistent, read-only ledger snapshot for a multi-account basket."""
+    requested = payload.get("securities")
+    if not isinstance(requested, list) or not 1 <= len(requested) <= 100:
+        raise HTTPException(status_code=422, detail="invalid_securities")
+    listings = []
+    for row in requested:
+        if not isinstance(row, dict):
+            raise HTTPException(status_code=422, detail="invalid_security")
+        symbol = str(row.get("symbol") or "").strip().upper()
+        market = _stock_market_key(str(row.get("stock_market") or ""))
+        if not re.fullmatch(r"[A-Za-z0-9_^.=-]{1,80}", symbol):
+            raise HTTPException(status_code=422, detail="invalid_symbol")
+        if market and market not in SUPPORTED_STOCK_MARKETS:
+            raise HTTPException(status_code=422, detail="unsupported_listing")
+        if (symbol, market) not in listings:
+            listings.append((symbol, market))
+    signature = portfolio_cache_signature()
+    snapshot = portfolio_payload(defer_enrichment=True)
+    accounts = local_store.list_accounts()
+    transactions = local_store.list_transactions()
+    securities = []
+    for symbol, market in listings:
+        security, reason = planner_security(symbol, market, snapshot.get("items") or [], hub(),
+                                            _stock_market_key, US_STOCK_MARKETS, local_store,
+                                            {"EQUITY", "ETF", "BOND", "MUTUALFUND"})
+        securities.append({"symbol": symbol, "stock_market": market, "security": security, "reason": reason})
+    quotes = fx()["quotes"]
+    if signature != portfolio_cache_signature():
+        raise HTTPException(status_code=409, detail="portfolio_changed")
+    return {"accounts": accounts, "transactions": transactions, "items": snapshot.get("items") or [],
+            "securities": securities, "fx_quotes": quotes, "signature": signature,
+            "base_currency": str(config.dashboard.get("base_currency") or "ILS").upper(),
+            "calculated_at": datetime.now(timezone.utc).isoformat(),
+            "refresh_pending": snapshot.get("refresh_pending", False)}
 
 
 @app.get("/api/alerts")

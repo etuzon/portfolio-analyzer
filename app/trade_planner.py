@@ -6,12 +6,13 @@ from .metrics import price_range_metrics
 from .models import Ohlcv
 
 
-def planner_security(symbol, market, items, market_hub, normalize_market, us_markets, local_store=None):
+def planner_security(symbol, market, items, market_hub, normalize_market, us_markets, local_store=None, manual_assets=None):
     matches = [item for item in items if item.get("holding", {}).get("symbol", "").upper() == symbol]
     if market:
         matches = [item for item in matches if normalize_market(item.get("holding", {}).get("stock_market")) == market
                    or normalize_market(item.get("exchange")) == market]
-    identities = {(item["holding"].get("currency"), normalize_market(item["holding"].get("stock_market"))) for item in matches}
+    identities = {(item["holding"].get("currency"), normalize_market(item["holding"].get("stock_market")),
+                   item["holding"].get("asset_class")) for item in matches}
     if len(identities) > 1:
         return None, "ambiguous_listing"
     if matches:
@@ -20,12 +21,13 @@ def planner_security(symbol, market, items, market_hub, normalize_market, us_mar
     # held. Keep their normalized prices and listing/currency identity intact.
     if local_store is not None and market:
         instrument = local_store.manual_security(symbol, market)
-        if instrument and instrument.get("asset_class") in {"EQUITY", "ETF"}:
+        if instrument and instrument.get("asset_class") in (manual_assets or {"EQUITY", "ETF"}):
             history = local_store.price_history(symbol, market, to_date=date.today())
             prices = [Ohlcv(date.fromisoformat(row["price_date"]), *([float(row["price"])] * 5), 0)
                       for row in history if row.get("currency") == instrument.get("currency")]
             return {"holding": {"symbol": instrument["symbol"], "name": instrument.get("name") or symbol,
                                 "stock_market": market, "currency": instrument["currency"],
+                                "location": instrument.get("location") or "",
                                 "asset_class": instrument["asset_class"], "quantity": 0, "market_value": 0},
                     "exchange": market, "price_ranges": price_range_metrics(prices), "missing": []}, None
     # A user-entered exchange or USD currency alone is not listing evidence.

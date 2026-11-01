@@ -1245,6 +1245,7 @@ function renderCurrentUser() {
 function setAuthenticatedSession(payload) {
   if (state.auth.user?.id !== payload?.user?.id) {
     if (typeof resetTradePlannerViews === "function") resetTradePlannerViews();
+    if (typeof resetTradeSimulator === "function") resetTradeSimulator();
     resetCompanyOutlookHistoryUi();
   }
   state.auth.user = payload?.user || null;
@@ -1258,6 +1259,7 @@ function setAuthenticatedSession(payload) {
 function showLogin(message = "") {
   resetCompanyOutlookHistoryUi();
   if (typeof resetTradePlannerViews === "function") resetTradePlannerViews();
+  if (typeof resetTradeSimulator === "function") resetTradeSimulator();
   state.portfolioRefreshPending = false;
   state.portfolioLoadVersion = (state.portfolioLoadVersion || 0) + 1;
   clearTimeout(portfolioEnrichmentRetryTimer);
@@ -1581,6 +1583,7 @@ function ensureHierarchicalNav() {
         <button class="nav-item" type="button" data-modal="brokersModal">${esc(t("brokers"))}</button>
         <button class="nav-item" type="button" data-modal="securitiesModal" data-securities-workflow="employee-options">${esc(t("employeeOptions"))}</button>
         <button class="nav-item" type="button" data-modal="securitiesModal">${esc(t("securities"))}</button>
+        <button class="nav-item" type="button" data-modal="tradeSimulatorModal">${esc(t("Trade Simulation"))}</button>
         <button class="nav-item" type="button" data-modal="positionsModal">${esc(t("positions"))}</button>
         <button class="nav-item" type="button" data-modal="pricesModal">${esc(t("prices"))}</button>
         <button class="nav-item" type="button" data-modal="eventsModal">${esc(t("events"))}</button>
@@ -2029,6 +2032,7 @@ function applyLanguage() {
   renderMacroScenario();
   if (state.alertData) renderAlerts(state.alertData);
   if (typeof renderTradePlannerViews === "function") renderTradePlannerViews();
+  if (typeof renderTradeSimulator === "function") renderTradeSimulator();
   renderAssistantChat();
   renderLoggingSettings();
   renderAlertDismissalSettings();
@@ -11395,6 +11399,7 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
     state.allPortfolioItems = allItems;
     state.items = portfolioItems(allItems);
     if (typeof checkTradePlannerInputs === "function") checkTradePlannerInputs();
+    if (typeof checkTradeSimulatorInputs === "function") checkTradeSimulatorInputs();
     state.portfolioReady = true;
     state.accountTrend = {
       ...trend,
@@ -13162,6 +13167,14 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
   if (id === "accountsModal") {
     setAccountsTab("existing");
     Promise.all([loadBrokers(), loadFamilyMembers(), loadLocalAccounts()]);
+  }
+  if (id === "tradeSimulatorModal") {
+    $("tradeSimulatorStatus").textContent = "";
+    loadLocalAccounts().then(() => { checkTradeSimulatorInputs(); renderTradeSimulator(); }).catch(() => {
+      const status = $("tradeSimulatorStatus");
+      if (status) status.textContent = t("Could not load accounts. Close and reopen to retry.");
+    });
+    if (typeof renderTradeSimulator === "function") renderTradeSimulator();
   }
   if (id === "brokersModal") loadBrokers();
   if (id === "familyModal") {
