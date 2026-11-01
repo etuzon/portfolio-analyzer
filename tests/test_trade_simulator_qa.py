@@ -295,7 +295,7 @@ def test_basket_edit_invalidates_old_response_even_after_new_calculation_finishe
 def test_coherent_backend_snapshot_survives_later_ledger_changes(monkeypatch, change_phase):
     live = {
         "signature": "captured-ledger",
-        "accounts": [{"id": "one", "initial_cash": 1000}],
+        "accounts": [{"id": "one", "type": "Investment", "initial_cash": 1000}],
         "transactions": [],
     }
     snapshot = {"items": [{"holding": {"symbol": "NEW", "quantity": 2}}], "refresh_pending": True}

@@ -295,7 +295,7 @@ def test_context_rejects_changes_during_initial_snapshot_capture(monkeypatch):
 
 
 def test_snapshot_is_private_and_survives_changes_after_capture(monkeypatch):
-    accounts = [{"id": "fixture", "currency": "USD", "initial_cash": 1000}]
+    accounts = [{"id": "fixture", "type": "Investment", "currency": "USD", "initial_cash": 1000}]
     transactions = [{"account_db_id": "fixture", "action": "BUY", "quantity": 2, "price": 100}]
     items = [{"holding": {"symbol": "NEW", "quantity": 2}}]
     source = {"version": "captured", "lookup_started": False}

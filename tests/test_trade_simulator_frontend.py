@@ -50,11 +50,11 @@ for(const language of ['he','en','he']){
  assert.ok(text.includes('29/10/2026'));
  assert.ok(!/undefined|NaN/.test(text));
  if(language==='he'){
-  assert.ok(text.includes('כוח הקנייה אינו מאומת'));
-  assert.ok(text.includes('סך כל החשבונות'));
+  assert.ok(text.includes('ביטחונות הברוקר אינם ידועים'));
+  assert.ok(text.includes('סך חשבונות ההשקעה'));
   assert.ok(!/Before|After|cash|risk|Short|Calculated|Trade/i.test(text));
  }else{
-  assert.ok(text.includes('Buying power unverified'));
+  assert.ok(text.includes('Broker collateral unknown'));
   assert.ok(!/[א-ת]/.test(text));
  }
 }

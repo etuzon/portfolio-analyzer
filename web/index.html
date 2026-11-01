@@ -521,7 +521,7 @@
         <div id="tradeSimulatorRows" class="trade-simulator-rows"></div>
         <div class="modal-toolbar"><button id="runTradeSimulator" type="button" disabled>Simulate trades</button></div>
         <p class="section-note">Cash includes short-sale proceeds. Buying power is unverified when shorts or derivatives are present. Fees are entered explicitly; taxes, borrowing costs and interest are excluded.</p>
-        <p class="section-note">Totals include managed account cash and securities. Separate fund records and private grants outside this snapshot are excluded. Risk is the app's 0–100 heuristic, not a probability of loss.</p>
+        <p class="section-note">Only Investment accounts are listed and included in cash, value and risk totals. Pension, savings, bank and ESOP accounts are excluded. Risk is the app's 0–100 heuristic, not a probability of loss.</p>
         <section id="tradeSimulatorResults" class="trade-simulator-results" aria-live="polite" aria-busy="false" aria-label="Simulation results"></section>
       </section>
     </div>
@@ -1038,11 +1038,12 @@
               </article>
               <article class="help-feature">
                 <h3>Trade Simulation</h3>
+                <p>Unavailable results show the missing input and affected securities. If total risk is unavailable, review the named Investment accounts below it. A cash deficit prevents a risk score because borrowing is not modeled; reduce the trade or check the recorded balance. Unknown broker collateral affects available cash for shorts or derivatives and does not by itself hide an otherwise calculable risk score.</p>
                 <p>RSU shares held in investment accounts support simulated buys, sells and shorts. Employee option grants and derivatives are not supported; ESOP accounts cannot be selected for trading.</p>
                 <p>Add up to 100 trades per scenario.</p>
                 <p>Open Portfolio Data → Trade Simulation. Choose an investment account, security symbol and listing, then add a Buy, Sell or Short with a positive quantity. Add multiple trades in one or more accounts; duplicate a row to reuse a security in another account. Edit account, action, quantity, execution price or fee in the scenario, or remove a row. Simulate trades evaluates rows in their displayed order using shared cash and projected holdings.</p>
                 <p>Leave execution price empty for the latest dated saved quote, or enter your own execution price: US shares in dollars, US bonds in cents, Israeli securities in agorot. Fees are in account currency and default to zero. Account and security currencies must match; no currency exchange is performed. Buy covers existing shorts first and may then open a long; Sell cannot exceed the projected long holding; Short requires the projected long holding to be closed first. Derivatives cannot be added as simulated trades.</p>
-                <p>Results compare cash, net value, gross security exposure, short exposure and the existing 0–100 risk estimate before and after, per account and across all managed accounts. Account amounts use account currency; totals use dashboard currency and saved exchange rates. Net value is cash plus signed security value; gross exposure uses absolute security values. Saved quotes value holdings; an execution-price override changes the trade cash flow. Fund records and private employee grants outside the security snapshot are excluded from these totals.</p>
+                <p>Results compare cash, net value, gross security exposure, short exposure and the existing 0–100 risk estimate before and after, per Investment account and across all Investment accounts. Account amounts use account currency; totals use dashboard currency and saved exchange rates. Net value is cash plus signed security value; gross exposure uses absolute security values. Saved quotes value holdings; an execution-price override changes the trade cash flow. Pension, savings, bank and ESOP accounts and their holdings are excluded from these totals.</p>
                 <p>Cash includes short-sale proceeds and is not broker buying power. Available cash is unknown when shorts or derivatives may require collateral; no broker margin rule is assumed. Taxes, borrowing costs and interest are excluded. Missing prices, exchange rates or unverifiable ledger cash leave affected results unavailable; negative cash also leaves risk unavailable. Update Prices or account transactions and retry. Stale saved quotes are flagged. Analytics loading is non-blocking. Drafts remain during the session; Clear scenario or signing out removes them. Simulation never records transactions or places orders.</p>
                 <p>Press Simulate trades to capture a portfolio snapshot. The account balances, holdings, prices and risk used for that result stay frozen while live accounts and analytics continue updating. Snapshot captured shows the capture date and time. Press Simulate trades again to capture current data. Editing the scenario requires a new calculation; signing out clears the snapshot.</p>
                 <p>Accounts with future-dated security trades cannot be simulated because the recorded position snapshot does not establish current quantities. Review transaction dates in Positions, then retry. Other accounts remain available; combined valuation and risk remain unavailable while an account is uncertain.</p>
@@ -2496,13 +2497,13 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="/i18n.js?v=1.2.15-simulation-frozen"></script>
+  <script src="/i18n.js?v=1.2.15-simulation-investment"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
   <script src="/trade-planner.js?v=2"></script>
   <script src="/trade-planner-ui.js?v=3"></script>
-  <script src="/trade-simulator.js?v=2"></script>
-  <script src="/trade-simulator-ui.js?v=3"></script>
+  <script src="/trade-simulator.js?v=3"></script>
+  <script src="/trade-simulator-ui.js?v=4"></script>
   <script src="/app.js?v=0.9.15-simulation-frozen"></script>
   </body>
 </html>

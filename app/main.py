@@ -4892,7 +4892,15 @@ def trade_simulator_context(payload: dict[str, Any]):
                                             {"EQUITY", "RSU", "ETF", "BOND", "MUTUALFUND"})
         securities.append({"symbol": symbol, "stock_market": market, "security": security, "reason": reason})
     quotes = deepcopy(fx()["quotes"])
-    return {"accounts": accounts, "transactions": transactions, "items": snapshot.get("items") or [],
+    all_account_ids = {str(account["id"]) for account in accounts}
+    investment_accounts = [account for account in accounts if str(account.get("type") or "").upper() == "INVESTMENT"]
+    investment_ids = {str(account["id"]) for account in investment_accounts}
+    investment_items = [item for item in snapshot.get("items") or []
+                        if str((item.get("holding") or {}).get("account_id")) in investment_ids
+                        or (str((item.get("holding") or {}).get("account_id")) not in all_account_ids
+                            and str((item.get("holding") or {}).get("account_type") or "").upper() not in {"BANK", "LONG-TERM SAVINGS", "ESOP"})]
+    return {"accounts": investment_accounts,
+            "transactions": [row for row in transactions if str(row.get("account_db_id")) in investment_ids], "items": investment_items,
             "securities": securities, "fx_quotes": quotes, "signature": signature,
             "base_currency": base_currency,
             "calculated_at": captured_at,

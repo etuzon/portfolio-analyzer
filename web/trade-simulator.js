@@ -61,7 +61,8 @@
       }
       return Number.isFinite(cash) ? cash : null;
     };
-    const books = new Map((context.accounts || []).map((account) => [String(account.id), {
+    const accountTypes = new Map((context.accounts || []).map((account) => [String(account.id), upper(account.type)]));
+    const books = new Map((context.accounts || []).filter((account) => upper(account.type) === "INVESTMENT").map((account) => [String(account.id), {
       account, cash: ledgerCash(account), positions: [], issue: null,
     }]));
     // The dashboard's position snapshot includes every ledger date. It cannot
@@ -76,7 +77,10 @@
     let totalIssue = null;
     for (const item of context.items || []) {
       const h = item.holding || {}, book = books.get(String(h.account_id));
-      if (!book) { totalIssue = "unknown_account"; continue; }
+      if (!book) {
+        if (accountTypes.has(String(h.account_id)) || ["BANK", "LONG-TERM SAVINGS", "ESOP"].includes(upper(h.account_type))) continue;
+        totalIssue = "unknown_account"; continue;
+      }
       const quantity = num(h.quantity);
       if (quantity === 0) continue;
       const quote = datedQuote(item, String(book.account.id));
@@ -154,8 +158,23 @@
       const risk = !reason ? adapters.risk(positions, { cash: cashBase, cashCurrency: currency,
         horizonYears: adapters.horizon(book.account), baseCurrency: base,
         normalizeField: (item, field) => convert(item.holding[field], item.holding.currency) }) : null;
-      return { cash: book.cash, netValue, grossExposure, shortExposure,
-        availableCash: book.cash !== null && !hasLiability ? book.cash : null, risk, reason,
+      const availableCash = book.cash !== null && !hasLiability ? book.cash : null;
+      const valueReason = book.issue || (missingValuation ? "valuation_unavailable" : null)
+        || (localValues.some((v) => v === null) ? "fx_unavailable" : null);
+      const cashReason = book.cash === null ? "cash_unverified" : null;
+      const issues = positions.flatMap((p) => {
+        const reasons = [];
+        if (p._price === null) reasons.push("price_missing");
+        if (!p.holding.currency) reasons.push("holding_currency_missing");
+        if (!p.holding.asset_class) reasons.push("holding_class_missing");
+        if (!reasons.length && convert(p.holding.market_value, p.holding.currency) === null) reasons.push("fx_unavailable");
+        return reasons.map((reason) => ({ symbol: p.holding.symbol, reason }));
+      });
+      return { cash: book.cash, netValue, grossExposure, shortExposure, availableCash, risk, reason, issues,
+        cashDeficit: book.cash !== null ? Math.max(0, -book.cash) : null,
+        unavailableReasons: { cash: cashReason, netValue: netValue === null ? valueReason || cashReason : null,
+          grossExposure: grossExposure === null ? valueReason : null, shortExposure: shortExposure === null ? valueReason : null,
+          availableCash: availableCash === null ? cashReason || "collateral_unverified" : null, risk: risk === null ? reason : null },
         _positions: positions, _cashBase: cashBase,
         _riskWeight: !reason ? sum(baseValues.map(Math.abs)) + Math.max(0, cashBase) : null };
     };
@@ -179,7 +198,17 @@
         const weighted = denominator ? sum(rows.map((r) => r.risk.score * r._riskWeight)) / denominator : 0;
         risk = { ...combinedRisk, score: Math.min(100, Math.max(0, Math.round(0.75 * combinedRisk.score + 0.25 * weighted))) };
       }
-      return { cash, netValue, grossExposure, shortExposure, availableCash: field("availableCash"), risk, reason };
+      const availableCash = field("availableCash");
+      const unavailableReasons = {};
+      for (const [name, value] of Object.entries({ cash, netValue, grossExposure, shortExposure, availableCash, risk })) {
+        unavailableReasons[name] = value === null ? totalIssue || rows.find((r) => r[name] === null)?.unavailableReasons[name] || reason : null;
+      }
+      const blockedAccounts = accounts.filter((entry) => entry[phase].risk === null).map((entry) => ({
+        accountId: entry.account.id, reason: entry[phase].reason, currency: entry.account.currency,
+        cashDeficit: entry[phase].cashDeficit,
+      }));
+      return { cash, netValue, grossExposure, shortExposure, availableCash, risk, reason, unavailableReasons, blockedAccounts,
+        cashDeficit: cash !== null ? Math.max(0, -cash) : null };
     };
     const total = { before: combined("before"), after: combined("after") };
     for (const entry of accounts) for (const phase of ["before", "after"]) {

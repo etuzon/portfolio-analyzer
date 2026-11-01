@@ -29,10 +29,12 @@ function tradeSimulatorReason(reason) {
     insufficient_holdings: "Sell quantity exceeds the projected long holding in this account.",
     sell_exceeds_holding: "Sell quantity exceeds the projected long holding in this account.",
     existing_long: "Sell the projected long holding before opening a short in this account.",
-    negative_cash: "Projected cash is negative. Broker borrowing and buying power are unverified.",
+    negative_cash: "Projected cash is negative. The risk score does not model borrowing; reduce the trade or review the recorded cash balance.",
     future_transactions: "Future-dated trades make current holdings uncertain. Check transaction dates before simulating this account.",
     insufficient_cash: "Projected cash is negative. Broker borrowing and buying power are unverified.",
-    valuation_unavailable: "Some holdings cannot be valued. Update their saved prices and retry.",
+    valuation_unavailable: "Some holdings cannot be valued. Check their saved prices, currencies, asset classes and quantities.",
+    holding_currency_missing: "The holding currency is missing. Set it in Securities before calculating risk.",
+    holding_class_missing: "The holding asset class is missing. Set it in Securities before calculating risk.",
     collateral_unverified: "Buying power is unknown because shorts or derivatives may require collateral.",
   }[reason] || "Some inputs cannot be verified. Check this trade, account ledger and saved prices, then retry.");
 }
@@ -96,17 +98,29 @@ function renderTradeSimulator() {
   renderTradeSimulatorResult();
 }
 
-function tradeSimulatorSnapshotHtml(snapshot, currency) {
-  const cash = (value) => Number.isFinite(value) ? `<bdi>${esc(money(value, currency))}</bdi>` : esc(t("Not available"));
+function tradeSimulatorSnapshotHtml(snapshot, currency, accountNames = new Map()) {
+  const missing = (field) => {
+    const reason = snapshot?.unavailableReasons?.[field] || snapshot?.reason;
+    const label = { valuation_unavailable: "Incomplete holding data", fx_unavailable: "Missing exchange rate",
+      cash_unverified: "Ledger cash unavailable", negative_cash: "Cash deficit", future_transactions: "Future-dated transactions",
+      collateral_unverified: "Broker collateral unknown", unknown_account: "Unassigned holding" }[reason] || "Not available";
+    return `<span class="signal-missing" title="${esc(tradeSimulatorReason(reason))}">${esc(t(label))}</span>`;
+  };
+  const cash = (field) => Number.isFinite(snapshot?.[field]) ? `<bdi>${esc(money(snapshot[field], currency))}</bdi>` : missing(field);
   const fact = (label, value) => `<div><dt>${esc(t(label))}</dt><dd>${value}</dd></div>`;
+  const blockers = (snapshot?.blockedAccounts || []).map((entry) => `<li><bdi>${esc(accountNames.get(String(entry.accountId)) || t("Account"))}</bdi>: ${esc(tradeSimulatorReason(entry.reason))}${entry.cashDeficit > 0 ? ` · ${esc(t("Cash deficit"))}: <bdi>${esc(money(entry.cashDeficit, entry.currency))}</bdi>` : ""}</li>`).join("");
+  const issues = (snapshot?.issues || []).map((entry) => `<li><bdi>${esc(entry.symbol)}</bdi>: ${esc(tradeSimulatorReason(entry.reason))}</li>`).join("");
+  const buyingPowerReason = snapshot?.availableCash === null && snapshot?.unavailableReasons?.availableCash === "collateral_unverified"
+    ? `<p class="signal-missing">${esc(tradeSimulatorReason("collateral_unverified"))}</p>` : "";
   return `<dl class="trade-simulator-facts">
-    ${fact("Recorded cash", cash(snapshot?.cash))}
-    ${fact("Net account value", cash(snapshot?.netValue))}
-    ${fact("Gross security exposure", cash(snapshot?.grossExposure))}
-    ${fact("Short exposure", cash(snapshot?.shortExposure))}
-    ${fact("Available cash estimate", snapshot?.availableCash === null ? esc(t("Buying power unverified")) : cash(snapshot?.availableCash))}
-    ${fact("Risk", snapshot?.risk ? riskBadge(snapshot.risk) : esc(t("Not available")))}
-  </dl>${snapshot?.reason ? `<p class="signal-missing">${esc(tradeSimulatorReason(snapshot.reason))}</p>` : ""}`;
+    ${fact("Recorded cash", cash("cash"))}
+    ${fact("Net account value", cash("netValue"))}
+    ${fact("Gross security exposure", cash("grossExposure"))}
+    ${fact("Short exposure", cash("shortExposure"))}
+    ${fact("Available cash estimate", cash("availableCash"))}
+    ${fact("Risk", snapshot?.risk ? riskBadge(snapshot.risk) : missing("risk"))}
+    ${snapshot?.cashDeficit > 0 ? fact("Cash deficit", `<span class="signal-missing"><bdi>${esc(money(snapshot.cashDeficit, currency))}</bdi></span>`) : ""}
+  </dl>${blockers ? `<ul class="signal-missing">${blockers}</ul>` : snapshot?.reason ? `<p class="signal-missing">${esc(tradeSimulatorReason(snapshot.reason))}</p>` : ""}${issues ? `<ul class="signal-missing">${issues}</ul>` : ""}${buyingPowerReason}`;
 }
 
 function renderTradeSimulatorResult() {
@@ -128,12 +142,12 @@ function renderTradeSimulatorResult() {
     if (node) { node.hidden = false; node.textContent += `${node.textContent ? " " : ""}${tradeSimulatorReason(error.reason)}`; }
   }
   if (result.status !== "ok") { panel.innerHTML = `<p role="alert">${esc(t("Review the highlighted trades and simulate again."))}</p><ul>${errors.map((error) => `<li>${esc(tradeSimulatorReason(error.reason))}</li>`).join("")}</ul>`; return; }
-  const comparison = (label, before, after, currency, total = false) => `<article class="trade-simulator-comparison${total ? " trade-simulator-total" : ""}"><h3>${esc(label)} <small>${esc(currencyDisplayLabel(currency))}</small></h3><div class="trade-simulator-before-after"><section><h4>${esc(t("Before"))}</h4>${tradeSimulatorSnapshotHtml(before, currency)}</section><section><h4>${esc(t("After"))}</h4>${tradeSimulatorSnapshotHtml(after, currency)}</section></div></article>`;
+  const comparison = (label, before, after, currency, total = false) => `<article class="trade-simulator-comparison${total ? " trade-simulator-total" : ""}"><h3>${esc(label)} <small>${esc(currencyDisplayLabel(currency))}</small></h3><div class="trade-simulator-before-after"><section><h4>${esc(t("Before"))}</h4>${tradeSimulatorSnapshotHtml(before, currency, accountNames)}</section><section><h4>${esc(t("After"))}</h4>${tradeSimulatorSnapshotHtml(after, currency, accountNames)}</section></div></article>`;
   const warnings = (result.warnings || []).map((warning) => `<li>${warning.symbol ? `<bdi dir="ltr">${esc(warning.symbol)}</bdi>: ` : ""}${esc(tradeSimulatorReason(warning.reason))}${warning.date ? ` · <bdi>${esc(formatDate(warning.date))}</bdi>` : ""}</li>`).join("");
   const accountNames = new Map((result.accounts || []).map((entry) => [String(entry.account.id), tradePlannerAccountName(entry.account)]));
   panel.innerHTML = `<p role="status">${esc(t("Scenario calculated. Your recorded portfolio is unchanged."))}</p>
     <p class="section-note">${esc(t("This result is frozen at the captured snapshot. Later account and market updates do not change it. Press Simulate trades again to capture current data."))}</p>
-    ${result.total ? comparison(t("All accounts total"), result.total.before, result.total.after, result.baseCurrency, true) : ""}
+    ${result.total ? comparison(t("Investment accounts total"), result.total.before, result.total.after, result.baseCurrency, true) : ""}
     ${(result.accounts || []).map((entry) => comparison(tradePlannerAccountName(entry.account), entry.before, entry.after, entry.account.currency)).join("")}
     <details class="trade-simulator-execution"><summary>${esc(t("Trade calculations"))}</summary><ol>${(result.trades || []).map((trade) => `<li><bdi dir="ltr">${esc(trade.symbol)}</bdi> · <bdi>${esc(accountNames.get(String(trade.accountId)) || t("Account"))}</bdi> · ${esc(t({ BUY: "Buy", SELL: "Sell", SHORT: "Short" }[trade.action]))} · <bdi>${esc(fmt(Number(trade.quantity), 8))}</bdi> · ${esc(t(trade.priceDate ? "Execution price" : "User-entered execution price"))}: <bdi>${esc(money(trade.price, trade.currency))}</bdi>${trade.priceDate ? ` · ${esc(t("Saved quote date"))}: <bdi>${esc(formatDate(trade.priceDate))}</bdi>` : ""} · ${esc(t("Cash change"))}: <bdi>${esc(money(trade.cashImpact, trade.currency))}</bdi></li>`).join("")}</ol></details>
     ${warnings ? `<ul class="signal-missing">${warnings}</ul>` : ""}
