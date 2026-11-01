@@ -4881,7 +4881,7 @@ def trade_simulator_context(payload: dict[str, Any]):
     for symbol, market in listings:
         security, reason = planner_security(symbol, market, snapshot.get("items") or [], hub(),
                                             _stock_market_key, US_STOCK_MARKETS, local_store,
-                                            {"EQUITY", "ETF", "BOND", "MUTUALFUND"})
+                                            {"EQUITY", "RSU", "ETF", "BOND", "MUTUALFUND"})
         securities.append({"symbol": symbol, "stock_market": market, "security": security, "reason": reason})
     quotes = fx()["quotes"]
     if signature != portfolio_cache_signature():

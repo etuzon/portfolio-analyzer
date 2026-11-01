@@ -37,6 +37,43 @@ assert.equal(JSON.stringify(ctx),source);
 ''')
 
 
+def test_listed_rsu_shares_replay_cisco_buy_and_followup_sell_short():
+    run_simulation('''
+const ctx=simulationContext();ctx.accounts[0].initial_cash=250000;
+const security=stock('CSCO',2000);security.holding.asset_class='RSU';
+ctx.items=[security];ctx.securities=[{symbol:'CSCO',stock_market:'NASDAQ',security}];
+const source=JSON.stringify(ctx);
+const buy=trade({symbol:'CSCO',quantity:1000,priceInput:101});
+let result=simulator.simulate(ctx,[buy],adapters);
+assert.equal(result.status,'ok',JSON.stringify(result));
+assert.equal(result.accounts[0].after.cash,149000);
+assert.equal(result.accounts[0].after.netValue,251000);
+assert.equal(result.trades[0].quantityAfter,1020);
+assert.ok(Number.isFinite(result.accounts[0].after.risk.score));
+result=simulator.simulate(ctx,[trade({symbol:'CSCO',action:'SELL',quantity:20}),trade({id:'short',symbol:'CSCO',action:'SHORT',quantity:10,priceInput:101})],adapters);
+assert.equal(result.status,'ok');
+assert.equal(result.accounts[0].after.cash,253010);
+assert.equal(result.accounts[0].after.shortExposure,1000);
+assert.equal(result.accounts[0].after.availableCash,null);
+assert.equal(JSON.stringify(ctx),source);
+''')
+
+
+def test_rsu_class_never_overrides_derivative_subclass_or_esop_account():
+    run_simulation('''
+const ctx=simulationContext();ctx.securities[0].security.holding.asset_class='RSU';
+for(const subclass of ['OPTION','FUTURE','STOCK_OPTION','EMPLOYEE_STOCK_OPTION']){
+ ctx.securities[0].security.holding.asset_sub_class=subclass;
+ const result=simulator.simulate(ctx,[trade()],adapters);
+ assert.equal(result.status,'invalid');assert.equal(result.errors[0].reason,'unsupported_instrument');
+}
+ctx.securities[0].security.holding.asset_sub_class='';ctx.accounts[0].type='ESOP';
+assert.equal(simulator.simulate(ctx,[trade()],adapters).errors[0].reason,'account_type');
+ctx.accounts[0].type='Investment';ctx.securities[0].security.holding.asset_class='PRIVATE_STOCK';
+assert.equal(simulator.simulate(ctx,[trade()],adapters).errors[0].reason,'unsupported_asset_class');
+''')
+
+
 def test_short_proceeds_preserve_equity_and_do_not_become_buying_power():
     run_simulation('''
 const ctx=simulationContext();

@@ -1038,6 +1038,7 @@
               </article>
               <article class="help-feature">
                 <h3>Trade Simulation</h3>
+                <p>RSU shares held in investment accounts support simulated buys, sells and shorts. Employee option grants and derivatives are not supported; ESOP accounts cannot be selected for trading.</p>
                 <p>Add up to 100 trades per scenario.</p>
                 <p>Open Portfolio Data → Trade Simulation. Choose an investment account, security symbol and listing, then add a Buy, Sell or Short with a positive quantity. Add multiple trades in one or more accounts; duplicate a row to reuse a security in another account. Edit account, action, quantity, execution price or fee in the scenario, or remove a row. Simulate trades evaluates rows in their displayed order using shared cash and projected holdings.</p>
                 <p>Leave execution price empty for the latest dated saved quote, or enter your own execution price: US shares in dollars, US bonds in cents, Israeli securities in agorot. Fees are in account currency and default to zero. Account and security currencies must match; no currency exchange is performed. Buy covers existing shorts first and may then open a long; Sell cannot exceed the projected long holding; Short requires the projected long holding to be closed first. Derivatives cannot be added as simulated trades.</p>
@@ -2494,13 +2495,13 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="/i18n.js?v=1.2.15-simulation"></script>
+  <script src="/i18n.js?v=1.2.15-simulation-rsu"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
   <script src="/trade-planner.js?v=2"></script>
   <script src="/trade-planner-ui.js?v=3"></script>
-  <script src="/trade-simulator.js?v=1"></script>
-  <script src="/trade-simulator-ui.js?v=1"></script>
+  <script src="/trade-simulator.js?v=2"></script>
+  <script src="/trade-simulator-ui.js?v=2"></script>
   <script src="/app.js?v=0.9.15-simulation"></script>
   </body>
 </html>

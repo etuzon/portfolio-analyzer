@@ -3,6 +3,9 @@
 
   const HEBREW_TEXT = Object.freeze({
     "Trade Simulation": "סימולציית מסחר",
+    "Duplicate": "שכפול",
+    "Simulation supports shares, including RSU shares, ETFs, bonds and mutual funds in investment accounts.": "הסימולציה תומכת במניות, כולל מניות RSU, קרנות סל, אג״ח וקרנות נאמנות בחשבונות השקעות.",
+    "RSU shares held in investment accounts support simulated buys, sells and shorts. Employee option grants and derivatives are not supported; ESOP accounts cannot be selected for trading.": "ניתן לדמות קנייה, מכירה ומכירה בחסר של מניות RSU המוחזקות בחשבונות השקעות. אין תמיכה במענקי אופציות לעובדים ובנגזרים; לא ניתן לבחור חשבונות ESOP לפעולות מסחר.",
     "User-entered execution price": "מחיר ביצוע שהוזן ידנית",
     "Totals include managed account cash and securities. Separate fund records and private grants outside this snapshot are excluded. Risk is the app's 0–100 heuristic, not a probability of loss.": "הסכומים הכוללים כוללים מזומן וניירות ערך בחשבונות המנוהלים. רישומי קרנות נפרדים ומענקים בחברות פרטיות שמחוץ לתמונה זו אינם נכללים. הסיכון הוא אומדן היישום בטווח 0–100 ואינו הסתברות להפסד.",
     "Future-dated trades make current holdings uncertain. Check transaction dates before simulating this account.": "עסקאות בעלות תאריך עתידי אינן מאפשרות לאמת את ההחזקות הנוכחיות. בדקו את תאריכי העסקאות לפני סימולציה בחשבון זה.",

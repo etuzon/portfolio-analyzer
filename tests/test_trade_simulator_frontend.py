@@ -120,3 +120,19 @@ for(const language of ['en','he']){
  assert.ok(detail.includes(language==='he'?'מחיר ביצוע שהוזן ידנית':'User-entered execution price'));
 }
 ''')
+
+
+def test_duplicate_action_and_instrument_errors_honor_the_active_language():
+    run_ui(r'''
+const row={id:'1',accountId:'one',symbol:'CSCO',market:'NASDAQ',action:'BUY',quantity:'1000',priceInput:'101',fee:'0'};
+tradeSimulatorRows=[row];
+for(const language of ['he','en','he']){
+ state.language=language;
+ const html=tradeSimulatorRowHtml(row,0);
+ assert.ok(html.includes(language==='he'?'שכפול':'Duplicate'));
+ if(language==='he') assert.ok(!html.includes('Duplicate'));
+ const error=tradeSimulatorReason('unsupported_asset_class');
+ assert.ok(error.includes('RSU'));
+ assert.ok(!error.includes(language==='he'?'נגזרים':'Derivatives'));
+}
+''')

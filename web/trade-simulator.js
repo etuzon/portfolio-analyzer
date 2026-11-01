@@ -97,8 +97,11 @@
       const security = entry?.security;
       if (!security) { fail(id, entry?.reason || "listing_unverified"); continue; }
       const h = security.holding, currency = upper(h.currency), quantity = num(trade.quantity);
-      if (!["EQUITY", "ETF", "BOND", "BONDS", "MUTUALFUND"].includes(upper(h.asset_class)) || adapters.derivative(security)) {
+      if (adapters.derivative(security)) {
         fail(id, "unsupported_instrument"); continue;
+      }
+      if (!["EQUITY", "RSU", "ETF", "BOND", "BONDS", "MUTUALFUND"].includes(upper(h.asset_class))) {
+        fail(id, "unsupported_asset_class"); continue;
       }
       if (currency !== upper(book.account.currency)) { fail(id, "account_currency"); continue; }
       const current = datedQuote(security, String(book.account.id));

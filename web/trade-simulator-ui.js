@@ -17,6 +17,7 @@ function tradeSimulatorReason(reason) {
     account_type: "Choose an investment account for simulated trades.",
     unknown_account: "Some holdings are not linked to an existing account. Check their account assignments.",
     unsupported_instrument: "This instrument cannot be simulated. Derivatives are not supported.",
+    unsupported_asset_class: "Simulation supports shares, including RSU shares, ETFs, bonds and mutual funds in investment accounts.",
     listing_unverified: "The security listing could not be verified. Check symbol and market.",
     ambiguous_listing: "This symbol has multiple listings. Enter its market.",
     price_unavailable: "Enter an execution price for this trade, or add a dated saved quote in Prices and retry.",
