@@ -1,6 +1,6 @@
 """Whole-basket financial checks using the actual dashboard risk calculation."""
 import json
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 from starlette.requests import Request
@@ -282,7 +282,7 @@ def test_context_http_requires_auth_and_allows_viewer_without_ledger_writes(tmp_
     assert main.local_store.list_transactions() == before
 
 
-def test_context_rejects_changes_during_lookup(monkeypatch):
+def test_context_rejects_changes_during_initial_snapshot_capture(monkeypatch):
     signatures = iter(["before", "after"])
     monkeypatch.setattr(main, "portfolio_cache_signature", lambda: next(signatures))
     monkeypatch.setattr(main, "portfolio_payload", lambda **kw: {"items": []})
@@ -292,6 +292,41 @@ def test_context_rejects_changes_during_lookup(monkeypatch):
     with pytest.raises(main.HTTPException) as exc:
         main.trade_simulator_context({"securities": [{"symbol": "NEW"}]})
     assert exc.value.status_code == 409
+
+
+def test_snapshot_is_private_and_survives_changes_after_capture(monkeypatch):
+    accounts = [{"id": "fixture", "currency": "USD", "initial_cash": 1000}]
+    transactions = [{"account_db_id": "fixture", "action": "BUY", "quantity": 2, "price": 100}]
+    items = [{"holding": {"symbol": "NEW", "quantity": 2}}]
+    source = {"version": "captured", "lookup_started": False}
+    captured_at = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
+
+    class CaptureClock:
+        @staticmethod
+        def now(tz):
+            assert not source["lookup_started"], "capture time must precede slow lookup"
+            return captured_at
+
+    def resolve(symbol, market, saved, *args):
+        source.update(version="later", lookup_started=True)
+        accounts[0]["initial_cash"] = 5000
+        transactions[0]["quantity"] = 20
+        items[0]["holding"]["quantity"] = 20
+        return saved[0], None
+
+    monkeypatch.setattr(main, "datetime", CaptureClock)
+    monkeypatch.setattr(main, "portfolio_cache_signature", lambda: source["version"])
+    monkeypatch.setattr(main, "portfolio_payload", lambda **kw: {"items": items})
+    monkeypatch.setattr(main, "local_store", type("Store", (), {"list_accounts": lambda _: accounts, "list_transactions": lambda _: transactions})())
+    monkeypatch.setattr(main, "planner_security", resolve)
+    monkeypatch.setattr(main, "fx", lambda: {"quotes": []})
+    result = main.trade_simulator_context({"securities": [{"symbol": "NEW"}]})
+    assert result["signature"] == "captured"
+    assert result["calculated_at"] == captured_at.isoformat()
+    assert result["accounts"][0]["initial_cash"] == 1000
+    assert result["transactions"][0]["quantity"] == 2
+    assert result["items"][0]["holding"]["quantity"] == 2
+    assert result["securities"][0]["security"]["holding"]["quantity"] == 2
 
 
 @pytest.mark.parametrize("payload", [{}, {"securities": []}, {"securities": [None]}, {"securities": [{"symbol": "bad symbol"}]}, {"securities": [{"symbol": "NEW", "stock_market": "BAD"}]}])

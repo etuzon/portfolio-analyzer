@@ -3,7 +3,6 @@ let tradeSimulatorRows = [];
 let tradeSimulatorView = null;
 let tradeSimulatorVersion = 0;
 let tradeSimulatorNextId = 1;
-let tradeSimulatorFingerprint = null;
 
 function tradeSimulatorReason(reason) {
   return t({
@@ -58,15 +57,8 @@ function resetTradeSimulator() {
   tradeSimulatorRows = [];
   tradeSimulatorView = null;
   tradeSimulatorVersion += 1;
-  tradeSimulatorFingerprint = null;
   $("tradeSimulatorForm")?.reset();
   renderTradeSimulator();
-}
-
-function checkTradeSimulatorInputs() {
-  const fingerprint = JSON.stringify([state.localAccounts, state.localTransactions, state.allPortfolioItems || state.items, state.fxRates]);
-  if (tradeSimulatorFingerprint !== null && tradeSimulatorFingerprint !== fingerprint) invalidateTradeSimulator();
-  tradeSimulatorFingerprint = fingerprint;
 }
 
 function tradeSimulatorRowHtml(row, index) {
@@ -127,7 +119,7 @@ function renderTradeSimulatorResult() {
   $("tradeSimulatorRows").querySelectorAll("[data-simulation-error]").forEach((node) => { node.hidden = true; node.textContent = ""; });
   if (!tradeSimulatorView) { panel.innerHTML = ""; return; }
   if (loading) { panel.innerHTML = `<p role="status">${esc(t("Calculating combined account cash and risk…"))}</p>`; return; }
-  if (tradeSimulatorView.status === "stale") { panel.innerHTML = `<p role="status">${esc(t("Scenario or portfolio inputs changed. Simulate again to update the results."))}</p>`; return; }
+  if (tradeSimulatorView.status === "stale") { panel.innerHTML = `<p role="status">${esc(t("Scenario changed. Simulate again to update the results."))}</p>`; return; }
   if (tradeSimulatorView.status === "error") { panel.innerHTML = `<p role="alert">${esc(t("Could not calculate the simulation. Your trades are kept. Try again."))}</p>`; return; }
   const result = tradeSimulatorView.result;
   const errors = result.errors || [];
@@ -140,12 +132,13 @@ function renderTradeSimulatorResult() {
   const warnings = (result.warnings || []).map((warning) => `<li>${warning.symbol ? `<bdi dir="ltr">${esc(warning.symbol)}</bdi>: ` : ""}${esc(tradeSimulatorReason(warning.reason))}${warning.date ? ` · <bdi>${esc(formatDate(warning.date))}</bdi>` : ""}</li>`).join("");
   const accountNames = new Map((result.accounts || []).map((entry) => [String(entry.account.id), tradePlannerAccountName(entry.account)]));
   panel.innerHTML = `<p role="status">${esc(t("Scenario calculated. Your recorded portfolio is unchanged."))}</p>
+    <p class="section-note">${esc(t("This result is frozen at the captured snapshot. Later account and market updates do not change it. Press Simulate trades again to capture current data."))}</p>
     ${result.total ? comparison(t("All accounts total"), result.total.before, result.total.after, result.baseCurrency, true) : ""}
     ${(result.accounts || []).map((entry) => comparison(tradePlannerAccountName(entry.account), entry.before, entry.after, entry.account.currency)).join("")}
     <details class="trade-simulator-execution"><summary>${esc(t("Trade calculations"))}</summary><ol>${(result.trades || []).map((trade) => `<li><bdi dir="ltr">${esc(trade.symbol)}</bdi> · <bdi>${esc(accountNames.get(String(trade.accountId)) || t("Account"))}</bdi> · ${esc(t({ BUY: "Buy", SELL: "Sell", SHORT: "Short" }[trade.action]))} · <bdi>${esc(fmt(Number(trade.quantity), 8))}</bdi> · ${esc(t(trade.priceDate ? "Execution price" : "User-entered execution price"))}: <bdi>${esc(money(trade.price, trade.currency))}</bdi>${trade.priceDate ? ` · ${esc(t("Saved quote date"))}: <bdi>${esc(formatDate(trade.priceDate))}</bdi>` : ""} · ${esc(t("Cash change"))}: <bdi>${esc(money(trade.cashImpact, trade.currency))}</bdi></li>`).join("")}</ol></details>
     ${warnings ? `<ul class="signal-missing">${warnings}</ul>` : ""}
     ${result.refreshPending ? `<p class="signal-missing">${esc(t("Analytics are updating. Simulate again after the update for the latest saved data."))}</p>` : ""}
-    <p class="trade-plan-note">${esc(t("Calculated"))}: <bdi>${esc(formatDateTime(result.calculatedAt))}</bdi></p>`;
+    <p class="trade-plan-note">${esc(t("Snapshot captured"))}: <bdi>${esc(formatDateTime(result.calculatedAt))}</bdi></p>`;
 }
 
 async function calculateTradeSimulation() {

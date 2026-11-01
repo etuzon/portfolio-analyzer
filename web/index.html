@@ -1043,7 +1043,8 @@
                 <p>Open Portfolio Data → Trade Simulation. Choose an investment account, security symbol and listing, then add a Buy, Sell or Short with a positive quantity. Add multiple trades in one or more accounts; duplicate a row to reuse a security in another account. Edit account, action, quantity, execution price or fee in the scenario, or remove a row. Simulate trades evaluates rows in their displayed order using shared cash and projected holdings.</p>
                 <p>Leave execution price empty for the latest dated saved quote, or enter your own execution price: US shares in dollars, US bonds in cents, Israeli securities in agorot. Fees are in account currency and default to zero. Account and security currencies must match; no currency exchange is performed. Buy covers existing shorts first and may then open a long; Sell cannot exceed the projected long holding; Short requires the projected long holding to be closed first. Derivatives cannot be added as simulated trades.</p>
                 <p>Results compare cash, net value, gross security exposure, short exposure and the existing 0–100 risk estimate before and after, per account and across all managed accounts. Account amounts use account currency; totals use dashboard currency and saved exchange rates. Net value is cash plus signed security value; gross exposure uses absolute security values. Saved quotes value holdings; an execution-price override changes the trade cash flow. Fund records and private employee grants outside the security snapshot are excluded from these totals.</p>
-                <p>Cash includes short-sale proceeds and is not broker buying power. Available cash is unknown when shorts or derivatives may require collateral; no broker margin rule is assumed. Taxes, borrowing costs and interest are excluded. Missing prices, exchange rates or unverifiable ledger cash leave affected results unavailable; negative cash also leaves risk unavailable. Update Prices or account transactions and retry. Stale saved quotes are flagged. Analytics loading is non-blocking; simulate again after updates. Editing the scenario or portfolio marks prior results stale. Drafts remain during the session; Clear scenario or signing out removes them. Simulation never records transactions or places orders.</p>
+                <p>Cash includes short-sale proceeds and is not broker buying power. Available cash is unknown when shorts or derivatives may require collateral; no broker margin rule is assumed. Taxes, borrowing costs and interest are excluded. Missing prices, exchange rates or unverifiable ledger cash leave affected results unavailable; negative cash also leaves risk unavailable. Update Prices or account transactions and retry. Stale saved quotes are flagged. Analytics loading is non-blocking. Drafts remain during the session; Clear scenario or signing out removes them. Simulation never records transactions or places orders.</p>
+                <p>Press Simulate trades to capture a portfolio snapshot. The account balances, holdings, prices and risk used for that result stay frozen while live accounts and analytics continue updating. Snapshot captured shows the capture date and time. Press Simulate trades again to capture current data. Editing the scenario requires a new calculation; signing out clears the snapshot.</p>
                 <p>Accounts with future-dated security trades cannot be simulated because the recorded position snapshot does not establish current quantities. Review transaction dates in Positions, then retry. Other accounts remain available; combined valuation and risk remain unavailable while an account is uncertain.</p>
               </article>
               <article class="help-feature">
@@ -2495,13 +2496,13 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="/i18n.js?v=1.2.15-simulation-rsu"></script>
+  <script src="/i18n.js?v=1.2.15-simulation-frozen"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
   <script src="/trade-planner.js?v=2"></script>
   <script src="/trade-planner-ui.js?v=3"></script>
   <script src="/trade-simulator.js?v=2"></script>
-  <script src="/trade-simulator-ui.js?v=2"></script>
-  <script src="/app.js?v=0.9.15-simulation"></script>
+  <script src="/trade-simulator-ui.js?v=3"></script>
+  <script src="/app.js?v=0.9.15-simulation-frozen"></script>
   </body>
 </html>

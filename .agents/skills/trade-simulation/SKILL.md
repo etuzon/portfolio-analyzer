@@ -10,7 +10,7 @@ Use the existing dashboard and account ledger as the evidence for a proposed tra
 ## Financial contract
 
 - Simulation is read-only: never call transaction-save endpoints, alter the source ledger, or submit broker orders. Drafts belong to the current authenticated browser session and clear on sign-out/user change.
-- Resolve every listing and fetch accounts, transactions, FX, and holding evidence as one version-checked snapshot. Deduplicate lookup requests without collapsing account positions. Reject superseded browser responses on basket edits, source changes, and sign-out.
+- Pressing Simulate captures a private snapshot for that request. Check local version consistency while capturing accounts, transactions and holdings; later account/market changes must not cancel an already coherent snapshot during listing lookup or erase its result. Copy mutable source records before lookup. Deduplicate listing requests without collapsing account positions. Reject superseded browser responses on basket edits, a newer explicit calculation, and sign-out, rather than on live portfolio refreshes.
 - Apply rows in order to shared projected cash and quantities per account. A sale cannot exceed the projected long holding or silently open a short. A short cannot coexist with a long in the same account/listing. Buy covers a short first and can cross zero into a long.
 - Treat listed RSU shares in Investment accounts as supported shares, using their existing listing identity and the shared equity risk factor. RSU classification alone does not make a holding a derivative or an unvested grant. Preserve the separate rejection of actual option/future subclasses and ESOP trading accounts. Check real imported asset classifications when reproducing unsupported-instrument errors; synthetic EQUITY-only fixtures miss this boundary. Explain unsupported asset classes separately from derivatives.
 - Cash changes by `−quantity × execution price − fee` for buys and `+quantity × execution price − fee` for sells/shorts. Fees are explicit, in account currency. Do not invent taxes, borrow costs, interest, automatic currency conversion, or broker eligibility.
@@ -23,7 +23,7 @@ Use the existing dashboard and account ledger as the evidence for a proposed tra
 
 ## Interaction and verification
 
-Keep a dedicated Trade Simulation entry within the existing hierarchical navigation. Let the user add, duplicate, edit, and remove rows across accounts, then calculate the whole basket. Keep numerical fields readable, preserve drafts on error/reopen/language change, and mark results stale after an input/source change. Loading must stay inside the simulator.
+Keep a dedicated Trade Simulation entry within the existing hierarchical navigation. Let the user add, duplicate, edit, and remove rows across accounts, then calculate the whole basket. Keep numerical fields readable and preserve drafts on error/reopen/language change. Only scenario edits mark its result stale. Display the capture time and explain that results stay frozen while live accounts/analytics update; an explicit Simulate captures fresh data. Do not subscribe simulator validity to the dashboard's live JSON fingerprint or refresh cycle. Loading must stay inside the simulator.
 
 Maintain the corresponding Help in `web/index.html` and Hebrew in `web/i18n.js`. Cover account prerequisites, price/fee units, row order, buy-to-cover, short uncertainty, total scope, risk limitations, saved evidence, and retry.
 

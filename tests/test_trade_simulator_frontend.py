@@ -6,7 +6,7 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_ui(body):
+def run_ui(body, integration_source=""):
     script = "const window = {};\n" + (ROOT / "web/i18n.js").read_text() + r'''
 const assert=require('node:assert/strict');
 window.PortfolioTradeSimulator=require('./web/trade-simulator.js');
@@ -32,7 +32,7 @@ const security={holding:{symbol:'NEW',stock_market:'NASDAQ',currency:'USD',asset
 const ctx={accounts:state.localAccounts,transactions:[],items:[],base_currency:'USD',fx_quotes:[],calculated_at:'2026-10-30T12:00:00Z',securities:[{symbol:'NEW',stock_market:'NASDAQ',security}]};
 let calls=0,pending=[];
 const api=()=>{calls++;return new Promise((resolve,reject)=>pending.push({resolve,reject}));};
-''' + (ROOT / "web/trade-simulator-ui.js").read_text() + "\n" + body
+''' + (ROOT / "web/trade-simulator-ui.js").read_text() + "\n" + integration_source + "\n" + body
     completed = subprocess.run(["node"], input=script, cwd=ROOT, text=True, capture_output=True)
     assert completed.returncode == 0, completed.stderr
 
@@ -61,21 +61,32 @@ for(const language of ['he','en','he']){
 ''')
 
 
-def test_source_fingerprint_preserves_results_until_real_change_and_discards_late_response():
+def test_simulation_freezes_snapshot_until_explicit_rerun_and_rejects_edited_drafts():
     run_ui(r'''
 (async()=>{
  tradeSimulatorRows=[{id:'1',accountId:'one',symbol:'NEW',market:'NASDAQ',action:'BUY',quantity:'2',priceInput:'',fee:'0'}];
- checkTradeSimulatorInputs();
+ const frozen=JSON.parse(JSON.stringify(ctx));
  const first=calculateTradeSimulation();
- checkTradeSimulatorInputs();
  assert.equal(tradeSimulatorView.status,'loading');
  await calculateTradeSimulation();assert.equal(calls,1);
- state.localAccounts[0].initial_cash=2000;checkTradeSimulatorInputs();
- assert.equal(tradeSimulatorView.status,'stale');
+ state.localAccounts=[{...state.localAccounts[0],initial_cash:2000}];
+ state.fxRates={'USD/ILS':4.1};state.allPortfolioItems=[{analytics_state:'updating'}];
+ renderTradeSimulator();
+ assert.equal(tradeSimulatorView.status,'loading');
+ pending[0].resolve(frozen);await first;
+ assert.equal(tradeSimulatorView.status,'ready');
+ assert.equal(tradeSimulatorView.result.accounts[0].before.cash,1000);
+ const result=JSON.stringify(tradeSimulatorView.result);
+ state.localAccounts=[{...state.localAccounts[0],initial_cash:5000}];
+ renderTradeSimulator();
+ assert.equal(JSON.stringify(tradeSimulatorView.result),result);
  const second=calculateTradeSimulation();assert.equal(calls,2);
- pending[0].resolve(ctx);await first;assert.equal(tradeSimulatorView.status,'loading');
- pending[1].resolve(ctx);await second;assert.equal(tradeSimulatorView.status,'ready');
- checkTradeSimulatorInputs();assert.equal(tradeSimulatorView.status,'ready');
+ pending[1].resolve({...frozen,accounts:JSON.parse(JSON.stringify(state.localAccounts))});await second;
+ assert.equal(tradeSimulatorView.result.accounts[0].before.cash,5000);
+ const third=calculateTradeSimulation();
+ tradeSimulatorRows[0].quantity='3';invalidateTradeSimulator();
+ pending[2].resolve(frozen);await third;
+ assert.equal(tradeSimulatorView.status,'stale');
  assert.equal(tradeSimulatorRows.length,1);
 })();
 ''')

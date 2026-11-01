@@ -14,6 +14,7 @@ import stat
 import tempfile
 import zipfile
 from contextlib import asynccontextmanager
+from copy import deepcopy
 from datetime import date, datetime, time as clock_time, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
@@ -4874,22 +4875,27 @@ def trade_simulator_context(payload: dict[str, Any]):
         if (symbol, market) not in listings:
             listings.append((symbol, market))
     signature = portfolio_cache_signature()
-    snapshot = portfolio_payload(defer_enrichment=True)
-    accounts = local_store.list_accounts()
-    transactions = local_store.list_transactions()
+    snapshot = deepcopy(portfolio_payload(defer_enrichment=True))
+    accounts = deepcopy(local_store.list_accounts())
+    transactions = deepcopy(local_store.list_transactions())
+    # Freeze one coherent local snapshot before potentially slow listing/FX
+    # lookups. Later ledger updates belong to the next simulation, rather than
+    # cancelling this already captured scenario.
+    if signature != portfolio_cache_signature():
+        raise HTTPException(status_code=409, detail="portfolio_changed")
+    captured_at = datetime.now(timezone.utc).isoformat()
+    base_currency = str(config.dashboard.get("base_currency") or "ILS").upper()
     securities = []
     for symbol, market in listings:
         security, reason = planner_security(symbol, market, snapshot.get("items") or [], hub(),
                                             _stock_market_key, US_STOCK_MARKETS, local_store,
                                             {"EQUITY", "RSU", "ETF", "BOND", "MUTUALFUND"})
         securities.append({"symbol": symbol, "stock_market": market, "security": security, "reason": reason})
-    quotes = fx()["quotes"]
-    if signature != portfolio_cache_signature():
-        raise HTTPException(status_code=409, detail="portfolio_changed")
+    quotes = deepcopy(fx()["quotes"])
     return {"accounts": accounts, "transactions": transactions, "items": snapshot.get("items") or [],
             "securities": securities, "fx_quotes": quotes, "signature": signature,
-            "base_currency": str(config.dashboard.get("base_currency") or "ILS").upper(),
-            "calculated_at": datetime.now(timezone.utc).isoformat(),
+            "base_currency": base_currency,
+            "calculated_at": captured_at,
             "refresh_pending": snapshot.get("refresh_pending", False)}
 
 

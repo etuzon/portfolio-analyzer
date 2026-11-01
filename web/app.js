@@ -11399,7 +11399,6 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
     state.allPortfolioItems = allItems;
     state.items = portfolioItems(allItems);
     if (typeof checkTradePlannerInputs === "function") checkTradePlannerInputs();
-    if (typeof checkTradeSimulatorInputs === "function") checkTradeSimulatorInputs();
     state.portfolioReady = true;
     state.accountTrend = {
       ...trend,
@@ -13170,7 +13169,7 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
   }
   if (id === "tradeSimulatorModal") {
     $("tradeSimulatorStatus").textContent = "";
-    loadLocalAccounts().then(() => { checkTradeSimulatorInputs(); renderTradeSimulator(); }).catch(() => {
+    loadLocalAccounts().then(() => { renderTradeSimulator(); }).catch(() => {
       const status = $("tradeSimulatorStatus");
       if (status) status.textContent = t("Could not load accounts. Close and reopen to retry.");
     });
