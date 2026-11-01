@@ -1141,6 +1141,7 @@
               <article class="help-feature">
                 <h3>Settings</h3>
                 <p>Manage language, account security, table display, signal-dismissal periods, saved-chat limits, and cache status. Portable JSON import replaces portable portfolio records; full backup/restore covers application state and offers automatic backup scheduling. Restoring a full backup replaces current state after a safety backup. Keep full backups secure.</p>
+                <p>In Settings → Full backup and restore, scroll inside the backup file list to browse older files and use Download to save a file.</p>
                 <p>Admins also manage log rotation and independent REST API and MCP access modes: Off, Read only, or Read and write. Viewer access stays read-only. Review the enabled mode and token permissions before connecting an external client.</p>
               </article>
             </div>
@@ -2462,6 +2463,7 @@
                 </div>
               </div>
               <div id="backupStatus" class="settings-grid"></div>
+              <div id="backupFiles" class="settings-grid backup-file-list" role="region" aria-label="Backup files" tabindex="0" hidden></div>
             </section>
 
             <section id="settingsPanelSystem" class="settings-section settings-panel" data-settings-panel="system" aria-labelledby="settingsNavSystem" hidden>

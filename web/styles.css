@@ -9212,6 +9212,21 @@ html[dir="rtl"] .settings-menu-button.active {
   gap: 8px;
 }
 
+.backup-file-list {
+  max-height: min(360px, 45vh);
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+  align-content: start;
+}
+
+.backup-file-list:focus-visible {
+  outline: 2px solid var(--ux-blue);
+  outline-offset: -2px;
+}
+
 .setting-row.backup-file-row {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;

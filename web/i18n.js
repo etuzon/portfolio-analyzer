@@ -2665,6 +2665,7 @@
     "Backup directory": "תיקיית גיבוי",
     "Backup contents": "תכולת הגיבוי",
     "Backup files": "קובצי גיבוי",
+    "In Settings → Full backup and restore, scroll inside the backup file list to browse older files and use Download to save a file.": "בהגדרות ← גיבוי ושחזור מלא, גללו בתוך רשימת קובצי הגיבוי כדי לעיין בקבצים ישנים יותר ולחצו על הורדה לשמירת קובץ.",
     "Cache file": "קובץ מטמון",
     "Cached daily prices": "מחירים יומיים במטמון",
     "Current size": "גודל נוכחי",

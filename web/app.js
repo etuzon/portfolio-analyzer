@@ -12534,7 +12534,9 @@ async function loadCacheStatus() {
       <button class="secondary compact-button" type="button" data-download-backup="${esc(file.filename)}">Download</button>
     </div>
   `).join("");
-  $("backupStatus").innerHTML = backupRows + backupFiles;
+  $("backupStatus").innerHTML = backupRows;
+  $("backupFiles").innerHTML = backupFiles;
+  $("backupFiles").hidden = !backupFiles;
   renderApiAccessSettings();
 }
 
