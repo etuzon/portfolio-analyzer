@@ -20,7 +20,7 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/assets/portfolio-vault/icon-48.png?v=1" />
     <link rel="shortcut icon" href="/assets/portfolio-vault/favicon.ico?v=1" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.17-simulation" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.17-risk-comparison" />
   </head>
   <body>
     <div id="authOverlay" class="auth-overlay">
@@ -987,7 +987,7 @@
                 <h3>Investment risk formula</h3>
                 <p>The risk score runs from 0 (very low) to 100 (extreme). It estimates concentration and market exposure; it is not a forecast of the amount you may lose.</p>
                 <p>Risk bands: 0–20 low, 21–40 moderate, 41–60 elevated, 61–80 high, and 81–100 extreme.</p>
-                <code class="help-command" dir="ltr" data-i18n-skip>risk = clamp(round(C + A + FX + I + B + D + V + H + IC + Q), 0, 100)</code>
+                <code class="help-command" dir="ltr" data-i18n-skip>S = C + A + FX + I + B + D + V + H + IC + Q; risk = clamp(round(S + L), 0, 100)</code>
                 <dl class="help-risk-components">
                   <div><dt>Concentration · 0–16</dt><dd>Largest-position weight plus the sum of squared position percentages (HHI).</dd></div>
                   <div><dt>Asset mix · 0–14</dt><dd>Value-weighted asset factors, from 0.05 for cash to 1.00 for options, futures, or leveraged instruments.</dd></div>
@@ -999,9 +999,10 @@
                   <div><dt>Investment horizon · 0–10</dt><dd>Uses the shortest linked owner horizon to retirement age; risky assets receive more penalty near retirement.</dd></div>
                   <div><dt>Issuer and country concentration · 0–8</dt><dd>Measures the largest issuer and unusually concentrated country exposure.</dd></div>
                   <div><dt>Missing data · 0–5</dt><dd>Adds uncertainty for missing prices, industry, currency, or asset-class data.</dd></div>
+                  <div><dt>Borrowing adjustment</dt><dd>Negative cash is modeled as borrowing. With positive net equity, add base score × borrowing / net equity, capped at the remaining points up to 100. Exposure or borrowing with zero or negative net equity scores 100. This declared heuristic applies to dashboard and simulator risk.</dd></div>
                 </dl>
-                <p>Total portfolio risk is 75% of the combined-holdings score plus 25% of the portfolio-value-weighted account scores, rounded and capped to 0–100.</p>
-                <p>Each industry row recalculates the same component formula for that industry's holdings. Portfolio cash is allocated in proportion to industry value. Industry scores are comparisons and must not be added together.</p>
+                <p>Total portfolio risk is 75% of the combined-holdings score plus 25% of the account scores weighted by gross holdings plus positive cash, rounded and capped to 0–100. Borrowing is summed across accounts, so another account's cash cannot erase it. Combined exposure or borrowing with nonpositive net equity scores 100.</p>
+                <p>Each industry row recalculates the same component formula for that industry's holdings. Signed portfolio cash and borrowing are allocated in proportion to industry value. Industry scores are comparisons and must not be added together.</p>
                 <p>In Industry split, select a security to assign or correct its industry locally. Manual classifications override provider data and can be removed later. Bonds always appear under Bonds and are not treated as an industry.</p>
               </article>
             </div>
@@ -1038,13 +1039,14 @@
               </article>
               <article class="help-feature">
                 <h3>Trade Simulation</h3>
-                <p>Unavailable results show the missing input and affected securities. If total risk is unavailable, review the named Investment accounts below it. A cash deficit prevents a risk score because borrowing is not modeled; reduce the trade or check the recorded balance. Unknown broker collateral affects available cash for shorts or derivatives and does not by itself hide an otherwise calculable risk score.</p>
+                <p>Unavailable results show missing prices, currencies, classifications or exchange rates and affected securities. Negative cash still produces a numerical risk score: modeled borrowing increases it and appears separately. Total borrowing includes deficits in individual Investment accounts even when combined cash is positive. Broker buying power and collateral remain separate from the risk score.</p>
+                <p>Compare the separate Before simulation and After simulation panels. Risk is shown first in each panel. On smaller screens, Before simulation appears above After simulation. Editing the scenario requires a new calculation.</p>
                 <p>RSU shares held in investment accounts support simulated buys, sells and shorts. Employee option grants and derivatives are not supported; ESOP accounts cannot be selected for trading.</p>
                 <p>Add up to 100 trades per scenario.</p>
                 <p>Open Portfolio Data → Trade Simulation. Choose an investment account, security symbol and listing, then add a Buy, Sell or Short with a positive quantity. Add multiple trades in one or more accounts; duplicate a row to reuse a security in another account. Edit account, action, quantity, execution price or fee in the scenario, or remove a row. Simulate trades evaluates rows in their displayed order using shared cash and projected holdings.</p>
                 <p>Leave execution price empty for the latest dated saved quote, or enter your own execution price: US shares in dollars, US bonds in cents, Israeli securities in agorot. Fees are in account currency and default to zero. Account and security currencies must match; no currency exchange is performed. Buy covers existing shorts first and may then open a long; Sell cannot exceed the projected long holding; Short requires the projected long holding to be closed first. Derivatives cannot be added as simulated trades.</p>
                 <p>Results compare cash, net value, gross security exposure, short exposure and the existing 0–100 risk estimate before and after, per Investment account and across all Investment accounts. Account amounts use account currency; totals use dashboard currency and saved exchange rates. Net value is cash plus signed security value; gross exposure uses absolute security values. Saved quotes value holdings; an execution-price override changes the trade cash flow. Pension, savings, bank and ESOP accounts and their holdings are excluded from these totals.</p>
-                <p>Cash includes short-sale proceeds and is not broker buying power. Available cash is unknown when shorts or derivatives may require collateral; no broker margin rule is assumed. Taxes, borrowing costs and interest are excluded. Missing prices, exchange rates or unverifiable ledger cash leave affected results unavailable; negative cash also leaves risk unavailable. Update Prices or account transactions and retry. Stale saved quotes are flagged. Analytics loading is non-blocking. Drafts remain during the session; Clear scenario or signing out removes them. Simulation never records transactions or places orders.</p>
+                <p>Cash includes short-sale proceeds and is not broker buying power. Available cash is unknown when shorts or derivatives may require collateral; no broker margin rule is assumed. Taxes, borrowing costs and interest are excluded. Missing prices, exchange rates or unverifiable ledger cash leave affected results unavailable. Update Prices or account transactions and retry. Stale saved quotes are flagged. Analytics loading is non-blocking. Drafts remain during the session; Clear scenario or signing out removes them. Simulation never records transactions or places orders.</p>
                 <p>Press Simulate trades to capture a portfolio snapshot. The account balances, holdings, prices and risk used for that result stay frozen while live accounts and analytics continue updating. Snapshot captured shows the capture date and time. Press Simulate trades again to capture current data. Editing the scenario requires a new calculation; signing out clears the snapshot.</p>
                 <p>Accounts with future-dated security trades cannot be simulated because the recorded position snapshot does not establish current quantities. Review transaction dates in Positions, then retry. Other accounts remain available; combined valuation and risk remain unavailable while an account is uncertain.</p>
               </article>
@@ -2497,13 +2499,13 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="/i18n.js?v=1.2.15-simulation-investment"></script>
+  <script src="/i18n.js?v=1.2.15-cash-risk"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
   <script src="/trade-planner.js?v=2"></script>
   <script src="/trade-planner-ui.js?v=3"></script>
-  <script src="/trade-simulator.js?v=3"></script>
-  <script src="/trade-simulator-ui.js?v=4"></script>
-  <script src="/app.js?v=0.9.15-simulation-frozen"></script>
+  <script src="/trade-simulator.js?v=4"></script>
+  <script src="/trade-simulator-ui.js?v=5"></script>
+  <script src="/app.js?v=0.9.15-cash-risk"></script>
   </body>
 </html>

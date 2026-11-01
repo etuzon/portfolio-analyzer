@@ -175,7 +175,7 @@ assert.equal(result.total.after.risk,null);
 '''.replace("FIELD", field).replace("REASON", repr(reason)))
 
 
-def test_account_cash_deficit_blocks_total_risk_even_when_total_cash_is_positive():
+def test_account_cash_borrowing_raises_risk_even_when_total_cash_is_positive():
     run_simulation('''
 const ctx=simulationContext();ctx.accounts[0].initial_cash=1000;
 ctx.accounts.push(account('healthy','USA',50000));
@@ -186,15 +186,16 @@ assert.equal(deficit.cash,-1000);
 assert.equal(deficit.netValue,1000);
 assert.equal(deficit.cashDeficit,1000);
 assert.equal(deficit.unavailableReasons.cash,null);
-assert.equal(deficit.unavailableReasons.risk,'negative_cash');
+assert.equal(deficit.unavailableReasons.risk,null);
+assert.ok(Number.isFinite(deficit.risk.score));
+assert.ok(deficit.risk.components.borrowing>0);
 assert.equal(result.total.after.cash,49000);
 assert.equal(result.total.after.netValue,51000);
-assert.equal(result.total.after.risk,null);
-assert.equal(result.total.after.reason,'negative_cash');
-const blocked=result.total.after.blockedAccounts.find(a=>a.accountId==='us1');
-assert.equal(blocked.reason,'negative_cash');
-assert.equal(blocked.cashDeficit,1000);
-assert.equal(blocked.currency,'USD');
+assert.ok(Number.isFinite(result.total.after.risk.score));
+assert.equal(result.total.after.reason,null);
+assert.equal(result.total.after.risk.cash_debt,1000);
+assert.equal(result.total.after.cashDeficit,1000);
+assert.deepEqual(result.total.after.blockedAccounts,[]);
 ''')
 
 
@@ -248,12 +249,12 @@ for(const language of ['en','he']){
  assert.ok(text.includes('USD 100.00'));
  assert.ok(!/undefined|NaN/.test(text));
  if(language==='en'){
-  assert.ok(/deficit/i.test(text));
+  assert.ok(/borrowing/i.test(text));
   assert.ok(/missing|cannot be valued/i.test(text));
   assert.ok(!text.includes('Not available'));
   assert.ok(!/[א-ת]/.test(text));
  }else{
-  assert.ok(/חוסר|מחסור|גירעון|גרעון/.test(text));
+  assert.ok(/אשראי/.test(text));
   assert.ok(!/Cash deficit|Missing holding|Not available|Before|After/.test(text));
  }
 }

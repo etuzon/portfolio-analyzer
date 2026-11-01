@@ -147,3 +147,29 @@ for(const language of ['he','en','he']){
  assert.ok(!error.includes(language==='he'?'נגזרים':'Derivatives'));
 }
 ''')
+
+
+def test_before_after_panels_keep_numeric_risk_separate_from_modeled_borrowing():
+    run_ui(r'''
+ctx.accounts[0].initial_cash=100;
+tradeSimulatorRows=[{id:'1',accountId:'one',symbol:'NEW',market:'NASDAQ',action:'BUY',quantity:'2',priceInput:'100',fee:'0'}];
+const result=window.PortfolioTradeSimulator.simulate(ctx,tradeSimulatorRows,{risk:riskScoreForItems,horizon:accountHorizonYears,derivative:derivativeHolding});
+for(const language of ['en','he']){
+ state.language=language;tradeSimulatorView={status:'ready',result};renderTradeSimulator();
+ const html=nodes.tradeSimulatorResults.innerHTML;
+ const before=language==='he'?'לפני הסימולציה':'Before simulation';
+ const after=language==='he'?'אחרי הסימולציה':'After simulation';
+ assert.ok(html.includes('aria-label="'+before+'"'));
+ assert.ok(html.includes('aria-label="'+after+'"'));
+ assert.ok(html.indexOf('aria-label="'+before+'"')<html.indexOf('aria-label="'+after+'"'));
+ const panels=[...html.matchAll(/<section class="trade-simulator-state[^]*?<\/section>/g)].map(match=>match[0]);
+ assert.equal(panels.length,4);
+ for(const panel of panels){
+  const risk=panel.match(/<div class="trade-simulator-risk-fact">([^]*?)<\/div>/)[1];
+  assert.ok(risk.includes('<span>10</span>'));
+  assert.ok(!risk.includes(language==='he'?'מחסור במזומן':'Cash deficit'));
+ }
+ assert.ok(html.includes(language==='he'?'אשראי מחושב':'Modeled borrowing'));
+ assert.ok(!/undefined|NaN/.test(html));
+}
+''')

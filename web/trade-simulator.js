@@ -25,6 +25,7 @@
   }
 
   function simulate(context, trades, adapters) {
+    context = JSON.parse(JSON.stringify(context));
     const planner = typeof module === "object" && module.exports ? require("./trade-planner.js") : globalThis.PortfolioTradePlanner;
     const now = Date.parse(context.calculated_at), base = upper(context.base_currency);
     const convert = planner.converter(context.fx_quotes, base);
@@ -154,7 +155,6 @@
       const grossExposure = valued ? sum(localValues.map(Math.abs)) : null;
       const shortExposure = valued ? Math.max(0, -sum(localValues.filter((v) => v < 0))) : null;
       const hasLiability = positions.some((p) => p.holding.quantity < 0 || adapters.derivative(p));
-      if (book.cash !== null && book.cash < 0) reason ||= "negative_cash";
       const risk = !reason ? adapters.risk(positions, { cash: cashBase, cashCurrency: currency,
         horizonYears: adapters.horizon(book.account), baseCurrency: base,
         normalizeField: (item, field) => convert(item.holding[field], item.holding.currency) }) : null;
@@ -192,11 +192,13 @@
       if (!reason && rows.length) {
         const horizons = accounts.map((a) => adapters.horizon(a.account)).filter((v) => v != null);
         const combinedRisk = adapters.risk(rows.flatMap((r) => r._positions), { cash, baseCurrency: base,
+          cashDebt: sum(rows.map((r) => Math.max(0, -r._cashBase))),
           horizonYears: horizons.length ? Math.min(...horizons) : null,
           normalizeField: (item, name) => convert(item.holding[name], item.holding.currency) });
         const denominator = sum(rows.map((r) => r._riskWeight));
         const weighted = denominator ? sum(rows.map((r) => r.risk.score * r._riskWeight)) / denominator : 0;
-        risk = { ...combinedRisk, score: Math.min(100, Math.max(0, Math.round(0.75 * combinedRisk.score + 0.25 * weighted))) };
+        const insolvent = combinedRisk.net_equity <= 0 && (grossExposure > 0 || combinedRisk.cash_debt > 0);
+        risk = { ...combinedRisk, score: insolvent ? 100 : Math.min(100, Math.max(0, Math.round(0.75 * combinedRisk.score + 0.25 * weighted))) };
       }
       const availableCash = field("availableCash");
       const unavailableReasons = {};
@@ -208,7 +210,7 @@
         cashDeficit: entry[phase].cashDeficit,
       }));
       return { cash, netValue, grossExposure, shortExposure, availableCash, risk, reason, unavailableReasons, blockedAccounts,
-        cashDeficit: cash !== null ? Math.max(0, -cash) : null };
+        cashDeficit: field("cashDeficit") };
     };
     const total = { before: combined("before"), after: combined("after") };
     for (const entry of accounts) for (const phase of ["before", "after"]) {

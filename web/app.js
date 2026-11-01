@@ -2472,6 +2472,10 @@ function accountCashValue(account) {
   return Math.max(0, normalizedAmount(accountCashBalance(account), account.currency));
 }
 
+function accountRiskCashValue(account) {
+  return account ? normalizedAmount(accountCashBalance(account), account.currency) : 0;
+}
+
 function accountRecordForHolding(holding) {
   return state.localAccounts.find((account) => account.id === holding.account_id)
     || state.localAccounts.find((account) => cleanSourceLabel(accountLabel(account)) === cleanSourceLabel(holding.account));
@@ -2683,6 +2687,7 @@ function riskTooltip(risk) {
     ["horizon", "Investment horizon", 10],
     ["issuer_country", "Issuer and country concentration", 8],
     ["data_quality", "Missing data", 5],
+    ["borrowing", "Borrowing adjustment", 100],
   ];
   const simpleDriver = (driver) => {
     const text = String(driver || "");
@@ -2700,6 +2705,7 @@ function riskTooltip(risk) {
     if (text.startsWith("Missing industry ")) return `industry information is missing for ${text.slice(17)}`;
     if (text.startsWith("Unknown FX exposure ")) return `currency exposure is unknown for ${text.slice(20)} of the portfolio`;
     if (text.startsWith("Asset factor ")) return "its asset type carries market risk";
+    if (text === "Non-positive net equity") return optionLabel("Non-positive net equity is scored as extreme risk.");
     if (text === "ETF/fund treated as diversified proxy") return "the fund is treated as diversified";
     if (text === "Option/future/leveraged instrument") return "it uses an option, future, or leveraged instrument";
     if (text.startsWith("Missing ")) {
@@ -2712,14 +2718,18 @@ function riskTooltip(risk) {
   };
   const drivers = (risk.drivers || []).slice(0, 4).map(simpleDriver).map(optionLabel);
   const components = risk.show_component_breakdown === false ? [] : componentSpecs
-    .filter(([key]) => risk.components && Number.isFinite(Number(risk.components[key])))
-    .map(([key, label, maximum]) => `${optionLabel(label)}: ${fmt(risk.components[key], 1)}/${maximum}`);
+    .filter(([key]) => risk.components && Number.isFinite(Number(risk.components[key])) && (key !== "borrowing" || risk.cash_debt > 0))
+    .map(([key, label, maximum]) => key === "borrowing" ? `${optionLabel(label)}: +${fmt(risk.components[key], 1)}`
+      : `${optionLabel(label)}: ${fmt(risk.components[key], 1)}/${maximum}`);
   const title = state.language === "he"
     ? `${optionLabel("Risk")} ${band.label} · ${risk.score}/100`
     : `${band.label} risk · ${risk.score}/100`;
   return [
     title,
     optionLabel(meaning),
+    ...(risk.cash_debt > 0 ? [optionLabel("Negative cash is modeled as borrowing and increases the risk score."),
+      risk.net_equity > 0 ? `${optionLabel("Borrowing / net equity")}: ${fmt(risk.cash_debt / risk.net_equity * 100, 1)}%`
+        : optionLabel("Non-positive net equity is scored as extreme risk.")] : []),
     ...(components.length ? ["", optionLabel("Components:"), ...components.map((component) => `• ${component}`)] : []),
     "",
     optionLabel("Main reasons:"),
@@ -2732,13 +2742,18 @@ function riskScoreForItems(items, options = {}) {
   const valueOfHolding = options.normalizeField || normalizedField;
   const baseCurrency = options.baseCurrency || state.baseCurrency;
   const label = options.label || "Portfolio risk";
-  const cash = Math.max(0, Number(options.cash || 0));
+  const signedCash = Number(options.cash || 0);
+  const cashDebt = Math.max(0, -signedCash, Number(options.cashDebt || 0));
+  const cash = Math.max(0, signedCash + cashDebt);
   const horizonYears = options.horizonYears ?? null;
   const values = rows.map((item) => Math.abs(valueOfHolding(item, "market_value"))).filter((value) => value > 0);
   const holdingsValue = sum(values);
+  const netEquity = sum(rows.map((item) => valueOfHolding(item, "market_value"))) + signedCash;
   const totalValue = holdingsValue + cash;
   if (totalValue <= 0) {
-    return { label, score: 0, components: {}, drivers: ["No account value"], position_risks: new Map() };
+    return { model: "portfolio-risk-v2", label, score: cashDebt > 0 ? 100 : 0,
+      components: cashDebt > 0 ? { borrowing: 100 } : {}, drivers: [cashDebt > 0 ? "Non-positive net equity" : "No account value"],
+      cash_debt: cashDebt, net_equity: netEquity, unlevered_score: 0, position_risks: new Map(), cash_pct: 0 };
   }
 
   const topPositionPct = values.length ? Math.max(...values) / totalValue * 100 : 0;
@@ -2850,7 +2865,12 @@ function riskScoreForItems(items, options = {}) {
     issuer_country: issuerCountry,
     data_quality: dataQuality,
   };
-  const score = Math.min(Math.max(Math.round(sum(Object.values(components))), 0), 100);
+  const unleveredScore = sum(Object.values(components));
+  const nonPositiveEquity = netEquity <= 0 && (holdingsValue > 0 || cashDebt > 0);
+  const borrowing = nonPositiveEquity ? Math.max(0, 100 - unleveredScore)
+    : cashDebt > 0 ? Math.max(0, Math.min(100 - unleveredScore, unleveredScore * cashDebt / netEquity)) : 0;
+  components.borrowing = borrowing;
+  const score = Math.min(Math.max(Math.round(unleveredScore + borrowing), 0), 100);
   const drivers = [
     topPositionPct > 25 ? `Top holding ${fmt(topPositionPct, 1)}%` : "",
     nonBaseCurrencyPct > 40 ? `Foreign currency ${fmt(nonBaseCurrencyPct, 1)}%` : "",
@@ -2869,7 +2889,9 @@ function riskScoreForItems(items, options = {}) {
     const itemScore = Math.min(Math.round(valuePct * 0.65 + assetRiskFactor(item) * 20 + itemVolatility / 120 * 15 + (derivativeHolding(item) ? 15 : 0) + ((item.missing || []).length ? 6 : 0)), 100);
     return [item, {
       label: `${item.holding.symbol} holding risk`,
-      score: itemScore,
+      score: nonPositiveEquity ? 100 : Math.min(100, Math.round(itemScore * (1 + (cashDebt > 0 ? cashDebt / netEquity : 0)))),
+      cash_debt: cashDebt,
+      net_equity: netEquity,
       components,
       show_component_breakdown: false,
       drivers: [
@@ -2882,7 +2904,8 @@ function riskScoreForItems(items, options = {}) {
       ].filter(Boolean),
     }];
   }));
-  return { label, score, components, drivers, position_risks: positionRisks, cash_pct: cashPct };
+  return { model: "portfolio-risk-v2", label, score, components, drivers, position_risks: positionRisks, cash_pct: cashPct,
+    cash_debt: cashDebt, net_equity: netEquity, unlevered_score: unleveredScore };
 }
 
 function portfolioRiskSnapshot(items) {
@@ -2894,12 +2917,12 @@ function portfolioRiskSnapshot(items) {
     return groups;
   }, {});
   portfolioAccounts().forEach((account) => {
-    if (accountCashValue(account) > 0 && !itemsByAccount[account.id]) itemsByAccount[account.id] = [];
+    if (Math.abs(accountRiskCashValue(account)) > 0 && !itemsByAccount[account.id]) itemsByAccount[account.id] = [];
   });
   const accountRisks = Object.entries(itemsByAccount).map(([key, rows]) => {
     const account = accountsById[key] || (rows[0] ? accountRecordForHolding(rows[0].holding) : null);
-    const cash = accountCashValue(account);
-    const value = sum(rows.map((item) => Math.abs(normalizedField(item, "market_value")))) + cash;
+    const cash = accountRiskCashValue(account);
+    const value = sum(rows.map((item) => Math.abs(normalizedField(item, "market_value")))) + Math.max(0, cash);
     const horizonYears = accountHorizonYears(account);
     const label = cleanSourceLabel(rows[0]?.holding.account) || account?.account_id || "Unassigned";
     return {
@@ -2911,17 +2934,18 @@ function portfolioRiskSnapshot(items) {
       allocation: riskAllocationForItems(rows, { cash, cashCurrency: account?.currency }),
     };
   });
-  const combinedCash = sum(portfolioAccounts().map(accountCashValue));
+  const combinedCash = sum(portfolioAccounts().map(accountRiskCashValue));
+  const combinedDebt = sum(portfolioAccounts().map((account) => Math.max(0, -accountRiskCashValue(account))));
   const portfolioHorizons = portfolioAccounts().map(accountHorizonYears).filter((value) => value !== null);
   const portfolioHorizonYears = portfolioHorizons.length ? Math.min(...portfolioHorizons) : null;
-  const combinedRisk = riskScoreForItems(items, { label: "Total portfolio risk", cash: combinedCash, horizonYears: portfolioHorizonYears });
+  const combinedRisk = riskScoreForItems(items, { label: "Total portfolio risk", cash: combinedCash, cashDebt: combinedDebt, horizonYears: portfolioHorizonYears });
   const holdingsValue = sum(items.map((item) => Math.abs(normalizedField(item, "market_value"))));
-  const cashValue = combinedCash;
-  const nav = holdingsValue + cashValue || 1;
+  const nav = sum(accountRisks.map((entry) => entry.value)) || 1;
   const weightedAccountScore = accountRisks.reduce((total, entry) => {
     return total + entry.risk.score * (entry.value / nav);
   }, 0);
-  const score = Math.min(Math.max(Math.round(0.75 * combinedRisk.score + 0.25 * weightedAccountScore), 0), 100);
+  const score = combinedRisk.net_equity <= 0 && (holdingsValue > 0 || combinedDebt > 0) ? 100
+    : Math.min(Math.max(Math.round(0.75 * combinedRisk.score + 0.25 * weightedAccountScore), 0), 100);
   const totalRisk = { ...combinedRisk, score, label: "Total portfolio risk" };
   return { total: totalRisk, accounts: accountRisks };
 }
@@ -4487,7 +4511,8 @@ function renderIndustrySplit(items) {
     .map((group) => ({ ...group, label: optionLabel(group.label), holdings: group.holdings.sort((a, b) => b.value - a.value) }))
     .sort((a, b) => b.value - a.value);
   const total = sum(groups.map((group) => group.value));
-  const combinedCash = sum(portfolioAccounts().map(accountCashValue));
+  const combinedCash = sum(portfolioAccounts().map(accountRiskCashValue));
+  const combinedDebt = sum(portfolioAccounts().map((account) => Math.max(0, -accountRiskCashValue(account))));
   const portfolioHorizons = portfolioAccounts().map(accountHorizonYears).filter((value) => value !== null);
   const horizonYears = portfolioHorizons.length ? Math.min(...portfolioHorizons) : null;
   groups.forEach((group) => {
@@ -4495,6 +4520,7 @@ function renderIndustrySplit(items) {
     group.risk = riskScoreForItems(group.items, {
       label: `${group.label} industry risk`,
       cash: allocatedCash,
+      cashDebt: total ? combinedDebt * (group.value / total) : 0,
       horizonYears,
     });
   });

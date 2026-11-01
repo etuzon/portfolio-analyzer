@@ -159,6 +159,7 @@ class _VisibleEnglishParser(HTMLParser):
 
 
 TECHNICAL_UI_VALUES = {
+    "S = C + A + FX + I + B + D + V + H + IC + Q; risk = clamp(round(S + L), 0, 100)",
     "1M", "6M", "1Y", "3Y", "5Y",
     "MA 7", "MA 10", "MA 15", "MA 30",
     "AMEX", "NASDAQ", "NYSE", "TASE", "US", "RSU",

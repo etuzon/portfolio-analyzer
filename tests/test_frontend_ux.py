@@ -628,7 +628,8 @@ def test_total_and_industry_risk_are_visible_and_help_documents_the_formula():
     assert 'optionLabel("Components:")' in script
 
     assert '<h3>Investment risk formula</h3>' in html
-    assert 'risk = clamp(round(C + A + FX + I + B + D + V + H + IC + Q), 0, 100)' in html
+    assert 'S = C + A + FX + I + B + D + V + H + IC + Q; risk = clamp(round(S + L), 0, 100)' in html
+    assert 'Negative cash is modeled as borrowing.' in html
     assert 'Industry HHI contributes up to 7 points' in html
     assert 'Total portfolio risk is 75% of the combined-holdings score plus 25%' in html
     assert 'Industry scores are comparisons and must not be added together.' in html

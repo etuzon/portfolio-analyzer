@@ -8359,17 +8359,27 @@ html[dir="rtl"] .signal-condition-help::after {
 .trade-simulator-comparison h3 { margin: 0 0 12px; overflow-wrap: anywhere; }
 .trade-simulator-comparison h3 small { font-size: 12px; font-weight: 400; color: #a5b5c7; }
 .trade-simulator-total { border-color: #7e79c7; }
-.trade-simulator-before-after { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
-.trade-simulator-before-after > section { min-width: 0; }
-.trade-simulator-before-after h4 { margin: 0 0 10px; color: #a5b5c7; }
-.trade-simulator-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); gap: 12px; margin: 0; }
+.trade-simulator-before-after { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px; align-items: stretch; }
+.trade-simulator-state { min-width: 0; padding: 18px; border: 1px solid #526273; border-radius: 10px; background: #0c141d; }
+.trade-simulator-state-after { border-color: #6a94da; background: #122236; }
+.trade-simulator-state-heading { margin: -18px -18px 16px; padding: 14px 18px; border-bottom: 1px solid #526273; border-radius: 9px 9px 0 0; background: #1c2a38; }
+.trade-simulator-state-after .trade-simulator-state-heading { border-bottom-color: #6a94da; background: #213d5e; }
+.trade-simulator-before-after h4 { margin: 0; color: #f0f5ff; font-size: 16px; line-height: 1.4; font-weight: 700; }
+.trade-simulator-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 0; }
 .trade-simulator-facts > div { min-width: 0; }
-.trade-simulator-facts dt { color: #a5b5c7; font-size: 12px; }
-.trade-simulator-facts dd { margin: 4px 0 0; font-weight: 600; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.trade-simulator-facts dt { color: #bdccdc; font-size: 12px; line-height: 1.5; }
+.trade-simulator-facts dd { margin: 5px 0 0; font-size: 16px; font-weight: 600; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.trade-simulator-risk-fact { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-bottom: 14px; border-bottom: 1px solid #3e5268; }
+.trade-simulator-risk-fact dt { color: #e3edfa; font-size: 14px; font-weight: 600; }
+.trade-simulator-risk-fact dd { margin: 0; }
+.trade-simulator-risk-fact .risk-badge { font-size: 14px; }
+.trade-simulator-state > .signal-missing { margin-block: 16px 0; line-height: 1.6; }
+.trade-simulator-state ul.signal-missing { padding-inline-start: 20px; }
 .trade-simulator-execution { padding: 12px; border: 1px solid #374653; border-radius: 8px; }
 .trade-simulator-execution summary { cursor: pointer; }
 .trade-simulator-execution li { margin-top: 8px; overflow-wrap: anywhere; }
-@media (max-width: 600px) { .trade-simulator-before-after { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 760px) { .trade-simulator-before-after { grid-template-columns: minmax(0, 1fr); gap: 22px; } }
+@media (max-width: 420px) { .trade-simulator-facts { grid-template-columns: minmax(0, 1fr); } }
 
 .trade-planner-form .management-field,
 .trade-planner-form input,
