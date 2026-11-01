@@ -8351,6 +8351,7 @@ html[dir="rtl"] .signal-condition-help::after {
 .trade-simulator-basket-heading, .trade-simulator-row-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .trade-simulator-basket-heading { margin: 20px 0 12px; }
 .trade-simulator-rows, .trade-simulator-results { display: grid; gap: 14px; min-width: 0; }
+#tradeSimulatorRows + .modal-toolbar { margin-block-start: 18px; }
 .trade-simulator-row, .trade-simulator-comparison { padding: 14px; border: 1px solid #374653; border-radius: 8px; background: #141c24; min-width: 0; }
 .trade-simulator-row-heading { margin-bottom: 12px; }
 .trade-simulator-row-actions { display: flex; flex-wrap: wrap; gap: 8px; }
