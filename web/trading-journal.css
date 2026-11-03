@@ -1,0 +1,53 @@
+.journal-controls { display:grid; grid-template-columns:repeat(3,minmax(135px,1fr)) minmax(180px,1.4fr) auto; gap:12px; align-items:end; }
+.journal-controls .field,.journal-transaction-picker { min-width:0; }
+.journal-controls input,.journal-controls select,.journal-transaction-picker select { width:100%; box-sizing:border-box; min-width:0; }
+.journal-transaction-picker { display:block; margin-block:14px; }
+.journal-layout { display:grid; grid-template-columns:minmax(230px,.7fr) minmax(0,1.3fr); gap:18px; align-items:start; }
+.journal-list { display:grid; gap:12px; max-height:1100px; overflow-y:auto; padding:2px; }
+.journal-list-entry { border:1px solid var(--ux-stroke); border-radius:9px; padding:13px; background:var(--ux-panel-soft); min-width:0; }
+.journal-list-entry.selected { border-color:var(--ux-blue); }
+.journal-list-entry p { margin:7px 0; font-size:13px; }
+.journal-entry-heading { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; font-weight:650; }
+.journal-entry-reason { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; overflow:hidden; overflow-wrap:anywhere; white-space:pre-wrap; }
+.journal-rating { padding:3px 7px; border-radius:5px; border:1px solid var(--ux-stroke); white-space:nowrap; font-size:12px; color:var(--ux-muted); }
+.journal-rating-good { color:#77dfb6; border-color:#305b4c; }
+.journal-rating-mixed { color:#f4ca80; border-color:#645130; }
+.journal-rating-bad { color:#ffa2b7; border-color:#6e3b49; }
+.journal-detail { min-width:0; border:1px solid var(--ux-stroke); border-radius:9px; padding:16px; }
+.journal-detail h3 { font-size:15px; margin:0 0 10px; }
+.journal-facts { margin-block-end:14px; }
+.journal-facts p { margin:6px 0; overflow-wrap:anywhere; }
+.journal-trade-title { font-weight:650; }
+.journal-facts dl { display:flex; flex-wrap:wrap; gap:12px 24px; margin:12px 0; }
+.journal-facts dl div { display:flex; gap:8px; align-items:baseline; }
+.journal-facts dt { font-size:13px; color:var(--ux-muted); }
+.journal-facts dd { margin:0; font-variant-numeric:tabular-nums; }
+.journal-outcome { padding:13px; margin-block:14px; border:1px solid var(--ux-stroke); background:var(--ux-panel-soft); border-radius:8px; }
+.journal-outcome strong { font-size:24px; font-variant-numeric:tabular-nums; }
+.journal-outcome p { margin:8px 0 0; }
+.journal-form { display:grid; gap:13px; padding-block:16px; border-top:1px solid var(--ux-stroke); }
+.journal-form .field { min-width:0; }
+.journal-form input,.journal-form select { box-sizing:border-box; width:100%; min-width:150px; }
+.journal-form .journal-date,.journal-form .journal-rating-field { width:min(100%,260px); }
+.journal-form textarea { width:100%; min-height:112px; box-sizing:border-box; padding:11px; resize:vertical; color:var(--ux-text); background:var(--ux-panel-soft); border:1px solid var(--ux-stroke); border-radius:7px; font:inherit; line-height:1.6; }
+.journal-actions { display:flex; flex-wrap:wrap; gap:10px; }
+.journal-actions button { width:auto; }
+.journal-history { border-top:1px solid var(--ux-stroke); margin-block:12px; padding-block-start:12px; }
+.journal-history summary { font-weight:650; cursor:pointer; }
+.journal-history ol { padding-inline-start:21px; }
+.journal-history li { padding-block:10px; border-bottom:1px solid var(--ux-stroke); }
+.journal-history li p { margin:7px 0; }
+.journal-prose { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.6; }
+.journal-notice { border-inline-start:3px solid #f4ca80; padding:10px; background:var(--ux-panel-soft); line-height:1.6; }
+.journal-empty { color:var(--ux-muted); line-height:1.6; padding-block:12px; }
+#tradingJournalContent [role="status"] { overflow-wrap:anywhere; }
+#tradingJournalContent button:focus-visible,#tradingJournalContent summary:focus-visible { outline:2px solid var(--ux-blue); outline-offset:3px; }
+@media(max-width:1050px) { .journal-controls { grid-template-columns:repeat(2,minmax(140px,1fr)); } .journal-controls button { width:max-content; } }
+@media(max-width:700px) {
+ .journal-controls,.journal-layout { grid-template-columns:minmax(0,1fr); }
+ .journal-detail { grid-row:1; padding:13px; }
+ .journal-list { max-height:none; }
+ .journal-controls button,.journal-actions button { min-height:42px; }
+ .journal-facts dl { gap:10px; }
+ .journal-facts dl div { flex-wrap:wrap; }
+}

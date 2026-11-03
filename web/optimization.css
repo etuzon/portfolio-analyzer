@@ -1,0 +1,67 @@
+.optimization-controls { display:grid; grid-template-columns:repeat(3,minmax(155px,1fr)) auto; gap:12px; align-items:end; }
+.optimization-controls .field,.optimization-parameters .field { min-width:0; }
+.optimization-controls select,.optimization-parameters input,.optimization-parameters select { width:100%; min-width:145px; box-sizing:border-box; }
+.optimization-parameters { display:grid; grid-template-columns:repeat(4,minmax(145px,1fr)); gap:12px; align-items:end; margin-block:16px; }
+.optimization-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-block:12px; }
+.optimization-actions button { width:auto; }
+.optimization-notice { border-inline-start:3px solid var(--ux-blue); padding-inline-start:12px; line-height:1.6; }
+.optimization-warning { border-inline-start-color:var(--ux-orange); }
+.optimization-status { min-height:1.5em; overflow-wrap:anywhere; }
+.optimization-assets { margin-block:18px; border-top:1px solid var(--ux-stroke); padding-block-start:14px; }
+.optimization-assets summary,.optimization-frontier-table summary,.optimization-coverage summary { cursor:pointer; font-weight:650; }
+.optimization-table { width:100%; min-width:760px; table-layout:fixed; }
+.optimization-table th,.optimization-table td { text-align:start; vertical-align:middle; font-variant-numeric:tabular-nums; }
+.optimization-table th:first-child { width:42px; }
+.optimization-table th:nth-child(2) { width:24%; }
+.optimization-table th:last-child { width:160px; }
+.optimization-table input[type="number"] { box-sizing:border-box; width:100%; min-width:125px; }
+.optimization-table input[type="checkbox"] { width:20px; height:20px; min-height:20px; accent-color:var(--ux-purple); }
+.optimization-table .section-note { margin:4px 0; font-size:12px; overflow-wrap:anywhere; }
+.optimization-results { margin-block:18px; }
+.optimization-kpis { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }
+.optimization-kpi { min-width:0; padding:15px; border:1px solid var(--ux-stroke); border-radius:9px; background:var(--ux-panel-soft); }
+.optimization-kpi h3 { margin:0 0 10px; font-size:14px; }
+.optimization-kpi strong { display:block; font-size:28px; font-variant-numeric:tabular-nums; }
+.optimization-kpi p { color:var(--ux-muted); margin:8px 0 0; font-size:13px; }
+.optimization-plot { margin:16px 0; padding:14px; border:1px solid var(--ux-stroke); border-radius:9px; background:var(--ux-panel-soft); }
+.optimization-plot svg { display:block; width:100%; height:auto; direction:ltr; overflow:visible; }
+.optimization-plot text { fill:var(--ux-muted); font-size:12px; }
+.optimization-plot .optimization-grid { stroke:var(--ux-stroke); stroke-width:1; }
+.optimization-frontier-line { fill:none; stroke:var(--ux-blue); stroke-width:2.5; }
+.optimization-point { fill:var(--ux-blue); cursor:pointer; }
+.optimization-point.selected { fill:var(--ux-purple); stroke:var(--ux-text); stroke-width:2; }
+.optimization-point:focus { outline:none; stroke:var(--ux-text); stroke-width:3; }
+.optimization-current-point { fill:var(--ux-orange); }
+.optimization-legend { display:flex; flex-wrap:wrap; gap:16px; margin-bottom:12px; font-size:13px; }
+.optimization-legend span::before { content:""; display:inline-block; width:10px; height:10px; border-radius:50%; vertical-align:middle; margin-inline-end:6px; background:var(--ux-blue); }
+.optimization-legend span:nth-child(2)::before { background:var(--ux-purple); }
+.optimization-legend span:nth-child(3)::before { background:var(--ux-orange); }
+.optimization-weights { width:100%; min-width:560px; table-layout:fixed; }
+.optimization-weights th,.optimization-weights td { font-variant-numeric:tabular-nums; text-align:start; }
+.optimization-weights th:first-child { width:35%; }
+.optimization-weight-track { display:block; height:4px; width:100%; margin-top:7px; border-radius:2px; background:var(--ux-stroke); }
+.optimization-weight-track span { display:block; height:4px; border-radius:2px; background:var(--ux-purple); }
+.optimization-frontier-table { margin-top:14px; }
+.optimization-frontier-table table { min-width:580px; width:100%; }
+.optimization-frontier-table td,.optimization-frontier-table th { text-align:start; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.optimization-coverage { margin-block:14px; }
+.optimization-coverage ul { padding-inline-start:22px; }
+.optimization-coverage li { margin-block:8px; overflow-wrap:anywhere; }
+#optimizationContent [role="region"]:focus-visible { outline:2px solid var(--ux-blue); outline-offset:2px; }
+@media(max-width:1000px) { .optimization-parameters { grid-template-columns:repeat(2,minmax(145px,1fr)); } }
+@media(max-width:650px) {
+ .optimization-controls,.optimization-parameters,.optimization-kpis { grid-template-columns:minmax(0,1fr); }
+ .optimization-controls select,.optimization-parameters input,.optimization-parameters select { min-width:0; }
+ .optimization-controls button,.optimization-actions button { width:auto; min-height:42px; }
+ .optimization-kpi strong { font-size:25px; }
+ .optimization-plot { padding:9px; }
+ .optimization-weights { display:block; min-width:0; table-layout:auto; }
+ .optimization-weights thead { position:absolute; width:1px; height:1px; padding:0; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
+ .optimization-weights tbody { display:grid; gap:12px; width:100%; }
+ .optimization-weights tr { display:grid; grid-template-columns:minmax(0,1fr); min-width:0; border:1px solid var(--ux-stroke); border-radius:8px; overflow:hidden; }
+ .optimization-weights th[scope="row"] { display:block; width:auto; padding:12px; overflow-wrap:anywhere; border:0; background:var(--ux-panel-soft); }
+ .optimization-weights td { display:grid; grid-template-columns:minmax(0,1fr) minmax(65px,auto); gap:10px; align-items:center; min-width:0; padding:10px 12px; border:0; }
+ .optimization-weights td::before { content:attr(data-label); color:var(--ux-muted); font-size:12px; font-weight:400; white-space:normal; }
+ .optimization-weights td>bdi { text-align:end; font-weight:600; }
+ .optimization-weights .optimization-weight-track { grid-column:1/-1; margin-top:0; }
+}

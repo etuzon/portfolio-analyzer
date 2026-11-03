@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import math
+import re
 import sqlite3
 import time
 import xml.etree.ElementTree as ET
@@ -113,6 +115,12 @@ class MarketDataHub:
             elif name == "google_finance" and self.config.get("google_finance", {}).get("enabled"):
                 providers.append(UnsupportedProvider("google_finance", "Google Finance has no supported backend API"))
         return providers
+
+    def fund_holdings(self, symbol: str, stock_market: str):
+        """Explicit refresh of a supported listing's official issuer download."""
+        if stock_market.upper() not in {"NASDAQ", "NYSE", "NYSEARCA", "AMEX", "US"}:
+            raise ProviderError("xray_issuer_unsupported")
+        return IssuerFundHoldingsProvider({}, self.cache).fund_holdings(symbol.upper())
 
     def prices(
         self,
@@ -338,6 +346,10 @@ class MarketDataHub:
     ) -> dict[str, Any]:
         return self.cached_view().profile(symbol, secondary_symbol=secondary_symbol, stock_market=stock_market)[0]
 
+    def cached_recent_prices(self, symbol: str, from_date: date, to_date: date, **context):
+        """Newest dated saved series for quote views, independent of coverage scoring."""
+        return self.cached_view().recent_prices(symbol, from_date, to_date, **context)
+
     def cached_view(self) -> CachedMarketDataHub:
         """Read saved market evidence without invoking any provider or cache writes."""
         return CachedMarketDataHub(self)
@@ -365,6 +377,10 @@ class MarketDataHub:
                 else:
                     status[provider.name] = f"error: {exc.__class__.__name__}"
         return saved_fallback or {}, status or {"providers": "none configured"}
+
+    def fx_history(self, currency: str, from_date: date, to_date: date) -> dict[str, Any]:
+        """Explicit download of official historical ILS representative rates."""
+        return BankOfIsraelFxHistoryProvider({}, self.cache).history(currency, from_date, to_date)
 
     def quote(self, symbol: str) -> tuple[dict[str, Any], dict[str, str]]:
         status = {}
@@ -482,6 +498,37 @@ class CachedMarketDataHub:
 
     def dividends(self, symbol: str, **context):
         return self._snapshot("dividends", symbol, **context)
+
+    def dividend_calendar(self, symbol: str, secondary_symbol: str = "", stock_market: str = ""):
+        """Saved evidence only; future scan snapshots may include declared dates."""
+        for provider in self.hub.providers:
+            for candidate in self._candidates(provider, symbol, secondary_symbol, stock_market):
+                saved = self.hub.cache.get_dividend_snapshot(provider.name, candidate)
+                if saved:
+                    return {**saved, "provider": provider.name}
+        return {"items": [], "provider": None, "updated_at": None}
+
+    def latest_price(self, symbol: str, from_date: date, to_date: date, secondary_symbol: str = "", stock_market: str = ""):
+        latest = None
+        for provider in self.hub.providers:
+            for candidate in self._candidates(provider, symbol, secondary_symbol, stock_market):
+                for row in self.hub.cache.get_prices(provider.name, candidate, from_date, to_date):
+                    if math.isfinite(row.close) and row.close > 0 and (latest is None or row.date > latest["date"]):
+                        latest = {"date": row.date, "close": row.close, "provider": provider.name}
+        return latest
+
+    def recent_prices(self, symbol: str, from_date: date, to_date: date, secondary_symbol: str = "", stock_market: str = ""):
+        best, best_key, status = [], None, {}
+        for provider in self.hub.providers:
+            for candidate in self._candidates(provider, symbol, secondary_symbol, stock_market):
+                saved = [row for row in self.hub.cache.get_prices(provider.name, candidate, from_date, to_date)
+                         if from_date <= row.date <= to_date and math.isfinite(row.close) and row.close > 0]
+                if saved:
+                    status[provider.name] = "cached"
+                    key = (max(row.date for row in saved), len(saved))
+                    if best_key is None or key > best_key:
+                        best, best_key = saved, key
+        return best, status or {"cache": "pending"}
 
     def profile(self, symbol: str, secondary_symbol: str = "", stock_market: str = ""):
         merged, status = {}, {}
@@ -722,6 +769,27 @@ class SqliteCache:
                 (provider, str(symbol or "").upper(), data_type, time.time(), payload),
             )
 
+    def get_dividend_snapshot(self, provider: str, symbol: str) -> dict[str, Any] | None:
+        # Do not let a historical as-of query supersede present-day evidence.
+        # Reading this retained snapshot never prunes or writes the cache.
+        with self._connect() as conn:
+            rows = conn.execute(
+                "select data_type, updated_at, value from security_snapshot "
+                "where provider = ? and symbol = ? and (data_type = 'dividends' or data_type like 'dividends_as_of:%') "
+                "order by updated_at desc",
+                (provider, str(symbol or "").upper()),
+            ).fetchall()
+        for kind, updated_at, raw in rows:
+            if kind != "dividends" and kind.split(":", 1)[-1] < date.today().isoformat():
+                continue
+            try:
+                items = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(items, list) and items:
+                return {"items": items, "updated_at": float(updated_at)}
+        return None
+
     def get_company_logo(self, symbol: str, stock_market: str = "") -> dict[str, Any] | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -883,6 +951,90 @@ def _cached_or_fetch_prices(
     return cache.get_prices(provider, symbol, from_date, to_date)
 
 
+class IssuerFundHoldingsProvider(MarketDataProvider):
+    """Parse issuer-published files with explicit identities, dates and units."""
+    name = "issuer_fund_holdings"
+    SOURCES = {
+        "IVV": "https://www.ishares.com/us/products/239726/ishares-core-s-p-500-etf/latest-holdings.csv",
+        "SPY": "https://www.ssga.com/library-content/products/fund-data/etfs/us/holdings-daily-us-en-spy.xlsx",
+    }
+
+    def fund_holdings(self, symbol):
+        from .xray import normalize_snapshot
+        url = self.SOURCES.get(symbol)
+        if not url:
+            raise ProviderError("xray_issuer_unsupported")
+        try:
+            with httpx.Client(timeout=20, follow_redirects=True, headers={"User-Agent": "portfolio-analyzer/1.0"}) as client:
+                response = client.get(url)
+                response.raise_for_status()
+            if len(response.content) > 5_000_000:
+                raise ValueError("report too large")
+            rows, as_of = self.parse_ivv(response.text) if symbol == "IVV" else self.parse_spy(response.content)
+            snapshot = normalize_snapshot(rows, as_of=as_of, source_name="iShares" if symbol == "IVV" else "State Street",
+                                          source_url=url, source_kind="issuer")
+        except Exception as exc:
+            # Do not expose network exceptions or credentials in diagnostics.
+            raise ProviderError("xray_issuer_failed") from exc
+        self.cache.set_security_snapshot(self.name, symbol, "fund_holdings", snapshot)
+        return snapshot
+
+    @staticmethod
+    def parse_ivv(content):
+        rows = list(csv.reader(content.lstrip("\ufeff").splitlines()))
+        if not rows or rows[0] != ["iShares Core S&P 500 ETF"]:
+            raise ValueError("fund identity mismatch")
+        as_of = datetime.strptime(next(r[1] for r in rows if r and r[0] == "Fund Holdings as of"), "%b %d, %Y").date().isoformat()
+        start = next(i for i, r in enumerate(rows) if r and r[0] == "Ticker")
+        result = []
+        us_exchanges = {"NASDAQ", "NYSE", "Cboe BZX", "New York Stock Exchange Inc.", "NYSE Arca", "Nyse Mkt Llc", "Cboe BZX formerly BATS"}
+        for values in rows[start + 1:]:
+            row = dict(zip(rows[start], values))
+            if row.get("Asset Class") != "Equity" or row.get("Exchange") not in us_exchanges:
+                continue
+            if row.get("Market Weight") in {None, "", "-"}:
+                continue
+            weight = float(row["Market Weight"])
+            if weight > 0:
+                result.append({"symbol": row["Ticker"], "market": "US", "weight_percent": weight, "name": row["Name"], "asset_class": "EQUITY"})
+        return result, as_of
+
+    @staticmethod
+    def parse_spy(content):
+        import io
+        import re
+        import zipfile
+        ns = {"m": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            if sum(info.file_size for info in archive.infolist()) > 25_000_000:
+                raise ValueError("report too large")
+            strings = ["".join(item.itertext()) for item in ET.fromstring(archive.read("xl/sharedStrings.xml")).findall("m:si", ns)]
+            rows = []
+            for row in ET.fromstring(archive.read("xl/worksheets/sheet1.xml")).findall(".//m:row", ns):
+                cells = {}
+                for cell in row.findall("m:c", ns):
+                    value = cell.find("m:v", ns)
+                    text = value.text if value is not None else ""
+                    if cell.get("t") == "s" and text:
+                        text = strings[int(text)]
+                    cells[re.sub(r"\d", "", cell.get("r", ""))] = text
+                rows.append(cells)
+        if not any(r.get("A") == "Ticker Symbol:" and r.get("B") == "SPY" for r in rows):
+            raise ValueError("fund identity mismatch")
+        reported = next(r["B"] for r in rows if r.get("A") == "Holdings:")
+        as_of = datetime.strptime(reported.removeprefix("As of "), "%d-%b-%Y").date().isoformat()
+        start = next(i for i, r in enumerate(rows) if r.get("A") == "Name" and r.get("B") == "Ticker" and r.get("E") == "Weight")
+        result = []
+        for row in rows[start + 1:]:
+            ticker = row.get("B") or ""
+            if not re.fullmatch(r"[A-Z][A-Z0-9.-]{0,19}", ticker) or not re.fullmatch(r"[A-Z0-9]{9}", row.get("C") or "") or row.get("H") != "USD":
+                continue
+            weight = float(row["E"])
+            if weight > 0:
+                result.append({"symbol": ticker, "market": "US", "weight_percent": weight, "name": row.get("A", "")})
+        return result, as_of
+
+
 class AlphaVantageProvider(MarketDataProvider):
     name = "alpha_vantage"
     base = "https://www.alphavantage.co/query"
@@ -967,6 +1119,53 @@ class AlphaVantageProvider(MarketDataProvider):
         return {"pair": pair, "rate": _float_or_none(quote.get("5. Exchange Rate")), "time": quote.get("6. Last Refreshed")}
 
 
+class BankOfIsraelFxHistoryProvider(MarketDataProvider):
+    name = "bank_of_israel_fx"
+    base = "https://edge.boi.gov.il/FusionEdgeServer/sdmx/v2/data/dataflow/BOI.STATISTICS/EXR/1.0/"
+
+    @staticmethod
+    def parse_history(text: str, currency: str, from_date: date, to_date: date) -> list[dict[str, Any]]:
+        """Keep official levels only and normalize quotes per ONE foreign unit."""
+        rates = {}
+        for row in csv.DictReader(io.StringIO(text.lstrip("\ufeff"))):
+            if (row.get("SERIES_CODE") != f"RER_{currency}_ILS" or row.get("FREQ") != "D"
+                    or row.get("BASE_CURRENCY") != currency or row.get("COUNTER_CURRENCY") != "ILS"
+                    or row.get("UNIT_MEASURE") != "ILS" or row.get("DATA_TYPE") != "OF00"
+                    or row.get("DATA_SOURCE") != "BOI_MRKT"):
+                continue
+            try:
+                day = date.fromisoformat(row["TIME_PERIOD"])
+                multiplier = int(row["UNIT_MULT"])
+                if not 0 <= multiplier <= 6:
+                    raise ValueError
+                # BOI's JPY quote is ILS per 100 JPY (UNIT_MULT=2).
+                rate = float(row["OBS_VALUE"]) / (10 ** multiplier)
+                if not math.isfinite(rate) or rate <= 0:
+                    raise ValueError
+            except (ValueError, KeyError, TypeError, OverflowError) as exc:
+                raise ProviderError("var_fx_refresh_failed") from exc
+            if from_date <= day <= to_date:
+                if day in rates and rates[day] != rate:
+                    raise ProviderError("var_fx_refresh_failed")
+                rates[day] = rate
+        if not rates:
+            raise ProviderError("var_fx_refresh_failed")
+        return [{"date": day.isoformat(), "rate": rate} for day, rate in sorted(rates.items())]
+
+    def history(self, currency: str, from_date: date, to_date: date) -> dict[str, Any]:
+        if not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency) or currency == "ILS":
+            raise ProviderError("var_fx_invalid_currency")
+        try:
+            with httpx.Client(timeout=25, follow_redirects=True) as client:
+                response = client.get(self.base, params={"c[BASE_CURRENCY]": currency, "c[COUNTER_CURRENCY]": "ILS",
+                    "c[DATA_TYPE]": "OF00", "format": "csv", "startPeriod": from_date.isoformat(), "endPeriod": to_date.isoformat()})
+                response.raise_for_status()
+            return {"currency": currency, "source": "Bank of Israel representative rates",
+                    "rates": self.parse_history(response.text, currency, from_date, to_date)}
+        except Exception as exc:
+            raise ProviderError("var_fx_refresh_failed") from exc
+
+
 class FrankfurterFxProvider(MarketDataProvider):
     name = "frankfurter_fx"
     base = "https://api.frankfurter.dev/v2/rate"
@@ -1043,7 +1242,16 @@ class FmpProvider(MarketDataProvider):
         self._require_key()
         data = self._get_json(f"{self.base}/dividends", {"symbol": symbol, "apikey": self.api_key}, f"fmp:dividends:{symbol}", force_refresh=force_refresh)
         rows = data if isinstance(data, list) else data.get("historical", [])
-        return [{"date": row.get("date"), "amount": float(row.get("dividend") or row.get("adjDividend") or 0)} for row in rows]
+        normalized = []
+        for row in rows:
+            item = {"date": row.get("date"), "amount": float(row.get("dividend") or row.get("adjDividend") or 0)}
+            if row.get("adjDividend") is not None:
+                item["adjusted_amount"] = row["adjDividend"]
+            for source, target in (("paymentDate", "payment_date"), ("recordDate", "record_date"), ("declarationDate", "declaration_date")):
+                if row.get(source):
+                    item[target] = row[source]
+            normalized.append(item)
+        return normalized
 
     def profile(self, symbol: str) -> dict[str, Any]:
         self._require_key()

@@ -42,6 +42,17 @@ from .auth import API_ACCESS_MODES, AUTH_ROLES, PASSWORD_MIN_LENGTH, SESSION_COO
 from .config import data_dir, load_config
 from .diagnostics import Diagnostics, TRACE_ID
 from .company_logos import CompanyLogoService
+from .correlation import portfolio_correlation
+from .heatmap import stock_heatmap
+from .benchmark import BenchmarkError
+from .trading_journal import JournalError, journal_payload, save_reason, add_review
+from .optimization import OptimizationError
+from .optimization_data import optimization_universe, optimize_portfolio
+from .value_at_risk import VarError, build_var
+from .var_fx import VarFxError, load_fx_histories, save_fx_history, refresh_fx_history
+from .benchmark_data import benchmark_comparison, benchmark_inputs, save_portfolio_inputs, save_index_inputs, refresh_index
+from .xray import XrayError, build_xray, read_snapshot, require_fund, save_manual_report, snapshot_key
+from .dividend_calendar import build_dividend_calendar
 from .external_import import ExternalImportClient
 from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, SUPPORTED_MANAGEMENT_CURRENCIES, LocalPortfolioStore, validate_portfolio_ownership
 from .llm_assistant import AssistantError, PortfolioAssistant, assistant_settings
@@ -49,7 +60,7 @@ from .metrics import analyze_holding, moving_averages, screen, support_resistanc
 from .mcp_server import create_portfolio_mcp_server
 from .models import Ohlcv
 from .outlook_scoring import OUTLOOK_MODEL_VERSION, OUTLOOK_EVALUATION_VERSION, OUTLOOK_FISCAL_ALIGNMENT_DAYS, OUTLOOK_MINIMUM_PEERS, OUTLOOK_MINIMUM_RANK_WEIGHT, OUTLOOK_METRICS, OUTLOOK_TOTAL_WEIGHT, evaluation_contract
-from .providers import MarketDataHub
+from .providers import MarketDataHub, ProviderError
 from .portfolio_refresh import attach_market_analysis, refresh_positions, security_key
 from .report_pdf import build_portfolio_report_pdf
 from .trade_planner import planner_security
@@ -219,6 +230,7 @@ _login_failures: dict[str, list[float]] = {}
 AUTH_LOGIN_MAX_FAILURES = 5
 AUTH_LOGIN_WINDOW_SECONDS = 300
 VIEWER_READ_ONLY_POST_PATHS = {
+    "/api/portfolio/optimization",
     "/api/assistant/questions",
     "/api/assistant/context/clear",
     "/api/assistant/chats",
@@ -3285,6 +3297,179 @@ def portfolio(refresh: bool = False):
     return portfolio_payload(force_refresh=refresh, defer_enrichment=True)
 
 
+@app.get("/api/portfolio/benchmark")
+def compare_portfolio_benchmark(account_id: str = "", benchmark_id: str = "sp500", date_from: str = "", date_to: str = ""):
+    try:
+        return benchmark_comparison(local_store, account_id, benchmark_id, date_from, date_to)
+    except BenchmarkError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/portfolio/benchmark-inputs")
+def get_benchmark_inputs(account_id: str = "", benchmark_id: str = "sp500"):
+    try:
+        return benchmark_inputs(local_store, account_id, benchmark_id)
+    except BenchmarkError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/local/benchmark-portfolio")
+def put_benchmark_portfolio(payload: dict[str, Any]):
+    try:
+        return {"dataset": save_portfolio_inputs(local_store, payload)}
+    except BenchmarkError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/local/benchmark-index")
+def put_benchmark_index(payload: dict[str, Any]):
+    try:
+        return {"index_dataset": save_index_inputs(local_store, payload)}
+    except BenchmarkError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/portfolio/benchmark/refresh")
+def refresh_benchmark_index(payload: dict[str, Any]):
+    try:
+        return {"index_dataset": refresh_index(local_store, hub(), payload)}
+    except BenchmarkError as exc:
+        status = 502 if str(exc) == "benchmark_refresh_failed" else 409 if str(exc) == "benchmark_inputs_changed" else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+def _var_http_error(exc):
+    code = str(exc)
+    status = 409 if code == "var_fx_conflict" else 502 if code == "var_fx_refresh_failed" else 400
+    return HTTPException(status_code=status, detail=code)
+
+
+@app.get("/api/portfolio/var")
+def portfolio_value_at_risk(account_id: str = "", period: str = "3y"):
+    try:
+        histories = load_fx_histories(local_store)
+        return {**build_var(local_store, hub(), histories, account_id=account_id, period=period),
+                "account_id": account_id, "period": period, "fx_histories": list(histories.values())}
+    except (VarError, VarFxError) as exc:
+        raise _var_http_error(exc) from exc
+
+
+@app.put("/api/local/var-fx-history")
+def put_var_fx_history(payload: dict[str, Any]):
+    try:
+        return {"snapshot": save_fx_history(local_store, payload)}
+    except VarFxError as exc:
+        raise _var_http_error(exc) from exc
+
+
+@app.post("/api/portfolio/var/fx-refresh")
+def post_var_fx_refresh(payload: dict[str, Any]):
+    try:
+        return {"snapshot": refresh_fx_history(local_store, hub(), payload)}
+    except VarFxError as exc:
+        raise _var_http_error(exc) from exc
+
+
+@app.get("/api/portfolio/optimization")
+def get_optimization(account_id: str = "", period: str = "3y", currency: str = ""):
+    try:
+        return optimization_universe(local_store, hub(), account_id=account_id, period=period, currency=currency)
+    except OptimizationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/portfolio/optimization")
+def calculate_optimization(payload: dict[str, Any]):
+    try:
+        return optimize_portfolio(local_store, hub(), payload)
+    except OptimizationError as exc:
+        status = 422 if str(exc) == "optimization_solver_failed" else 400
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
+@app.get("/api/portfolio/heatmap")
+def portfolio_heatmap(account_id: str = ""):
+    try:
+        return stock_heatmap(local_store, hub(), load_fx_histories(local_store), account_id=account_id)
+    except ValueError as exc:
+        if str(exc) == "heatmap_unknown_account":
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise
+
+
+@app.get("/api/portfolio/correlation")
+def correlation_matrix(period: str = "1y", account_id: str = ""):
+    if period not in {"3m", "1y", "3y"}:
+        raise HTTPException(status_code=422, detail="invalid_correlation_period")
+    try:
+        return portfolio_correlation(local_store, hub(), period=period, account_id=account_id)
+    except ValueError as exc:
+        if str(exc) == "unknown_account":
+            raise HTTPException(status_code=400, detail="unknown_account") from exc
+        raise
+
+
+@app.get("/api/portfolio/dividend-calendar")
+def dividend_calendar(year: int | None = None, account_id: str = ""):
+    try:
+        return build_dividend_calendar(local_store, hub(), year=year, account_id=account_id)
+    except ValueError as exc:
+        if str(exc) in {"invalid_dividend_year", "unknown_dividend_account"}:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise
+
+
+@app.get("/api/portfolio/xray")
+def portfolio_xray(account_id: str = ""):
+    try:
+        return build_xray(local_store, account_id)
+    except XrayError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/local/fund-holdings")
+def get_fund_holdings(symbol: str, stock_market: str):
+    try:
+        fund = require_fund(local_store, symbol, stock_market)
+        return {"snapshot": read_snapshot(local_store, fund.symbol, fund.stock_market)}
+    except XrayError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/api/local/fund-holdings")
+def save_fund_holdings(payload: dict[str, Any]):
+    try:
+        return {"snapshot": save_manual_report(local_store, payload)}
+    except XrayError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/portfolio/xray/refresh")
+def refresh_xray_fund(payload: dict[str, Any]):
+    try:
+        fund = require_fund(local_store, payload.get("symbol"), payload.get("stock_market"))
+        if fund.asset_class != "ETF":
+            raise XrayError("xray_issuer_unsupported")
+        saved_before = read_snapshot(local_store, fund.symbol, fund.stock_market)
+        snapshot = hub().fund_holdings(fund.symbol, fund.stock_market)
+        # A slower issuer fetch must not overwrite a report saved meanwhile.
+        with local_store._sync_lock:
+            require_fund(local_store, fund.symbol, fund.stock_market)
+            if read_snapshot(local_store, fund.symbol, fund.stock_market) != saved_before:
+                raise HTTPException(status_code=409, detail="xray_report_changed")
+            local_store.set_preference(snapshot_key(fund.symbol, fund.stock_market), snapshot)
+        return {"snapshot": snapshot}
+    except XrayError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ProviderError as exc:
+        code = "xray_issuer_unsupported" if str(exc) == "xray_issuer_unsupported" else "xray_issuer_failed"
+        raise HTTPException(status_code=400 if code == "xray_issuer_unsupported" else 502, detail=code) from exc
+    except Exception as exc:
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(status_code=502, detail="xray_issuer_failed") from exc
+
+
 @app.get("/api/assistant/portfolio-summary")
 def assistant_portfolio_summary(
     symbol: str = "", stock_market: str = "", account_id: str = "",
@@ -3526,6 +3711,36 @@ def delete_local_account(account_id: str):
 @app.get("/api/local/securities")
 def list_local_securities():
     return {"items": local_store.list_transactions()}
+
+
+def _journal_http_error(exc):
+    code = str(exc)
+    status = 409 if code == "journal_conflict" else 404 if code in {"journal_not_found", "journal_transaction_not_found"} else 400
+    return HTTPException(status_code=status, detail=code)
+
+
+@app.get("/api/local/trading-journal")
+def get_trading_journal(account_id: str = "", action: str = "", review_status: str = "", query: str = ""):
+    try:
+        return journal_payload(local_store, account_id=account_id, action=action, review_status=review_status, query=query)
+    except JournalError as exc:
+        raise _journal_http_error(exc) from exc
+
+
+@app.put("/api/local/trading-journal")
+def put_trading_journal(payload: dict[str, Any], request: Request):
+    try:
+        return {"entry": save_reason(local_store, payload, actor=request.state.auth_user)}
+    except JournalError as exc:
+        raise _journal_http_error(exc) from exc
+
+
+@app.post("/api/local/trading-journal/{entry_id}/reviews")
+def post_trading_journal_review(entry_id: str, payload: dict[str, Any], request: Request):
+    try:
+        return {"entry": add_review(local_store, entry_id, payload, actor=request.state.auth_user)}
+    except JournalError as exc:
+        raise _journal_http_error(exc) from exc
 
 
 @app.get("/api/local/trade-history")
@@ -4660,6 +4875,8 @@ def _portfolio_alert_rows(required_metrics: set[str] | None = None, progress=Non
                 "relative_volume_20d": _number_or_none((analysis.get("volume") or {}).get("relative_20d")),
                 "confirmed_breakout": 1.0 if breakout.get("state") == "ok" and breakout.get("triggered") else (0.0 if breakout.get("state") == "ok" else None),
                 "price_from_high_1y_percent": _number_or_none(one_year.get("percent_from_high")),
+                "price_from_high_3y_percent": _number_or_none((price_ranges.get("3y") or {}).get("percent_from_high")) if (price_ranges.get("3y") or {}).get("state") == "ok" else None,
+                "price_from_high_5y_percent": _number_or_none((price_ranges.get("5y") or {}).get("percent_from_high")) if (price_ranges.get("5y") or {}).get("state") == "ok" else None,
                 "missing": sorted(set(group["missing"]) | set(row.get("missing") or [])),
             }
         )

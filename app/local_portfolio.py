@@ -834,11 +834,11 @@ class LocalPortfolioStore:
 
     def change_token(self) -> str:
         data = self.export_data()["data"]
-        # Chat history/retention is user interface state, not financial input.
-        # Saving a reply must not invalidate analytics and refetch market data.
+        # Notes and chat history are independent of financial inputs.
+        # Saving a journal reason/review or reply must not refetch market data.
         data["app_preferences"] = [
             row for row in data.get("app_preferences", [])
-            if row.get("key") != "logging_settings" and not str(row.get("key") or "").startswith(("assistant_chats:", "assistant_context:"))
+            if row.get("key") != "logging_settings" and not str(row.get("key") or "").startswith(("assistant_chats:", "assistant_context:", "trading_journal_v1:", "var_fx_v1:"))
         ]
         encoded = json.dumps(data, sort_keys=True, default=str).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()

@@ -21,6 +21,11 @@
     <link rel="shortcut icon" href="/assets/portfolio-vault/favicon.ico?v=1" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
   <link rel="stylesheet" href="/styles.css?v=0.9.17-simulation-spacing" />
+  <link rel="stylesheet" href="/benchmark.css?v=1" />
+  <link rel="stylesheet" href="/trading-journal.css?v=1" />
+  <link rel="stylesheet" href="/optimization.css?v=1" />
+  <link rel="stylesheet" href="/var.css?v=1" />
+  <link rel="stylesheet" href="/heatmap.css?v=1" />
   </head>
   <body>
     <div id="authOverlay" class="auth-overlay">
@@ -100,6 +105,13 @@
             <div class="nav-children">
               <button class="nav-item" type="button" data-modal="assistantModal">Ask portfolio assistant</button>
               <button class="nav-item" type="button" data-modal="researchModal" data-research-section="finance">Company Reports</button>
+              <button class="nav-item" type="button" data-modal="correlationModal">Correlation Matrix</button>
+              <button class="nav-item" type="button" data-modal="benchmarkModal">Benchmark Comparison</button>
+              <button class="nav-item" type="button" data-modal="optimizationModal">Mean–Variance Optimization</button>
+              <button class="nav-item" type="button" data-modal="varModal">Value at Risk</button>
+              <button class="nav-item" type="button" data-modal="tradingJournalModal">Trading Journal</button>
+              <button class="nav-item" type="button" data-modal="xrayModal">X-Ray</button>
+              <button class="nav-item" type="button" data-modal="dividendCalendarModal">Dividend Calendar</button>
               <button class="nav-item" type="button" data-modal="researchModal" data-research-section="outlook">Company Outlook</button>
               <button class="nav-item" type="button" data-modal="researchModal" data-research-section="signals">Portfolio Signals</button>
             </div>
@@ -161,6 +173,11 @@
             <button type="button" class="secondary" data-modal="bannerModal">Manage</button>
           </div>
           <div id="bannerItems" class="ticker-row"></div>
+        </section>
+
+        <section class="tool-panel var-summary-panel" aria-labelledby="varSummaryTitle">
+          <div class="section-head"><h2 id="varSummaryTitle">One-month 95% VaR</h2><button type="button" class="secondary compact-button" data-modal="varModal">Details</button></div>
+          <div id="varSummaryContent" role="status" aria-live="polite"></div>
         </section>
 
         <section class="analytics-panel">
@@ -496,6 +513,111 @@
             <button class="secondary" type="button" data-close>Cancel</button>
           </div>
         </form>
+      </section>
+    </div>
+
+    <div id="dividendCalendarModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="dividendCalendarTitle">
+        <div class="section-head"><h2 id="dividendCalendarTitle">Dividend Calendar</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <div class="dividend-calendar-controls">
+          <label class="field"><span>Account</span><select id="dividendCalendarAccount"><option value="">Any account</option></select></label>
+          <label class="field"><span>Year</span><select id="dividendCalendarYear"></select></label>
+          <button id="dividendCalendarReload" class="secondary" type="button">Reload</button>
+        </div>
+        <p class="section-note">Larger dots and percentages show larger observed annual dividend yields, not larger individual payments. Select a distribution for its details.</p>
+        <p class="section-note">Annual yield uses available dividends from the last 12 months divided by the saved price. The highest-yield badge requires history spanning 12 months, a price no older than 7 days and dividend evidence no older than 30 days.</p>
+        <p id="dividendCalendarStatus" class="status-line" role="status"></p>
+        <div id="dividendCalendarResults" aria-busy="false"></div>
+        <section id="dividendCalendarDetails" class="dividend-detail-box" role="status" aria-live="polite" aria-label="Distribution details"></section>
+        <p class="section-note">Calendar dates use payment dates when supplied; otherwise ex-dividend or provider dates are explicitly labelled. Recorded ledger dates are used only when no provider distribution dates exist for that security and year. No future dates are generated from past payment frequency.</p>
+        <p class="section-note">Known year totals use available calendar records and may include reported future distributions. They are not confirmed income received. Recorded year income comes from dated dividend transactions for the currently held securities and may be net of tax. Different currencies stay separate.</p>
+        <p class="section-note">Missing records do not establish zero dividends. Last-12-month calculations use ex-dividend dates where available, otherwise payment or provider dates, and provider-adjusted amounts where supplied. Splits and special dividends may affect comparisons. Current share counts are not applied to historical payouts.</p>
+        <p class="section-note">This view reads saved evidence without recording payments. For newer data, use dashboard Refresh, allow the background update to finish, then Reload here. Dashboard filters do not apply.</p>
+      </section>
+    </div>
+
+    <div id="xrayModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="xrayTitle">
+        <div class="section-head"><h2 id="xrayTitle">X-Ray</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <p class="section-note">Find securities held directly and inside funds, and holdings shared by funds.</p>
+        <div class="xray-controls"><label class="field"><span>Account</span><select id="xrayAccount"><option value="">Any account</option></select></label><button id="xrayReload" class="secondary" type="button">Reload</button></div>
+        <p id="xrayStatus" class="status-line" role="status"></p>
+        <div id="xrayResults" aria-busy="false"></div>
+        <p class="section-note">Fund weights describe each fund's reported allocation, not your portfolio percentage. Observed overlap adds the smaller reported weight for each security shared by two funds. Partial reports are not scaled to 100%; unreported holdings remain unknown.</p>
+        <p class="section-note">Matching uses exact tickers within a market scope. US exchanges share the US scope; other markets stay separate. Names, ticker aliases and share classes are not merged. Look-through stops at the reported constituents; nested funds are not expanded. Cash, pension balances and derivatives are excluded. Dashboard filters do not apply.</p>
+        <p id="xrayViewerNote" class="section-note" hidden>Viewer access can inspect reports and overlaps. An editor must add or refresh fund reports.</p>
+        <details id="xrayReportEditor" class="xray-editor" hidden>
+          <summary>Fund holdings reports</summary>
+          <p class="section-note">Saving or fetching replaces the selected fund's saved report. Use the fund's own dated holdings report. Local entries are not independently verified. Official downloads currently support US-listed SPY and IVV.</p>
+          <form id="xrayReportForm">
+            <div class="xray-controls"><label class="field"><span>Fund</span><select id="xrayFund"></select></label><button id="fetchXrayIssuer" type="button" class="secondary">Fetch official report</button></div>
+            <div class="xray-report-fields">
+              <label class="field"><span>Holdings as of</span><input id="xrayReportDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" required /></label>
+              <label class="field"><span>Report source</span><input id="xrayReportSource" maxlength="240" required /></label>
+              <label class="field"><span>Source URL (optional)</span><input id="xrayReportUrl" type="url" maxlength="1000" dir="ltr" /></label>
+            </div>
+            <label class="field"><span>Holdings CSV</span><textarea id="xrayReportCsv" rows="8" dir="ltr" spellcheck="false" required placeholder="Paste report CSV"></textarea></label>
+            <p class="section-note">Required CSV columns: symbol, market, weight_percent. Optional: name, asset_class. Use US for US-listed securities or an explicit market such as TASE. Enter weights as percentages, not fractions. Allowed asset_class values: EQUITY, ETF, MUTUALFUND, UNKNOWN. Use ETF or MUTUALFUND to identify nested funds. Maximum 5000 rows and 1 MB. Weights must be positive and total at most 100%.</p>
+            <div class="field"><button id="chooseXrayReportFile" type="button" class="secondary">Choose CSV file (optional)</button><input id="xrayReportFile" type="file" accept=".csv,text/csv" hidden /></div>
+            <p id="xrayPreview" class="section-note" role="status"></p>
+            <button id="saveXrayReport" type="submit">Save report</button>
+          </form>
+          <p id="xrayReportStatus" class="status-line" role="status"></p>
+        </details>
+      </section>
+    </div>
+
+    <div id="varModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="varTitle">
+        <div class="section-head"><h2 id="varTitle">Value at Risk</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <div id="varContent"></div>
+      </section>
+    </div>
+
+    <div id="optimizationModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="optimizationTitle">
+        <div class="section-head"><h2 id="optimizationTitle">Mean–Variance Optimization</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <div id="optimizationContent"></div>
+      </section>
+    </div>
+
+    <div id="tradingJournalModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="tradingJournalTitle">
+        <div class="section-head"><h2 id="tradingJournalTitle">Trading Journal</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <div id="tradingJournalContent"></div>
+      </section>
+    </div>
+
+    <div id="benchmarkModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="benchmarkTitle">
+        <div class="section-head"><h2 id="benchmarkTitle">Benchmark Comparison</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <div id="benchmarkContent"></div>
+      </section>
+    </div>
+
+    <div id="correlationModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="correlationTitle">
+        <div class="section-head"><h2 id="correlationTitle">Correlation Matrix</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <p class="section-note">Compare how assets moved together using Pearson correlation of percentage returns. +1 means movement together, 0 means little linear relationship, and −1 means opposite movement.</p>
+        <div class="correlation-controls">
+          <label class="field"><span>Account</span><select id="correlationAccount"><option value="">Any account</option></select></label>
+          <label class="field"><span>Period</span><select id="correlationPeriod"><option value="3m">3 months</option><option value="1y" selected>1 year</option><option value="3y">3 years</option></select></label>
+          <button type="button" id="correlationRecalculate" class="secondary">Recalculate</button>
+        </div>
+        <p id="correlationStatus" class="status-line" role="status"></p>
+        <div id="correlationResults" aria-busy="false"></div>
+        <p id="correlationPairDetails" class="section-note" role="status"></p>
+        <p class="section-note">Uses saved daily prices only, in each asset's native currency, without FX conversion. Identical listings across accounts appear once. Cash and pension fund balances are excluded. Dashboard filters do not apply.</p>
+        <p class="section-note">At least 30 matching return observations are required. Both dates of each return must match; gaps longer than 7 days are excluded. Missing prices are never filled. Unchanged returns are unavailable.</p>
+        <p class="section-note">If the same listing has conflicting recorded currencies across accounts, its correlations are unavailable. Choose one account to analyze its holdings separately.</p>
+        <p class="section-note">Provider adjusted closes are preferred. Local price overrides use unadjusted closes for the entire series; splits and dividends may affect results. This is asset co-movement, without position weights or short direction. Historical correlations can change and do not predict returns or guarantee diversification.</p>
       </section>
     </div>
 
@@ -975,6 +1097,14 @@
                 <p>Analytics refresh in the background. Hover or focus a data-gap count to see which input is unavailable; unavailable dividend history does not confirm zero dividends. Currency tooltips use symbols and retain the converted base-currency value.</p>
               </article>
               <article class="help-feature">
+                <h3>Portfolio stocks heatmap</h3>
+                <p>The Portfolio stocks heatmap card is on the main dashboard in All areas or Investment portfolio, in Glance and Full. Choose All accounts to combine your held listings, select one account, or choose By account for separate panels. Editors can use dashboard Edit to move or hide the card. Its account selector controls the heatmap independently of the Holdings filters. Stocks, employee shares, ETFs and mutual funds are included; cash, bonds, pension fund balances and derivatives are excluded and unsupported holdings are listed.</p>
+                <p>Tile area represents gross current stock and fund exposure in ILS: absolute share quantity multiplied by the latest saved raw price and ILS per currency unit. Long and short positions in different accounts are not netted. Each account panel has its own area scale; compare its ILS total rather than tile size between panels. Weights describe only holdings with available values in that view, not the entire portfolio.</p>
+                <p>Color shows the latest observed native-currency raw price change, (latest / previous − 1) × 100, for both long and short holdings. It is not your investment profit or an ILS return and does not include currency changes, dividends or fees. Splits and distributions can affect raw-price changes. Select a tile or an entry in the complete holdings list for both observation dates, prices, currency and account breakdown.</p>
+                <p>Quotes and FX must be no older than 7 days for tile sizing. Color is unavailable when the latest price is stale, fewer than two prices exist, or their dates are more than 7 days apart; observations are not guaranteed to be consecutive trading sessions. Unavailable changes use a neutral tile and unavailable values appear separately without an invented size. Dates may differ between exchanges. Missing coverage is never treated as zero.</p>
+                <p>The card loads automatically with the portfolio. Reload reads saved local and qualified market-cache prices and dated FX snapshots without a provider download or portfolio changes. For newer prices use dashboard Refresh or Prices, then Reload. FX comes from saved dashboard currency quotes or the FX history maintained under Value at Risk; the latest dated observation wins. Viewer users can read all heatmap views. Loading remains inside the card, failures can be retried, and switching users clears the results.</p>
+              </article>
+              <article class="help-feature">
                 <h3>Portfolio alarms</h3>
                 <p>Open the bell to review vesting and dividend notices. Use Events to scan held securities for dividends. Clearing notices hides the alerts; it does not delete grants or transactions.</p>
               </article>
@@ -1056,7 +1186,7 @@
               </article>
               <article class="help-feature">
                 <h3>Events</h3>
-                <p>Scan held securities for dividend events and review the resulting portfolio notices.</p>
+                <p>Scan held securities for dividend events and review the resulting portfolio notices. Dividend Calendar opens a separate read-only calendar with annual per-share totals, observed annual yields and recorded year income; opening it does not run a scan or record payments.</p>
               </article>
             </div>
           </details>
@@ -1093,6 +1223,72 @@
             <summary><span>Research</span><small>Investigate companies, outlooks, and portfolio signals.</small></summary>
             <div class="help-group-content">
               <article class="help-feature">
+                <h3>Dividend Calendar</h3>
+                <p>Open Research → Dividend Calendar, or open it from Events. Choose an account scope and year. The twelve month cards show dates from saved dividend evidence for currently held long stocks and funds. Short positions, ESOP grants and unsupported instruments are excluded. Dashboard filters do not apply.</p>
+                <p>Each marker shows a distribution amount per share and the stock's observed annual dividend yield. Larger dots indicate larger annual percentages. All ties for the highest comparable yield are highlighted. The comparison always uses the latest twelve months through today, even when viewing an earlier year; it never multiplies one payout by an assumed payment frequency.</p>
+                <p>The annual summary separates known calendar-year dividends per share, observed last-12-month dividends per share, annual yield, the saved price and its date, and recorded income for that year. Annual yield is last-12-month dividends per share divided by the saved raw closing price, multiplied by 100. Provider-adjusted dividend amounts are used where supplied; special distributions and share splits can affect comparisons. Highest-yield highlighting requires a history record at or before the start of the twelve-month window, a price no older than 7 days and dividend evidence no older than 30 days. Partial or stale values remain visible with warnings.</p>
+                <p>Calendar dates prefer a reported payment date. If it is missing, the entry explicitly shows an ex-dividend date or an unidentified provider date. These do not establish when cash is received. If no provider distributions have dates in the selected year, recorded dividend transactions for that security supply ledger-date markers instead. Select a marker for its amount, date meaning and annual context. Future dates must already be present in the source; no payment schedule is invented.</p>
+                <p>Known year totals may include reported future distributions and are not confirmed income received. Recorded year income uses dated local dividend transactions through today, only for currently held eligible securities in the selected account scope; it may be net of tax. Current share quantities are never applied to historical payouts, and currencies are not added together. Missing history or prices are unavailable, not zero.</p>
+                <p>Dividend data coverage shows source, saved-evidence date, available history dates and excluded or undated record counts. Reload rereads saved evidence without contacting providers or recording dividends and is available to Viewer users. For newer evidence use dashboard Refresh, wait for background completion, then Reload. Loading stays in this dialog; failed requests retain matching saved results and can be retried.</p>
+              </article>
+              <article class="help-feature">
+                <h3>X-Ray</h3>
+                <p>X-Ray requires current holdings recorded as ETF or Mutual Fund. It reads the local portfolio; it does not identify fund composition from a name or index label.</p>
+                <p>Open Research → X-Ray and choose Any account or one account. Shared securities shows direct holdings also found inside held funds and securities shared by two or more funds. Each path shows the account, long or short direction, and the weight within that fund. Buying the same fund in several accounts is combined into one fund path. Membership overlap is not correlation, a recommendation to sell, or a net exposure calculation.</p>
+                <p>Fund coverage lists the reported allocation, constituent count, holdings date, retrieval time and source for every held ETF or mutual fund. Missing reports mean overlap is unknown. Reports older than 45 days are marked stale; dates are never inferred from the download time. Observed fund overlap sums the smaller of each shared constituent's two reported weights. Partial weights are not rescaled, so observed overlap is only the portion established by the reports. Different report dates can produce different results.</p>
+                <p>Editors can expand Fund holdings reports, select a held fund and Fetch official report for US-listed SPY or IVV. This downloads the fund issuer's own file and replaces that fund's saved snapshot. For other funds, paste or choose a CSV from a fund report, enter its holdings date and source, review the row count and total allocation, then Save report. CSV requires symbol, market and weight_percent; name and asset_class are optional. Weights are percentages greater than 0, totaling at most 100%, with at most 5000 rows and 1 MB. US exchange listings use market US; use TASE for Israeli listings. Local entries retain their source but are not independently verified.</p>
+                <p>Reload reads saved reports without contacting providers. Provider downloads and saves remain inside this dialog; failures retain saved evidence and entered drafts for retry. Viewer users can read and filter but cannot maintain reports. Reports persist locally and are included in full backups and local data export. No trades or external portfolio records are changed.</p>
+                <p>Matching uses exact ticker and market scope, without company-name or index-name guesses. Share classes and ticker aliases are not merged. Only the reported layer of constituents is compared; use ETF or MUTUALFUND in the optional asset_class column to flag nested funds, which remain unexpanded. Unidentified nested funds may remain in the report. Cash, pension balances and derivatives are excluded; unsupported held securities are listed. Dashboard filters do not apply. Fund weights are not total portfolio percentages and values in different currencies are not added.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Value at Risk</h3>
+                <p>The dashboard One-month 95% VaR card estimates a loss threshold in ILS for All accounts using 3 years of saved evidence. Open its Details or Research → Value at Risk to choose All accounts or one account and 1, 3 or 5 years of history, then Calculate / Reload. Dashboard filters do not apply. One month means 30 calendar days, and loss is measured at the end of that holding period.</p>
+                <p>VaR is an estimated 95% loss threshold under a historical model, not an absolute maximum loss or a guarantee. Losses beyond the threshold remain possible in the 5% tail and can be much larger. Average loss in the worst 5% shows expected shortfall. The current recorded net value includes signed security values and cash or borrowing. All amounts in these result cards are in ILS.</p>
+                <p>Each scenario applies the same observed 30-day native-price and ILS exchange-rate movements to today's recorded positions. For a foreign asset, the value factor is the native-price ratio multiplied by the ILS-per-unit exchange-rate ratio; a falling dollar therefore reduces an unhedged USD position's ILS value even when its USD price is flat. Foreign cash and borrowing also receive the currency movement. The price-only VaR comparison holds FX fixed over the same scenarios; it is not a separate currency-risk contribution that can be added to asset risk.</p>
+                <p>At least 100 historical scenarios are required, with every selected security price and required exchange rate observed on both dates exactly 30 calendar days apart. Missing dates are never filled and today's FX rate is never substituted for historical movement. Overlapping scenarios are not independent months; fewer than 250 are marked limited history. VaR uses the empirical 95th-percentile loss with nearest-rank selection; expected shortfall averages exactly the worst 5% probability mass, including a fractional boundary scenario. Negative estimated loss thresholds are displayed as zero with a warning that this does not establish zero future risk.</p>
+                <p>Portfolio coverage lists securities, account cash and borrowing, currencies, values and quote dates. Current security prices and FX observations must be no older than 7 days; the latest common monthly scenario must end within 14 days. Any missing, stale or unsupported position in the selected scope prevents a whole-scope VaR headline. Options, futures, private assets and pension or savings fund balances without supported market-price histories are unavailable. Choose another account or correct the reported evidence. Cash movements recorded in a different currency from their account are unsupported. Use a reconciled account scope with consistent cash currencies; the model does not infer exchange conversions.</p>
+                <p>Historical FX data is quoted as ILS per one unit of the chosen foreign currency. Editors can select a currency and Refresh official FX history to download Bank of Israel representative rates for the selected history period, or enter a source and load date,rate CSV, then Save FX history. Dates accept dd/mm/yyyy or yyyy-mm-dd; use positive plain decimal rates, at most 10000 unique dates, and files up to 1 MB. Official quotes per multiple units, such as 100 JPY, are normalized to one unit. Saving replaces that currency's local series and recalculates the dialog and All accounts dashboard card.</p>
+                <p>Saved local and qualified cached security prices are used without a market download during calculation. All selected histories use provider adjusted closes only when every asset has complete adjusted evidence and no local override; otherwise every asset uses raw closes. Raw prices can be affected by dividends and splits, and provider adjustments do not guarantee a particular reinvestment method. Maintain missing security history in Prices or through a configured market-data refresh. Representative daily FX fixings and market closes may occur at different times; dated valuations can differ from the dashboard's other quote sources.</p>
+                <p>Viewer users can calculate and read coverage and saved FX histories; operators and administrators can save or refresh FX evidence. Loading remains local to the card or dialog. Failed saves and downloads retain entered drafts and saved history. If another tab or user saves first, stale revisions cannot overwrite it; load the latest saved history and reconcile the draft before retrying. FX evidence is included in full backups and local data export. Calculation does not change holdings, account cash or the existing risk score. The model holds current exposures fixed and excludes future trades, deposits, withdrawals, interest, fees, taxes and liquidity effects.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Mean–Variance Optimization</h3>
+                <p>Open Research → Mean–Variance Optimization. Choose an account or All accounts, one currency and 1, 3 or 5 years of saved history. Select 2 to 30 eligible assets, choose an objective and set a maximum weight per asset, then Optimize. This is a fully invested, long-only model for the selected stocks and funds. Identical listings across accounts are combined. Cash, short positions, derivatives, unsupported assets and other currencies are outside this allocation; the dashboard filters do not apply.</p>
+                <p>Minimum volatility minimizes estimated portfolio variance. Maximum Sharpe maximizes estimated excess return divided by volatility using the annual risk-free rate you enter; it requires positive feasible excess return and a finite ratio. Target return minimizes variance while meeting at least the entered annual return; a target below the minimum-volatility portfolio return retains that portfolio. Weights total 100%, remain nonnegative and respect the maximum per asset. The cap must be at least 100 divided by the number of selected assets. Infeasible targets or caps and failed numerical checks produce an explanation instead of suggested weights.</p>
+                <p>Assets and assumptions shows saved price coverage and optional annual expected-return overrides in percent. Blank overrides use the historical estimate. Advanced estimation controls covariance shrinkage: the default 10% moves the sample covariance toward its diagonal; 0% uses the sample matrix and 100% removes estimated cross-asset covariance. This changes the risk model. These are historical estimates and explicit assumptions, not forecasts or guaranteed returns; allocations can be sensitive to the history, assumptions and selected assets.</p>
+                <p>The model uses the last date with a quote for every selected asset in each completed Monday–Friday week. Every return uses identical start and end dates across all assets. Only intervals of 4 to 10 days are included; longer gaps are skipped, and missing prices are never filled. At least 26 common weekly returns are required; fewer than 52 are marked limited history. Annual expected return is the arithmetic weekly mean multiplied by 52; annual covariance is the sample covariance with denominator n minus 1, multiplied by 52. The selected shrinkage is then applied. Constant-return assets cannot establish a usable risk estimate. Expand the observation details to inspect the actual return intervals.</p>
+                <p>Provider adjusted closes are used only when every selected asset has complete adjusted evidence and no local overrides. Otherwise all selected series use raw closes, with qualified local overrides. Adjustment scales are never spliced. Provider adjustments do not establish a guaranteed dividend-reinvestment methodology; raw prices can be affected by dividends and splits. The model uses one recorded currency without historical FX conversion. Quotes older than 7 days and common samples ending more than 14 days ago are flagged. For missing history, use a configured dashboard Refresh or maintain qualified prices in Prices, then Reload saved history here.</p>
+                <p>Cached provider history is accepted for supported US listings recorded in USD and Tel Aviv listings recorded in ILS. Other listings and manually defined instruments without a provider alias require local price history matching their currency and asset class. A market refresh cannot establish that missing identity. Listings with conflicting currencies or asset classes remain unavailable; select one account or correct the recorded identity.</p>
+                <p>Results compare estimated annual return, annual volatility, Sharpe ratio and weights with the current selected sleeve. Current weights use held quantities and latest raw prices no older than 7 days, normalized across only the selected assets; if any selected value is unavailable, that comparison is unavailable. The input table shows current weights across all displayed long holdings in the chosen currency. The efficient frontier shows the minimum-variance portfolio and progressively higher feasible returns. Select a frontier point or its table button to inspect that portfolio; return to the optimized portfolio to restore the chosen objective. Volatility here is a model percentage, separate from the dashboard risk score.</p>
+                <p>Calculation reads saved evidence and is available to Viewer users as well as editors. It does not place trades, save target holdings or change account balances. Loading and calculation stay inside the dialog. Changing inputs clears the old result; failed calculations retain the inputs for retry with Optimize. Reload saved history rereads local and cached evidence without downloading prices. Fees, taxes, trading costs, liquidity, future market changes and personal suitability are outside this model.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Trading Journal</h3>
+                <p>Open Research → Trading Journal, or choose Journal beside a buy, sell or short transaction in Buy / sell history or Position history details. Select a recorded trade, enter Why and optionally What would change my mind and a Review date, then save. Fully closed positions remain available. Each journal entry links to one whole recorded transaction, including when Position history allocates part of that transaction to a holding period.</p>
+                <p>The journal preserves the trade facts captured when the entry was created, your first saved reason, and every later reasoning revision with its author and recording time. Recording times show when notes were written; they do not establish that the reason was recorded on the trade date. Saving a revised reason appends history. If the trade is corrected or deleted, the entry remains available with its captured facts and a changed or deleted link status; price evidence is unavailable for that link.</p>
+                <p>Revisit an entry and add a review rated Good, Mixed or Bad with required review notes or lessons learned. Each review is retained with its author and time; the latest review determines the displayed assessment. Pending means no review has been recorded. Review dates mark pending entries due in the journal. Use account, action and assessment filters and search to find past decisions; dashboard filters do not apply.</p>
+                <p>Price change since trade uses the latest later saved local price matching the captured symbol, market, asset class and currency. It shows the price date and raw percentage movement from the recorded unit price, independently of your manual assessment. Quotes older than 7 days are marked stale. Missing later prices, unsupported instruments and changed or deleted trades show an explanation. Prices are unadjusted; dividends, fees, taxes and splits can affect interpretation. This is price movement, not realized profit, total return or an automatic Good or Bad rating. Add or correct a later quote in Prices, then reload the journal.</p>
+                <p>Viewer users can read entries, reasons and review histories. Operators and administrators can save reasons and add reviews. Journal records are saved locally and included in full backups and local data export. Saving journal notes leaves the trade ledger, cash, financial analytics and trade simulations unchanged.</p>
+                <p>Loading stays inside the journal. Failed saves retain your draft for retry. If another user or tab saved first, reload the latest entry and reconcile your retained draft before saving again; stale revisions cannot overwrite history. Reload reads saved records without downloading market data.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Benchmark Comparison</h3>
+                <p>Open Research → Benchmark Comparison. Choose the entire portfolio or one account, the From and To dates, and an index, then Compare. This view uses its own saved performance inputs; dashboard filters do not apply. Viewer users can read and compare; editors can save inputs and refresh supported indexes.</p>
+                <p>In Performance inputs, enter a source, one reporting currency and dated total values including cash. Use saved account history as a starting point when available, review it, and record every external deposit as positive and withdrawal as negative. Trades, fees and income retained inside the account belong in its value, not in external flows. Transfers between selected accounts are internal; a transfer across the selected scope is an external flow. Confirm the cash-flow history is complete, including when there were no flows, then save. CSV columns are date,value for valuations and date,amount for flows; use dd/mm/yyyy or yyyy-mm-dd, plain numbers without thousands separators, and at most 10000 rows per list.</p>
+                <p>Valuations are after end-of-day external flows. The opening value already includes flows on the From date; later flows through the To date are included. XIRR is an annualized money-weighted return using actual dates and a 365-day year. TWRR is the cumulative linked return after removing each end-of-day flow; it requires a valuation on every flow date as well as both boundary dates. Missing evidence, incomplete flows, nonpositive bases and potentially ambiguous XIRR cash flows show an explanation instead of a fabricated return. Annualizing less than one year can magnify results. Growth of 100 shows linked returns, so deposits do not create jumps in performance.</p>
+                <p>The benchmark invests the same opening value and deposits and funds the same withdrawals at the saved index levels. Its XIRR uses those same dated cash flows; its TWRR is the index change over the period. A withdrawal exceeding the simulated benchmark balance makes that comparison unavailable. Index observations use the latest earlier level within 7 days and show the actual observation dates; future observations are never used. Price indexes exclude dividends; total-return series include the reinvestment specified by their source. Review the basis and source before comparing with portfolio returns after actual fees and taxes.</p>
+                <p>Maintain index history with a name, source, currency, price or total-return basis, and date,level CSV. S&amp;P 500, Nasdaq Composite and Dow Jones can refresh through configured FMP or explicitly enabled Yahoo providers. TA indexes and other indexes support sourced CSV input. TA-25 and TA-100 end on 08/02/2017; select TA-35 or TA-125 for their successors from 09/02/2017. They are separate selections. Portfolio and index series must use the same reporting currency; import a documented currency-converted index series when needed. Current exchange rates are not used to invent historical returns.</p>
+                <p>Compare reads saved evidence. Saving replaces the selected scope or index inputs locally and includes them in full backups and local data export. Loading and provider refresh stay inside the dialog. Failed saves keep your draft; failed refreshes retain saved history. Retry with Compare or the refresh action after correcting the reported issue. Reload saved inputs to discard a draft and read persisted data.</p>
+              </article>
+              <article class="help-feature">
+                <h3>Correlation Matrix</h3>
+                <p>If the same listing has conflicting recorded currencies across accounts, its correlations are unavailable. Choose one account to analyze its holdings separately.</p>
+                <p>Open Research → Correlation Matrix. Choose Any account or one account and a period of 3 months, 1 year or 3 years. The matrix compares current held securities, with identical listings combined across accounts and different exchanges kept separate. Cash and pension fund balances are excluded; dashboard filters do not apply. Viewer access is supported.</p>
+                <p>Each cell shows Pearson correlation from −1 to +1 and the number of matching percentage returns. Positive values mean movement together, negative values mean opposite movement, and near zero means little linear relationship. Select a cell to see its actual observation dates. At least 30 matching observations are required; insufficient overlap or constant returns show Unavailable. Both return endpoints must match, gaps longer than 7 days are excluded, and missing prices are never filled.</p>
+                <p>Price history coverage shows each security's actual dates and price basis. Saved provider adjusted closes are preferred; local overrides use raw closes throughout that security's series to avoid mixing adjustment scales. Prices stay in native currencies without historical FX conversion, and dividends or splits may affect raw-price results. Pairwise samples can differ; this matrix is not an optimization input or a portfolio risk score. Position weights and short direction are excluded. Correlations can change and do not predict future returns.</p>
+                <p>Calculation reads saved price history without downloading data or changing holdings. Loading stays inside the dialog. Recalculate retries after failure or rereads updated saved data; it does not fetch new prices. For missing history, use dashboard Refresh with a configured provider, or maintain manual history in Prices, then Recalculate. Use the scrollable table on small screens.</p>
+              </article>
+              <article class="help-feature">
                 <h3>Company Reports</h3>
                 <p>Enter a ticker and Get company report to review annual revenue, net income, growth, net margin, free cash flow, and long-term debt when available. Fiscal dates are report year-ends; hover or focus a value for its definition and comparison period.</p>
                 <p>Reports are cached locally. Fresh data is reused until the configured refresh interval expires; a refresh may download the complete provider dataset rather than only missing years. Saved evidence can remain available if an online refresh fails.</p>
@@ -1105,6 +1301,7 @@
               </article>
               <article class="help-feature">
                 <h3>Portfolio Signals</h3>
+                <p>For Buy, Sell or Watch rules, choose Price from 1Y high, Price from 3Y high or Price from 5Y high and a greater-than or less-than comparison. These signed percentages measure distance from the selected period's high: less than -20% means more than 20% below that high; greater than -20% means closer to it. The 3Y and 5Y measures require sufficient history for that period; partial or missing history is unavailable and cannot satisfy that condition. Other conditions may still match in an Any rule. Saved rules retain their selected period.</p>
                 <p>Create and enable rules for securities already held, choose whether all or any conditions must match, and save. Rules run daily; Run rules now starts a manual check. Review Active signals and Run history, and open Graph for price context. Matches and account recommendations do not place trades.</p>
                 <p>Dismiss hides the same stock and signal type across rules for the configured period. Change that period in Settings for new dismissals; existing dismissals keep their original expiry. A failed rule run is different from a successful run with no matches.</p>
               </article>
@@ -1429,6 +1626,7 @@
         </div>
         <div class="settings-actions">
           <button id="runDividendEvents" class="secondary" type="button">Scan dividends</button>
+          <button class="secondary" type="button" data-modal="dividendCalendarModal">Dividend Calendar</button>
         </div>
         <p id="eventsStatus" class="status-line"></p>
         <div id="eventsList" class="stack management-list"></div>
@@ -2508,6 +2706,14 @@
   <script src="/trade-planner-ui.js?v=3"></script>
   <script src="/trade-simulator.js?v=4"></script>
   <script src="/trade-simulator-ui.js?v=5"></script>
+  <script src="/correlation-ui.js?v=1"></script>
+  <script src="/xray-ui.js?v=1"></script>
+  <script src="/dividend-calendar-ui.js?v=1"></script>
+  <script src="/benchmark-ui.js?v=1"></script>
+  <script src="/trading-journal-ui.js?v=1"></script>
+  <script src="/optimization-ui.js?v=1"></script>
+  <script src="/var-ui.js?v=1"></script>
+  <script src="/heatmap-ui.js?v=1"></script>
   <script src="/app.js?v=0.9.15-cash-risk"></script>
   </body>
 </html>

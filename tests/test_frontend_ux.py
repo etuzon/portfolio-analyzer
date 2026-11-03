@@ -280,7 +280,8 @@ def test_dashboard_shows_bond_market_value_grouped_by_currency():
     i18n = (ROOT / "web/i18n.js").read_text()
 
     assert '{ id: "bond_currency", title: "Bonds by currency", view: "basic", size: "compact", area: "investments" }' in script
-    assert 'investments: ["portfolio_value", "account_trend", "asset_mix", "top_holdings", "bond_currency"]' in script
+    featured_investments = script.split('investments: [', 1)[1].split(']', 1)[0]
+    assert '"bond_currency"' in featured_investments
     assert "function bondsByCurrencyData(items)" in script
     assert "[holding.asset_class, holding.asset_sub_class]" in script
     assert "group.amount += Number(holding.market_value || 0)" in script

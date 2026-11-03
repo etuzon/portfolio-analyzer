@@ -139,6 +139,7 @@ const $ = (id) => document.getElementById(id);
 
 const DASHBOARD_WIDGETS = [
   { id: "portfolio_value", title: "Portfolio value", view: "basic", size: "wide", area: "investments" },
+  { id: "stock_heatmap", title: "Portfolio stocks heatmap", view: "basic", size: "wide", area: "investments" },
   { id: "long_term_savings", title: "Long-term savings", view: "basic", size: "wide", area: "long_term" },
   { id: "account_trend", title: "Account value trend", view: "basic", size: "wide", area: "investments" },
   { id: "long_term", title: "Long-term funds", view: "basic", size: "wide", area: "long_term" },
@@ -184,7 +185,7 @@ const DASHBOARD_SECTIONS = [
 ];
 const DASHBOARD_AREAS = ["all", "investments", "long_term", "employee"];
 const DASHBOARD_AREA_FEATURES = {
-  investments: ["portfolio_value", "account_trend", "asset_mix", "top_holdings", "bond_currency"],
+  investments: ["portfolio_value", "stock_heatmap", "account_trend", "asset_mix", "top_holdings", "bond_currency"],
   long_term: ["long_term_savings", "long_term"],
   employee: ["equity_comp"],
 };
@@ -361,6 +362,8 @@ const ALERT_METRIC_LOCALIZATIONS = {
     relative_volume_20d: { label: "מחזור יחסי לעומת 20 ימים", guidance: { description: "מחזור המסחר היום חלקי המחזור הממוצע ב־20 ימי המסחר האחרונים.", example: "מחזור יחסי > 1.5×", use: "מסמן מסחר חריג שיכול לאשש או לאתגר תנועת מחיר." } },
     confirmed_breakout: { label: "פריצת התנגדות מאושרת", guidance: { description: "האם המחיר חצה רמת התנגדות מחושבת עם אישור.", example: "פריצה מאושרת = 1", use: "מסמן אירוע טכני למחקר; רמות התנגדות הן הערכות." } },
     price_from_high_1y_percent: { label: "מחיר מהשיא השנתי", guidance: { description: "מרחק המחיר הנוכחי מהמחיר הגבוה ביותר בשנה האחרונה.", example: "מחיר מהשיא השנתי < ‎-20%", use: "מציג ירידה מהשיא השנתי, ולא אם מניה זולה." } },
+    price_from_high_3y_percent: { label: "מחיר מהשיא ב־3 שנים", guidance: { description: "מרחק המחיר הנוכחי מהמחיר הגבוה ביותר ב־3 השנים האחרונות, באחוזים. היסטוריה חלקית מוצגת כלא זמינה.", example: "מחיר מהשיא ב־3 שנים < ‎-20%", use: "ערך נמוך מ־‎-20% מציין שהמחיר נמוך ביותר מ־20% מהשיא ב־3 שנים; ערך גבוה מ־‎-20% מציין שהמחיר קרוב יותר לשיא." } },
+    price_from_high_5y_percent: { label: "מחיר מהשיא ב־5 שנים", guidance: { description: "מרחק המחיר הנוכחי מהמחיר הגבוה ביותר ב־5 השנים האחרונות, באחוזים. היסטוריה חלקית מוצגת כלא זמינה.", example: "מחיר מהשיא ב־5 שנים < ‎-20%", use: "ערך נמוך מ־‎-20% מציין שהמחיר נמוך ביותר מ־20% מהשיא ב־5 שנים; ערך גבוה מ־‎-20% מציין שהמחיר קרוב יותר לשיא." } },
   },
 };
 const OPTION_LABELS = {
@@ -647,6 +650,8 @@ async function api(path, options = {}) {
       throw failure;
     }
     if (!["GET", "HEAD", "OPTIONS"].includes(String(method).toUpperCase()) && endpoint.startsWith("/api/local/")
+      && endpoint !== "/api/local/trading-journal" && !endpoint.startsWith("/api/local/trading-journal/")
+      && endpoint !== "/api/local/var-fx-history"
       && typeof invalidateTradePlans === "function") invalidateTradePlans();
     return response.json();
   } catch (error) {
@@ -1141,6 +1146,7 @@ async function saveLoggingSettings() {
 }
 
 const WRITE_CONTROL_IDS = new Set([
+  "saveXrayReport", "fetchXrayIssuer", "chooseXrayReportFile",
   "addAlertCondition", "newAlertRule", "addBannerItem", "addPensionPeriod", "addPensionRate", "addPensionScenario",
   "applyBackupSchedule", "attachAccountToMember", "attachEditAccountPerson", "attachLocalAccountPerson",
   "captureHistorySnapshot", "chooseFullRestore", "chooseImportData", "clearAlarms", "dashboardEdit",
@@ -1246,6 +1252,14 @@ function setAuthenticatedSession(payload) {
   if (state.auth.user?.id !== payload?.user?.id) {
     if (typeof resetTradePlannerViews === "function") resetTradePlannerViews();
     if (typeof resetTradeSimulator === "function") resetTradeSimulator();
+    if (typeof resetCorrelation === "function") resetCorrelation();
+    if (typeof resetBenchmarkComparison === "function") resetBenchmarkComparison();
+    if (typeof resetTradingJournal === "function") resetTradingJournal();
+    if (typeof resetOptimization === "function") resetOptimization();
+    if (typeof resetVar === "function") resetVar();
+    if (typeof resetHeatmap === "function") resetHeatmap();
+    if (typeof resetXray === "function") resetXray();
+    if (typeof resetDividendCalendar === "function") resetDividendCalendar();
     resetCompanyOutlookHistoryUi();
   }
   state.auth.user = payload?.user || null;
@@ -1257,6 +1271,14 @@ function setAuthenticatedSession(payload) {
 }
 
 function showLogin(message = "") {
+  if (typeof resetVar === "function") resetVar();
+  if (typeof resetHeatmap === "function") resetHeatmap();
+  if (typeof resetOptimization === "function") resetOptimization();
+  if (typeof resetTradingJournal === "function") resetTradingJournal();
+  if (typeof resetBenchmarkComparison === "function") resetBenchmarkComparison();
+  if (typeof resetDividendCalendar === "function") resetDividendCalendar();
+  if (typeof resetXray === "function") resetXray();
+  if (typeof resetCorrelation === "function") resetCorrelation();
   resetCompanyOutlookHistoryUi();
   if (typeof resetTradePlannerViews === "function") resetTradePlannerViews();
   if (typeof resetTradeSimulator === "function") resetTradeSimulator();
@@ -1607,6 +1629,13 @@ function ensureHierarchicalNav() {
       ${navMenuSummary("research", t("research"))}
       <div class="nav-children">
         <button class="nav-item" type="button" data-modal="researchModal" data-research-section="finance">${esc(t("companyReports"))}</button>
+        <button class="nav-item" type="button" data-modal="correlationModal">${esc(t("Correlation Matrix"))}</button>
+        <button class="nav-item" type="button" data-modal="benchmarkModal">${esc(t("Benchmark Comparison"))}</button>
+        <button class="nav-item" type="button" data-modal="optimizationModal">${esc(t("Mean–Variance Optimization"))}</button>
+        <button class="nav-item" type="button" data-modal="varModal">${esc(t("Value at Risk"))}</button>
+        <button class="nav-item" type="button" data-modal="tradingJournalModal">${esc(t("Trading Journal"))}</button>
+        <button class="nav-item" type="button" data-modal="xrayModal">${esc(t("X-Ray"))}</button>
+        <button class="nav-item" type="button" data-modal="dividendCalendarModal">${esc(t("Dividend Calendar"))}</button>
         <button class="nav-item" type="button" data-modal="researchModal" data-research-section="outlook">${esc(t("companyOutlook"))}</button>
         <button class="nav-item" type="button" data-modal="researchModal" data-research-section="signals">${esc(t("signalRules"))}</button>
       </div>
@@ -2033,6 +2062,14 @@ function applyLanguage() {
   if (state.alertData) renderAlerts(state.alertData);
   if (typeof renderTradePlannerViews === "function") renderTradePlannerViews();
   if (typeof renderTradeSimulator === "function") renderTradeSimulator();
+  if (typeof renderCorrelation === "function") renderCorrelation();
+  if (typeof renderBenchmarkComparison === "function") renderBenchmarkComparison();
+  if (typeof renderTradingJournal === "function") renderTradingJournal();
+  if (typeof renderOptimization === "function") renderOptimization();
+  if (typeof renderVar === "function") renderVar();
+  if (typeof renderHeatmap === "function") renderHeatmap();
+  if (typeof renderXray === "function") renderXray();
+  if (typeof renderDividendCalendar === "function") renderDividendCalendar();
   renderAssistantChat();
   renderLoggingSettings();
   renderAlertDismissalSettings();
@@ -5113,7 +5150,10 @@ function renderAnalytics(items) {
   const scrollPositions = dashboardScrollPositions(board);
   if (!state.dashboard) loadDashboardSettings();
   renderDashboardControls();
-  if (!items.length && !(state.localFunds || []).length && state.dashboard.area !== "employee") {
+  const heatmapOnly = !items.length && !(state.localFunds || []).length && state.dashboard.area !== "employee";
+  const hasHeatmapHoldings = (state.allPortfolioItems || []).some((item) =>
+    ["EQUITY", "STOCK", "RSU", "ETF", "MUTUALFUND"].includes(String(item.holding?.asset_class || "").toUpperCase()));
+  if (heatmapOnly && !hasHeatmapHoldings) {
     board.innerHTML = '<div class="empty">No portfolio data</div>';
     restoreInteraction();
     return;
@@ -5124,6 +5164,7 @@ function renderAnalytics(items) {
   const currencyTotal = sum(currencyGroups.map((group) => group.value)) || 1;
   const renderers = {
     portfolio_value: () => renderPortfolioValueDashboard(items),
+    stock_heatmap: () => renderDashboardHeatmap(),
     long_term_savings: () => renderFundsOverviewDashboard(),
     account_trend: () => renderAccountValueTrend(),
     long_term: () => renderLongTermDashboard(),
@@ -5141,14 +5182,16 @@ function renderAnalytics(items) {
   };
   if (state.dashboard.edit) {
     board.innerHTML = renderDashboardEditor(renderers);
+    if (typeof renderHeatmap === "function") renderHeatmap();
     restoreDashboardScrollPositions(board, scrollPositions);
     restoreInteraction();
     return;
   }
-  const visible = visibleDashboardWidgets();
+  const visible = visibleDashboardWidgets().filter((widget) => !heatmapOnly || widget.id === "stock_heatmap");
   board.innerHTML = visible.length
     ? visible.map((widget) => withDashboardToolbar(widget, renderers[widget.id]())).join("")
     : '<div class="empty">No dashboard cards in this area</div>';
+  if (typeof renderHeatmap === "function") renderHeatmap();
   restoreDashboardScrollPositions(board, scrollPositions);
   restoreInteraction();
 }
@@ -6542,7 +6585,7 @@ function renderPositionTransactionHistory() {
       <td>${money(amount, tx.currency || detail.currency, 2)}</td>
       <td>${esc(sourceLabel)}</td>
       <td>${esc(cleanSourceLabel(tx.comments || "")) || "—"}</td>
-      <td><button class="secondary compact-button" type="button" data-edit-position-transaction="${esc(tx.id)}">Edit</button></td>
+      <td><button class="secondary compact-button" type="button" data-edit-position-transaction="${esc(tx.id)}">Edit</button>${["BUY", "SELL", "SHORT"].includes(tx.action) ? ` <button class="secondary compact-button" type="button" data-trading-journal="${esc(tx.id)}">${esc(t("Journal"))}</button>` : ""}</td>
     </tr>`;
   }).join("") : '<tr><td colspan="8" class="empty-cell">No buy or sell transactions found for this position</td></tr>';
 }
@@ -8848,14 +8891,14 @@ function renderTradeHistoryDetails(row) {
     ["Price date", row.valuation_date ? formatDate(row.valuation_date) : t("Not applicable")],
   ].map(([label, value]) => `<div class="stat"><span>${esc(t(label))}</span><b dir="auto">${esc(value)}</b></div>`).join("");
   $("tradeHistoryDetailIssues").textContent = (row.issues || []).map(tradeHistoryIssueText).join(" · ");
-  const headers = ["Date", "Action", "Units", "Unit price", "Total", "Source"];
+  const headers = ["Date", "Action", "Units", "Unit price", "Total", "Source", "Journal"];
   $("tradeHistoryDetailTransactions").innerHTML = `<table class="holdings-table compact-report-table trade-history-table"><thead><tr>${headers.map((header) => `<th scope="col">${esc(t(header))}</th>`).join("")}</tr></thead><tbody>${(row.transactions || []).map((tx) => {
     const quantity = tx.allocated_quantity ?? tx.quantity;
     const values = [tx.trade_date ? formatDate(tx.trade_date) : t("Not available"), tradeHistoryActionLabel(tx.action), fmt(quantity, 4),
       tx.price === null || tx.price === undefined ? t("Not available") : money(tx.price, tx.currency || row.currency, 4),
       tradeHistoryAmount(Number.isFinite(quantity) && Number.isFinite(tx.price) ? quantity * tx.price : null, tx.currency || row.currency),
       tradeHistorySourceLabel(tx.source)];
-    return `<tr>${values.map((value, index) => `<td data-label="${esc(t(headers[index]))}">${esc(value)}</td>`).join("")}</tr>`;
+    return `<tr>${values.map((value, index) => `<td data-label="${esc(t(headers[index]))}">${esc(value)}</td>`).join("")}<td data-label="${esc(t("Journal"))}">${["BUY", "SELL", "SHORT"].includes(tx.action) ? `<button class="secondary compact-button" type="button" data-trading-journal="${esc(tx.id)}">${esc(t("Journal"))}</button>` : "—"}</td></tr>`;
   }).join("")}</tbody></table>`;
 }
 
@@ -11439,6 +11482,8 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
       : t(data.refresh_pending ? "Updating analytics in the background" : data.refresh_state === "failed" ? "Financial data could not be updated. Use Refresh to retry." : "Analytics updated");
     $("status").textContent = `${state.items.length} ${t("portfolio positions")} · ${refreshText}`;
     renderPortfolio(state.items);
+    if (typeof loadVarSummary === "function" && (!data.refresh_pending || enrichmentRetry === 0)) loadVarSummary();
+    if (typeof loadHeatmap === "function" && (!data.refresh_pending || enrichmentRetry === 0)) loadHeatmap();
     if (!$("macroScenarioModal")?.hidden) renderMacroScenario();
     if (hasActivePortfolioFilter(state.portfolioFilterCriteria)) {
       const matches = filterPortfolioItems(state.allPortfolioItems, state.portfolioFilterCriteria);
@@ -13176,6 +13221,21 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
   modal.parentElement?.append(modal);
   modal.hidden = false;
   mountModalHomeLink(modal);
+  if (id === "correlationModal") loadCorrelation();
+  if (id === "benchmarkModal") loadBenchmarkComparison();
+  if (id === "optimizationModal") loadOptimization();
+  if (id === "varModal") loadVar();
+  if (id === "tradingJournalModal") {
+    const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : null;
+    if (parentModal && parentModal !== modal) {
+      modal.dataset.parentModalId = parentModal.id;
+      parentModal.inert = true;
+      parentModal.setAttribute("aria-hidden", "true");
+    }
+    loadTradingJournal();
+  }
+  if (id === "xrayModal") loadXray();
+  if (id === "dividendCalendarModal") loadDividendCalendar();
   if (id === "securityDetailModal") {
     const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : null;
     if (parentModal && parentModal !== modal) {
@@ -13276,7 +13336,7 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
 function closeModal(modal) {
   if (!modal) return;
   if (modal.id === "assistantModal") saveAssistantDraft();
-  if (modal.id === "securityDetailModal" && modal.dataset.parentModalId) {
+  if (["securityDetailModal", "tradingJournalModal"].includes(modal.id) && modal.dataset.parentModalId) {
     const parentModal = $(modal.dataset.parentModalId);
     if (parentModal) {
       parentModal.inert = false;

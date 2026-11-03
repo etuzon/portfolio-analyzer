@@ -19,6 +19,90 @@
   color: var(--ux-text);
 }
 
+.correlation-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+.correlation-controls .field { flex:1 1 180px; min-width:160px; }
+.correlation-controls select { min-width:160px; }
+.correlation-scroll { max-width:100%; max-height:56vh; overflow:auto; margin-block:12px; }
+.correlation-table { width:max-content; min-width:100%; border-collapse:separate; border-spacing:3px; }
+.correlation-table th { min-width:132px; max-width:190px; white-space:normal; overflow-wrap:anywhere; text-align:center; }
+.correlation-table th:first-child { position:sticky; inset-inline-start:0; z-index:2; background:var(--ux-panel); }
+.correlation-table thead th { position:sticky; top:0; z-index:3; background:var(--ux-panel); }
+.correlation-table thead th:first-child { z-index:4; }
+.correlation-table td { padding:0; }
+.correlation-cell { min-width:132px; width:100%; padding:12px 8px; color:var(--ux-text); border:1px solid var(--ux-stroke); border-radius:6px; }
+.correlation-cell b { display:block; font-variant-numeric:tabular-nums; }
+.correlation-cell small { display:block; margin-top:4px; font-size:11px; font-weight:400; }
+.correlation-cell:focus-visible, .correlation-scroll:focus-visible { outline:2px solid var(--ux-blue); outline-offset:2px; }
+.correlation-coverage { margin-block:12px; }
+.correlation-coverage li { margin-block:8px; overflow-wrap:anywhere; }
+.xray-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-block:12px; }
+.xray-controls .field { flex:1 1 220px; min-width:160px; }
+.xray-controls select { min-width:160px; }
+.xray-report-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+.xray-editor { margin-block:16px; padding:12px; border:1px solid var(--ux-stroke); border-radius:8px; }
+.xray-editor textarea { width:100%; min-height:140px; padding:12px; font-family:monospace; resize:vertical; background:var(--ux-panel-soft); color:var(--ux-text); }
+.xray-scroll { max-width:100%; max-height:50vh; overflow:auto; }
+.xray-table { min-width:580px; table-layout:fixed; }
+.xray-table th:first-child { width:25%; }
+.xray-table td, .xray-table th { white-space:normal; overflow-wrap:anywhere; }
+.xray-table small { display:block; margin-block:4px; font-weight:400; }
+.xray-table td > div + div { margin-top:10px; }
+.xray-coverage { list-style:none; padding:0; display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); gap:10px; }
+.xray-coverage li { border:1px solid var(--ux-stroke); padding:12px; border-radius:8px; overflow-wrap:anywhere; }
+.xray-coverage li > div { margin-top:6px; }
+.xray-pairs li { margin-block:8px; overflow-wrap:anywhere; }
+.dividend-calendar-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-block:12px; }
+.dividend-calendar-controls .field { flex:1 1 180px; min-width:145px; }
+.dividend-calendar-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-block:16px; }
+.dividend-month { min-width:0; padding:12px; border:1px solid var(--ux-stroke); border-radius:8px; background:var(--ux-panel); }
+.dividend-month h3 { margin:0 0 12px; }
+.dividend-calendar-entry { display:flex; gap:10px; align-items:center; width:100%; margin-block:8px; padding:10px; background:var(--ux-panel-soft); color:var(--ux-text); border:1px solid var(--ux-stroke); text-align:start; }
+.dividend-calendar-entry.highest-yield { border-color:var(--ux-purple); }
+.dividend-calendar-entry[aria-pressed="true"] { outline:2px solid var(--ux-blue); outline-offset:2px; }
+.dividend-yield-dot { width:var(--yield-size); height:var(--yield-size); flex:0 0 var(--yield-size); background:var(--ux-blue); border-radius:50%; }
+.highest-yield .dividend-yield-dot { background:var(--ux-purple); }
+.dividend-yield-dot.unknown-yield { background:transparent; border:2px dashed var(--ux-muted); }
+.dividend-event-content { display:grid; gap:4px; min-width:0; font-size:12px; font-weight:400; overflow-wrap:anywhere; }
+.dividend-event-content strong { font-size:13px; }
+.dividend-event-content small { color:var(--ux-muted); }
+.dividend-highest-label { color:#d9bfff !important; font-weight:600; }
+.dividend-annual-scroll { max-width:100%; overflow:auto; }
+.dividend-annual-table { min-width:950px; table-layout:fixed; }
+.dividend-annual-table th, .dividend-annual-table td { white-space:normal; overflow-wrap:anywhere; }
+.dividend-annual-table small { display:block; margin-block:6px; font-weight:400; }
+.dividend-annual-cards { display:none; }
+.dividend-coverage { margin-block:16px; }
+.dividend-coverage li { margin-block:10px; overflow-wrap:anywhere; }
+.dividend-detail-box:empty { display:none; }
+.dividend-detail-box:not(:empty) { border:1px solid var(--ux-blue); padding:12px; border-radius:8px; margin-block:16px; }
+@media (max-width:900px) { .dividend-calendar-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:640px) {
+  .dividend-calendar-grid { grid-template-columns:minmax(0,1fr); }
+  .dividend-annual-scroll { display:none; }
+  .dividend-annual-cards { display:grid; list-style:none; padding:0; gap:12px; }
+  .dividend-annual-cards li { border:1px solid var(--ux-stroke); padding:12px; border-radius:8px; overflow-wrap:anywhere; }
+  .dividend-annual-cards h4 { margin:0 0 12px; }
+  .dividend-annual-cards dl { display:grid; grid-template-columns:minmax(0,1fr) minmax(100px,1fr); gap:10px; margin:0; }
+  .dividend-annual-cards dt { color:var(--ux-muted); }
+  .dividend-annual-cards dd { margin:0; }
+  .dividend-annual-cards small { display:block; margin-block:4px; }
+}
+.xray-mobile-overlaps { display:none; }
+@media (max-width:640px) {
+  .xray-scroll { display:none; }
+  .xray-mobile-overlaps { display:grid; list-style:none; padding:0; gap:12px; }
+  .xray-mobile-overlaps li { padding:12px; border:1px solid var(--ux-stroke); border-radius:8px; overflow-wrap:anywhere; }
+  .xray-mobile-overlaps h4 { margin:0 0 12px; }
+  .xray-mobile-overlaps dl, .xray-mobile-overlaps dd { margin:0; }
+  .xray-mobile-overlaps dt { font-weight:600; color:var(--ux-muted); margin-block:10px 4px; }
+  .xray-mobile-overlaps small { display:block; margin-block:4px; font-weight:400; }
+  .xray-mobile-overlaps dd > div + div { margin-top:10px; }
+}
+@media (max-width:600px) {
+  .correlation-table th:first-child { width:120px; min-width:120px; max-width:120px; padding-inline:6px; }
+  .correlation-table th:first-child bdi { display:block; max-width:108px; overflow-wrap:anywhere; }
+}
+
 * {
   box-sizing: border-box;
 }
