@@ -63,9 +63,9 @@ def test_per_account_has_same_dates_move_and_only_its_own_exposure():
 
 
 def test_market_currency_identity_and_disallowed_assets_are_not_merged():
-    result=calc(Store([holding(),holding(stock_market="TASE",currency="ILS"),holding(currency="EUR"),holding("BOND",asset_class="BOND")]))
+    result=calc(Store([holding(),holding(stock_market="TASE",currency="ILS"),holding(currency="EUR"),holding("OPTION",asset_class="OPTION")]))
     assert len(result["assets"])==3 and len({row["id"] for row in result["assets"]})==3
-    assert result["excluded"][0]["symbol"]=="BOND"
+    assert result["excluded"][0]["symbol"]=="OPTION"
     assert result["excluded"][0]["reason"]=="unsupported_asset"
     eur=next(row for row in result["assets"] if row["currency"]=="EUR")
     assert eur["gross_value_ils"] is None and "missing_price" in eur["issues"]
@@ -76,6 +76,59 @@ def test_missing_fx_prevents_size_but_native_price_move_remains(fx,code):
     asset,=calc(fx=fx)["assets"]
     assert asset["gross_value_ils"] is None and code in asset["issues"]
     assert asset["change_percent"]==pytest.approx(10)
+
+
+@pytest.mark.parametrize('short_basis',[400,-400])
+def test_unrealized_profit_is_signed_and_scoped_without_netting_costs(short_basis):
+    store=Store([holding(cost_basis=1000),holding(account_id='b',quantity=-4,cost_basis=short_basis)])
+    asset,=calc(store)['assets']
+    assert asset['unrealized_pnl_native']==pytest.approx(60)
+    assert asset['unrealized_pnl_ils']==pytest.approx(240)
+    assert [row['unrealized_pnl_native'] for row in asset['accounts']]==[100,-40]
+    assert [row['unrealized_pnl_ils'] for row in asset['accounts']]==[400,-160]
+    short,=calc(store,account_id='b')['assets']
+    assert short['quantity']==-4 and short['unrealized_pnl_native']==-40
+
+
+@pytest.mark.parametrize('basis',[float('nan'),float('inf'),True])
+def test_invalid_cost_basis_does_not_hide_a_priced_holding_or_invent_profit(basis):
+    asset,=calc(Store([holding(cost_basis=basis)]))['assets']
+    assert asset['gross_value_ils']==4400
+    assert asset['cost_basis_native'] is None and asset['unrealized_pnl_native'] is None
+    assert asset['unrealized_pnl_ils'] is None
+    assert asset['accounts'][0]['pnl_status']=='invalid_cost_basis'
+
+
+def test_native_profit_remains_available_without_fx_but_stale_quotes_have_no_profit():
+    asset,=calc(Store([holding(cost_basis=1000)]),fx={})['assets']
+    assert asset['unrealized_pnl_native']==100 and asset['unrealized_pnl_ils'] is None
+    stale,=calc(Store([holding(cost_basis=1000)]),Hub(prices(days=(10,9))))['assets']
+    assert stale['unrealized_pnl_native'] is None and stale['unrealized_pnl_ils'] is None
+
+
+def test_bonds_use_saved_normalized_per_unit_prices_and_recorded_basis():
+    local=[{'currency':'USD','asset_class':'BOND','price_date':'2026-11-02','price':1.0},
+           {'currency':'USD','asset_class':'BOND','price_date':'2026-11-03','price':1.02}]
+    store=Store([holding('SYNTHBOND',asset_class='BOND',stock_market='MANUAL',quantity=100,cost_basis=100)],local,manual={})
+    result=calc(store,Hub([]))
+    asset,=result['assets']
+    assert not result['excluded'] and asset['asset_class']=='BOND'
+    assert asset['price']==1.02 and asset['gross_value_ils']==408
+    assert asset['change_percent']==pytest.approx(2)
+    assert asset['unrealized_pnl_native']==pytest.approx(2)
+    assert asset['unrealized_pnl_ils']==pytest.approx(8)
+
+
+def test_verified_cached_company_name_fills_missing_name_without_replacing_user_name():
+    hub=Hub()
+    hub.cached_view=lambda:SimpleNamespace(profile=lambda *args,**kwargs:({'exchange':'Nasdaq','currency':'USD','name':'Synthetic issuer <company>'},{}))
+    asset,=calc(Store([holding(stock_market='YAHOO')]),hub)['assets']
+    assert asset['name']=='Synthetic issuer <company>'
+    named,=calc(Store([holding(stock_market='YAHOO',name='Recorded name')]),hub)['assets']
+    assert named['name']=='Recorded name'
+    hub.cached_view=lambda:SimpleNamespace(profile=lambda *args,**kwargs:({'exchange':'Nasdaq','currency':'EUR','name':'Unrelated issuer'},{}))
+    missing,=calc(Store([holding(stock_market='YAHOO')]),hub)['assets']
+    assert missing['name']=='AAA' and missing['gross_value_ils'] is None
 
 
 @pytest.mark.parametrize("rows,code",[(prices(days=(10,9)),"stale_price"),(prices(days=(20,0)),"sparse_prices"),(prices(values=(100,),days=(0,)),"missing_previous_price"),([],"missing_price")])

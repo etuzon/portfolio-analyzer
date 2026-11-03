@@ -46,7 +46,7 @@ def test_dashboard_mount_and_background_load_replace_research_modal_and_help():
     dashboard_help = html[html.index('<span>Dashboard</span>'):html.index('<span>Portfolio Data</span>')]
     assert '<h3>Portfolio stocks heatmap</h3>' in dashboard_help
     assert 'Research → Stock heatmap' not in html + translations
-    assert 'Loading remains inside the card' in html
+    assert 'Loading is nonblocking; failed reloads retain previous results for retry.' in html
     assert '"Portfolio stocks heatmap": "מפת חום של מניות התיק"' in translations
 
 

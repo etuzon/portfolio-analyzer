@@ -139,3 +139,20 @@ def test_reclassified_account_cannot_retain_old_risk_result():
     run_ui(r'''
 (async()=>{seed();varView.account_id='one';const old=loadVar();pending[0].reject(new Error('var_unknown_account'));await new Promise(resolve=>setImmediate(resolve));assert.equal(varView.account_id,'');assert.equal(varView.data,null);assert.ok(!target.innerHTML.includes('₪ 12000'));assert.ok(pending[1].path.includes('account_id=&'));pending[1].resolve({...data,accounts:data.accounts.filter(row=>row.id==='two'),var_ils:222});await old;assert.equal(varView.data.var_ils,222);})();
 ''')
+
+
+def test_dashboard_unavailable_var_explains_grouped_missing_inputs_and_sample_requirement():
+    run_ui(r'''
+seed();varSummaryView.data={...data,status:'unavailable',scope_complete:false,reason:'coverage_incomplete',var_ils:null,sample_count:0,min_samples:100,issues:[
+ {code:'stale_price',symbol:'FIRST'},{code:'stale_price',symbol:'SECOND'},
+ {code:'missing_price_history',symbol:'SAFE<img>'},{code:'missing_fx_history',currency:'USD'}]};
+for(const language of ['en','he']){
+ state.language=language;renderVarSummary();const html=nodes.varSummaryContent.innerHTML;
+ assert.ok(html.includes('var-summary-issues'));assert.ok(html.includes('(2)'));assert.ok(html.includes('(1)'));
+ assert.ok(html.includes('FIRST, SECOND'));assert.ok(html.includes('SAFE&lt;img&gt;'));assert.ok(!html.includes('SAFE<img>'));
+ assert.ok(html.includes('0 / 100'));assert.ok(!html.includes('var-summary-amount'));
+ if(language==='he'){assert.ok(html.includes('תרחישים תואמים של 30 ימים'));assert.ok(!html.includes('Matching historical exchange rates are missing.'));}
+ else{assert.ok(html.includes('Matching 30-day scenarios'));assert.ok(html.includes('Matching historical exchange rates are missing.'));}
+}
+varSummaryView.data={...data,status:'ok',scope_complete:true};renderVarSummary();assert.ok(nodes.varSummaryContent.innerHTML.includes('var-summary-amount'));assert.ok(!nodes.varSummaryContent.innerHTML.includes('var-summary-issues'));
+''')

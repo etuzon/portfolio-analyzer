@@ -37,6 +37,7 @@
 .var-facts { display:flex; flex-wrap:wrap; gap:10px 22px; font-size:13px; color:var(--ux-muted); }
 .var-facts b { color:var(--ux-text); margin-inline-start:6px; }
 .var-summary-amount { display:block; font-size:clamp(1.35rem,3vw,2rem); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+.var-summary-issues { padding-inline-start:20px; line-height:1.6; overflow-wrap:anywhere; }
 #varContent [role="region"]:focus-visible { outline:2px solid var(--ux-blue); outline-offset:2px; }
 @media(max-width:850px) { .var-kpis { grid-template-columns:minmax(0,1fr) minmax(0,1fr); } .var-kpi.primary { grid-column:1/-1; } }
 @media(max-width:650px) {

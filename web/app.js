@@ -61,6 +61,9 @@ const state = {
   importSkippedAccounts: [],
   editingAccountId: "",
   editingBrokerId: "",
+  brokerSaving: false,
+  brokerEditorVersion: 0,
+  brokerEditorMessage: "",
   editingFamilyMemberId: "",
   familyMemberSaving: false,
   deletingFamilyMemberIds: [],
@@ -1156,7 +1159,7 @@ const WRITE_CONTROL_IDS = new Set([
   "saveEditFund", "saveEmployeeExercise", "saveEmployeeListing", "saveEmployeeOptionGrant", "saveFamilyMember",
   "saveFund", "saveFundHistory", "saveHistorySnapshot", "saveLocalAccount", "saveManualSecurity",
   "saveIndustryClassification", "removeIndustryClassification", "savePositionTransaction", "savePrice", "saveSecurity", "saveTableSettings", "saveUser", "showFundCreate",
-  "addSecurityExposureCurrency", "saveSecurityExposure", "removeSecurityExposure", "newFamilyMember",
+  "addSecurityExposureCurrency", "saveSecurityExposure", "removeSecurityExposure", "newFamilyMember", "newBroker",
   "showPensionPeriodEntry", "showPensionRateEntry", "saveAlertDismissalSettings",
 ]);
 const WRITE_DATA_ACTIONS = new Set([
@@ -1250,6 +1253,7 @@ function renderCurrentUser() {
 
 function setAuthenticatedSession(payload) {
   if (state.auth.user?.id !== payload?.user?.id) {
+    clearBrokerForm();
     if (typeof resetTradePlannerViews === "function") resetTradePlannerViews();
     if (typeof resetTradeSimulator === "function") resetTradeSimulator();
     if (typeof resetCorrelation === "function") resetCorrelation();
@@ -1271,6 +1275,7 @@ function setAuthenticatedSession(payload) {
 }
 
 function showLogin(message = "") {
+  clearBrokerForm();
   if (typeof resetVar === "function") resetVar();
   if (typeof resetHeatmap === "function") resetHeatmap();
   if (typeof resetOptimization === "function") resetOptimization();
@@ -2044,6 +2049,7 @@ function applyLanguage() {
   refreshLocalizedFormOptions();
   refreshBrokerSelects();
   renderBrokersList();
+  renderBrokerEditor();
   renderLocalAccountsList();
   renderFamilyMembers();
   renderFamilyMemberEditor();
@@ -5274,59 +5280,121 @@ function applyBrokerToAccount(brokerId, locationId, currencyId) {
 }
 
 async function loadBrokers() {
-  const data = await api("/api/local/brokers");
+  const userId = state.auth?.user?.id || "";
+  let data;
+  try { data = await api("/api/local/brokers"); }
+  catch (error) { if (userId !== (state.auth?.user?.id || "")) return false; throw error; }
+  if (userId !== (state.auth?.user?.id || "")) return false;
   state.brokers = data.items || [];
   refreshBrokerSelects();
   renderBrokersList();
+  return true;
 }
 
 function renderBrokersList() {
   const list = $("brokersList");
   if (list) {
     list.innerHTML = state.brokers.length ? state.brokers.map((broker) => `
-      <div class="stack-item management-item">
-        <b>${esc(broker.name)}</b>
-        <span>${esc(countryDisplayLabel(broker.country))} · ${esc(currencyDisplayLabel(broker.currency))}${broker.attached_accounts ? ` · ${broker.attached_accounts} account${broker.attached_accounts === 1 ? "" : "s"}` : ""}</span>
-        <button class="secondary compact-button" type="button" data-edit-broker="${esc(broker.id)}">Edit</button>
-        <button class="secondary compact-button" type="button" data-delete-broker="${esc(broker.id)}"${broker.attached_accounts ? " disabled" : ""} title="${broker.attached_accounts ? "Cannot delete while attached to an account" : "Remove broker"}">Remove</button>
-        <div class="sub">${esc(broker.comments || "No comments")}</div>
+      <div class="stack-item management-item broker-management-item">
+        <div class="broker-management-main">
+          <button class="broker-name-button" type="button" data-edit-broker="${esc(broker.id)}" aria-label="${esc(t("Edit broker"))}: ${esc(broker.name)}"${canWrite() ? "" : " disabled"}><bdi>${esc(broker.name)}</bdi></button>
+          <span>${esc(countryDisplayLabel(broker.country))} · ${esc(currencyDisplayLabel(broker.currency))} · ${esc(t("Accounts"))}: ${fmt(Number(broker.attached_accounts || 0), 0)}</span>
+          <div class="sub">${esc(broker.comments || t("No comments"))}</div>
+        </div>
+        <div class="broker-row-actions"><button class="secondary compact-button" type="button" data-edit-broker="${esc(broker.id)}"${canWrite() ? "" : " disabled"}>${esc(t("Edit"))}</button>
+        <button class="secondary compact-button" type="button" data-delete-broker="${esc(broker.id)}"${broker.attached_accounts || !canWrite() ? " disabled" : ""} title="${esc(t(broker.attached_accounts ? "Cannot delete while attached to an account" : "Remove broker"))}">${esc(t("Remove"))}</button></div>
       </div>
-    `).join("") : '<div class="empty">No brokers yet</div>';
+    `).join("") : `<div class="empty">${esc(t("No brokers yet"))}</div>`;
   }
 }
 
+function setBrokerStatus(message = "") {
+  state.brokerListMessage = message;
+  if ($("brokerStatus")) $("brokerStatus").textContent = t(message);
+}
+
 async function saveBroker() {
-  await api("/api/local/brokers", {
-    method: "POST",
-    body: JSON.stringify({
-      id: state.editingBrokerId || undefined,
-      name: valueOf("brokerName"),
-      country: valueOf("brokerCountry"),
-      currency: valueOf("brokerCurrency"),
-      comments: valueOf("brokerComments"),
-    }),
-  });
-  $("brokerStatus").textContent = state.editingBrokerId ? "Broker updated" : "Broker saved";
-  clearBrokerForm();
-  await loadBrokers();
+  if (!canWrite() || state.brokerSaving) return;
+  if (!valueOf("brokerName")) {
+    state.brokerEditorMessage = "Enter a broker name.";
+    renderBrokerEditor();
+    $("brokerName").focus();
+    return;
+  }
+  const version = state.brokerEditorVersion;
+  const editing = Boolean(state.editingBrokerId);
+  state.brokerSaving = true;
+  state.brokerEditorMessage = "";
+  renderBrokerEditor();
+  try {
+    const result = await api("/api/local/brokers", {
+      method: "POST",
+      body: JSON.stringify({ id: state.editingBrokerId || undefined, name: valueOf("brokerName"),
+        country: valueOf("brokerCountry"), currency: valueOf("brokerCurrency"), comments: valueOf("brokerComments") }),
+    });
+    if (version !== state.brokerEditorVersion) return;
+    if (result?.id) {
+      const previous = state.brokers.find((broker) => broker.id === result.id);
+      state.brokers = [...state.brokers.filter((broker) => broker.id !== result.id), { ...previous, ...result }];
+      refreshBrokerSelects();
+      renderBrokersList();
+    }
+    state.brokerSaving = false;
+    closeModal($("brokerEditorModal"));
+    setBrokerStatus(editing ? "Broker updated" : "Broker saved");
+    try { await loadBrokers(); }
+    catch { setBrokerStatus("Broker saved, but the list could not reload. Close and reopen Brokers to refresh it."); }
+  } catch {
+    if (version !== state.brokerEditorVersion) return;
+    state.brokerEditorMessage = "Could not save broker. Your entries are retained. Try again.";
+  } finally {
+    if (version === state.brokerEditorVersion) {
+      state.brokerSaving = false;
+      renderBrokerEditor();
+    }
+  }
 }
 
 function clearBrokerForm() {
+  state.brokerEditorVersion = (state.brokerEditorVersion || 0) + 1;
+  state.brokerSaving = false;
+  state.brokerEditorMessage = "";
   state.editingBrokerId = "";
-  ["brokerName", "brokerComments"].forEach((id) => { $(id).value = ""; });
-  $("brokerCountry").value = "USA";
-  $("brokerCurrency").value = "USD";
+  ["brokerName", "brokerComments"].forEach((id) => { if ($(id)) $(id).value = ""; });
+  if ($("brokerCountry")) $("brokerCountry").value = "USA";
+  if ($("brokerCurrency")) $("brokerCurrency").value = "USD";
+  renderBrokerEditor();
 }
 
-function editBroker(brokerId) {
+function renderBrokerEditor() {
+  if (!$("brokerEditorTitle")) return;
+  if ($("brokerStatus")) $("brokerStatus").textContent = t(state.brokerListMessage || "");
+  $("brokerEditorTitle").textContent = t(state.editingBrokerId ? "Edit broker" : "New broker");
+  $("brokerEditorStatus").textContent = t(state.brokerSaving ? "Saving broker…" : state.brokerEditorMessage || "");
+  $("saveBroker").textContent = t(state.brokerSaving ? "Saving broker…" : "Save broker");
+  $("saveBroker").disabled = state.brokerSaving || !canWrite();
+  ["brokerName", "brokerCountry", "brokerCurrency", "brokerComments"].forEach((id) => { $(id).disabled = state.brokerSaving || !canWrite(); });
+  $("brokerEditorModal").querySelectorAll("[data-close]").forEach((button) => { if (button instanceof HTMLButtonElement) button.disabled = Boolean(state.brokerSaving); });
+}
+
+function newBroker(returnFocus = $("newBroker")) {
+  if (!canWrite() || state.brokerSaving) return;
+  clearBrokerForm();
+  openModal("brokerEditorModal", returnFocus);
+}
+
+function editBroker(brokerId, returnFocus = document.activeElement) {
+  if (!canWrite() || state.brokerSaving) return;
   const broker = state.brokers.find((item) => item.id === brokerId);
-  if (!broker) return;
+  if (!broker) { setBrokerStatus("This broker is no longer available. Reopen Brokers to refresh the list."); return; }
+  clearBrokerForm();
   state.editingBrokerId = broker.id;
   $("brokerName").value = broker.name || "";
   $("brokerCountry").value = normalizeAccountCountry(broker.country);
   $("brokerCurrency").value = broker.currency || preferredCurrencyForLocation(broker.country) || "USD";
   $("brokerComments").value = broker.comments || "";
-  $("brokerStatus").textContent = `Editing ${broker.name}`;
+  renderBrokerEditor();
+  openModal("brokerEditorModal", returnFocus);
 }
 
 function personFullName(person) {
@@ -13231,6 +13299,15 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
   if (id === "benchmarkModal") loadBenchmarkComparison();
   if (id === "optimizationModal") loadOptimization();
   if (id === "varModal") loadVar();
+  if (id === "brokerEditorModal") {
+    const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : $("brokersModal");
+    if (parentModal && parentModal !== modal && !parentModal.hidden) {
+      modal.dataset.parentModalId = parentModal.id;
+      parentModal.inert = true;
+      parentModal.setAttribute("aria-hidden", "true");
+    }
+    requestAnimationFrame(() => { if (!modal.hidden) $("brokerName").focus({ preventScroll: true }); });
+  }
   if (id === "tradingJournalModal") {
     const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : null;
     if (parentModal && parentModal !== modal) {
@@ -13269,7 +13346,11 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
     });
     if (typeof renderTradeSimulator === "function") renderTradeSimulator();
   }
-  if (id === "brokersModal") loadBrokers();
+  if (id === "brokersModal") {
+    setBrokerStatus("Loading brokers…");
+    loadBrokers().then((loaded) => { if (loaded && state.brokerListMessage === "Loading brokers…") setBrokerStatus(); })
+      .catch(() => setBrokerStatus("Could not load brokers. Close and reopen Brokers to retry."));
+  }
   if (id === "familyModal") {
     setFamilyStatus("Loading people…");
     Promise.all([loadLocalAccounts(), loadFamilyMembers()])
@@ -13341,14 +13422,22 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
 
 function closeModal(modal) {
   if (!modal) return;
+  if (modal.id === "brokerEditorModal" && state.brokerSaving) return;
   if (modal.id === "assistantModal") saveAssistantDraft();
-  if (["securityDetailModal", "tradingJournalModal"].includes(modal.id) && modal.dataset.parentModalId) {
+  if (["securityDetailModal", "tradingJournalModal", "brokerEditorModal"].includes(modal.id) && modal.dataset.parentModalId) {
     const parentModal = $(modal.dataset.parentModalId);
     if (parentModal) {
       parentModal.inert = false;
       parentModal.removeAttribute("aria-hidden");
     }
     delete modal.dataset.parentModalId;
+  }
+  if (modal.id === "brokerEditorModal") {
+    if (!modalReturnFocus.get(modal.id)?.isConnected) {
+      const editButton = [...document.querySelectorAll(".broker-row-actions [data-edit-broker]")].find((button) => button.dataset.editBroker === state.editingBrokerId);
+      modalReturnFocus.set(modal.id, editButton || $("newBroker"));
+    }
+    clearBrokerForm();
   }
   if (modal.id === "familyMemberModal") {
     if (state.familyMemberSaving) return;
@@ -13901,12 +13990,12 @@ document.addEventListener("click", (event) => {
   if (brokerId) {
     api(`/api/local/brokers/${brokerId}`, { method: "DELETE" })
       .then(loadBrokers)
-      .catch((error) => { $("brokerStatus").textContent = `Error: ${error.message}`; });
+      .catch(() => setBrokerStatus("Could not remove broker. It may still be linked to an account. Reopen Brokers to refresh the list."));
   }
 
   const editBrokerId = event.target.closest("[data-edit-broker]")?.dataset.editBroker;
   if (editBrokerId) {
-    editBroker(editBrokerId);
+    editBroker(editBrokerId, event.target.closest("[data-edit-broker]"));
   }
 
   const localPersonIndex = event.target.closest("[data-delete-local-person]")?.dataset.deleteLocalPerson;
@@ -14348,8 +14437,8 @@ $("runMarketScreener").addEventListener("click", () => runMarketScreener().catch
 $("resetMarketScreener").addEventListener("click", resetMarketScreener);
 $("saveLocalAccount").addEventListener("click", () => saveLocalAccount().catch((error) => { setStatusMessage("accountsStatus", `Error: ${error.message}`); }));
 $("saveEditAccount").addEventListener("click", () => saveEditAccount().catch((error) => { $("editAccountStatus").textContent = `Error: ${error.message}`; }));
-$("saveBroker").addEventListener("click", () => saveBroker().catch((error) => { $("brokerStatus").textContent = `Error: ${error.message}`; }));
-$("clearBrokerForm").addEventListener("click", clearBrokerForm);
+$("brokerForm").addEventListener("submit", (event) => { event.preventDefault(); saveBroker(); });
+$("newBroker").addEventListener("click", () => newBroker());
 $("newFamilyMember").addEventListener("click", () => openFamilyMemberEditor("", $("newFamilyMember")));
 $("familyMemberForm").addEventListener("submit", (event) => {
   event.preventDefault();

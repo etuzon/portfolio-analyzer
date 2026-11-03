@@ -2,6 +2,7 @@
 let varView={version:0,operation:0,loading:false,busy:false,data:null,accounts:[],error:"",message:"",account_id:"",period:"3y",fxCurrency:"",renderedCurrency:"",fxOpen:false,drafts:{}};
 let varSummaryView={version:0,loading:false,data:null,error:""};
 const VAR_HE=Object.freeze({
+ "Matching 30-day scenarios":"תרחישים תואמים של 30 ימים",
  "Previous saved result shown; the latest recalculation failed.":"מוצגת התוצאה השמורה הקודמת; החישוב העדכני נכשל.",
  "Saved FX history could not be read. Restore a valid backup or ask an administrator for help.":"לא ניתן לקרוא את היסטוריית המטבע השמורה. שחזרו גיבוי תקין או פנו למנהל לקבלת עזרה.",
  "Reload saved FX history before retrying the change.":"טענו מחדש את היסטוריית המטבע השמורה לפני ניסיון נוסף לשינוי.",
@@ -111,13 +112,23 @@ document.addEventListener("input",event=>{if(event.target.closest?.("#varContent
 document.addEventListener("submit",event=>{if(event.target.id==="varFxForm"){event.preventDefault();maintainVarFx(false);}});
 document.addEventListener("click",event=>{if(event.target.closest?.("#varReload")&&!varView.busy&&!varView.loading)loadVar();if(event.target.closest?.("#varFxRefresh"))maintainVarFx(true);if(event.target.closest?.("#varFxDiscard"))discardVarFx();});
 
+function varSummaryIssues(data){
+ const groups=new Map();
+ for(const issue of data.issues || []){
+  const code=typeof issue.code==="string"?issue.code:"coverage_incomplete";
+  if(!groups.has(code))groups.set(code,[]);
+  const context=issue.symbol || (issue.currency?currencyDisplayLabel(issue.currency):"");
+  groups.get(code).push(context);
+ }
+ return groups.size?`<ul class="section-note var-summary-issues">${[...groups].map(([code,rows])=>{const contexts=[...new Set(rows.filter(Boolean))];return `<li>${varEsc(varReason(code))} <bdi>(${rows.length})</bdi>${contexts.length?` <bdi>${esc(contexts.slice(0,6).join(", "))}${contexts.length>6?` +${contexts.length-6}`:""}</bdi>`:""}</li>`;}).join("")}</ul>`:"";
+}
 function renderVarSummary(){
  const target=$("varSummaryContent");if(!target)return;const v=varSummaryView,d=v.data;
  target.setAttribute?.("aria-busy",String(v.loading));
  if(v.loading&&!d){target.innerHTML=`<p class="section-note">${varEsc("Loading saved risk data…")}</p>`;return;}
  let html=`<p class="section-note">${varEsc("All investment accounts")} · ${varEsc("3 years")}</p>${v.loading?`<p class="section-note">${varEsc("Loading saved risk data…")}</p>`:""}`;
  if(d?.status==="ok"&&d.scope_complete!==false&&varKnown(d.var_ils)&&d.var_ils>=0)html+=`<strong class="var-summary-amount"><bdi>${esc(varMoney(d.var_ils))}</bdi></strong><p class="section-note">${varEsc("Estimated threshold; losses can be larger in about 5% of model scenarios.")}</p>`;
- else html+=`<strong>${varEsc("Unavailable")}</strong><p class="section-note">${varEsc(v.error || (d?.status==="empty"?"No recorded holdings or cash in this account scope.":varReason(d?.reason)))}</p><p class="section-note">${varEsc("Open Details to review coverage and historical FX data.")}</p>`;
+ else html+=`<strong>${varEsc("Unavailable")}</strong><p class="section-note">${varEsc(v.error || (d?.status==="empty"?"No recorded holdings or cash in this account scope.":varReason(d?.reason)))}</p>${d?varSummaryIssues(d):""}${d?.status!=="empty"&&varKnown(d?.sample_count)&&varKnown(d?.min_samples)?`<p class="section-note">${varEsc("Matching 30-day scenarios")}: <bdi>${esc(varNumber(d.sample_count,0))} / ${esc(varNumber(d.min_samples,0))}</bdi></p>`:""}<p class="section-note">${varEsc("Open Details to review coverage and historical FX data.")}</p>`;
  if(d?.valuation_date)html+=`<p class="section-note">${varEsc("Valuation date")}: <bdi>${esc(formatDate(d.valuation_date))}</bdi></p>`;
  target.innerHTML=html;
 }

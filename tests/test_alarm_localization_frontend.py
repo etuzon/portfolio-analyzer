@@ -48,7 +48,7 @@ const scheduleClientStateSync = () => {};
 const saveAlarmDismissals = () => {};
 const noop = () => {};
 const refreshLocalizedFormOptions = noop, refreshBrokerSelects = noop,
-  renderBrokersList = noop, renderLocalAccountsList = noop, renderImportSkippedAccounts = noop,
+  renderBrokersList = noop, renderBrokerEditor = noop, renderLocalAccountsList = noop, renderImportSkippedAccounts = noop,
   renderFundAccountOwners = noop, ensureHierarchicalNav = noop, bindNavAccordion = noop,
   renderCurrentUser = noop, renderFamilyMembers = noop, renderFamilyMemberEditor = noop,
   refreshFamilyMemberSelects = noop, refreshFamilyAccountSelects = noop,

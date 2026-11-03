@@ -431,21 +431,27 @@
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="brokersTitle">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Account setup</p>
             <h2 id="brokersTitle">Brokers</h2>
           </div>
-          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+          <div class="broker-header-actions"><button id="newBroker" type="button">New broker</button><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
         </div>
-        <div class="management-form">
-          <input id="brokerName" placeholder="Broker / bank / fund name" />
-          <select id="brokerCountry"></select>
-          <select id="brokerCurrency"></select>
-          <input id="brokerComments" placeholder="Comments" />
-          <button id="saveBroker" type="button">Save broker</button>
-          <button id="clearBrokerForm" class="secondary" type="button">Clear form</button>
-        </div>
-        <p id="brokerStatus" class="status-line"></p>
+        <p id="brokerStatus" class="status-line" role="status" aria-live="polite"></p>
         <div id="brokersList" class="stack management-list"></div>
+      </section>
+    </div>
+
+    <div id="brokerEditorModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card broker-editor-card" role="dialog" aria-modal="true" aria-labelledby="brokerEditorTitle">
+        <div class="section-head"><h2 id="brokerEditorTitle">New broker</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <form id="brokerForm" class="broker-editor-form">
+          <label class="field"><span>Broker / bank / fund name</span><input id="brokerName" maxlength="240" required autocomplete="organization" /></label>
+          <label class="field"><span>Country</span><select id="brokerCountry"></select></label>
+          <label class="field"><span>Currency</span><select id="brokerCurrency"></select></label>
+          <label class="field broker-comments-field"><span>Comments</span><textarea id="brokerComments" rows="3"></textarea></label>
+          <p id="brokerEditorStatus" class="status-line broker-editor-status" role="status" aria-live="polite"></p>
+          <div class="broker-editor-actions"><button id="saveBroker" type="submit">Save broker</button><button id="cancelBrokerEdit" class="secondary" type="button" data-close>Cancel</button></div>
+        </form>
       </section>
     </div>
 
@@ -1098,14 +1104,14 @@
               </article>
               <article class="help-feature">
                 <h3>Portfolio stocks heatmap</h3>
-                <p>Only accounts with type Investment are included in this feature. All investment accounts combines those accounts only. ESOP/RSU, Bank and Long-Term Savings accounts are excluded from calculations, coverage and account choices. Shares held in an Investment account remain eligible according to the feature’s asset rules.</p>
-                <p>The Portfolio stocks heatmap card is on the main dashboard in All areas or Investment portfolio, in Glance and Full. Choose All investment accounts to combine your held listings, select one investment account, or choose By account for separate panels. Editors can use dashboard Edit to move or hide the card. Its account selector controls the heatmap independently of the Holdings filters. Stocks, employee shares, ETFs and mutual funds are included; cash, bonds, pension fund balances and derivatives are excluded and unsupported holdings are listed.</p>
-                <p>Tile area represents gross current stock and fund exposure in ILS: absolute share quantity multiplied by the latest saved raw price and ILS per currency unit. Long and short positions in different accounts are not netted. Each account panel has its own area scale; compare its ILS total rather than tile size between panels. Weights describe only holdings with available values in that view, not the entire portfolio.</p>
-                <p>Color shows the latest observed native-currency raw price change, (latest / previous − 1) × 100, for both long and short holdings. It is not your investment profit or an ILS return and does not include currency changes, dividends or fees. Splits and distributions can affect raw-price changes. Select a tile or an entry in the complete holdings list for both observation dates, prices, currency and account breakdown.</p>
-                <p>Quotes and FX must be no older than 7 days for tile sizing. Color is unavailable when the latest price is stale, fewer than two prices exist, or their dates are more than 7 days apart; observations are not guaranteed to be consecutive trading sessions. Unavailable changes use a neutral tile and unavailable values appear separately without an invented size. Dates may differ between exchanges. Missing coverage is never treated as zero.</p>
-                <p>The card loads automatically with the portfolio. Reload reads saved local and qualified market-cache prices and dated FX snapshots without a provider download or portfolio changes. For newer prices use dashboard Refresh or Prices, then Reload. FX comes from saved dashboard currency quotes or the FX history maintained under Value at Risk; the latest dated observation wins. Viewer users can read all heatmap views. Loading remains inside the card, failures can be retried, and switching users clears the results.</p>
-
-                <p>Imported market fields can contain a provider label such as YAHOO. Saved exchange metadata and compatible currency are required to resolve that label before cached prices are used. No exchange is guessed from the provider name; unmatched listings require verified metadata or matching local prices.</p>
+                <p>The Portfolio stocks heatmap card is on the main dashboard in All areas or Investment portfolio, in Glance and Full. Only accounts with type Investment are included. ESOP/RSU, Bank and Long-Term Savings accounts are excluded. Choose All investment accounts, one Investment account or By account for separate panels. Editors can use dashboard Edit to move or hide the card. Holdings filters do not control this card.</p>
+                <p>Use the Stocks, Bonds and Funds checkboxes to choose which recorded asset classes appear. Stocks and funds start selected; bonds start unselected. ETFs and mutual funds belong to Funds; stock and RSU shares actually held in Investment accounts belong to Stocks. The same choices apply to combined holdings, account panels, totals, weights, details and the complete holdings list. Clear every checkbox for an explicit empty selection.</p>
+                <p>Each colored rectangle represents a held security. Its area is proportional to gross exposure in ILS: absolute quantity multiplied by the latest saved raw price and ILS per currency unit. Long and short positions across accounts are added by absolute value. Each account panel has its own area scale; compare ILS totals between accounts. Weights and totals cover only the selected asset classes with available values, not the entire portfolio.</p>
+                <p>Color and Day change show the latest observed native-price change, (latest / previous − 1) × 100. The two saved observations can span multiple trading sessions; their dates are shown in the details. This is not your investment profit or an ILS return. Currency changes, dividends, bond coupons, fees and taxes are not added to this price change; splits and distributions may affect raw prices.</p>
+                <p>Hover over or focus a security for a multiline tooltip showing its symbol, company name, quantity, saved price and date, unrealized P/L, observed day change and Investment account breakdown. Press Escape to dismiss it. Select a security or a row in the complete holdings list to keep the same details open, including on touch screens. Text automatically shrinks to fit each rectangle; secondary labels are omitted when space is too small, while the full information remains in the tooltip and details.</p>
+                <p>Unrealized P/L uses the current saved price and recorded remaining cost basis, calculated separately for long and short holdings before combining accounts in the same security currency. The native amount excludes realized trades and income. Converted to ILS means that native P/L multiplied by the current saved exchange rate; it does not reconstruct historical FX gains or losses on the purchase cost. Unknown cost basis or stale prices leave P/L unavailable without inventing zero. Bond prices use stored currency per unit; no extra cents or agorot conversion is applied.</p>
+                <p>Prices and FX must be no older than 7 days to calculate rectangle sizes. Color is unavailable with fewer than two price observations, a stale latest price or a gap greater than 7 days. Holdings not shown on the map lists selected holdings without an available ILS value, with their reasons in the details. An unavailable change is neutral, not zero. Missing cost basis affects P/L, not an otherwise valid exposure value.</p>
+                <p>The card loads with the portfolio. Reload reads saved local prices, qualified cached market data and dated FX without downloading providers or changing holdings. Imported source labels such as YAHOO require saved recognized exchange metadata and compatible currency before cached prices are used. For newer prices use dashboard Refresh or Prices, then Reload. Expand Method and data for sources and coverage. Loading is nonblocking; failed reloads retain previous results for retry. Viewer users can read and filter; switching users clears results.</p>
               </article>
               <article class="help-feature">
                 <h3>Portfolio alarms</h3>
@@ -1150,7 +1156,9 @@
               </article>
               <article class="help-feature">
                 <h3>Brokers</h3>
-                <p>Add banks, brokers, pension providers, and other managing institutions before linking them to accounts.</p>
+                <p>Open Portfolio Data → Brokers to review all managing institutions. Choose New broker for a blank popup, or select a broker name or its Edit button to open its existing fields. Enter the name, country, currency and optional comments, then Save broker. Cancel, the close button or Escape discards the draft and returns to the list.</p>
+                <p>Operators and administrators can create and edit brokers; Viewer access is read-only. Country and currency labels follow the interface language, and supported currencies are ILS, USD and EUR. A linked broker cannot be removed. Broker administration covers all account types and is separate from the Investment-only analytics scope.</p>
+                <p>Saving keeps the editor open until the request completes. A failed save retains entered fields for correction and retry. A successful save closes the editor, refreshes the list and updates broker choices in account forms. If the list refresh fails after a save, the saved result is retained; reopen Brokers to reload the list.</p>
               </article>
               <article class="help-feature">
                 <h3>Employee Stock Options</h3>
@@ -1247,6 +1255,7 @@
               </article>
               <article class="help-feature">
                 <h3>Value at Risk</h3>
+                <p>When VaR is unavailable, its dashboard card groups the missing or stale inputs, shows affected symbols or currencies and counts, and reports matching 30-day scenarios against the required minimum. Open Details for the full coverage and historical FX controls. Refreshing only today’s quotes cannot replace the matching historical price and currency series.</p>
                 <p>Only accounts with type Investment are included in this feature. All investment accounts combines those accounts only. ESOP/RSU, Bank and Long-Term Savings accounts are excluded from calculations, coverage and account choices. Shares held in an Investment account remain eligible according to the feature’s asset rules.</p>
                 <p>The dashboard One-month 95% VaR card estimates a loss threshold in ILS for All investment accounts using 3 years of saved evidence. Open its Details or Research → Value at Risk to choose All investment accounts or one investment account and 1, 3 or 5 years of history, then Calculate / Reload. Dashboard filters do not apply. One month means 30 calendar days, and loss is measured at the end of that holding period.</p>
                 <p>VaR is an estimated 95% loss threshold under a historical model, not an absolute maximum loss or a guarantee. Losses beyond the threshold remain possible in the 5% tail and can be much larger. Average loss in the worst 5% shows expected shortfall. The current recorded net value includes signed security values and cash or borrowing. All amounts in these result cards are in ILS.</p>

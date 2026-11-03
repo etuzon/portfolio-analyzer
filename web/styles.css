@@ -6291,6 +6291,34 @@ tbody tr:hover {
   overflow: auto;
 }
 
+.broker-header-actions,
+.broker-row-actions,
+.broker-editor-actions { display:flex; align-items:center; gap:8px; }
+.broker-management-item { grid-template-columns:minmax(0,1fr) auto; align-items:start; }
+.broker-management-main { display:grid; gap:7px; min-width:0; }
+.broker-management-main span,.broker-management-main .sub { overflow-wrap:anywhere; }
+.broker-management-main .broker-name-button { justify-self:start; display:inline; min-width:0; max-width:100%; padding:0; background:transparent; border:0; border-radius:3px; color:var(--ux-text); font-size:14px; font-weight:700; text-align:start; overflow-wrap:anywhere; box-shadow:none; }
+.broker-name-button:not(:disabled):hover { text-decoration:underline; }
+.broker-name-button:focus-visible { outline:2px solid var(--ux-blue); outline-offset:4px; }
+.broker-row-actions { flex-wrap:wrap; justify-content:flex-end; }
+.broker-editor-card { width:min(100% - 32px,620px); }
+.broker-editor-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.broker-editor-form .field { min-width:0; }
+.broker-editor-form .field:first-child,
+.broker-editor-form .broker-comments-field,
+.broker-editor-status,
+.broker-editor-actions { grid-column:1 / -1; }
+.broker-editor-form input,.broker-editor-form select,.broker-editor-form textarea { width:100%; min-width:0; box-sizing:border-box; }
+.broker-editor-form textarea { resize:vertical; padding:10px; min-height:84px; background:var(--ux-panel-soft); color:var(--ux-text); border:1px solid var(--ux-stroke); border-radius:7px; font:inherit; }
+.broker-editor-status:empty { display:none; }
+.broker-editor-actions { justify-content:flex-end; }
+@media(max-width:550px) {
+ .broker-management-item { grid-template-columns:minmax(0,1fr); }
+ .broker-row-actions { justify-content:flex-start; }
+ .broker-editor-form { grid-template-columns:minmax(0,1fr); }
+ .broker-header-actions { flex-shrink:0; }
+}
+
 .management-item b {
   color: #f7f9ff;
   font-size: 13px;

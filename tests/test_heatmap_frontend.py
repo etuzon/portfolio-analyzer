@@ -38,7 +38,7 @@ def test_combined_gross_values_account_filters_and_missing_coverage():
 seed();let html=target.innerHTML;
 assert.ok(html.includes('₪ 10000.00'));
 assert.ok(html.includes('Long and short exposure'));
-assert.ok(html.includes('Holdings without a tile'));
+assert.ok(html.includes('Holdings not shown on the map'));
 assert.ok(html.includes('The total covers priced holdings only'));
 assert.ok(html.includes('No change / unavailable'));
 assert.ok(html.includes('data-heatmap-asset="0"'));
@@ -49,7 +49,7 @@ const combined=heatmapScope();assert.equal(combined[0].quantity,5);assert.equal(
 heatmapView.account_id='one';renderHeatmap();html=target.innerHTML;
 assert.ok(html.includes('₪ 4000.00'));assert.equal(heatmapScope().length,2);assert.equal(heatmapScope()[0].quantity,10);assert.equal(heatmapExcluded().length,0);
 heatmapView.account_id='two';renderHeatmap();assert.equal(heatmapScope()[0].quantity,-5);assert.equal(heatmapScope()[0].gross_value_ils,2000);assert.ok(target.innerHTML.includes('Short exposure'));assert.ok(target.innerHTML.includes('₪ 6000.00'));
-heatmapView.account_id='empty';renderHeatmap();assert.ok(target.innerHTML.includes('No stock or fund holdings'));assert.ok(!target.innerHTML.includes('heatmap-canvas'));
+heatmapView.account_id='empty';renderHeatmap();assert.ok(target.innerHTML.includes('No holdings match the selected asset types'));assert.ok(!target.innerHTML.includes('heatmap-canvas'));
 ''')
 
 
@@ -110,7 +110,7 @@ const button={dataset:{heatmapAsset:'0',heatmapAccount:'two'}};for(const listene
 def test_independent_account_assets_override_unusable_combined_listing():
     run_ui(r'''
 seed();heatmapView.data.assets[0].gross_value_ils=null;heatmapView.data.assets[0].accounts[0].gross_value_ils=null;heatmapView.data.assets[0].issues=['classification_conflict'];heatmapView.data.account_assets={one:[{...structuredClone(a),accounts:[row('one',10,4000)],quantity:10,gross_quantity:10,gross_value_ils:4000,value_ils:4000,issues:[]}],two:[]};
-heatmapView.account_id='one';renderHeatmap();assert.equal(heatmapScope().length,1);assert.equal(heatmapScope()[0].gross_value_ils,4000);assert.ok(target.innerHTML.includes('₪ 4000.00'));assert.ok(!target.innerHTML.includes('Holdings without a tile'));
+heatmapView.account_id='one';renderHeatmap();assert.equal(heatmapScope().length,1);assert.equal(heatmapScope()[0].gross_value_ils,4000);assert.ok(target.innerHTML.includes('₪ 4000.00'));assert.ok(!target.innerHTML.includes('Holdings not shown on the map'));
 heatmapView.selected={id:a.id,account_id:'one'};renderHeatmapSelection();assert.ok(!nodes.heatmapSelection.innerHTML.includes('classifications conflict'));
 state.language='he';assert.equal(heatmapFxSource('external_import_market_data'),'נתוני שוק ממקור מיובא');assert.equal(heatmapFxSource('bank_of_israel_fx'),'בנק ישראל');assert.equal(heatmapFxSource('My exact citation'),'My exact citation');
 ''')
@@ -140,4 +140,45 @@ def test_verified_import_exchange_is_shown_and_unverified_reason_is_localized():
 assert.ok(heatmapLabel({...a,stock_market:'YAHOO',resolved_stock_market:'NASDAQ'}).includes('NASDAQ'));
 assert.ok(!heatmapLabel({...a,stock_market:'YAHOO'}).includes('YAHOO'));
 state.language='he';assert.equal(heatmapText(heatmapReason('unverified_listing')),'נדרשים נתוני בורסה שמורים כדי לזהות את הנייר המיובא הזה.');
+''')
+
+
+def test_asset_checkboxes_filter_all_account_and_grouped_totals_and_empty_choice():
+    run_ui(r'''
+seed();const bond={...structuredClone(a),id:'bond',symbol:'BOND',asset_class:'BOND',quantity:2,gross_value_ils:500,value_ils:500,accounts:[row('one',2,500)]};heatmapView.data.assets.push(bond);
+assert.deepEqual(heatmapCategories(),{stocks:true,bonds:false,funds:true});assert.equal(heatmapScope().length,3);renderHeatmap();assert.ok(target.innerHTML.includes('id="heatmapCategory-stocks" data-heatmap-category="stocks" checked'));assert.ok(!target.innerHTML.includes('id="heatmapCategory-bonds" data-heatmap-category="bonds" checked'));
+for(const category of ['stocks','funds'])for(const listener of listeners.change)listener({target:{id:`heatmapCategory-${category}`,checked:false}});
+assert.equal(heatmapScope().length,0);assert.ok(target.innerHTML.includes('Choose Stocks, Bonds or Funds'));assert.ok(!target.innerHTML.includes('heatmap-canvas'));
+for(const listener of listeners.change)listener({target:{id:'heatmapCategory-bonds',checked:true}});assert.deepEqual(heatmapScope().map(asset=>asset.symbol),['BOND']);assert.ok(target.innerHTML.includes('₪ 500.00'));assert.ok(!target.innerHTML.includes('₪ 10000.00'));assert.equal(heatmapValueFraction(heatmapScope()[0],heatmapScope()),100);
+heatmapView.layout='accounts';renderHeatmap();assert.ok(target.innerHTML.includes('data-heatmap-account="one"'));assert.deepEqual(heatmapCategories(),{stocks:false,bonds:true,funds:false});assert.equal(pending.length,0);
+heatmapView.data.account_assets={one:[bond,structuredClone(a)]};heatmapView.account_id='one';assert.deepEqual(heatmapScope().map(asset=>asset.symbol),['BOND']);
+state.language='he';heatmapView.categories={stocks:false,bonds:false,funds:false};renderHeatmap();assert.ok(target.innerHTML.includes('בחרו מניות, אג״ח או קרנות'));assert.ok(!target.innerHTML.includes('Choose Stocks'));
+''')
+
+
+def test_multiline_popup_and_click_detail_show_localized_native_and_converted_pnl():
+    run_ui(r'''
+seed();Object.assign(heatmapView.data.assets[0].accounts[0],{cost_basis_native:500,unrealized_pnl_native:600,unrealized_pnl_ils:2400});Object.assign(heatmapView.data.assets[0].accounts[1],{cost_basis_native:400,unrealized_pnl_native:-150,unrealized_pnl_ils:-600});const asset=heatmapScope()[0];assert.equal(asset.unrealized_pnl_native,450);assert.equal(asset.unrealized_pnl_ils,1800);
+for(const language of ['en','he']){state.language=language;const html=heatmapTooltipHtml(asset);assert.ok(html.includes('Alpha &lt;company&gt;'));assert.ok(html.includes('USD 450.00'));assert.ok(html.includes('₪ 1800.00'));assert.ok(html.includes('USD 110.00'));assert.ok(html.includes('03/11/2026'));assert.ok(html.includes('5.0000'));assert.ok(html.includes('15.0000'));assert.ok(html.includes('First'));assert.ok(html.includes('Second'));assert.ok(!html.includes('NaN'));if(language==='he'){assert.ok(html.includes('רווח / הפסד לא ממומש'));assert.ok(html.includes('המרה לשקלים'));assert.ok(!/Unrealized|Converted|Accounts|Observed price/.test(html));}else assert.ok(html.includes('Unrealized profit / loss'));heatmapView.selected={id:asset.id,account_id:''};renderHeatmapSelection();assert.ok(nodes.heatmapSelection.innerHTML.includes('USD 450.00'));assert.ok(nodes.heatmapSelection.innerHTML.includes('₪ 1800.00'));}
+asset.unrealized_pnl_native=null;asset.unrealized_pnl_ils=null;state.language='en';assert.ok(heatmapTooltipHtml(asset).includes('Unavailable'));assert.ok(!heatmapTooltipHtml(asset).includes('USD 0.00'));
+''')
+
+
+def test_popup_is_viewport_clamped_keyboard_described_and_escape_does_not_move_focus():
+    run_ui(r'''
+seed();globalThis.window={innerWidth:390,innerHeight:300};const popupListeners={};const popup={hidden:true,style:{},setAttribute(k,v){this[k]=v;},addEventListener(type,fn){popupListeners[type]=fn;},getBoundingClientRect(){return {width:360,height:250};}};document.createElement=()=>popup;document.body={appendChild(node){assert.equal(node,popup);}};const button={dataset:{heatmapAsset:'0',heatmapAccount:''},isConnected:true,attrs:{},setAttribute(k,v){this.attrs[k]=v;},removeAttribute(k){delete this.attrs[k];},getBoundingClientRect(){return {left:380,right:390,top:290,bottom:300};}};document.activeElement=button;showHeatmapTooltip(button);assert.equal(button.attrs['aria-describedby'],'heatmapTooltip');assert.equal(popup.role,'tooltip');assert.equal(popup.hidden,false);assert.equal(popup.style.left,'22px');assert.equal(popup.style.top,'32px');assert.ok(popup.innerHTML.includes('First'));
+popupListeners.pointerenter();assert.equal(heatmapTooltipHovered,true);for(const listener of listeners.focusout)listener({target:button});assert.equal(popup.hidden,false);
+let prevented=false,stopped=false;for(const listener of listeners.keydown)listener({key:'Escape',preventDefault(){prevented=true;},stopImmediatePropagation(){stopped=true;}});assert.equal(popup.hidden,true);assert.equal(popup.innerHTML,'');assert.equal(button.attrs['aria-describedby'],undefined);assert.equal(document.activeElement,button);assert.equal(prevented,true);assert.equal(stopped,true);
+state.language='he';showHeatmapTooltip(button);assert.equal(popup.dir,'rtl');hideHeatmapTooltip();assert.equal(popup.hidden,true);
+''')
+
+
+def test_label_font_fits_dimensions_and_hides_secondary_text_before_primary():
+    run_ui(r'''
+function rectangle(width,height,symbolLength=12){const button={clientWidth:width,clientHeight:height,dataset:{},size:16,style:{setProperty(k,v){button.size=parseInt(v);}},querySelector(selector){if(selector==='.heatmap-tile-label')return label;return rows[selector.replace('.heatmap-tile-','')];}};const lengths={symbol:symbolLength,change:6,value:8,direction:19},rows={};for(const [key,length] of Object.entries(lengths)){rows[key]={get clientWidth(){return width-8;},get scrollWidth(){return key==='symbol'&&button.dataset.heatmapLabelMode?.endsWith('-wrap')?width-8:length*button.size*(key==='value'||key==='direction'?.48:.6);}};}const label={get scrollWidth(){return width;},get scrollHeight(){const mode=button.dataset.heatmapLabelMode,count=mode==='full'?4:mode?.startsWith('compact')?2:1,wrappedLines=mode?.endsWith('-wrap')?Math.ceil(symbolLength*button.size*.6/(width-8)):1;return 8+(count+wrappedLines-1)*(button.size*1.15)+(count-1)*2;}};return button;}
+const full=rectangle(220,110);heatmapFitLabel(full);assert.equal(full.dataset.heatmapLabelMode,'full');assert.equal(full.size,16);
+const small=rectangle(100,34);heatmapFitLabel(small);assert.equal(small.dataset.heatmapLabelMode,'compact');assert.ok(small.size>=9&&small.size<16);
+const thin=rectangle(100,21);heatmapFitLabel(thin);assert.equal(thin.dataset.heatmapLabelMode,'symbol');
+const longSymbol=rectangle(93,159,16);heatmapFitLabel(longSymbol);assert.equal(longSymbol.dataset.heatmapLabelMode,'compact-wrap');assert.equal(longSymbol.size,16);
+const tiny=rectangle(12,8);heatmapFitLabel(tiny);assert.equal(tiny.dataset.heatmapLabelMode,'none');assert.equal(tiny.clientWidth,12);assert.equal(tiny.clientHeight,8);
 ''')
