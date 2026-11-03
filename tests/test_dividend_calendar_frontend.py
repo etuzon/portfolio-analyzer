@@ -20,7 +20,7 @@ const year=new Date().getFullYear();
 const a={id:'AAA@NASDAQ',symbol:'AAA',stock_market:'NASDAQ',name:'Alpha',currency:'USD',year_dividend_per_share:4,year_payment_count:4,ttm_dividend_per_share:4,annual_yield_percent:4,price:100,price_date:'2026-11-03',history_partial:false,history_stale:false,price_stale:false,currency_conflict:false,invalid_prices:0,rankable:true,highest_yield:true,source:'financial_modeling_prep',fetched_date:'2026-11-03',history_from:'2024-01-01',history_to:'2026-11-01',invalid_records:0,undated_records:0,recorded_income:[{currency:'USD',amount:20}]};
 const b={...a,id:'BBB@NASDAQ',symbol:'BBB',year_dividend_per_share:5,year_payment_count:1,ttm_dividend_per_share:5,annual_yield_percent:2.5,price:200,highest_yield:false};
 const c={...a,id:'EMPTY@NASDAQ',symbol:'EMPTY',year_dividend_per_share:null,ttm_dividend_per_share:null,annual_yield_percent:null,price:null,rankable:false,highest_yield:false,source:null,recorded_income:[]};
-const data={year,account_id:'',accounts:[{id:'a',account_id:'First'}],available_years:[year-1,year],ttm_from:'2025-11-03',ttm_to:'2026-11-03',assets:[a,b,c],excluded:[],events:[{id:'a1',asset_id:a.id,date:`${year}-01-20`,date_type:'payment',amount_per_share:1,currency:'USD',future:false},{id:'b1',asset_id:b.id,date:`${year}-01-10`,date_type:'ex_date',amount_per_share:5,currency:'USD',future:false},{id:'c1',asset_id:c.id,date:`${year}-02-10`,date_type:'ledger',recorded_amount:10,amount_per_share:null,currency:'USD',future:false}]};
+const data={year,account_id:'',accounts:[{id:'a',type:'Investment',account_id:'First'}],available_years:[year-1,year],ttm_from:'2025-11-03',ttm_to:'2026-11-03',assets:[a,b,c],excluded:[],events:[{id:'a1',asset_id:a.id,date:`${year}-01-20`,date_type:'payment',amount_per_share:1,currency:'USD',future:false},{id:'b1',asset_id:b.id,date:`${year}-01-10`,date_type:'ex_date',amount_per_share:5,currency:'USD',future:false},{id:'c1',asset_id:c.id,date:`${year}-02-10`,date_type:'ledger',recorded_amount:10,amount_per_share:null,currency:'USD',future:false}]};
 ''' +(ROOT/'web/dividend-calendar-ui.js').read_text()+'\n'+body
     result=subprocess.run(['node'],input=source,text=True,capture_output=True,cwd=ROOT)
     assert result.returncode==0,result.stderr
@@ -90,3 +90,18 @@ def test_static_calendar_and_help_copy_translates():
     source+="process.stdout.write(JSON.stringify(parts.filter(x=>/[A-Za-z]/.test(x)&&window.PortfolioI18n.translate(x,'he')===x)));"
     result=subprocess.run(['node'],input=source,text=True,capture_output=True,check=True)
     assert json.loads(result.stdout)==[]
+
+
+def test_investment_account_selector_rejects_other_and_untyped_accounts():
+    run_ui(r'''
+const outside=[{id:'esop-only',type:'ESOP',account_id:'Outside employee account'},{id:'bank-only',type:'Bank',account_id:'Outside bank account'},{id:'pension-only',type:'Long-Term Savings',account_id:'Outside pension account'},{id:'unknown-only',account_id:'Outside untyped account'}];
+data.accounts.push(...outside);dividendCalendarView.data=data;renderDividendCalendar();
+const html=nodes.dividendCalendarAccount.innerHTML;for(const row of outside)assert.ok(!html.includes(row.account_id));
+assert.ok(html.includes('All investment accounts'));
+''')
+
+
+def test_removed_account_recovers_to_investment_scope():
+    run_ui(r'''
+(async()=>{$('dividendCalendarAccount').value='removed';const old=loadDividendCalendar();pending[0].reject(new Error('unknown_dividend_account'));await new Promise(resolve=>setImmediate(resolve));assert.equal(nodes.dividendCalendarAccount.value,'');assert.equal(dividendCalendarView.data,null);pending[1].resolve(data);await old;assert.equal(dividendCalendarView.data.assets.length,3);})();
+''')

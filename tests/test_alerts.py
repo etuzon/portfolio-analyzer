@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -176,8 +177,9 @@ def test_running_rule_persists_live_progress(tmp_path):
 
 
 def test_portfolio_alert_rows_reuse_matching_local_analytics_cache(monkeypatch):
+    monkeypatch.setattr(main, "local_store", SimpleNamespace(list_accounts=lambda:[{"id":"investment","type":"Investment"}]))
     item = {
-        "holding": {"symbol": "LOCAL", "name": "Local", "currency": "ILS", "market_value": 100, "cost_basis": 80, "unrealized_profit": 20, "account": "Brokerage"},
+        "holding": {"symbol": "LOCAL", "name": "Local", "currency": "ILS", "market_value": 100, "cost_basis": 80, "unrealized_profit": 20, "account": "Brokerage", "account_id": "investment"},
         "price_ranges": {"1y": {"current": 10, "percent_from_high": -5}},
         "moving_averages": {"30": {"price_vs_ma_percent": 2, "slope_percent": 0.1}},
         "technical_signals": {"confirmed_breakout": {"state": "ok", "triggered": False}},
@@ -298,6 +300,7 @@ def test_alert_store_persists_background_failure_without_stale_matches(tmp_path)
 
 
 def test_portfolio_alert_rows_derive_portfolio_and_enriched_metrics(monkeypatch):
+    monkeypatch.setattr(main, "local_store", SimpleNamespace(list_accounts=lambda:[{"id":"investment","type":"Investment"},{"id":"rsu","type":"ESOP"}]))
     analysis = SymbolAnalysis(
         holding=Holding(
             symbol="CSCO",
@@ -307,6 +310,7 @@ def test_portfolio_alert_rows_derive_portfolio_and_enriched_metrics(monkeypatch)
             cost_basis=400,
             unrealized_profit=100,
             account="Brokerage",
+            account_id="investment",
             sector="Technology",
         ),
         provider_status={},
@@ -343,7 +347,7 @@ def test_portfolio_alert_rows_derive_portfolio_and_enriched_metrics(monkeypatch)
 
     rsu_analysis = replace(
         analysis,
-        holding=replace(analysis.holding, symbol="RSUGRANT", asset_class="RSU", market_value=10_000),
+        holding=replace(analysis.holding, symbol="RSUGRANT", asset_class="RSU", market_value=10_000, account_id="rsu"),
     )
     monkeypatch.setattr(main, "analyze_all", lambda: [analysis, rsu_analysis])
     monkeypatch.setattr(main, "_portfolio_alert_source_items", lambda: ([main.to_dict(analysis), main.to_dict(rsu_analysis)], "refreshed"))

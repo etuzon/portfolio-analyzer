@@ -1,6 +1,8 @@
 """Fund-constituent overlap from sourced snapshots; never infer index membership."""
 from __future__ import annotations
 
+from .investment_scope import investments
+
 import csv
 import io
 import math
@@ -31,6 +33,7 @@ def snapshot_key(symbol, market):
 
 
 def held_funds(store):
+    store = investments(store)
     return {(h.symbol.upper(), market_scope(h.stock_market)): h for a in store.holdings()
             if (h := a.holding).asset_class.upper() in FUNDS and abs(h.quantity) > 1e-9}
 
@@ -126,6 +129,7 @@ def save_manual_report(store, payload):
 
 
 def build_xray(store, account_id="", today=None):
+    store = investments(store)
     today = today or date.today()
     accounts = store.list_accounts()
     if account_id and account_id not in {row["id"] for row in accounts}:

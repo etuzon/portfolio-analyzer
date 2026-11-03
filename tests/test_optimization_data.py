@@ -36,7 +36,7 @@ class Store:
         self.local = local or {}
         self.manual = manual or {}
     def holdings(self): return [SimpleNamespace(holding=row) for row in self.positions]
-    def list_accounts(self): return [{"id": "a", "account_id": "Synthetic A"}, {"id": "b", "account_id": "Synthetic B"}]
+    def list_accounts(self): return [{"id": "a", "type":"Investment", "account_id": "Synthetic A"}, {"id": "b", "type":"Investment", "account_id": "Synthetic B"}]
     def manual_security(self, symbol, market): return self.manual.get(symbol)
     def price_history(self, symbol, market, start, end): return [r for r in self.local.get(symbol, []) if start.isoformat() <= r["price_date"] <= end.isoformat()]
 

@@ -1,6 +1,8 @@
 """Benchmark application boundary: saved inputs, statement suggestions and explicit refresh."""
 from __future__ import annotations
 
+from .investment_scope import investments
+
 from contextlib import nullcontext
 from datetime import date, timedelta
 import math
@@ -22,6 +24,7 @@ def catalog():
 
 
 def require_scope(store, account_id="", benchmark_id="sp500"):
+    store = investments(store)
     accounts = store.list_accounts()
     if not isinstance(account_id, str) or (account_id and account_id not in {row["id"] for row in accounts}):
         raise BenchmarkError("benchmark_unknown_account")
@@ -53,6 +56,7 @@ def _suggestions(store, accounts, account_id):
 
 
 def benchmark_inputs(store, account_id="", benchmark_id="sp500"):
+    store = investments(store)
     accounts = require_scope(store, account_id, benchmark_id)
     suggestions, currency = _suggestions(store, accounts, account_id)
     return {"accounts": accounts, "catalog": catalog(), "account_id": account_id,
@@ -62,6 +66,7 @@ def benchmark_inputs(store, account_id="", benchmark_id="sp500"):
 
 
 def benchmark_comparison(store, account_id="", benchmark_id="sp500", date_from="", date_to=""):
+    store = investments(store)
     inputs = benchmark_inputs(store, account_id, benchmark_id)
     dataset = inputs["dataset"]
     days = [row["date"] for row in (dataset or {}).get("valuations", [])]
@@ -76,12 +81,14 @@ def benchmark_comparison(store, account_id="", benchmark_id="sp500", date_from="
 
 
 def save_portfolio_inputs(store, payload):
+    store = investments(store)
     account_id = payload.get("account_id", "")
     require_scope(store, account_id)
     return save_portfolio(store, payload, account_id=account_id)
 
 
 def save_index_inputs(store, payload):
+    store = investments(store)
     benchmark_id = payload.get("benchmark_id", "")
     require_scope(store, "", benchmark_id)
     # Bind saved identity to selected catalog entry, never an untrusted id field.
@@ -89,6 +96,7 @@ def save_index_inputs(store, payload):
 
 
 def refresh_index(store, market_hub, payload):
+    store = investments(store)
     benchmark_id = payload.get("benchmark_id", "")
     require_scope(store, "", benchmark_id)
     if benchmark_id not in PROVIDER_SYMBOLS:

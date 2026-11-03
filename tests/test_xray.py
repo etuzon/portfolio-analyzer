@@ -26,7 +26,7 @@ class Store:
     def holdings(self):
         return [SimpleNamespace(holding=h) for h in self.positions]
     def list_accounts(self):
-        return [{"id":"a","account_id":"First"},{"id":"b","account_id":"Second"}]
+        return [{"id":"a","account_id":"First","type":"Investment"},{"id":"b","account_id":"Second","type":"Investment"}]
     def get_preference(self,key,default=None):
         return self.prefs.get(key,default)
     def set_preference(self,key,value):

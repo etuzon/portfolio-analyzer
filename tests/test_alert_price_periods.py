@@ -20,7 +20,8 @@ def _ranges():
 
 
 def _rows(monkeypatch,ranges):
-    item={"holding":{"symbol":"PERIODQA","name":"Fixture","asset_class":"EQUITY","currency":"USD","market_value":800,"cost_basis":500,"unrealized_profit":300,"account":"Synthetic"},"price_ranges":ranges,"missing":[]}
+    item={"holding":{"symbol":"PERIODQA","name":"Fixture","asset_class":"EQUITY","currency":"USD","market_value":800,"cost_basis":500,"unrealized_profit":300,"account":"Synthetic","account_id":"investment"},"price_ranges":ranges,"missing":[]}
+    monkeypatch.setattr(main,"local_store",SimpleNamespace(list_accounts=lambda:[{"id":"investment","type":"Investment"}]))
     monkeypatch.setattr(main,"_portfolio_alert_source_items",lambda:([item],"cached"))
     monkeypatch.setattr(main,"config",SimpleNamespace(dashboard={"base_currency":"USD"}))
     monkeypatch.setattr(main,"hub",lambda:SimpleNamespace())
@@ -34,6 +35,17 @@ def test_horizons_use_distinct_real_period_extremes_and_keep_1y_behavior(monkeyp
     assert rows[0]["price_from_high_1y_percent"]==-20
     assert rows[0]["price_from_high_3y_percent"]==-60
     assert rows[0]["price_from_high_5y_percent"]==-80
+
+
+def test_alarm_source_uses_authoritative_investment_accounts(monkeypatch):
+    _rows(monkeypatch,_ranges())
+    items=[]
+    for key in ['investment','rsu','bank','pension','missing']:
+        items.append({'holding':{'symbol':key.upper(),'account_id':key,'account_type':'Investment','asset_class':'EQUITY','currency':'USD','market_value':100},'price_ranges':_ranges()})
+    monkeypatch.setattr(main,'local_store',SimpleNamespace(list_accounts=lambda:[{'id':'investment','type':'Investment'},{'id':'rsu','type':'ESOP'},{'id':'bank','type':'Bank'},{'id':'pension','type':'Long-Term Savings'},{'id':'missing'}]))
+    monkeypatch.setattr(main,'_portfolio_alert_source_items',lambda:(items,'cached'))
+    rows,_=main._portfolio_alert_rows({'price_from_high_3y_percent'})
+    assert [row['symbol'] for row in rows]==['INVESTMENT']
 
 
 @pytest.mark.parametrize("signal",["buy","sell"])

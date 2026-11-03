@@ -11,7 +11,7 @@ def test_confirmed_sale_clears_form_and_updates_history_before_analytics_finishe
     functions = []
     for name in (
         "savePositionTransaction", "clearPositionTransactionForm", "renderPositionTransactionHistory",
-        "positionTransactionDisplayAction", "transactionMatchesPosition", "transactionMatchesSecurity",
+        "positionTransactionDisplayAction", "transactionMatchesPosition", "transactionMatchesSecurity", "investmentJournalTrade",
     ):
         match = re.search(rf"(?:async )?function {name}\(", source)
         end = re.search(r"\n(?:async )?function ", source[match.end():])

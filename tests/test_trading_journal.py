@@ -165,6 +165,34 @@ def test_deleted_trade_keeps_journal_and_can_receive_a_review(ledger):
     assert reviewed["review_status"] == "mixed" and reviewed["link_status"] == "deleted"
 
 
+@pytest.mark.parametrize('account_type',['ESOP','Bank','Long-Term Savings',''])
+def test_reclassified_account_notes_are_preserved_but_cannot_leak_or_accept_edits(ledger,account_type):
+    store,a,_,buy,*_=ledger
+    reason(store,buy)
+    with store._connect() as conn:
+        conn.execute('update accounts set type=? where id=?',(account_type,a['id']))
+    data=journal_payload(store)
+    assert data['items']==[] and data['counts']['total']==0
+    assert a['id'] not in {row['id'] for row in data['accounts']}
+    assert buy['id'] not in {row['id'] for row in data['transactions']}
+    with pytest.raises(JournalError,match='journal_unknown_account'): journal_payload(store,account_id=a['id'])
+    with pytest.raises(JournalError,match='journal_invalid_transaction'): reason(store,buy,expected_revision=1)
+    with pytest.raises(JournalError,match='journal_not_found'): add_review(store,buy['id'],{'expected_revision':1,'rating':'bad','notes':'Excluded account'})
+    with store._connect() as conn:
+        preserved=conn.execute('select value from app_preferences where key=?',(PREFIX+buy['id'],)).fetchone()
+    assert json.loads(preserved['value'])['reason']=='Earnings thesis'
+
+
+def test_trade_moved_out_of_investments_does_not_reappear_as_deleted_link(ledger):
+    store,a,b,buy,*_=ledger
+    reason(store,buy)
+    with store._connect() as conn:
+        conn.execute('update accounts set type=? where id=?',('ESOP',b['id']))
+        conn.execute('update transactions set account_db_id=? where id=?',(b['id'],buy['id']))
+    assert journal_payload(store)['items']==[]
+    with pytest.raises(JournalError,match='journal_invalid_transaction'): reason(store,buy,expected_revision=1)
+
+
 def test_outcome_uses_later_matching_raw_quotes_without_auto_rating(ledger):
     store, _, _, buy, sell, *_ = ledger
     reason(store, buy)

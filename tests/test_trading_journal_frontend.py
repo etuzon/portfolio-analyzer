@@ -38,7 +38,7 @@ const openModal=()=>{opened++;nodes.tradingJournalModal.hidden=false;loadTrading
 const trade={id:'tx-a',account_id:'a',account_label:'Fixture account',symbol:'AAPL',name:'Apple',stock_market:'NASDAQ',currency:'USD',asset_class:'EQUITY',action:'BUY',trade_date:'2025-01-01',quantity:10,price:100};
 const second={...trade,id:'tx-b',symbol:'MSFT',action:'SELL',account_id:'b'};
 const entry={id:'tx-a',transaction_id:'tx-a',trade:{...trade},created_at:'2025-01-02T12:00:00Z',updated_at:'2025-01-02T12:00:00Z',revision:1,reason:'Original <reason>',thesis:'Risk <thesis>',review_date:'2025-06-01',reason_history:[{reason:'Original <reason>',thesis:'Risk <thesis>',review_date:'2025-06-01',recorded_at:'2025-01-02T12:00:00Z',author:'Fixture'}],reviews:[],review_status:'pending',link_status:'current',current_trade:{...trade},outcome:{status:'ok',price_change_percent:20,last_price:120,last_price_date:'2025-06-01',currency:'USD'}};
-const data={items:[entry],transactions:[trade,second],accounts:[{id:'a',account_id:'First account'},{id:'b',account_id:'Second account'}],as_of_date:'2025-06-02'};
+const data={items:[entry],transactions:[trade,second],accounts:[{id:'a',type:'Investment',account_id:'First account'},{id:'b',type:'Investment',account_id:'Second account'}],as_of_date:'2025-06-02'};
 function seed(){tradingJournalView.data=structuredClone(data);tradingJournalView.selected='tx-a';tradingJournalDraft();renderTradingJournal();}
 function choose(id){tradingJournalCapture();tradingJournalView.selected=id;tradingJournalDraft();renderTradingJournal();}
 ''' + (ROOT / "web/trading-journal-ui.js").read_text() + "\n" + body
@@ -177,4 +177,19 @@ def test_review_requires_explicit_assessment_and_write_focus_is_restored():
  assert.equal(document.activeElement.id,'journalSaveReview');
  assert.ok(target.innerHTML.includes('Due for review'));
 })();
+''')
+
+
+def test_investment_account_selector_rejects_other_and_untyped_accounts():
+    run_ui(r'''
+const outside=[{id:'esop-only',type:'ESOP',account_id:'Outside employee account'},{id:'bank-only',type:'Bank',account_id:'Outside bank account'},{id:'pension-only',type:'Long-Term Savings',account_id:'Outside pension account'},{id:'unknown-only',account_id:'Outside untyped account'}];
+data.accounts.push(...outside);seed();renderTradingJournal();
+const html=target.innerHTML;for(const row of outside)assert.ok(!html.includes(row.account_id));
+assert.ok(html.includes('All investment accounts'));
+''')
+
+
+def test_reclassified_journal_account_cannot_reappear_through_captured_trade():
+    run_ui(r'''
+(async()=>{seed();const privateTrade={...trade,id:'tx-outside',account_id:'esop',account_label:'Excluded employee account'};const privateEntry={...entry,id:'tx-outside',trade:privateTrade,reason:'PRIVATE employee reasoning'};tradingJournalView.selected=privateTrade.id;tradingJournalView.drafts[privateTrade.id]={reason:'PRIVATE excluded draft'};tradingJournalView.filters.account='esop';const load=loadTradingJournal();pending[0].resolve({...data,accounts:[...data.accounts,{id:'esop',type:'ESOP',account_id:'Excluded employee account'}],transactions:[...data.transactions,privateTrade],items:[...data.items,privateEntry]});await load;assert.equal(tradingJournalView.filters.account,'');assert.equal(tradingJournalView.selected,'');assert.ok(!tradingJournalView.drafts['tx-outside']);assert.ok(tradingJournalView.drafts['tx-a']);assert.ok(!target.innerHTML.includes('PRIVATE'));assert.ok(!target.innerHTML.includes('Excluded employee account'));})();
 ''')

@@ -37,7 +37,7 @@ const listeners={};
 const document={addEventListener(type,fn){(listeners[type] ||= []).push(fn);}};
 const pending=[];
 const api=(path,options={})=>new Promise((resolve,reject)=>pending.push({path,options,resolve,reject}));
-const data={accounts:[{id:'a',account_id:'One'},{id:'b',account_id:'Two'}],catalog:[{id:'sp500',name:'S&P 500',currency:'USD'},{id:'ta25',name:'TA-25',valid_to:'2017-02-08'}],dataset:{currency:'USD',source:'statement <safe>',flows_complete:true,valuations:[{date:'2025-01-01',value:1000},{date:'2026-01-01',value:1210}],cash_flows:[]},index_dataset:{name:'S&P 500',currency:'USD',basis:'price',source:'official <safe>',levels:[{date:'2025-01-01',level:100},{date:'2026-01-01',level:110}]},suggested_valuations:[{date:'2025-01-01',value:999}],result:{currency:'USD',date_from:'2025-01-01',date_to:'2026-01-01',portfolio:{xirr:{value:21,status:'ok'},twrr:{value:21,status:'ok'},opening_value:1000,closing_value:1210,net_flows:0,gain:210},benchmark:{xirr:{value:10,status:'ok'},twrr:{value:10,status:'ok'},ending_value:1100,level_dates:[{date:'2025-01-01',level_date:'2024-12-31',level:100}]},chart:[{date:'2025-01-01',portfolio_growth:100,benchmark_growth:100},{date:'2026-01-01',portfolio_growth:121,benchmark_growth:110}]}};
+const data={accounts:[{id:'a',type:'Investment',account_id:'One'},{id:'b',type:'Investment',account_id:'Two'}],catalog:[{id:'sp500',name:'S&P 500',currency:'USD'},{id:'ta25',name:'TA-25',valid_to:'2017-02-08'}],dataset:{currency:'USD',source:'statement <safe>',flows_complete:true,valuations:[{date:'2025-01-01',value:1000},{date:'2026-01-01',value:1210}],cash_flows:[]},index_dataset:{name:'S&P 500',currency:'USD',basis:'price',source:'official <safe>',levels:[{date:'2025-01-01',level:100},{date:'2026-01-01',level:110}]},suggested_valuations:[{date:'2025-01-01',value:999}],result:{currency:'USD',date_from:'2025-01-01',date_to:'2026-01-01',portfolio:{xirr:{value:21,status:'ok'},twrr:{value:21,status:'ok'},opening_value:1000,closing_value:1210,net_flows:0,gain:210},benchmark:{xirr:{value:10,status:'ok'},twrr:{value:10,status:'ok'},ending_value:1100,level_dates:[{date:'2025-01-01',level_date:'2024-12-31',level:100}]},chart:[{date:'2025-01-01',portfolio_growth:100,benchmark_growth:100},{date:'2026-01-01',portfolio_growth:121,benchmark_growth:110}]}};
 function seed(scope=''){benchmarkView.data=data;benchmarkView.filters={account_id:scope,benchmark_id:'sp500',date_from:'2025-01-01',date_to:'2026-01-01'};benchmarkInitDrafts(data);renderBenchmarkComparison();}
 ''' + (ROOT / "web/benchmark-ui.js").read_text() + "\n" + body
     result = subprocess.run(["node"], input=script, text=True, cwd=ROOT, capture_output=True)
@@ -133,4 +133,19 @@ def test_initial_portfolio_save_selects_saved_boundaries_unless_period_edited():
  benchmarkView.periodEdited=true;benchmarkView.filters.date_from='2025-01-01';benchmarkView.filters.date_to='2026-01-01';renderBenchmarkComparison();
  const again=benchmarkSave('portfolio');pending[2].resolve({});await new Promise(r=>setImmediate(r));assert.ok(pending[3].path.includes('date_from=2025-01-01'));pending[3].resolve(data);await again;
 })();
+''')
+
+
+def test_investment_account_selector_rejects_other_and_untyped_accounts():
+    run_ui(r'''
+const outside=[{id:'esop-only',type:'ESOP',account_id:'Outside employee account'},{id:'bank-only',type:'Bank',account_id:'Outside bank account'},{id:'pension-only',type:'Long-Term Savings',account_id:'Outside pension account'},{id:'unknown-only',account_id:'Outside untyped account'}];
+data.accounts.push(...outside);seed();renderBenchmarkComparison();
+const html=target.innerHTML;for(const row of outside)assert.ok(!html.includes(row.account_id));
+assert.ok(html.includes('All investment accounts'));
+''')
+
+
+def test_removed_account_recovers_to_investment_aggregate_without_old_draft():
+    run_ui(r'''
+(async()=>{seed('a');nodes.benchmarkSource.value='PRIVATE removed account draft';benchmarkCapture();const old=loadBenchmarkComparison();pending[0].reject(new Error('benchmark_unknown_account'));await new Promise(resolve=>setImmediate(resolve));assert.equal(benchmarkView.filters.account_id,'');assert.equal(benchmarkView.data,null);assert.ok(!target.innerHTML.includes('PRIVATE removed account draft'));assert.ok(!pending[1].path.includes('account_id=a'));pending[1].resolve({...data,accounts:data.accounts.filter(row=>row.id==='b'),dataset:{...data.dataset,source:'Investment aggregate evidence'}});await old;assert.equal(nodes.benchmarkSource.value,'Investment aggregate evidence');assert.ok(!benchmarkView.drafts.a);})();
 ''')

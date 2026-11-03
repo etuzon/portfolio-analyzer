@@ -26,7 +26,7 @@ class Store:
         self.positions = [holding()] if positions is None else positions
         self.local, self.manual = local or [], manual
     def holdings(self): return [SimpleNamespace(holding=row) for row in self.positions]
-    def list_accounts(self): return [{"id":"a", "account_id":"First"}, {"id":"b", "account_id":"Second"}]
+    def list_accounts(self): return [{"id":"a", "type":"Investment", "account_id":"First"}, {"id":"b", "type":"Investment", "account_id":"Second"}]
     def manual_security(self, *args): return self.manual
     def price_history(self, *args): return deepcopy(self.local)
 
@@ -115,6 +115,31 @@ def test_empty_scope_and_classification_conflict():
     assert calc(Store([]))["status"]=="empty"
     asset,=calc(Store([holding(),holding(asset_class="ETF",account_id="b")]))["assets"]
     assert "classification_conflict" in asset["issues"] and asset["gross_value_ils"] is None
+
+
+@pytest.mark.parametrize("exchange,currency,accepted",[("Nasdaq",None,True),("NYSE","USD",True),("NYSE","EUR",False),(None,None,False),("LSE","USD",False)])
+def test_import_source_label_uses_only_verified_saved_exchange_metadata(exchange,currency,accepted):
+    hub=Hub()
+    hub.cached_view=lambda:SimpleNamespace(profile=lambda *args,**kwargs:({"exchange":exchange,"currency":currency},{}))
+    result=calc(Store([holding(stock_market="YAHOO")]),hub)
+    asset,=result['assets']
+    if accepted:
+        assert asset['gross_value_ils']==4400 and asset['change_percent']==pytest.approx(10)
+        assert asset['resolved_stock_market']==exchange.upper()
+        assert all(call['stock_market']==exchange.upper() for call in hub.calls)
+    else:
+        assert asset['gross_value_ils'] is None and asset['change_percent'] is None
+        assert 'unverified_listing' in asset['issues'] and not hub.calls
+
+
+def test_investment_account_membership_controls_holdings_not_stale_holding_labels():
+    store=Store([holding(account_id='a',account_type='ESOP'),holding('OUTSIDE',account_id='b',account_type='Investment')])
+    store.list_accounts=lambda:[{'id':'a','type':'Investment'},{'id':'b','type':'ESOP'}]
+    result=calc(store)
+    assert [row['id'] for row in result['accounts']]==['a']
+    assert [row['symbol'] for row in result['assets']]==['AAA']
+    assert list(result['account_assets'])==['a']
+    with pytest.raises(ValueError,match='heatmap_unknown_account'): calc(store,account_id='b')
 
 
 @pytest.mark.parametrize("bad",[holding(account_id="b",quantity=float('nan')),holding(account_id="b",asset_class="ETF")])

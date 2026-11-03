@@ -17,7 +17,7 @@ class Store:
     def __init__(self):
         self.prefs = {}
         self._sync_lock = RLock()
-        self.accounts = [{"id": "a", "currency": "USD"}, {"id": "b", "currency": "USD"}]
+        self.accounts = [{"id": "a", "currency": "USD", "type": "Investment"}, {"id": "b", "currency": "USD", "type": "Investment"}]
         self.snapshots = [
             {"account_db_id": "a", "snapshot_date": "2024-01-01", "value": 100},
             {"account_db_id": "b", "snapshot_date": "2024-01-01", "value": 200},
@@ -62,6 +62,29 @@ def test_default_period_uses_saved_boundaries_and_preserves_independent_scopes()
     assert result["result"]["benchmark"]["twrr"]["value"] == pytest.approx(20)
     assert benchmark_comparison(store)["result"]["portfolio"]["status"] == "missing_portfolio"
     assert result["index_dataset"]["id"] == "sp500"
+
+
+def test_legacy_all_account_input_is_not_reused_as_investment_only_history():
+    store=Store()
+    legacy=portfolio()
+    store.prefs['benchmark_portfolio_v1:all']=legacy
+    assert benchmark_inputs(store)['dataset'] is None
+    save_portfolio_inputs(store,portfolio(source='Investment statements only'))
+    assert benchmark_inputs(store)['dataset']['source']=='Investment statements only'
+    assert store.prefs['benchmark_portfolio_v1:all']==legacy
+
+
+def test_aggregate_inputs_are_bound_to_the_actual_investment_account_membership():
+    store=Store()
+    saved=save_portfolio_inputs(store,portfolio())
+    assert saved['investment_account_ids']==['a','b']
+    store.accounts[1]['type']='ESOP'
+    assert benchmark_inputs(store)['dataset'] is None
+    assert store.prefs['benchmark_portfolio_v2:all_investments']['investment_account_ids']==['a','b']
+    save_portfolio_inputs(store,portfolio())
+    assert benchmark_inputs(store)['dataset']['investment_account_ids']==['a']
+    store.accounts.append({'id':'c','type':'Investment','currency':'USD'})
+    assert benchmark_inputs(store)['dataset'] is None
 
 
 def test_single_observation_remains_editable_with_missing_boundary_explanation():

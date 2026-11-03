@@ -5,6 +5,8 @@ evidence only; they are not a return or an automatic quality rating.
 """
 from __future__ import annotations
 
+from .investment_scope import investments
+
 from copy import deepcopy
 from datetime import date, datetime, timezone
 import json
@@ -96,10 +98,19 @@ def _safe_trade(tx, accounts):
 
 
 def _ledger(store):
+    store = investments(store)
     accounts = store.list_accounts()
     by_account = {row["id"]: row for row in accounts}
     trades = {str(tx.get("id")): _safe_trade(tx, by_account) for tx in store.list_transactions()}
     return accounts, trades
+
+
+def _entry_allowed(item, account_ids, transaction_accounts):
+    # A deleted trade can keep its original notes while its authoritative
+    # account remains Investment. A moved trade must also still be in scope.
+    return item["trade"].get("account_id") in account_ids and (
+        item["transaction_id"] not in transaction_accounts
+        or transaction_accounts[item["transaction_id"]] in account_ids)
 
 
 def _decode(raw, transaction_id=None):
@@ -211,6 +222,7 @@ def _view(item, trades, prices, today):
 
 
 def journal_payload(store, *, account_id="", action="", review_status="", query="", today=None):
+    store = investments(store)
     today = today or date.today()
     if not isinstance(today, date):
         raise JournalError("journal_invalid_date")
@@ -227,14 +239,9 @@ def journal_payload(store, *, account_id="", action="", review_status="", query=
     if len(rows) > MAX_ENTRIES:
         raise JournalError("journal_entry_limit")
     entries = [_decode(row["value"], row["key"][len(PREFIX):]) for row in rows]
-    # Preserved entries remain discoverable after their account is removed.
     known = {row["id"] for row in accounts}
-    for item in entries:
-        trade = item["trade"]
-        if trade.get("account_id") and trade["account_id"] not in known:
-            accounts.append({"id": trade["account_id"], "account_id": trade.get("account_label") or trade["account_id"],
-                             "currency": trade.get("currency"), "archived": True})
-            known.add(trade["account_id"])
+    transaction_accounts = store.transaction_accounts()
+    entries = [item for item in entries if _entry_allowed(item, known, transaction_accounts)]
     if account_id and account_id not in known:
         raise JournalError("journal_unknown_account")
     prices = _group_prices(store.list_prices())
@@ -259,6 +266,7 @@ def journal_payload(store, *, account_id="", action="", review_status="", query=
 
 
 def save_reason(store, payload, actor=None):
+    store = investments(store)
     if not isinstance(payload, dict):
         raise JournalError("journal_invalid_payload")
     transaction_id = _id(payload.get("transaction_id"))
@@ -274,6 +282,8 @@ def save_reason(store, payload, actor=None):
             _, trades = _ledger(store)
             current = trades.get(transaction_id)
             item = _read(conn, transaction_id)
+            if item is not None and not _entry_allowed(item, store.account_ids(), store.transaction_accounts()):
+                raise JournalError("journal_invalid_transaction")
             if (item["revision"] if item else 0) != expected:
                 raise JournalError("journal_conflict")
             if item is None:
@@ -306,6 +316,7 @@ def save_reason(store, payload, actor=None):
 
 
 def add_review(store, entry_id, payload, actor=None):
+    store = investments(store)
     entry_id = _id(entry_id)
     if not isinstance(payload, dict):
         raise JournalError("journal_invalid_payload")
@@ -318,7 +329,7 @@ def add_review(store, entry_id, payload, actor=None):
         with store._connect() as conn:
             conn.execute("begin immediate")
             item = _read(conn, entry_id)
-            if item is None:
+            if item is None or not _entry_allowed(item, store.account_ids(), store.transaction_accounts()):
                 raise JournalError("journal_not_found")
             if item["revision"] != expected:
                 raise JournalError("journal_conflict")

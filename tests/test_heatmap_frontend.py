@@ -26,7 +26,7 @@ const row=(account_id,quantity,gross_value_ils)=>({account_id,quantity,gross_val
 const a={id:'A|NASDAQ|USD',symbol:'AAA',name:'Alpha <company>',stock_market:'NASDAQ',currency:'USD',asset_class:'EQUITY',quantity:5,gross_quantity:15,gross_value_ils:6000,value_ils:2000,price:110,price_date:'2026-11-03',previous_price:100,previous_date:'2026-11-02',change_percent:10,basis:'close',source:'local',status:'ok',issues:[],accounts:[row('one',10,4000),row('two',-5,2000)]};
 const b={...a,id:'B|TASE|ILS',symbol:'BBB',name:'Beta',stock_market:'TASE',currency:'ILS',asset_class:'ETF',quantity:20,gross_quantity:20,gross_value_ils:4000,value_ils:4000,change_percent:null,previous_price:null,previous_date:null,status:'partial',issues:['missing_previous_price'],accounts:[row('two',20,4000)]};
 const c={...a,id:'C|NASDAQ|EUR',symbol:'CCC',currency:'EUR',asset_class:'MUTUAL_FUND',gross_value_ils:null,value_ils:null,change_percent:-1,status:'partial',issues:['missing_fx'],accounts:[row('one',10,null)]};
-const data={accounts:[{id:'one',account_id:'First'},{id:'two',account_id:'Second'},{id:'empty',account_id:'Empty'}],assets:[a,b,c],as_of:'2026-11-03',excluded:[{symbol:'BOND',stock_market:'TASE',account_id:'two',reason:'unsupported_asset'}],fx:[{currency:'USD',rate:4,date:'2026-11-03',source:'Saved <rates>',status:'ok'}]};
+const data={accounts:[{id:'one',type:'Investment',account_id:'First'},{id:'two',type:'Investment',account_id:'Second'},{id:'empty',type:'Investment',account_id:'Empty'}],assets:[a,b,c],as_of:'2026-11-03',excluded:[{symbol:'BOND',stock_market:'TASE',account_id:'two',reason:'unsupported_asset'}],fx:[{currency:'USD',rate:4,date:'2026-11-03',source:'Saved <rates>',status:'ok'}]};
 function seed(){resetHeatmap();heatmapView.data=structuredClone(data);renderHeatmap();}
 ''' + (ROOT / 'web/heatmap-ui.js').read_text() + '\n' + body
     result = subprocess.run(['node'], input=script, text=True, capture_output=True, cwd=ROOT)
@@ -123,4 +123,21 @@ let captures=0,restores=0;globalThis.preserveRenderedInteraction=node=>{assert.e
 for(const language of ['en','he']){state.language=language;const card=renderDashboardHeatmap();assert.ok(card.includes('class="chart-card portfolio-heatmap-card"'));assert.ok(card.includes('id="heatmapContent"'));assert.ok(!card.includes('role="dialog"'));assert.ok(!card.includes('data-modal='));assert.ok(card.includes(language==='he'?'מפת חום של מניות התיק':'Portfolio stocks heatmap'));
  renderHeatmap();assert.equal(heatmapView.account_id,'two');assert.equal(heatmapView.layout,'accounts');assert.deepEqual(heatmapView.selected,{id:a.id,account_id:'two'});assert.ok(nodes.heatmapSelection.innerHTML.includes(language==='he'?'חשיפה בחסר':'Short exposure'));assert.ok(target.innerHTML.includes('<details id="heatmapMethod"'));assert.ok(!target.innerHTML.includes('<details id="heatmapMethod" class="heatmap-method" open'));}
 assert.equal(captures,2);assert.equal(restores,2);
+''')
+
+
+def test_investment_account_selector_rejects_other_and_untyped_accounts():
+    run_ui(r'''
+const outside=[{id:'esop-only',type:'ESOP',account_id:'Outside employee account'},{id:'bank-only',type:'Bank',account_id:'Outside bank account'},{id:'pension-only',type:'Long-Term Savings',account_id:'Outside pension account'},{id:'unknown-only',account_id:'Outside untyped account'}];
+seed();heatmapView.data.accounts.push(...outside);renderHeatmap();
+const html=target.innerHTML;for(const row of outside)assert.ok(!html.includes(row.account_id));
+assert.ok(html.includes('All investment accounts'));
+''')
+
+
+def test_verified_import_exchange_is_shown_and_unverified_reason_is_localized():
+    run_ui(r'''
+assert.ok(heatmapLabel({...a,stock_market:'YAHOO',resolved_stock_market:'NASDAQ'}).includes('NASDAQ'));
+assert.ok(!heatmapLabel({...a,stock_market:'YAHOO'}).includes('YAHOO'));
+state.language='he';assert.equal(heatmapText(heatmapReason('unverified_listing')),'נדרשים נתוני בורסה שמורים כדי לזהות את הנייר המיובא הזה.');
 ''')

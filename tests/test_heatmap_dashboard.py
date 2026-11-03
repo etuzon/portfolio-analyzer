@@ -50,12 +50,12 @@ def test_dashboard_mount_and_background_load_replace_research_modal_and_help():
     assert '"Portfolio stocks heatmap": "מפת חום של מניות התיק"' in translations
 
 
-def test_employee_share_only_portfolio_can_mount_its_heatmap_without_other_empty_cards():
+def test_only_investment_account_shares_can_mount_the_heatmap_without_other_empty_cards():
     source = (ROOT / "web/app.js").read_text()
     renderer = source[source.index('function renderAnalytics('):source.index('function renderPortfolio(')]
     script = r'''
 const assert=require('node:assert/strict');
-const state={allPortfolioItems:[{holding:{asset_class:'RSU',account_type:'ESOP',quantity:10}}],localFunds:[],dashboard:{area:'all',edit:false}};
+const state={localAccounts:[{id:'invest',type:'Investment'},{id:'esop',type:'ESOP'}],allPortfolioItems:[{holding:{asset_class:'RSU',account_id:'invest',quantity:10}}],localFunds:[],dashboard:{area:'all',edit:false}};
 const board={innerHTML:''};const $=()=>board;
 const preserveRenderedInteraction=()=>()=>{},dashboardScrollPositions=()=>new Map(),restoreDashboardScrollPositions=()=>{};
 const renderDashboardControls=()=>{},assetMixGroups=()=>[],currencyAllocationGroups=()=>[],sum=()=>0;
@@ -65,6 +65,7 @@ let mounted=0;const renderHeatmap=()=>mounted++;
 ''' + renderer + r'''
 renderAnalytics([]);assert.ok(board.innerHTML.includes('portfolio stock heatmap'));assert.equal(mounted,1);
 state.dashboard.area='investments';renderAnalytics([]);assert.ok(board.innerHTML.includes('portfolio stock heatmap'));
+state.allPortfolioItems[0].holding.account_id='esop';renderAnalytics([]);assert.ok(board.innerHTML.includes('No portfolio data'));
 state.allPortfolioItems=[];renderAnalytics([]);assert.ok(board.innerHTML.includes('No portfolio data'));
 '''
     result = subprocess.run(["node"], input=script, text=True, capture_output=True)

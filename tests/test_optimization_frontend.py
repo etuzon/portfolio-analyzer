@@ -34,7 +34,7 @@ const target={_html:'',get innerHTML(){return this._html},set innerHTML(html){
 nodes.optimizationContent=target;nodes.optimizationModal={hidden:false};const $=id=>nodes[id];
 const api=(path,options={})=>new Promise((resolve,reject)=>pending.push({path,options,resolve,reject}));
 const assets=[{id:'a',symbol:'AAA',stock_market:'NASDAQ',name:'Name <safe>',currency:'USD',eligible:true,status:'ok',price_count:200,adjusted_available:true,basis:'adjusted_close',source:'cached',from:'2023-01-06',to:'2026-01-02',current_weight_percent:60},{id:'b',symbol:'BBB',stock_market:'NYSE',name:'Other & safe',currency:'USD',eligible:true,status:'ok',price_count:190,adjusted_available:false,basis:'close',source:'local',from:'2023-01-06',to:'2026-01-02',current_weight_percent:40}];
-const data={accounts:[{id:'acct-a',account_id:'One'},{id:'acct-b',account_id:'Two'}],currencies:['USD','ILS'],currency:'USD',period:'3y',assets,excluded:[{symbol:'SHORT',stock_market:'NYSE',reason:'short_position'}],min_observations:26,max_assets:30,as_of:'2026-01-05',from:'2023-01-06',to:'2026-01-02'};
+const data={accounts:[{id:'acct-a',type:'Investment',account_id:'One'},{id:'acct-b',type:'Investment',account_id:'Two'}],currencies:['USD','ILS'],currency:'USD',period:'3y',assets,excluded:[{symbol:'SHORT',stock_market:'NYSE',reason:'short_position'}],min_observations:26,max_assets:30,as_of:'2026-01-05',from:'2023-01-06',to:'2026-01-02'};
 const result={status:'ok',assets:[{...assets[0],historical_return_percent:8,expected_return_percent:8},{...assets[1],historical_return_percent:16,expected_return_percent:16}],current:{weights:[.6,.4],expected_return_percent:11.2,volatility_percent:11,sharpe:.83636},solution:{weights:[.25,.75],expected_return_percent:14,volatility_percent:10,sharpe:1.2},minimum_variance:{weights:[.5,.5],expected_return_percent:12,volatility_percent:8,sharpe:1.25},frontier:[{id:'f0',weights:[.5,.5],expected_return_percent:12,volatility_percent:8,sharpe:1.25},{id:'f1',weights:[.2,.8],expected_return_percent:14.4,volatility_percent:12,sharpe:1.033}],observations:100,from:'2023-01-06',to:'2026-01-02',requested_from:'2023-01-02',requested_to:'2026-01-05',annualization:52,basis:'close',currency:'USD',shrinkage_percent:10,warnings:['unadjusted_prices'],feasible_return_range:{min_percent:8,max_percent:16},covariance_status:'positive_definite',intervals:[{from:'2023-01-06',to:'2023-01-13'},{from:'2023-01-13',to:'2023-01-20'}]};
 function seed(){resetOptimization();optimizationView.data=structuredClone(data);optimizationView.config.currency='USD';optimizationView.selected=['a','b'];optimizationView.initialized=true;renderOptimization();}
 ''' + (ROOT / 'web/optimization-ui.js').read_text() + '\n' + body
@@ -147,3 +147,18 @@ for(const language of ['en','he']){
 }
 ''')
 
+
+
+def test_investment_account_selector_rejects_other_and_untyped_accounts():
+    run_ui(r'''
+const outside=[{id:'esop-only',type:'ESOP',account_id:'Outside employee account'},{id:'bank-only',type:'Bank',account_id:'Outside bank account'},{id:'pension-only',type:'Long-Term Savings',account_id:'Outside pension account'},{id:'unknown-only',account_id:'Outside untyped account'}];
+seed();optimizationView.data.accounts.push(...outside);renderOptimization();
+const html=target.innerHTML;for(const row of outside)assert.ok(!html.includes(row.account_id));
+assert.ok(html.includes('All investment accounts'));
+''')
+
+
+def test_removed_account_clears_old_allocation_and_recovers_to_investments():
+    run_ui(r'''
+(async()=>{seed();optimizationView.config.account_id='acct-a';optimizationView.overrides={a:999};optimizationView.result=structuredClone(result);const old=loadOptimization();pending[0].reject(new Error('optimization_unknown_account'));await new Promise(resolve=>setImmediate(resolve));assert.equal(optimizationView.config.account_id,'');assert.equal(optimizationView.result,null);assert.equal(optimizationView.data,null);assert.deepEqual(optimizationView.overrides,{});assert.ok(pending[1].path.includes('account_id=&'));pending[1].resolve({...data,accounts:data.accounts.filter(row=>row.id==='acct-b')});await old;assert.equal(optimizationView.data.accounts.length,1);})();
+''')

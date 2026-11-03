@@ -28,7 +28,7 @@ const pending = [];
 const api = path => new Promise((resolve,reject)=>pending.push({path,resolve,reject}));
 const cell = {value:0,observations:40,status:'ok',from:'2026-09-24',to:'2026-11-03'};
 const missing = {...cell,value:null,status:'insufficient_history',observations:0,from:null,to:null};
-const data = {status:'partial',asset_count:2,usable_pairs:0,pair_count:1,from:'2025-11-03',to:'2026-11-03',accounts:[{id:'a',account_id:'One'}],assets:[{symbol:'AAA',stock_market:'NASDAQ',currency:'USD',price_count:41,basis:'adjusted_close',from:'2026-09-24',to:'2026-11-03'},{symbol:'BBB',stock_market:'NASDAQ',currency:'USD',price_count:0,basis:'close',from:null,to:null}],matrix:[[cell,missing],[missing,cell]]};
+const data = {status:'partial',asset_count:2,usable_pairs:0,pair_count:1,from:'2025-11-03',to:'2026-11-03',accounts:[{id:'a',type:'Investment',account_id:'One'}],assets:[{symbol:'AAA',stock_market:'NASDAQ',currency:'USD',price_count:41,basis:'adjusted_close',from:'2026-09-24',to:'2026-11-03'},{symbol:'BBB',stock_market:'NASDAQ',currency:'USD',price_count:0,basis:'close',from:null,to:null}],matrix:[[cell,missing],[missing,cell]]};
 ''' + (ROOT / "web/correlation-ui.js").read_text() + "\n" + body
     result = subprocess.run(["node"], input=script, text=True, cwd=ROOT, capture_output=True)
     assert result.returncode == 0, result.stderr
@@ -112,3 +112,18 @@ def test_all_added_static_modal_and_help_copy_translates():
     script += "process.stdout.write(JSON.stringify(parts.filter(value=>/[A-Za-z]/.test(value)&&window.PortfolioI18n.translate(value,'he')===value)));"
     result = subprocess.run(["node"], input=script, text=True, capture_output=True, check=True)
     assert json.loads(result.stdout) == []
+
+
+def test_investment_account_selector_rejects_other_and_untyped_accounts():
+    run_ui(r'''
+const outside=[{id:'esop-only',type:'ESOP',account_id:'Outside employee account'},{id:'bank-only',type:'Bank',account_id:'Outside bank account'},{id:'pension-only',type:'Long-Term Savings',account_id:'Outside pension account'},{id:'unknown-only',account_id:'Outside untyped account'}];
+correlationView={...correlationView,status:"ready",data,accounts:[...data.accounts,...outside]};renderCorrelation();
+const html=nodes.correlationAccount.innerHTML;for(const row of outside)assert.ok(!html.includes(row.account_id));
+assert.ok(html.includes('All investment accounts'));
+''')
+
+
+def test_removed_account_recovers_to_investment_scope():
+    run_ui(r'''
+(async()=>{nodes.correlationAccount.value='removed';const old=loadCorrelation();pending[0].reject(new Error('unknown_account'));await new Promise(resolve=>setImmediate(resolve));assert.equal(nodes.correlationAccount.value,'');assert.equal(correlationView.data,null);assert.ok(pending[1].path.includes('account_id='));pending[1].resolve(data);await old;assert.equal(correlationView.status,'ready');})();
+''')

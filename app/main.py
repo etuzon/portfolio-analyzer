@@ -44,6 +44,7 @@ from .diagnostics import Diagnostics, TRACE_ID
 from .company_logos import CompanyLogoService
 from .correlation import portfolio_correlation
 from .heatmap import stock_heatmap
+from .investment_scope import investments
 from .benchmark import BenchmarkError
 from .trading_journal import JournalError, journal_payload, save_reason, add_review
 from .optimization import OptimizationError
@@ -4757,6 +4758,7 @@ def _portfolio_alert_rows(required_metrics: set[str] | None = None, progress=Non
     if progress:
         progress("loading_saved_data")
     analyses, _cache_status = _portfolio_alert_source_items()
+    investment_ids = {row["id"] for row in investments(local_store).list_accounts()}
     all_metrics = required_metrics is None
     required_metrics = required_metrics or set()
     needs_financials = all_metrics or bool(required_metrics & {
@@ -4770,7 +4772,7 @@ def _portfolio_alert_rows(required_metrics: set[str] | None = None, progress=Non
     for analysis in analyses:
         holding = analysis.get("holding") or {}
         asset_class = str(holding.get("asset_class") or holding.get("asset_sub_class") or "").upper()
-        if str(holding.get("account_type") or "").upper() == "ESOP" or asset_class in {"RSU", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"}:
+        if holding.get("account_id") not in investment_ids or asset_class in {"STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"}:
             continue
         symbol = str(holding.get("symbol") or "").upper().strip()
         if not symbol:

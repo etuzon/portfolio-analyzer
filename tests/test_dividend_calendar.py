@@ -20,7 +20,7 @@ class Store:
                           for symbol, account, quantity in [("AAA","a",2),("AAA","b",200),("BBB","a",3),("CCC","a",4),("EMPTY","a",5)]]
         self.local = {}; self.transactions = []
     def holdings(self):return [SimpleNamespace(holding=h) for h in self.positions]
-    def list_accounts(self):return [{"id":"a","account_id":"First"},{"id":"b","account_id":"Second"}]
+    def list_accounts(self):return [{"id":"a","account_id":"First","type":"Investment"},{"id":"b","account_id":"Second","type":"Investment"}]
     def list_transactions(self):return self.transactions
     def manual_security(self,*_args):return None
     def price_history(self,symbol,market,*_args):return self.local.get((symbol,market),[])
@@ -142,7 +142,7 @@ def test_partial_stale_and_missing_inputs_do_not_get_highest_badges(evidence):
 def test_different_listing_short_derivatives_and_currency_conflicts_are_not_mixed(evidence):
     store,hub=evidence
     store.positions += [Holding(symbol="AAA",stock_market="TASE",asset_class="EQUITY",currency="ILS",account_id="a",quantity=5),
-                        Holding(symbol="SHORT",stock_market="NASDAQ",asset_class="EQUITY",quantity=-1),Holding(symbol="OPT",stock_market="NASDAQ",asset_class="OPTION",quantity=1)]
+                        Holding(symbol="SHORT",stock_market="NASDAQ",asset_class="EQUITY",account_id="a",quantity=-1),Holding(symbol="OPT",stock_market="NASDAQ",asset_class="OPTION",account_id="a",quantity=1)]
     data=result(evidence)
     tase=next(row for row in data["assets"] if row["stock_market"]=="TASE")
     assert tase["annual_yield_percent"] is None and len(data["excluded"])==2

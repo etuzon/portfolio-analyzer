@@ -3,7 +3,7 @@ let correlationView = { version: 0, status: "idle", data: null, accounts: [], se
 
 function resetCorrelation() {
   correlationView = { version: correlationView.version + 1, status: "idle", data: null, accounts: [], selected: null };
-  if ($("correlationAccount")) $("correlationAccount").innerHTML = `<option value="">${esc(t("Any account"))}</option>`;
+  if ($("correlationAccount")) $("correlationAccount").innerHTML = `<option value="">${esc(t("All investment accounts"))}</option>`;
   renderCorrelation();
 }
 
@@ -22,7 +22,7 @@ function renderCorrelation() {
   const view = correlationView;
   const account = $("correlationAccount");
   const chosen = account.value;
-  account.innerHTML = `<option value="">${esc(t("Any account"))}</option>` + view.accounts.map(row => `<option value="${esc(row.id)}">${esc(accountLabel(row))}</option>`).join("");
+  account.innerHTML = `<option value="">${esc(t("All investment accounts"))}</option>` + view.accounts.filter(row => row.type === "Investment").map(row => `<option value="${esc(row.id)}">${esc(accountLabel(row))}</option>`).join("");
   account.value = chosen;
   target.setAttribute("aria-busy", String(view.status === "loading"));
   $("correlationRecalculate").disabled = view.status === "loading";
@@ -84,10 +84,11 @@ async function loadCorrelation() {
     const data = await api(`/api/portfolio/correlation?${params}`);
     if (version !== correlationView.version) return;
     correlationView.data = data;
-    correlationView.accounts = data.accounts || [];
+    correlationView.accounts = (data.accounts || []).filter(row => row.type === "Investment");
     correlationView.status = "ready";
-  } catch {
+  } catch (error) {
     if (version !== correlationView.version) return;
+    if(params.get("account_id") && (error?.code || error?.message)==="unknown_account") { $("correlationAccount").value=""; correlationView.accounts=[]; correlationView.data=null; return loadCorrelation(); }
     correlationView.status = "error";
   }
   if (version === correlationView.version) renderCorrelation();

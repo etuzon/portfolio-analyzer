@@ -8,6 +8,7 @@ import math
 import numpy as np
 
 from .optimization import OptimizationError, solve_portfolio, portfolio_metrics
+from .investment_scope import investments
 
 PERIODS = {"1y": 365, "3y": 1096, "5y": 1827}
 MIN_OBSERVATIONS = 26
@@ -16,6 +17,7 @@ ANNUALIZATION = 52
 ALLOWED_ASSETS = {"EQUITY", "ETF", "MUTUALFUND", "RSU", "STOCK"}
 US_MARKETS = {"US", "NYSE", "NASDAQ", "NYSEARCA", "AMEX", "OTC"}
 IL_MARKETS = {"TASE", "TLV", "TELAVIV"}
+PROVIDER_MARKETS = {"YAHOO", "YAHOO_FINANCE", "ALPHA_VANTAGE", "FINANCIAL_MODELING_PREP"}
 
 
 def _positive(value):
@@ -99,10 +101,22 @@ def _history(store, market_hub, asset, start, today):
     manual = store.manual_security(symbol, market)
     # Cache identity is supported for US/USD and Israeli/ILS listings. Other
     # exchanges require currency-qualified local evidence, never a bare US alias.
-    cache_qualified = (market in US_MARKETS and asset["currency"] == "USD") or (market in IL_MARKETS and asset["currency"] == "ILS")
+    resolved_market = market
+    if market in PROVIDER_MARKETS:
+        # Imported portfolios sometimes persist the DATA SOURCE as the market.
+        # Saved exchange metadata establishes listing identity; never assume a
+        # bare imported ticker is a US listing from the source label alone.
+        alias = (manual or {}).get("secondary_symbol") or asset["secondary_symbol"]
+        profile = market_hub.cached_view().profile(symbol, stock_market=market, secondary_symbol=alias)[0] if callable(getattr(market_hub, "cached_view", None)) else {}
+        exchange = str(profile.get("exchange") or "").strip().upper()
+        profile_currency = str(profile.get("currency") or "").strip().upper()
+        resolved_market = exchange if not profile_currency or profile_currency == asset["currency"] else ""
+    asset["resolved_stock_market"] = resolved_market
+    cache_qualified = (resolved_market in US_MARKETS and asset["currency"] == "USD") or (resolved_market in IL_MARKETS and asset["currency"] == "ILS")
+    asset["history_identity"] = "verified" if cache_qualified else "local_only"
     saved = []
     if cache_qualified and not (manual and not manual.get("secondary_symbol")):
-        saved, _ = market_hub.cached_prices(symbol, start, today, stock_market=market,
+        saved, _ = market_hub.cached_prices(symbol, start, today, stock_market=resolved_market,
                                            secondary_symbol=(manual or {}).get("secondary_symbol") or asset["secondary_symbol"])
     raw, adjusted = {}, {}
     for row in saved:
@@ -131,6 +145,7 @@ def _history(store, market_hub, asset, start, today):
 
 
 def _prepare(store, market_hub, account_id, period, currency, today):
+    store = investments(store)
     accounts = _scope(store, account_id, period)
     assets, excluded = _universe(store, account_id)
     currencies = sorted({row["currency"] for row in assets if row["currency"]})

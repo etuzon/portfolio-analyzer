@@ -21,7 +21,7 @@ const XRAY_ERRORS = {
 
 function resetXray() {
   xrayView = { version: xrayView.version + 1, editorVersion: xrayView.editorVersion + 1, fileVersion: xrayView.fileVersion + 1, operation: xrayView.operation + 1, data: null, error: "", loading: false, busy: false, editorLoading: false, fileLoading: false, target: "", drafts: {}, message: "" };
-  if ($("xrayAccount")) $("xrayAccount").innerHTML = `<option value="">${esc(t("Any account"))}</option>`;
+  if ($("xrayAccount")) $("xrayAccount").innerHTML = `<option value="">${esc(t("All investment accounts"))}</option>`;
   if ($("xrayFund")) $("xrayFund").innerHTML = "";
   XRAY_FIELDS.forEach(id => { if ($(id)) $(id).value = ""; });
   renderXray();
@@ -56,7 +56,7 @@ function renderXray() {
   const view = xrayView, data = view.data;
   const chosen = $("xrayAccount").value;
   if (data) {
-    $("xrayAccount").innerHTML = `<option value="">${esc(t("Any account"))}</option>` + data.accounts.map(row => `<option value="${esc(row.id)}">${esc(accountLabel(row))}</option>`).join("");
+    $("xrayAccount").innerHTML = `<option value="">${esc(t("All investment accounts"))}</option>` + data.accounts.filter(row => row.type === "Investment").map(row => `<option value="${esc(row.id)}">${esc(accountLabel(row))}</option>`).join("");
     $("xrayAccount").value = chosen;
   }
   $("xrayStatus").textContent = t(view.loading ? "Reading saved fund reports…" : view.error || "");
@@ -67,8 +67,8 @@ function renderXray() {
     $("xrayResults").innerHTML = "";
     return;
   }
-  const accounts = new Map(data.accounts.map(row => [row.id, accountLabel(row)]));
-  const positionText = positions => positions.map(row => `${esc(accounts.get(row.account_id) || t("Account"))} · ${esc(t(row.quantity < 0 ? "Short" : "Long"))}`).join("<br>");
+  const accounts = new Map(data.accounts.filter(row => row.type === "Investment").map(row => [row.id, accountLabel(row)]));
+  const positionText = positions => positions.map(row => `${esc(accounts.get(row.account_id) || t("Investment account"))} · ${esc(t(row.quantity < 0 ? "Short" : "Long"))}`).join("<br>");
   const funds = new Map(data.funds.map(row => [xrayFundKey(row), row]));
   const securityHtml = row => `<bdi>${esc(xrayListing(row))}</bdi>${row.name ? `<small dir="auto">${esc(row.name)}</small>` : ""}`;
   const directHtml = row => row.direct.length ? positionText(row.direct) : esc(t("Through funds only"));
@@ -107,6 +107,7 @@ async function loadXray() {
     loaded = true;
   } catch (error) {
     if (version !== xrayView.version) return;
+    if(params.get("account_id") && (error?.code || error?.message)==="xray_unknown_account") { $("xrayAccount").value=""; xrayView.data=null; xrayView.loading=false; return loadXray(); }
     xrayView.error = XRAY_ERRORS[error.message] || "Could not load X-Ray. Use Reload to retry.";
   }
   if (version !== xrayView.version) return;

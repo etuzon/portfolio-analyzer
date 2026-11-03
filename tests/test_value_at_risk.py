@@ -37,7 +37,7 @@ def holding(symbol="AAA", **kwargs):
 class Store:
     def __init__(self, holdings=None, *, accounts=None, transactions=None, funds=None, local=None, manual=None):
         self.positions = holdings if holdings is not None else [holding()]
-        self.accounts = accounts if accounts is not None else [{"id": "a", "account_id": "Synthetic account", "currency": "USD", "initial_cash": 0}]
+        self.accounts = accounts if accounts is not None else [{"id": "a", "type":"Investment", "account_id": "Synthetic account", "currency": "USD", "initial_cash": 0}]
         self.transactions = transactions or []
         self.funds = funds or []
         self.local = local or {}
@@ -85,7 +85,7 @@ def test_price_and_fx_losses_compound_instead_of_adding_percentages():
 
 
 def test_ils_stock_needs_no_fx_history_and_keeps_its_recorded_units():
-    store=Store([holding(stock_market="TASE",currency="ILS")], accounts=[{"id":"a","currency":"ILS","initial_cash":0}])
+    store=Store([holding(stock_market="TASE",currency="ILS")], accounts=[{"id":"a", "type":"Investment","currency":"ILS","initial_cash":0}])
     result=calculate(store,Hub({"AAA":prices(.9)}),snapshots={})
     assert result["status"]=="ok" and result["fx"]==[]
     assert result["portfolio_value_ils"]==pytest.approx(1000)
@@ -94,7 +94,7 @@ def test_ils_stock_needs_no_fx_history_and_keeps_its_recorded_units():
 
 @pytest.mark.parametrize("amount,monthly_ratio,loss",[(1000,.9,400),(-1000,1.1,400)])
 def test_foreign_cash_and_borrowing_have_currency_risk(amount,monthly_ratio,loss):
-    store=Store([], accounts=[{"id":"a","currency":"USD","initial_cash":amount}])
+    store=Store([], accounts=[{"id":"a", "type":"Investment","currency":"USD","initial_cash":amount}])
     result=calculate(store,snapshots={"USD":fx(monthly_ratio)})
     assert result["status"]=="ok" and result["var_ils"]==pytest.approx(loss)
     assert result["var_without_fx_ils"]==0
@@ -102,7 +102,7 @@ def test_foreign_cash_and_borrowing_have_currency_risk(amount,monthly_ratio,loss
 
 
 def test_ils_cash_has_zero_nominal_price_var_without_inventing_a_sample():
-    result=calculate(Store([],accounts=[{"id":"a","currency":"ILS","initial_cash":10000}]),snapshots={})
+    result=calculate(Store([],accounts=[{"id":"a", "type":"Investment","currency":"ILS","initial_cash":10000}]),snapshots={})
     assert result["status"]=="ok" and result["var_ils"]==0 and result["portfolio_value_ils"]==10000
     assert result["sample_count"]==0 and result["warnings"]==["nominal_ils_cash_only"]
     empty=calculate(Store([],accounts=[]),snapshots={})
@@ -111,7 +111,7 @@ def test_ils_cash_has_zero_nominal_price_var_without_inventing_a_sample():
 
 
 def test_signed_stock_risk_and_cash_hedge_are_joint_not_summed_independent_vars():
-    store=Store([holding(quantity=-10)],accounts=[{"id":"a","currency":"USD","initial_cash":1000}])
+    store=Store([holding(quantity=-10)],accounts=[{"id":"a", "type":"Investment","currency":"USD","initial_cash":1000}])
     result=calculate(store,snapshots={"USD":fx(.9)})
     assert result["status"]=="ok" and result["portfolio_value_ils"]==pytest.approx(0)
     assert result["var_ils"]==pytest.approx(0,abs=1e-9)
@@ -172,7 +172,7 @@ def test_uncovered_or_inconsistent_book_is_not_a_partial_portfolio_headline(code
 
 
 def test_scope_can_narrow_a_complete_account_away_from_an_unsupported_fund():
-    store=Store(accounts=[{"id":"a","currency":"USD","initial_cash":0},{"id":"b","currency":"ILS","initial_cash":0}],funds=[{"account_id":"b","amount":5000}])
+    store=Store(accounts=[{"id":"a", "type":"Investment","currency":"USD","initial_cash":0},{"id":"b", "type":"Investment","currency":"ILS","initial_cash":0}],funds=[{"account_id":"b","amount":5000}])
     assert calculate(store)["var_ils"] is None
     assert calculate(store,account_id="a")["status"]=="ok"
     with pytest.raises(VarError,match="var_unknown_account"):calculate(store,account_id="missing")
@@ -180,7 +180,7 @@ def test_scope_can_narrow_a_complete_account_away_from_an_unsupported_fund():
 
 def test_cash_model_matches_recorded_trade_actions_in_account_currency():
     tx={"account_db_id":"a","currency":"USD","quantity":1,"trade_date":"2026-01-01"}
-    store=Store(transactions=[{**tx,"action":"BUY","price":500},{**tx,"action":"SELL","price":200},{**tx,"action":"FEE","price":20},{**tx,"action":"DIVIDEND","price":10}],accounts=[{"id":"a","currency":"USD","initial_cash":1000}])
+    store=Store(transactions=[{**tx,"action":"BUY","price":500},{**tx,"action":"SELL","price":200},{**tx,"action":"FEE","price":20},{**tx,"action":"DIVIDEND","price":10}],accounts=[{"id":"a", "type":"Investment","currency":"USD","initial_cash":1000}])
     result=calculate(store)
     assert result["cash"][0]["amount"]==690
     assert result["portfolio_value_ils"]==pytest.approx((1000+690)*4)
@@ -218,7 +218,7 @@ def test_adjusted_histories_are_never_spliced_with_raw_local_overrides():
 
 
 def test_listing_currency_identity_conflicts_and_wrong_local_quotes_are_not_inferred():
-    store=Store([holding(),holding(currency="ILS",account_id="b")],accounts=[{"id":"a","currency":"USD","initial_cash":0},{"id":"b","currency":"ILS","initial_cash":0}])
+    store=Store([holding(),holding(currency="ILS",account_id="b")],accounts=[{"id":"a", "type":"Investment","currency":"USD","initial_cash":0},{"id":"b", "type":"Investment","currency":"ILS","initial_cash":0}])
     result=calculate(store)
     assert any(row["code"]=="currency_conflict" for row in result["issues"]) and result["var_ils"] is None
     manual=Store(manual={"AAA":{"secondary_symbol":""}},local={"AAA":[{"price_date":row.date.isoformat(),"price":row.close,"currency":"ILS","asset_class":"EQUITY"} for row in prices()]})
@@ -235,11 +235,11 @@ def test_invalid_fx_snapshots_do_not_create_constant_or_fabricated_history(chang
 
 
 def test_overflow_cash_quantities_and_values_remain_json_safe_unavailable():
-    for store in [Store([holding(quantity=float("inf"))]),Store([holding(quantity=1e308)]),Store([holding(quantity=1e308),holding(quantity=1e308)]),Store([],accounts=[{"id":"a","currency":"USD","initial_cash":float("nan")}])]:
+    for store in [Store([holding(quantity=float("inf"))]),Store([holding(quantity=1e308)]),Store([holding(quantity=1e308),holding(quantity=1e308)]),Store([],accounts=[{"id":"a", "type":"Investment","currency":"USD","initial_cash":float("nan")}])]:
         result=calculate(store)
         assert result["status"]=="unavailable" and result["var_ils"] is None
         assert JSONResponse(result).status_code==200
-    invalid=calculate(Store([],accounts=[{"id":"a","currency":"USD","initial_cash":None}]))
+    invalid=calculate(Store([],accounts=[{"id":"a", "type":"Investment","currency":"USD","initial_cash":None}]))
     assert invalid["cash"][0]["amount"] is None
 
 

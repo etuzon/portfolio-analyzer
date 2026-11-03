@@ -58,7 +58,7 @@ def test_revisioned_fx_survives_backup_and_does_not_invalidate_portfolio_models(
 
 def test_corrupt_unrelated_fx_is_explicit_and_repairable_without_blocking_ils_scope(tmp_path):
     store = LocalPortfolioStore(tmp_path / "portfolio.sqlite3")
-    account = store.save_account({"type":"Bank", "account_id":"ILS only", "currency":"ILS", "initial_cash":1000, "persons":[{"name":"Synthetic","birth_date":"01/01/1990"}]})
+    account = store.save_account({"type":"Investment", "account_id":"ILS only", "currency":"ILS", "initial_cash":1000, "persons":[{"name":"Synthetic","birth_date":"01/01/1990"}]})
     with store._connect() as conn:
         conn.execute("insert into app_preferences(key,value,updated_at) values(?,?,?)", (PREFIX+"USD", "broken json", "fixture"))
     histories = load_fx_histories(store)

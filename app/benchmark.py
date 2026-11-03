@@ -11,6 +11,8 @@ from datetime import date
 from math import exp, fsum, isfinite
 import re
 
+from .investment_scope import InvestmentStoreView
+
 MAX_ROWS = 10000
 MAX_LEVEL_AGE_DAYS = 7
 BENCHMARKS = [
@@ -306,7 +308,9 @@ def compute_comparison(dataset, index_dataset, date_from, date_to):
 
 
 def portfolio_key(account_id=""):
-    return "benchmark_portfolio_v1:" + (str(account_id) or "all")
+    if account_id:
+        return "benchmark_portfolio_v1:" + str(account_id)
+    return "benchmark_portfolio_v2:all_investments"
 
 
 def index_key(benchmark_id):
@@ -316,11 +320,17 @@ def index_key(benchmark_id):
 
 
 def load_portfolio(store, account_id=""):
-    return store.get_preference(portfolio_key(account_id), None)
+    saved = store.get_preference(portfolio_key(account_id), None)
+    if isinstance(store, InvestmentStoreView) and not account_id and saved is not None:
+        if not isinstance(saved, dict) or saved.get("investment_account_ids") != sorted(store.account_ids()):
+            return None  # Changing account membership invalidates an aggregate, not its preserved audit data.
+    return saved
 
 
 def save_portfolio(store, payload, account_id=""):
     normalized = normalize_portfolio(payload)
+    if isinstance(store, InvestmentStoreView) and not account_id:
+        normalized["investment_account_ids"] = sorted(store.account_ids())
     store.set_preference(portfolio_key(account_id), normalized)
     return normalized
 

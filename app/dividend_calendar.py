@@ -1,6 +1,8 @@
 """Read-only calendar and annual dividend comparisons from retained evidence."""
 from __future__ import annotations
 
+from .investment_scope import investments
+
 import calendar
 from datetime import date, datetime, timedelta, timezone
 from math import fsum, isfinite
@@ -64,6 +66,7 @@ def _records(rows, provider, currency):
 
 
 def build_dividend_calendar(store, market_hub, *, year=None, account_id="", today=None):
+    store = investments(store)
     today = today or date.today()
     year = today.year if year is None else year
     if not 1900 <= year <= 2200:
@@ -77,7 +80,7 @@ def build_dividend_calendar(store, market_hub, *, year=None, account_id="", toda
         h = analysis.holding
         if abs(h.quantity) <= 1e-9 or (account_id and h.account_id != account_id):
             continue
-        if h.quantity < 0 or h.asset_class not in SUPPORTED or h.account_type == "ESOP":
+        if h.quantity < 0 or h.asset_class not in SUPPORTED:
             excluded.append({"symbol": h.symbol, "stock_market": h.stock_market,
                              "reason": "short" if h.quantity < 0 else "unsupported"})
             continue

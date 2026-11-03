@@ -1,6 +1,8 @@
 """Read-only correlations of held securities using saved, date-aligned returns."""
 from __future__ import annotations
 
+from .investment_scope import investments
+
 from datetime import date, timedelta
 from math import fsum, isfinite, sqrt
 
@@ -48,6 +50,7 @@ def _pair(left, right):
 
 
 def portfolio_correlation(store, market_hub, *, period="1y", account_id="", today=None):
+    store = investments(store)
     today = today or date.today()
     start = today - timedelta(days=PERIOD_DAYS[period])
     accounts = store.list_accounts()

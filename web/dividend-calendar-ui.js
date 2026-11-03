@@ -2,7 +2,7 @@ let dividendCalendarView = {version:0, data:null, loading:false, error:"", selec
 
 function resetDividendCalendar() {
   dividendCalendarView = {version:dividendCalendarView.version + 1, data:null, loading:false, error:"", selected:""};
-  if ($("dividendCalendarAccount")) $("dividendCalendarAccount").innerHTML = `<option value="">${esc(t("Any account"))}</option>`;
+  if ($("dividendCalendarAccount")) $("dividendCalendarAccount").innerHTML = `<option value="">${esc(t("All investment accounts"))}</option>`;
   if ($("dividendCalendarYear")) $("dividendCalendarYear").innerHTML = "";
   renderDividendCalendar();
 }
@@ -43,7 +43,7 @@ function renderDividendCalendar() {
   yearSelect.innerHTML = [...new Set([...years, year])].sort((a,b)=>b-a).map(value => `<option value="${value}">${value}</option>`).join("");
   yearSelect.value = String(year);
   if (data) {
-    account.innerHTML = `<option value="">${esc(t("Any account"))}</option>` + data.accounts.map(row => `<option value="${esc(row.id)}">${esc(accountLabel(row))}</option>`).join("");
+    account.innerHTML = `<option value="">${esc(t("All investment accounts"))}</option>` + data.accounts.filter(row => row.type === "Investment").map(row => `<option value="${esc(row.id)}">${esc(accountLabel(row))}</option>`).join("");
     account.value = chosen;
   }
   target.setAttribute("aria-busy", String(view.loading));
@@ -105,8 +105,9 @@ async function loadDividendCalendar() {
     const data = await api(`/api/portfolio/dividend-calendar?${params}`);
     if (version !== dividendCalendarView.version) return;
     dividendCalendarView.data = data; dividendCalendarView.selected = "";
-  } catch {
+  } catch (error) {
     if (version !== dividendCalendarView.version) return;
+    if(params.get("account_id") && (error?.code || error?.message)==="unknown_dividend_account") { $("dividendCalendarAccount").value=""; dividendCalendarView.data=null; dividendCalendarView.loading=false; return loadDividendCalendar(); }
     dividendCalendarView.error = "Could not load the dividend calendar. Use Reload to retry.";
   }
   if (version !== dividendCalendarView.version) return;

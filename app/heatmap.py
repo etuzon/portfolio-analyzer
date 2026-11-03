@@ -5,7 +5,8 @@ from datetime import date, timedelta
 from hashlib import sha256
 import math
 
-from .optimization_data import ALLOWED_ASSETS, _class, _history, _positive, _finite_total
+from .optimization_data import ALLOWED_ASSETS, PROVIDER_MARKETS, _class, _history, _positive, _finite_total
+from .investment_scope import investments
 
 
 def _fx_evidence(market_hub, histories, currencies, today):
@@ -45,8 +46,12 @@ class _RecentEvidence:
         reader = getattr(self.hub, "cached_recent_prices", self.hub.cached_prices)
         return reader(*args, **kwargs)
 
+    def __getattr__(self, key):
+        return getattr(self.hub, key)
+
 
 def stock_heatmap(store, market_hub, fx_histories=None, *, account_id="", today=None, _account_views=True):
+    store = investments(store)
     today = today or date.today()
     accounts = store.list_accounts()
     if account_id and account_id not in {row["id"] for row in accounts}:
@@ -87,7 +92,7 @@ def stock_heatmap(store, market_hub, fx_histories=None, *, account_id="", today=
             history = _history(store, _RecentEvidence(market_hub), asset, today-timedelta(days=45), today)[0]
         dates = sorted(history)
         if not dates:
-            issues.append("missing_price")
+            issues.append("unverified_listing" if market in PROVIDER_MARKETS and asset.get("history_identity") == "local_only" else "missing_price")
         else:
             last = dates[-1]
             asset.update(price=history[last], price_date=last.isoformat())
@@ -110,7 +115,7 @@ def stock_heatmap(store, market_hub, fx_histories=None, *, account_id="", today=
         fx_status = "ok" if currency == "ILS" else fx.get(currency, {}).get("status", "missing_fx")
         if fx_status != "ok":
             issues.append(fx_status)
-        valuation_ok = not any(code in issues for code in ("classification_conflict", "invalid_position", "missing_price", "stale_price", "missing_fx", "stale_fx", "invalid_value"))
+        valuation_ok = not any(code in issues for code in ("classification_conflict", "invalid_position", "missing_price", "unverified_listing", "stale_price", "missing_fx", "stale_fx", "invalid_value"))
         per_account = {}
         for row in holdings:
             per_account.setdefault(row.account_id, []).append(row.quantity)

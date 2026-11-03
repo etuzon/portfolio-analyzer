@@ -23,7 +23,7 @@ const nodes={};const $=id=>nodes[id]||=( {value:'',innerHTML:'',textContent:'',h
 const document={addEventListener(){}};
 const pending=[];const api=(path,options)=>new Promise((resolve,reject)=>pending.push({path,options,resolve,reject}));
 const fund={symbol:'ONE',stock_market:'NYSE',status:'available',positions:[{account_id:'a',quantity:1}],covered_weight_percent:7.5,constituent_count:1,as_of:'2026-10-30',retrieved_at:'2026-11-03T12:00:00Z',source_name:'Example',source_kind:'local',source_url:'https://example.com/',nested_constituents:0};
-const data={account_id:'',accounts:[{id:'a',account_id:'First'}],fund_count:1,funds:[fund],fund_pairs:[],excluded:[],has_shorts:false,overlaps:[{symbol:'AAPL',market:'US',name:'Apple',direct:[{account_id:'a',quantity:2}],funds:[{symbol:'ONE',stock_market:'NYSE',weight_percent:7.5,nested:false}]}]};
+const data={account_id:'',accounts:[{id:'a',type:'Investment',account_id:'First'}],fund_count:1,funds:[fund],fund_pairs:[],excluded:[],has_shorts:false,overlaps:[{symbol:'AAPL',market:'US',name:'Apple',direct:[{account_id:'a',quantity:2}],funds:[{symbol:'ONE',stock_market:'NYSE',weight_percent:7.5,nested:false}]}]};
 ''' + (ROOT/'web/xray-ui.js').read_text() + '\n' + body
     result=subprocess.run(['node'],input=source,text=True,capture_output=True,cwd=ROOT)
     assert result.returncode==0,result.stderr
@@ -151,4 +151,19 @@ def test_all_xray_static_copy_and_error_messages_translate():
     assert json.loads(result.stdout)==[]
     run_ui(r'''
 for(const value of Object.values(XRAY_ERRORS))assert.notEqual(window.PortfolioI18n.translate(value,'he'),value);
+''')
+
+
+def test_investment_account_selector_rejects_other_and_untyped_accounts():
+    run_ui(r'''
+const outside=[{id:'esop-only',type:'ESOP',account_id:'Outside employee account'},{id:'bank-only',type:'Bank',account_id:'Outside bank account'},{id:'pension-only',type:'Long-Term Savings',account_id:'Outside pension account'},{id:'unknown-only',account_id:'Outside untyped account'}];
+data.accounts.push(...outside);xrayView.data=data;renderXray();
+const html=nodes.xrayAccount.innerHTML;for(const row of outside)assert.ok(!html.includes(row.account_id));
+assert.ok(html.includes('All investment accounts'));
+''')
+
+
+def test_removed_account_recovers_to_investment_scope():
+    run_ui(r'''
+(async()=>{nodes.xrayAccount=$('xrayAccount');nodes.xrayAccount.value='removed';const old=loadXray();pending[0].reject(new Error('xray_unknown_account'));await new Promise(resolve=>setImmediate(resolve));assert.equal(nodes.xrayAccount.value,'');assert.equal(xrayView.data,null);pending[1].resolve(data);await old;assert.equal(xrayView.data.fund_count,1);})();
 ''')

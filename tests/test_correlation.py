@@ -34,7 +34,7 @@ class Store:
         return [SimpleNamespace(holding=h) for h in self.items]
 
     def list_accounts(self):
-        return [{"id": "a", "account_id": "First"}, {"id": "b", "account_id": "Second"}]
+        return [{"id": "a", "account_id": "First", "type": "Investment"}, {"id": "b", "account_id": "Second", "type": "Investment"}]
 
     def price_history(self, symbol, market, *_args):
         return self.local.get((symbol, market), [])

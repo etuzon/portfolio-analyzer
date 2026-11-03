@@ -32,7 +32,7 @@ const target={_html:'',get innerHTML(){return this._html},set innerHTML(html){
 nodes.varContent=target;nodes.varModal={hidden:false};nodes.varSummaryContent={innerHTML:'',setAttribute(){}};
 const $=id=>nodes[id];const api=(path,options={})=>new Promise((resolve,reject)=>pending.push({path,options,resolve,reject}));
 const fx={currency:'USD',source:'Official <FX>',rates:[{date:'2025-01-01',rate:3.8},{date:'2026-01-01',rate:3.6}],revision:1,updated_at:'2026-01-02T00:00:00Z'};
-const data={status:'ok',reason:null,confidence:.95,horizon_days:30,currency:'ILS',var_ils:12000,expected_shortfall_ils:16000,var_without_fx_ils:7000,portfolio_value_ils:240000,sample_count:200,min_samples:100,from:'2025-01-01',to:'2026-01-01',valuation_date:'2026-01-02',accounts:[{id:'one',account_id:'First'},{id:'two',account_id:'Second'}],scope_complete:true,assets:[{symbol:'SAFE<asset>',stock_market:'NASDAQ',currency:'USD',quantity:20,value_ils:72000,current_price_date:'2026-01-01',status:'ok'}],cash:[{account_id:'one',currency:'USD',amount:1000,value_ils:3600,fx_date:'2026-01-01'}],fx:[{currency:'USD',source:'Official <FX>',count:400,from:'2025-01-01',to:'2026-01-01',current_rate:3.6,current_date:'2026-01-01',status:'ok'}],issues:[],warnings:['overlapping_scenarios','limited_history','fx_fixing_times'],scenarios:[{from:'2025-01-01',to:'2025-01-31',pnl_ils:-12000,loss_ils:12000},{from:'2025-02-01',to:'2025-03-03',pnl_ils:2000,loss_ils:-2000},{from:'2025-03-01',to:'2025-03-31',pnl_ils:-20000,loss_ils:20000}],currency_exposures:[{currency:'USD',value_ils:75600}],basis:'close',fx_histories:[fx]};
+const data={status:'ok',reason:null,confidence:.95,horizon_days:30,currency:'ILS',var_ils:12000,expected_shortfall_ils:16000,var_without_fx_ils:7000,portfolio_value_ils:240000,sample_count:200,min_samples:100,from:'2025-01-01',to:'2026-01-01',valuation_date:'2026-01-02',accounts:[{id:'one',type:'Investment',account_id:'First'},{id:'two',type:'Investment',account_id:'Second'}],scope_complete:true,assets:[{symbol:'SAFE<asset>',stock_market:'NASDAQ',currency:'USD',quantity:20,value_ils:72000,current_price_date:'2026-01-01',status:'ok'}],cash:[{account_id:'one',currency:'USD',amount:1000,value_ils:3600,fx_date:'2026-01-01'}],fx:[{currency:'USD',source:'Official <FX>',count:400,from:'2025-01-01',to:'2026-01-01',current_rate:3.6,current_date:'2026-01-01',status:'ok'}],issues:[],warnings:['overlapping_scenarios','limited_history','fx_fixing_times'],scenarios:[{from:'2025-01-01',to:'2025-01-31',pnl_ils:-12000,loss_ils:12000},{from:'2025-02-01',to:'2025-03-03',pnl_ils:2000,loss_ils:-2000},{from:'2025-03-01',to:'2025-03-31',pnl_ils:-20000,loss_ils:20000}],currency_exposures:[{currency:'USD',value_ils:75600}],basis:'close',fx_histories:[fx]};
 function seed(){resetVar();varView.data=structuredClone(data);varView.accounts=data.accounts;renderVar();}
 ''' + (ROOT / 'web/var-ui.js').read_text() + '\n' + body
     result = subprocess.run(['node'], input=script, text=True, capture_output=True, cwd=ROOT)
@@ -114,7 +114,7 @@ nodes.varFxSource.value='PRIVATE draft';const late=loadVar();resetVar();pending[
 
 def test_dashboard_summary_stays_all_accounts_and_auth_reset_rejects_late_response():
     run_ui(r'''
-(async()=>{seed();varView.account_id='two';const summary=loadVarSummary();assert.equal(pending[0].path,'/api/portfolio/var?account_id=&period=3y');pending[0].resolve(data);await summary;assert.ok(nodes.varSummaryContent.innerHTML.includes('₪ 12000'));assert.ok(nodes.varSummaryContent.innerHTML.includes('All accounts'));assert.ok(nodes.varSummaryContent.innerHTML.includes('about 5%'));
+(async()=>{seed();varView.account_id='two';const summary=loadVarSummary();assert.equal(pending[0].path,'/api/portfolio/var?account_id=&period=3y');pending[0].resolve(data);await summary;assert.ok(nodes.varSummaryContent.innerHTML.includes('₪ 12000'));assert.ok(nodes.varSummaryContent.innerHTML.includes('All investment accounts'));assert.ok(nodes.varSummaryContent.innerHTML.includes('about 5%'));
 varSummaryView.data={...data,scope_complete:false};renderVarSummary();assert.ok(!nodes.varSummaryContent.innerHTML.includes('₪ 12000'));
 const late=loadVarSummary();resetVar();pending[1].resolve(data);await late;assert.equal(varSummaryView.data,null);assert.ok(!nodes.varSummaryContent.innerHTML.includes('₪ 12000'));})();
 ''')
@@ -123,4 +123,19 @@ const late=loadVarSummary();resetVar();pending[1].resolve(data);await late;asser
 def test_finite_extreme_loss_values_cannot_create_invalid_chart_coordinates():
     run_ui(r'''
 seed();const html=varHistogram({...data,var_ils:1e307,scenarios:[{from:'2025-01-01',to:'2025-01-31',loss_ils:-1e308},{from:'2025-02-01',to:'2025-03-03',loss_ils:1e308}]});assert.ok(!html.includes('NaN'));assert.ok(!html.includes('Infinity'));assert.ok(html.includes('role="img"'));
+''')
+
+
+def test_investment_account_selector_rejects_other_and_untyped_accounts():
+    run_ui(r'''
+const outside=[{id:'esop-only',type:'ESOP',account_id:'Outside employee account'},{id:'bank-only',type:'Bank',account_id:'Outside bank account'},{id:'pension-only',type:'Long-Term Savings',account_id:'Outside pension account'},{id:'unknown-only',account_id:'Outside untyped account'}];
+seed();varView.accounts.push(...outside);renderVar();
+const html=target.innerHTML;for(const row of outside)assert.ok(!html.includes(row.account_id));
+assert.ok(html.includes('All investment accounts'));
+''')
+
+
+def test_reclassified_account_cannot_retain_old_risk_result():
+    run_ui(r'''
+(async()=>{seed();varView.account_id='one';const old=loadVar();pending[0].reject(new Error('var_unknown_account'));await new Promise(resolve=>setImmediate(resolve));assert.equal(varView.account_id,'');assert.equal(varView.data,null);assert.ok(!target.innerHTML.includes('₪ 12000'));assert.ok(pending[1].path.includes('account_id=&'));pending[1].resolve({...data,accounts:data.accounts.filter(row=>row.id==='two'),var_ils:222});await old;assert.equal(varView.data.var_ils,222);})();
 ''')

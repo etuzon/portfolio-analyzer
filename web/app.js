@@ -5151,8 +5151,9 @@ function renderAnalytics(items) {
   if (!state.dashboard) loadDashboardSettings();
   renderDashboardControls();
   const heatmapOnly = !items.length && !(state.localFunds || []).length && state.dashboard.area !== "employee";
+  const heatmapAccountIds = new Set((state.localAccounts || []).filter((account) => account.type === "Investment").map((account) => account.id));
   const hasHeatmapHoldings = (state.allPortfolioItems || []).some((item) =>
-    ["EQUITY", "STOCK", "RSU", "ETF", "MUTUALFUND"].includes(String(item.holding?.asset_class || "").toUpperCase()));
+    heatmapAccountIds.has(item.holding?.account_id) && ["EQUITY", "STOCK", "RSU", "ETF", "MUTUALFUND"].includes(String(item.holding?.asset_class || "").toUpperCase()));
   if (heatmapOnly && !hasHeatmapHoldings) {
     board.innerHTML = '<div class="empty">No portfolio data</div>';
     restoreInteraction();
@@ -6561,6 +6562,11 @@ async function savePositionTransaction() {
   });
 }
 
+function investmentJournalTrade(tx, fallbackAccountId = "") {
+  const accountId = tx.account_db_id || tx.account_id || fallbackAccountId;
+  return ["BUY", "SELL", "SHORT"].includes(tx.action) && (state.localAccounts || []).some((account) => account.id === accountId && account.type === "Investment");
+}
+
 function renderPositionTransactionHistory() {
   const detail = state.positionTransactionsDetail;
   if (!detail) return;
@@ -6585,7 +6591,7 @@ function renderPositionTransactionHistory() {
       <td>${money(amount, tx.currency || detail.currency, 2)}</td>
       <td>${esc(sourceLabel)}</td>
       <td>${esc(cleanSourceLabel(tx.comments || "")) || "—"}</td>
-      <td><button class="secondary compact-button" type="button" data-edit-position-transaction="${esc(tx.id)}">Edit</button>${["BUY", "SELL", "SHORT"].includes(tx.action) ? ` <button class="secondary compact-button" type="button" data-trading-journal="${esc(tx.id)}">${esc(t("Journal"))}</button>` : ""}</td>
+      <td><button class="secondary compact-button" type="button" data-edit-position-transaction="${esc(tx.id)}">Edit</button>${investmentJournalTrade(tx) ? ` <button class="secondary compact-button" type="button" data-trading-journal="${esc(tx.id)}">${esc(t("Journal"))}</button>` : ""}</td>
     </tr>`;
   }).join("") : '<tr><td colspan="8" class="empty-cell">No buy or sell transactions found for this position</td></tr>';
 }
@@ -8898,7 +8904,7 @@ function renderTradeHistoryDetails(row) {
       tx.price === null || tx.price === undefined ? t("Not available") : money(tx.price, tx.currency || row.currency, 4),
       tradeHistoryAmount(Number.isFinite(quantity) && Number.isFinite(tx.price) ? quantity * tx.price : null, tx.currency || row.currency),
       tradeHistorySourceLabel(tx.source)];
-    return `<tr>${values.map((value, index) => `<td data-label="${esc(t(headers[index]))}">${esc(value)}</td>`).join("")}<td data-label="${esc(t("Journal"))}">${["BUY", "SELL", "SHORT"].includes(tx.action) ? `<button class="secondary compact-button" type="button" data-trading-journal="${esc(tx.id)}">${esc(t("Journal"))}</button>` : "—"}</td></tr>`;
+    return `<tr>${values.map((value, index) => `<td data-label="${esc(t(headers[index]))}">${esc(value)}</td>`).join("")}<td data-label="${esc(t("Journal"))}">${investmentJournalTrade(tx, row.account_id) ? `<button class="secondary compact-button" type="button" data-trading-journal="${esc(tx.id)}">${esc(t("Journal"))}</button>` : "—"}</td></tr>`;
   }).join("")}</tbody></table>`;
 }
 

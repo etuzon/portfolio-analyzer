@@ -13,6 +13,7 @@ import re
 
 from .local_portfolio import _cash_delta
 from .optimization_data import _history
+from .investment_scope import investments
 
 PERIOD_DAYS = {"1y": 365, "3y": 1096, "5y": 1827}
 HORIZON_DAYS = 30
@@ -125,6 +126,7 @@ def _fx_history(currency, snapshots, start, today):
 
 
 def build_var(store, market_hub, fx_histories, *, account_id="", period="3y", today=None):
+    store = investments(store)
     today = today or date.today()
     if not isinstance(today, date):
         raise VarError("var_invalid_date")

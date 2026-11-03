@@ -6,7 +6,7 @@ let tradingJournalView = {
 };
 
 const TRADING_JOURNAL_HE = Object.freeze({
-  "Trading Journal": "יומן מסחר", "Account": "חשבון", "All accounts": "כל החשבונות",
+  "Trading Journal": "יומן מסחר", "Investment account": "חשבון השקעות", "All investment accounts": "כל חשבונות ההשקעה",
   "Action": "פעולה", "All actions": "כל הפעולות", "Buy": "קנייה", "Sell": "מכירה", "Short": "מכירה בחסר",
   "Add": "הוספה", "Remove": "הסרה", "Dividend": "דיבידנד", "Interest": "ריבית", "Fee": "עמלה",
   "Review": "סקירה", "All reviews": "כל הסקירות", "Not reviewed": "טרם נסקר", "Good": "טובה", "Mixed": "מעורבת", "Bad": "גרועה",
@@ -132,9 +132,8 @@ function renderTradingJournal() {
   const activeStart=document.activeElement?.selectionStart,activeEnd=document.activeElement?.selectionEnd;
   const v=tradingJournalView,d=v.data,f=v.filters,disabled=v.busy ? " disabled" : "",read=tradingJournalCanWrite() ? "" : " readonly";
   let html=`<p class="section-note">${tradingJournalEsc("Record why you made a trade, then revisit the decision and what you learned.")}</p>`;
-  const accounts=new Map((d?.accounts || []).map(row=>[row.id,{id:row.id,label:accountLabel(row)}]));
-  for(const row of d?.items || []) if(!accounts.has(row.trade.account_id)) accounts.set(row.trade.account_id,{id:row.trade.account_id,label:row.trade.account_label || row.trade.account_id});
-  html+=`<div class="journal-controls"><label class="field"><span>${tradingJournalEsc("Account")}</span><select id="journalAccount"${disabled}><option value="">${tradingJournalEsc("All accounts")}</option>${[...accounts.values()].map(row=>`<option value="${esc(row.id)}"${f.account===row.id ? " selected" : ""}>${esc(row.label)}</option>`).join("")}</select></label><label class="field"><span>${tradingJournalEsc("Action")}</span><select id="journalAction"${disabled}><option value="">${tradingJournalEsc("All actions")}</option>${["BUY","SELL","SHORT"].map(action=>`<option value="${action}"${f.action===action ? " selected" : ""}>${esc(tradingJournalAction(action))}</option>`).join("")}</select></label><label class="field"><span>${tradingJournalEsc("Review")}</span><select id="journalReviewFilter"${disabled}><option value="">${tradingJournalEsc("All reviews")}</option>${["pending","good","mixed","bad","due"].map(rating=>`<option value="${rating}"${f.review===rating ? " selected" : ""}>${rating==="due" ? tradingJournalEsc("Due for review") : esc(tradingJournalRating(rating))}</option>`).join("")}</select></label><label class="field journal-search"><span>${tradingJournalEsc("Search reasons or symbols")}</span><input id="journalQuery" value="${esc(f.query)}"${disabled}/></label><button type="button" class="secondary" id="journalReload"${disabled}>${tradingJournalEsc("Reload")}</button></div><p id="journalStatus" class="status-line" role="status" aria-live="polite">${tradingJournalEsc(v.loading ? "Loading saved journal…" : v.error)}</p>`;
+  const accounts=new Map((d?.accounts || []).filter(row=>row.type==="Investment").map(row=>[row.id,{id:row.id,label:accountLabel(row)}]));
+  html+=`<div class="journal-controls"><label class="field"><span>${tradingJournalEsc("Investment account")}</span><select id="journalAccount"${disabled}><option value="">${tradingJournalEsc("All investment accounts")}</option>${[...accounts.values()].map(row=>`<option value="${esc(row.id)}"${f.account===row.id ? " selected" : ""}>${esc(row.label)}</option>`).join("")}</select></label><label class="field"><span>${tradingJournalEsc("Action")}</span><select id="journalAction"${disabled}><option value="">${tradingJournalEsc("All actions")}</option>${["BUY","SELL","SHORT"].map(action=>`<option value="${action}"${f.action===action ? " selected" : ""}>${esc(tradingJournalAction(action))}</option>`).join("")}</select></label><label class="field"><span>${tradingJournalEsc("Review")}</span><select id="journalReviewFilter"${disabled}><option value="">${tradingJournalEsc("All reviews")}</option>${["pending","good","mixed","bad","due"].map(rating=>`<option value="${rating}"${f.review===rating ? " selected" : ""}>${rating==="due" ? tradingJournalEsc("Due for review") : esc(tradingJournalRating(rating))}</option>`).join("")}</select></label><label class="field journal-search"><span>${tradingJournalEsc("Search reasons or symbols")}</span><input id="journalQuery" value="${esc(f.query)}"${disabled}/></label><button type="button" class="secondary" id="journalReload"${disabled}>${tradingJournalEsc("Reload")}</button></div><p id="journalStatus" class="status-line" role="status" aria-live="polite">${tradingJournalEsc(v.loading ? "Loading saved journal…" : v.error)}</p>`;
   if(d) {
     const transactions=[...(d.transactions || [])];
     const selected=tradingJournalSelected();
@@ -174,7 +173,11 @@ async function loadTradingJournal() {
   try {
     const data=await api("/api/local/trading-journal");
     if(version!==tradingJournalView.version) return false;
+    const allowed=new Set((data.accounts || []).filter(row=>row.type==="Investment").map(row=>row.id));data.accounts=(data.accounts || []).filter(row=>allowed.has(row.id));data.transactions=(data.transactions || []).filter(row=>allowed.has(row.account_id));data.items=(data.items || []).filter(row=>allowed.has(row.trade?.account_id));
     v.data=data;v.loading=false;
+    if(v.filters.account&&!allowed.has(v.filters.account))v.filters.account="";
+    const eligible=new Set([...data.transactions,...data.items].map(row=>row.id));for(const id of Object.keys(v.drafts))if(!eligible.has(id))delete v.drafts[id];
+    if(v.selected&&!eligible.has(v.selected)){v.selected="";v.rendered="";}
     if(v.selected) tradingJournalDraft();
     renderTradingJournal();return true;
   } catch(error) {
