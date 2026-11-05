@@ -67,6 +67,18 @@ The Docker app is served at `https://localhost:6443`.
 
 ## Implementation Notes
 
+### Agent Team and Financial Ownership
+
+- Role and financial skills are versioned in `.agents/skills/`. Keep local user-level skill aliases pointed at these maintained copies rather than editing a second divergent copy.
+- Use `principal-engineering-triad` to coordinate applicable UX, development, financial, and independent QA phases. The main agent owns scope and handoffs; the development phase may remain with the main agent or have a dedicated owner.
+- For financial calculations, quote/FX normalization, scores, forecasts, portfolio risk, or investment conclusions, use `principal-financial-analyst` and assign a dedicated financial subagent when delegation is available and permitted. This instruction requests that delegation. Load its relevant domain skills on demand; each financial topic does not need its own agent.
+- The financial agent owns macro/microeconomic assumptions, company-report evidence, announcements, valuation, instrument conventions, scenario methods, and financial interpretation. Establish source cutoffs, units, formulas, missing-data behavior, scope, and raw numerical examples before implementation; re-check material outputs afterward. Maintained repository models below govern the implemented formulas.
+- Agents may ask each other directly for missing evidence and contracts, while recording consequential decisions with the coordinator. Ask the user only for material unresolved product choices, necessary personal suitability facts, or genuinely missing authorization; continue independent work while waiting.
+- Keep final QA independent for features and functional fixes under the triad. QA derives financial expectations from requirements and raw evidence; neither developer conclusions nor financial sign-off replace its review. Route financial-method defects to finance, implementation defects to development, and interaction defects to UX, then re-test.
+- Schedule role handoffs within available agent slots. Research-only questions need no software lifecycle; cosmetic-only edits need no financial agent. If delegation is unavailable, report same-agent review and any unmet independence requirement. Skill changes configure agent behavior; they do not install data feeds, enable broker execution, or authorize deployment.
+
+### Existing Models and Implementation Patterns
+
 - For financial score, report normalization, or forecast evaluation changes, read [.agents/skills/company-outlook-model/SKILL.md](.agents/skills/company-outlook-model/SKILL.md) and keep its implemented formula aligned with code.
 - For portfolio risk, cash-buffer, or borrowing-score changes, read [.agents/skills/trade-simulation/references/portfolio-risk.md](.agents/skills/trade-simulation/references/portfolio-risk.md) and keep the dashboard and simulator on the same model.
 - Prefer existing patterns in `app/local_portfolio.py`, `app/main.py`, and `web/app.js`.

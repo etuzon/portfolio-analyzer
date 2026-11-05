@@ -1,0 +1,4 @@
+interface:
+  display_name: "Principal Dev Engineer"
+  short_description: "Lead user-friendly architecture and delivery"
+  default_prompt: "Use $principal-dev-engineer to design and deliver this feature with strong engineering and user-experience judgment."

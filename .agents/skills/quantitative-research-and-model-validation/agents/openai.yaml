@@ -1,0 +1,3 @@
+interface:
+  display_name: "Quantitative Research and Model Validation"
+  short_description: "Evaluate financial signals without hindsight or leakage"

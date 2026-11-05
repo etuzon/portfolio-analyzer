@@ -1,0 +1,4 @@
+interface:
+  display_name: "Company Report Industry Outlook"
+  short_description: "Report peers, outlook, and Mermaid map."
+  default_prompt: "Use $company-report-industry-outlook to compare a company against peers, related industries, report numbers, a Mermaid relation diagram, and a final score."

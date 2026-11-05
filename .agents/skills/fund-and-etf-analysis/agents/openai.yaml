@@ -1,0 +1,3 @@
+interface:
+  display_name: "Fund and ETF Analysis"
+  short_description: "Compare fund holdings, costs, tracking, and structure"

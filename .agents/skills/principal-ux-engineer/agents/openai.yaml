@@ -1,0 +1,4 @@
+interface:
+  display_name: "Principal UX Engineer"
+  short_description: "Engineer intuitive, accessible product experiences"
+  default_prompt: "Use $principal-ux-engineer to prototype and validate this interaction from user intent through design-system handoff."

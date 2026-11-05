@@ -1,0 +1,4 @@
+interface:
+  display_name: "Principal QA Engineer"
+  short_description: "Validate behavior, quality, and release readiness"
+  default_prompt: "Use $principal-qa-engineer to design and execute a user-centered test strategy for this feature."

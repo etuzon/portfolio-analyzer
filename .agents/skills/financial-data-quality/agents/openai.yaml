@@ -1,0 +1,3 @@
+interface:
+  display_name: "Financial Data Quality"
+  short_description: "Verify financial sources, dates, units, and comparability"

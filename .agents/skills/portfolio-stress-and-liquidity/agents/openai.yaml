@@ -1,0 +1,3 @@
+interface:
+  display_name: "Portfolio Stress and Liquidity"
+  short_description: "Test portfolio shocks, leverage, and funding needs"

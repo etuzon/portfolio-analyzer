@@ -1,0 +1,4 @@
+interface:
+  display_name: "Principal Engineering Triad"
+  short_description: "Coordinate UX, development, finance, and independent QA"
+  default_prompt: "Use $principal-engineering-triad to coordinate this task across UX, development, independent QA, and financial analysis when relevant."

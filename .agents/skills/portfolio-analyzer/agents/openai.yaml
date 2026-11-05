@@ -1,0 +1,4 @@
+interface:
+  display_name: "Portfolio Analyzer"
+  short_description: "Analyze portfolio holdings, trends, and alerts"
+  default_prompt: "Use $portfolio-analyzer to build a Dockerized dashboard that analyzes my portfolio, fundamentals, trends, support/resistance, and alerts."
