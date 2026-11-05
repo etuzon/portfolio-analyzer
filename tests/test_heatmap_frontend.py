@@ -62,7 +62,7 @@ heatmapView.selected={id:b.id,account_id:''};renderHeatmapSelection();html=nodes
 ''')
 
 
-def test_supported_fund_and_bond_without_moves_show_weights_and_honest_valuation():
+def test_supported_fund_and_bond_without_moves_keep_weights_in_tooltip():
     run_ui(r'''
 seed();
 const fund={...a,id:'fund',symbol:'5139324',name:'Recorded fund',asset_class:'MUTUALFUND',currency:'ILS',stock_market:'TASE',quantity:100,gross_quantity:100,price:null,price_date:null,previous_price:null,previous_date:null,change_percent:null,gross_value_ils:1000,value_ils:1000,valuation_basis:'cost_basis',valuation_status:'estimated',unrealized_pnl_native:9999,unrealized_pnl_ils:9999,issues:['missing_price','estimated_value'],accounts:[{...row('one',100,1000),valuation_basis:'cost_basis',valuation_status:'estimated'}]};
@@ -71,13 +71,32 @@ heatmapView.data.assets=[fund,bond];heatmapView.data.excluded=[];
 for(const language of ['en','he']){
  state.language=language;renderHeatmap();const tiles=heatmapTileMap(heatmapScope());
  assert.equal((tiles.match(/class="heatmap-tile"/g)||[]).length,2);
- assert.ok(tiles.includes(language==='he'?'25.0% משקל':'25.0% weight'));
- assert.ok(tiles.includes(language==='he'?'75.0% משקל':'75.0% weight'));
+ const visibleTiles=tiles.replace(/aria-label="[^"]*"/g,'');
+ assert.ok(!visibleTiles.includes('25.0%'));assert.ok(!visibleTiles.includes('75.0%'));
+ assert.equal((visibleTiles.match(/class="heatmap-tile-change"><bdi>([^<]*)/g)||[]).length,2);
+ assert.ok(visibleTiles.includes(language==='he'?'לא זמין':'Unavailable'));
+ const weight=language==='he'?'משקל':'weight';
+ assert.ok(heatmapTooltipHtml(fund).includes(`25.0% ${weight}`));
+ assert.ok(heatmapTooltipHtml(bond).includes(`75.0% ${weight}`));
+ assert.ok(!heatmapListing(fund).includes(`25.0% ${weight}`));
  assert.equal((tiles.match(/background:#27354b/g)||[]).length,2);
  assert.ok(!target.innerHTML.includes('heatmap-unsized'));
  const tooltip=heatmapTooltipHtml(fund);assert.ok(tooltip.includes(language==='he'?'אומדן לפי עלות':'Cost-based estimate'));assert.ok(!tooltip.includes('9999'));
  heatmapView.selected={id:'bond',account_id:''};renderHeatmapSelection();assert.ok(nodes.heatmapSelection.innerHTML.includes('31/07/2026'));
 }
+for(const language of ['en','he']){
+ state.language=language;
+ for(const asset_class of ['EQUITY','STOCK','RSU','ETF','MUTUALFUND','BOND']){
+  const priced={...a,asset_class};
+  const tooltip=heatmapTooltipHtml(priced,[priced,b]);
+  assert.ok(tooltip.includes(language==='he'?'60.0% משקל':'60.0% weight'));
+  assert.ok(tooltip.includes('+10.00%'));
+  heatmapView.data.assets=[priced,b];
+  const visibleTiles=heatmapTileMap([priced,b]).replace(/aria-label="[^"]*"/g,'');
+  assert.ok(visibleTiles.includes('+10.00%'));assert.ok(!visibleTiles.includes('60.0%'));
+ }
+}
+heatmapView.data.assets=[fund,bond];
 state.language='en';const accountTooltip=heatmapTooltipHtml(bond,[bond]);assert.ok(accountTooltip.includes('100.0% weight'));assert.ok(!accountTooltip.includes('75.0% weight'));
 heatmapView.categories={stocks:true,bonds:false,funds:true};renderHeatmap();assert.deepEqual(heatmapScope().map(row=>row.id),['fund']);
 ''')

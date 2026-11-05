@@ -97,7 +97,6 @@ function heatmapValueFraction(asset, assets) {
   return (asset.gross_value_ils/max)/sized.reduce((sum,row)=>sum+row.gross_value_ils/max,0)*100;
 }
 function heatmapWeight(asset,assets) { const value=heatmapValueFraction(asset,assets);return heatmapKnown(value)?`${fmt(value,1)}% ${heatmapText("weight")}`:heatmapText("Unavailable"); }
-function heatmapTileMetric(asset,assets) { return heatmapKnown(asset.change_percent)?heatmapPercent(asset.change_percent):heatmapWeight(asset,assets); }
 function heatmapButtonLabel(asset,assets) { return `${heatmapLabel(asset)}; ${heatmapText(heatmapClass(asset))}; ${heatmapText("Gross value")}: ${heatmapMoney(asset.gross_value_ils)}; ${heatmapText("Weight of known gross holdings")}: ${heatmapWeight(asset,assets)}; ${heatmapText("Price change")}: ${heatmapPercent(asset.change_percent)}; ${heatmapText("Valuation basis")}: ${heatmapText(heatmapValuationBasis(asset))}; ${heatmapText("Valuation status")}: ${heatmapText(heatmapValuationStatus(asset))}${heatmapDirection(asset)?`; ${heatmapText(heatmapDirection(asset))}`:""}`; }
 function heatmapTileMap(assets, accountId="") {
   const sized=assets.filter(asset=>heatmapKnown(asset.gross_value_ils)&&asset.gross_value_ils>0);
@@ -105,12 +104,12 @@ function heatmapTileMap(assets, accountId="") {
   const all=heatmapView.data.assets;
   return `<div class="heatmap-canvas" role="group" aria-label="${heatmapEsc("Stock Heatmap")}">${heatmapRectangles(sized).map(rect=>{
     const asset=rect.asset,index=all.findIndex(row=>row.id===asset.id),label=heatmapButtonLabel(asset,assets),direction=heatmapDirection(asset);
-    return `<button type="button" class="heatmap-tile" style="left:${rect.x}%;top:${rect.y}%;width:${rect.width}%;height:${rect.height}%;background:${heatmapColor(asset.change_percent)}" data-heatmap-asset="${index}" data-heatmap-account="${esc(accountId)}" data-heatmap-label-mode="full" aria-label="${esc(label)}" aria-pressed="false"><span class="heatmap-tile-label" aria-hidden="true"><bdi class="heatmap-tile-symbol">${esc(asset.symbol)}</bdi><strong class="heatmap-tile-change"><bdi>${esc(heatmapTileMetric(asset,assets))}</bdi></strong><small class="heatmap-tile-value"><bdi>${esc(heatmapMoney(asset.gross_value_ils))}</bdi></small>${direction?`<small class="heatmap-tile-direction">${heatmapEsc(direction)}</small>`:""}</span></button>`;
+    return `<button type="button" class="heatmap-tile" style="left:${rect.x}%;top:${rect.y}%;width:${rect.width}%;height:${rect.height}%;background:${heatmapColor(asset.change_percent)}" data-heatmap-asset="${index}" data-heatmap-account="${esc(accountId)}" data-heatmap-label-mode="full" aria-label="${esc(label)}" aria-pressed="false"><span class="heatmap-tile-label" aria-hidden="true"><bdi class="heatmap-tile-symbol">${esc(asset.symbol)}</bdi><strong class="heatmap-tile-change"><bdi>${esc(heatmapPercent(asset.change_percent))}</bdi></strong><small class="heatmap-tile-value"><bdi>${esc(heatmapMoney(asset.gross_value_ils))}</bdi></small>${direction?`<small class="heatmap-tile-direction">${heatmapEsc(direction)}</small>`:""}</span></button>`;
   }).join("")}</div>`;
 }
-function heatmapListing(asset, accountId="", assets=heatmapScope(accountId || heatmapView.account_id)) {
+function heatmapListing(asset, accountId="") {
   const index=heatmapView.data.assets.findIndex(row=>row.id===asset.id);
-  return `<li><button type="button" class="heatmap-listing" data-heatmap-asset="${index}" data-heatmap-account="${esc(accountId)}" aria-pressed="false"><span><bdi>${esc(heatmapLabel(asset))}</bdi><small>${esc(asset.name || "")} · ${heatmapEsc(heatmapClass(asset))}${heatmapDirection(asset)?` · ${heatmapEsc(heatmapDirection(asset))}`:""}</small></span><span><bdi>${esc(heatmapMoney(asset.gross_value_ils))}</bdi><small><bdi>${esc(heatmapTileMetric(asset,assets))}</bdi></small></span></button></li>`;
+  return `<li><button type="button" class="heatmap-listing" data-heatmap-asset="${index}" data-heatmap-account="${esc(accountId)}" aria-pressed="false"><span><bdi>${esc(heatmapLabel(asset))}</bdi><small>${esc(asset.name || "")} · ${heatmapEsc(heatmapClass(asset))}${heatmapDirection(asset)?` · ${heatmapEsc(heatmapDirection(asset))}`:""}</small></span><span><bdi>${esc(heatmapMoney(asset.gross_value_ils))}</bdi><small><bdi>${esc(heatmapPercent(asset.change_percent))}</bdi></small></span></button></li>`;
 }
 function heatmapFact(label,value) { return `<div><dt>${heatmapEsc(label)}</dt><dd>${value}</dd></div>`; }
 function heatmapQuantity(value) { return heatmapKnown(value)?esc(fmt(value,4)):heatmapEsc("Unavailable"); }
