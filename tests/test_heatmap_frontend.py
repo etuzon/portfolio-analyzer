@@ -73,8 +73,10 @@ for(const language of ['en','he']){
  assert.equal((tiles.match(/class="heatmap-tile"/g)||[]).length,2);
  const visibleTiles=tiles.replace(/aria-label="[^"]*"/g,'');
  assert.ok(!visibleTiles.includes('25.0%'));assert.ok(!visibleTiles.includes('75.0%'));
- assert.equal((visibleTiles.match(/class="heatmap-tile-change"><bdi>([^<]*)/g)||[]).length,2);
- assert.ok(visibleTiles.includes(language==='he'?'לא זמין':'Unavailable'));
+ assert.ok(!visibleTiles.includes('class="heatmap-tile-change"'));
+ assert.ok(!visibleTiles.includes(language==='he'?'לא זמין':'Unavailable'));
+ assert.ok(visibleTiles.includes('5139324'));assert.ok(visibleTiles.includes('₪ 1000.00'));
+ assert.ok(heatmapTooltipHtml(fund).includes(language==='he'?'לא זמין':'Unavailable'));
  const weight=language==='he'?'משקל':'weight';
  assert.ok(heatmapTooltipHtml(fund).includes(`25.0% ${weight}`));
  assert.ok(heatmapTooltipHtml(bond).includes(`75.0% ${weight}`));
