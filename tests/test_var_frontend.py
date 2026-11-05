@@ -105,6 +105,23 @@ def test_dirty_refresh_does_not_make_old_draft_overwrite_new_official_history():
 ''')
 
 
+def test_daily_fx_source_is_localized_without_changing_saved_provenance_or_dirty_draft():
+    run_ui(r'''
+seed();
+varView.data.fx_histories[0].source='Recorded daily FX quotes';
+varView.data.fx[0].source='Recorded daily FX quotes';
+delete varView.drafts.USD;varView.renderedCurrency='';
+for(const language of ['he','en','he']){
+ state.language=language;renderVar();
+ assert.equal(nodes.varFxSource.value,language==='he'?'שערי מטבע יומיים שנשמרו':'Recorded daily FX quotes');
+ assert.ok(target.innerHTML.includes(language==='he'?'שמירת שער המטבע הנוכחי':'Record current FX rate'));
+ assert.ok(!target.innerHTML.includes('Refresh official FX history'));
+ varCapture();assert.equal(varView.drafts.USD.source,'Recorded daily FX quotes');
+}
+nodes.varFxSource.value='My edited source';varCapture();renderVar();assert.equal(nodes.varFxSource.value,'My edited source');
+''')
+
+
 def test_scope_request_race_and_logout_suppress_old_user_data():
     run_ui(r'''
 (async()=>{seed();const old=loadVar();nodes.varAccount.value='two';for(const listener of listeners.change)listener({target:nodes.varAccount});assert.equal(pending.length,2);pending[1].resolve({...data,var_ils:22222});await new Promise(r=>setImmediate(r));pending[0].resolve({...data,var_ils:11111});await old;assert.equal(varView.data.var_ils,22222);

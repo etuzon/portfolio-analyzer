@@ -50,7 +50,7 @@ from .trading_journal import JournalError, journal_payload, save_reason, add_rev
 from .optimization import OptimizationError
 from .optimization_data import optimization_universe, optimize_portfolio
 from .value_at_risk import VarError, build_var
-from .var_fx import VarFxError, load_fx_histories, save_fx_history, refresh_fx_history, maintain_fx_histories
+from .var_fx import VarFxError, load_fx_histories, save_fx_history, refresh_fx_history, maintain_fx_histories, record_current_fx_quote
 from .benchmark_data import benchmark_comparison, benchmark_inputs, save_portfolio_inputs, save_index_inputs, refresh_index
 from .xray import XrayError, build_xray, read_snapshot, require_fund, save_manual_report, snapshot_key
 from .dividend_calendar import build_dividend_calendar
@@ -4311,6 +4311,11 @@ def fx():
     quotes = []
     for pair in pairs:
         quote, status = hub().fx(pair)
+        if re.fullmatch(r"[A-Z]{3}/ILS", pair) and not pair.startswith("ILS/"):
+            try:
+                record_current_fx_quote(local_store, pair, quote, status)
+            except VarFxError as exc:
+                logger.warning("Current FX quote was not recorded for %s: %s", pair, str(exc))
         quotes.append({"pair": pair, "quote": quote, "status": status})
     return {"quotes": quotes}
 

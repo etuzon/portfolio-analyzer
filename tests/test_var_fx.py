@@ -1,6 +1,6 @@
 """Official FX identity, one-unit normalization, persistence and API permissions."""
 from copy import deepcopy
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -11,7 +11,7 @@ from app.auth import AuthStore
 from app.local_portfolio import LocalPortfolioStore
 from app.providers import BankOfIsraelFxHistoryProvider, ProviderError
 from app.var_fx import PREFIX, VarFxError, load_fx_histories, normalize_fx, save_fx_history, refresh_fx_history
-from app.var_fx import MANAGED_PROVIDER, maintain_fx_histories
+from app.var_fx import DAILY_ORIGIN, MANAGED_PROVIDER, maintain_fx_histories, record_current_fx_quote
 
 TODAY = date.today()
 
@@ -76,13 +76,13 @@ def test_provider_failure_and_delayed_refresh_preserve_newer_manual_history(tmp_
     payload = {"currency":"USD", "period":"3y", "expected_revision":1}
     def fail(*args): raise RuntimeError("private provider body")
     with pytest.raises(VarFxError, match="^var_fx_refresh_failed$"):
-        refresh_fx_history(store, SimpleNamespace(fx_history=fail), payload)
+        refresh_fx_history(store, SimpleNamespace(fx=fail), payload)
     assert load_fx_histories(store)["USD"] == first
-    def raced(currency, start, end):
+    def raced(pair):
         save_fx_history(store, {**snapshot(source="Newer manual correction"), "expected_revision":1})
-        return snapshot()
+        return current_quote()
     with pytest.raises(VarFxError, match="^var_fx_conflict$"):
-        refresh_fx_history(store, SimpleNamespace(fx_history=raced), payload)
+        refresh_fx_history(store, SimpleNamespace(fx=raced), payload)
     assert load_fx_histories(store)["USD"]["source"] == "Newer manual correction"
 
 
@@ -101,8 +101,8 @@ def test_authenticated_var_fx_workflow_permissions_cash_and_no_request_provider_
     history_calls = []
     def history(*args):
         history_calls.append(args)
-        return snapshot()
-    fake=SimpleNamespace(cached_prices=cached_prices, prices=live, fx=live, fx_history=history)
+        return current_quote()
+    fake=SimpleNamespace(cached_prices=cached_prices, prices=live, fx=history, fx_history=live)
     monkeypatch.setattr(main,"local_store",store);monkeypatch.setattr(main,"auth_store",auth);monkeypatch.setattr(main,"hub",lambda:fake)
     client=TestClient(main.app,base_url="https://localhost:6443")
     assert client.get('/api/portfolio/var').status_code==401
@@ -138,7 +138,11 @@ def investment_cash(store, currency="USD", amount=1000, account_type="Investment
         "persons": [{"name": "Synthetic", "birth_date": "01/01/1990"}]})
 
 
-def test_background_fx_seeds_required_currency_persists_and_avoids_repeat_download(tmp_path):
+def current_quote(rate=4.0, day=None, **changes):
+    return {"pair":"USD/ILS", "rate":rate, "time":(day or TODAY).isoformat(), **changes}, {"fixture_fx":"ok"}
+
+
+def test_current_capture_persists_without_backfill_and_same_day_is_idempotent(tmp_path):
     store = LocalPortfolioStore(tmp_path / "portfolio.sqlite3")
     investment_cash(store)
     investment_cash(store, "EUR", account_type="Bank")
@@ -146,23 +150,33 @@ def test_background_fx_seeds_required_currency_persists_and_avoids_repeat_downlo
     before = deepcopy(store.export_data()["data"])
     token = store.change_token()
     calls = []
-    def official(currency, start, end):
-        calls.append((currency, start, end))
-        return snapshot(currency)
-    market = SimpleNamespace(fx_history=official)
+    def current(pair):
+        calls.append(pair)
+        return current_quote()
+    def history(*args):
+        pytest.fail("Daily recording must never download history")
+    market = SimpleNamespace(fx=current, fx_history=history)
     maintain_fx_histories(store, market)
-    assert calls == [("USD", TODAY-timedelta(days=1827), TODAY)]
+    assert calls == ["USD/ILS"]
     reloaded = LocalPortfolioStore(store.path)
     histories = load_fx_histories(reloaded)
     assert set(histories) == {"USD"}
-    assert histories["USD"]["managed_by"] == MANAGED_PROVIDER
-    assert histories["USD"]["revision"] == 1
+    saved = histories["USD"]
+    assert saved["source"] == "Recorded daily FX quotes"
+    assert saved["managed_by"] == MANAGED_PROVIDER and saved["revision"] == 1
+    assert len(saved["rates"]) == 1
+    assert saved["rates"][0]["date"] == TODAY.isoformat()
+    assert saved["rates"][0]["rate"] == 4
+    assert saved["rates"][0]["origin"] == DAILY_ORIGIN
+    assert saved["rates"][0]["source"] == "fixture_fx"
+    record_current_fx_quote(reloaded, "USD/ILS", *current_quote())
+    record_current_fx_quote(reloaded, "USD/ILS", *current_quote(9.9))
+    assert load_fx_histories(reloaded) == histories
     maintain_fx_histories(reloaded, market)
     assert len(calls) == 1
     result = main.build_var(reloaded, market, histories)
-    assert result["status"] == "ok"
-    assert result["var_ils"] == pytest.approx(400)
-    assert result["var_without_fx_ils"] == pytest.approx(0)
+    assert result["status"] == "unavailable" and result["reason"] == "insufficient_monthly_history"
+    assert result["sample_count"] == 0 and result["var_ils"] is None
     assert store.change_token() == token
     assert {k:v for k,v in store.export_data()["data"].items() if k != "app_preferences"} == {
         k:v for k,v in before.items() if k != "app_preferences"}
@@ -171,45 +185,82 @@ def test_background_fx_seeds_required_currency_persists_and_avoids_repeat_downlo
     assert load_fx_histories(restored) == histories
 
 
-def test_managed_fx_refresh_retains_older_observations_and_manual_save_stops_automation(tmp_path):
-    store = LocalPortfolioStore(tmp_path / "portfolio.sqlite3")
-    investment_cash(store)
-    old_day = (TODAY-timedelta(days=2000)).isoformat()
-    first = save_fx_history(store, {**snapshot(), "rates":[{"date":old_day,"rate":3.1}],
-        "expected_revision":0}, managed_by=MANAGED_PROVIDER)
-    # Emulate a prior process's saved official snapshot, without waiting a day.
-    import json
-    first["updated_at"] = (TODAY-timedelta(days=1)).isoformat()+"T00:00:00Z"
-    with store._connect() as conn:
-        conn.execute("update app_preferences set value=? where key=?", (json.dumps(first), PREFIX+"USD"))
-    maintain_fx_histories(store, SimpleNamespace(fx_history=lambda *args:snapshot()))
-    saved = load_fx_histories(store)["USD"]
-    assert saved["revision"] == 2
-    assert saved["rates"][0] == {"date":old_day,"rate":3.1}
-    assert saved["rates"][-1]["date"] == TODAY.isoformat()
-    refreshed = refresh_fx_history(store, SimpleNamespace(fx_history=lambda *args:snapshot()),
-        {"currency":"USD", "period":"1y", "expected_revision":2})
-    assert refreshed["managed_by"] == MANAGED_PROVIDER
-    assert refreshed["rates"][0] == {"date":old_day,"rate":3.1}
-    refreshed["updated_at"] = (TODAY-timedelta(days=1)).isoformat()+"T00:00:00Z"
-    with store._connect() as conn:
-        conn.execute("update app_preferences set value=? where key=?", (json.dumps(refreshed), PREFIX+"USD"))
+def test_daily_capture_accumulates_future_dates_and_updates_only_newer_auto_quotes(monkeypatch, tmp_path):
     from app import var_fx
-    var_fx._retry_after.pop((str(store.path), "USD"), None)
-    maintain_fx_histories(store, SimpleNamespace(fx_history=lambda *args:snapshot()))
-    assert load_fx_histories(store)["USD"]["revision"] == 4
-    manual = save_fx_history(store, {**snapshot(source="Manual correction", managed_by=MANAGED_PROVIDER), "expected_revision":4})
-    assert "managed_by" not in manual  # Client-supplied provenance is ignored.
-    calls = []
-    def recorded(*args):
-        calls.append(args)
-        return snapshot()
-    maintain_fx_histories(store, SimpleNamespace(fx_history=recorded))
-    assert not calls
+    store = LocalPortfolioStore(tmp_path / "portfolio.sqlite3")
+    class ClockDate(date):
+        day = TODAY
+        @classmethod
+        def today(cls): return cls.day
+    class ClockDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            day = ClockDate.day
+            return datetime(day.year, day.month, day.day, 18, tzinfo=timezone.utc)
+    monkeypatch.setattr(var_fx, "date", ClockDate)
+    monkeypatch.setattr(var_fx, "datetime", ClockDateTime)
+    old = {"date":(TODAY-timedelta(days=4)).isoformat(), "rate":3.5}
+    save_fx_history(store, {**snapshot(source="Manual past rate"), "rates":[old], "expected_revision":0})
+    record_current_fx_quote(store,"USD/ILS",*current_quote(time=TODAY.isoformat()+"T09:00:00"))
+    record_current_fx_quote(store,"USD/ILS",*current_quote(3.9,time=TODAY.isoformat()+"T10:00:00"))
+    record_current_fx_quote(store,"USD/ILS",*current_quote(4.5,time=TODAY.isoformat()+"T08:00:00"))
+    record_current_fx_quote(store,"USD/ILS",*current_quote(9.9,time=TODAY.isoformat()+"T10:00:00"))
+    saved = load_fx_histories(store)["USD"]
+    assert saved["revision"] == 3
+    assert saved["rates"][0] == old
+    assert saved["rates"][-1]["rate"] == 3.9
+    assert saved["source"] == "Manual past rate"
+    ClockDate.day = TODAY+timedelta(days=1)
+    record_current_fx_quote(store,"USD/ILS",*current_quote(3.8,ClockDate.day))
+    saved = load_fx_histories(LocalPortfolioStore(store.path))["USD"]
+    assert len(saved["rates"]) == 3 and saved["rates"][-1]["rate"] == 3.8
+    assert saved["rates"][-1]["date"] == ClockDate.day.isoformat()
+    # Manually saving a date protects it even if a quote later arrives for it.
+    manual = save_fx_history(store, {**snapshot(source="Manual today"),
+        "rates":[{"date":ClockDate.day.isoformat(), "rate":3.6}], "expected_revision":4})
+    record_current_fx_quote(store,"USD/ILS",*current_quote(3.7,ClockDate.day))
     assert load_fx_histories(store)["USD"] == manual
+    ClockDate.day += timedelta(days=1)
+    record_current_fx_quote(store,"USD/ILS",*current_quote(3.7,ClockDate.day))
+    saved = load_fx_histories(store)["USD"]
+    assert saved["rates"][0]["rate"] == 3.6 and len(saved["rates"]) == 2
 
 
-def test_automatic_fx_failure_cooldown_recovery_and_revision_race(monkeypatch, tmp_path):
+@pytest.mark.parametrize("stamp_suffix", ["T12:01:00", "T12:01:00Z", "T15:01:00+03:00"])
+def test_future_intraday_quotes_are_rejected_with_and_without_timezone(monkeypatch, tmp_path, stamp_suffix):
+    from app import var_fx
+    class NoonDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(TODAY.year, TODAY.month, TODAY.day, 12, tzinfo=timezone.utc)
+    monkeypatch.setattr(var_fx, "datetime", NoonDateTime)
+    store = LocalPortfolioStore(tmp_path / "portfolio.sqlite3")
+    with pytest.raises(VarFxError, match="var_fx_current_rate_unavailable"):
+        record_current_fx_quote(store,"USD/ILS",*current_quote(time=TODAY.isoformat()+stamp_suffix))
+    assert not load_fx_histories(store)
+
+
+@pytest.mark.parametrize("changes,status", [
+    ({"time":None}, {"fixture_fx":"ok"}),
+    ({"time":"not a timestamp"}, {"fixture_fx":"ok"}),
+    ({"time":(TODAY-timedelta(days=1)).isoformat()}, {"fixture_fx":"ok"}),
+    ({"time":(TODAY+timedelta(days=1)).isoformat()}, {"fixture_fx":"ok"}),
+    ({"pair":"ILS/USD"}, {"fixture_fx":"ok"}),
+    ({"rate":True}, {"fixture_fx":"ok"}),
+    ({"rate":0}, {"fixture_fx":"ok"}),
+    ({"rate":float("nan")}, {"fixture_fx":"ok"}),
+    ({"rate":float("inf")}, {"fixture_fx":"ok"}),
+    ({}, {"fixture_fx":"stale (saved local history)"}),
+])
+def test_daily_recording_rejects_stale_undated_inverse_or_invalid_quotes_without_filling_dates(tmp_path, changes, status):
+    store = LocalPortfolioStore(tmp_path / "portfolio.sqlite3")
+    with pytest.raises(VarFxError, match="var_fx_current_rate_unavailable"):
+        quote,_ = current_quote(**changes)
+        record_current_fx_quote(store,"USD/ILS",quote,status)
+    assert not load_fx_histories(store)
+
+
+def test_current_capture_failure_cooldown_and_manual_revision_race(monkeypatch, tmp_path):
     from app import var_fx
     store = LocalPortfolioStore(tmp_path / "portfolio.sqlite3")
     investment_cash(store)
@@ -219,40 +270,39 @@ def test_automatic_fx_failure_cooldown_recovery_and_revision_race(monkeypatch, t
     def fail(*args):
         attempts.append(args)
         raise ConnectionError("isolated fixture failure")
-    maintain_fx_histories(store, SimpleNamespace(fx_history=fail))
+    maintain_fx_histories(store, SimpleNamespace(fx=fail))
     assert not load_fx_histories(store)
-    maintain_fx_histories(store, SimpleNamespace(fx_history=fail))
+    maintain_fx_histories(store, SimpleNamespace(fx=fail))
     assert len(attempts) == 1
     clock[0] = 301
     def raced(*args):
         save_fx_history(store, {**snapshot(source="Concurrent manual correction"), "expected_revision":0})
-        return snapshot()
-    maintain_fx_histories(store, SimpleNamespace(fx_history=raced))
+        return current_quote()
+    maintain_fx_histories(store, SimpleNamespace(fx=raced))
     saved = load_fx_histories(store)["USD"]
     assert saved["source"] == "Concurrent manual correction"
     assert saved["revision"] == 1 and "managed_by" not in saved
-    recovery = LocalPortfolioStore(tmp_path / "recovery.sqlite3")
-    investment_cash(recovery)
-    maintain_fx_histories(recovery, SimpleNamespace(fx_history=lambda *args:snapshot()))
-    assert main.build_var(recovery, SimpleNamespace(), load_fx_histories(recovery))["status"] == "ok"
+    clock[0] = 602
+    # A failed current request also leaves already saved history unchanged.
+    maintain_fx_histories(store, SimpleNamespace(fx=fail))
+    assert load_fx_histories(store)["USD"] == saved
 
 
-def test_auto_fx_does_not_replace_invalid_saved_evidence(tmp_path):
+def test_current_capture_does_not_replace_invalid_saved_evidence(tmp_path):
     store = LocalPortfolioStore(tmp_path / "portfolio.sqlite3")
     investment_cash(store)
     with store._connect() as conn:
         conn.execute("insert into app_preferences(key,value,updated_at) values(?,?,?)", (PREFIX+"USD", "broken json", "fixture"))
     calls = []
-    maintain_fx_histories(store, SimpleNamespace(fx_history=lambda *args:calls.append(args)))
-    assert not calls
-    assert load_fx_histories(store)["USD"]["invalid"]
+    maintain_fx_histories(store, SimpleNamespace(fx=lambda *args:calls.append(args)))
+    assert not calls and load_fx_histories(store)["USD"]["invalid"]
 
 
-def test_background_portfolio_worker_maintains_fx_even_if_analytics_fail(monkeypatch, tmp_path):
+def test_background_portfolio_worker_records_today_even_if_analytics_fail(monkeypatch, tmp_path):
     store = LocalPortfolioStore(tmp_path / "portfolio.sqlite3")
     investment_cash(store)
     monkeypatch.setattr(main, "local_store", store)
-    monkeypatch.setattr(main, "hub", lambda:SimpleNamespace(fx_history=lambda *args:snapshot()))
+    monkeypatch.setattr(main, "hub", lambda:SimpleNamespace(fx=lambda *args:current_quote()))
     monkeypatch.setattr(main, "portfolio_cache_signature", lambda:"fx-fixture")
     monkeypatch.setattr(main, "_portfolio_refresh_failure", None)
     monkeypatch.setattr(main, "_portfolio_refresh_progress", None)
@@ -261,4 +311,18 @@ def test_background_portfolio_worker_maintains_fx_even_if_analytics_fail(monkeyp
         raise RuntimeError("isolated analytics failure")
     monkeypatch.setattr(main, "enriched_local_holdings", fail)
     main._refresh_portfolio_cache()
-    assert load_fx_histories(store)["USD"]["managed_by"] == MANAGED_PROVIDER
+    assert len(load_fx_histories(store)["USD"]["rates"]) == 1
+
+
+def test_dashboard_saves_already_fetched_current_rate_without_another_provider_request(monkeypatch, tmp_path):
+    store = LocalPortfolioStore(tmp_path / "portfolio.sqlite3")
+    calls = []
+    def current(pair):
+        calls.append(pair)
+        return current_quote()
+    monkeypatch.setattr(main, "local_store", store)
+    monkeypatch.setattr(main, "config", SimpleNamespace(dashboard={"display_currencies":["USD/ILS"]}))
+    monkeypatch.setattr(main, "hub", lambda:SimpleNamespace(fx=current))
+    result = main.fx()
+    assert calls == ["USD/ILS"] and result["quotes"][0]["quote"]["rate"] == 4
+    assert load_fx_histories(store)["USD"]["rates"][0]["date"] == TODAY.isoformat()
