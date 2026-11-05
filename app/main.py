@@ -50,7 +50,7 @@ from .trading_journal import JournalError, journal_payload, save_reason, add_rev
 from .optimization import OptimizationError
 from .optimization_data import optimization_universe, optimize_portfolio
 from .value_at_risk import VarError, build_var
-from .var_fx import VarFxError, load_fx_histories, save_fx_history, refresh_fx_history
+from .var_fx import VarFxError, load_fx_histories, save_fx_history, refresh_fx_history, maintain_fx_histories
 from .benchmark_data import benchmark_comparison, benchmark_inputs, save_portfolio_inputs, save_index_inputs, refresh_index
 from .xray import XrayError, build_xray, read_snapshot, require_fund, save_manual_report, snapshot_key
 from .dividend_calendar import build_dividend_calendar
@@ -83,6 +83,7 @@ async def application_lifespan(_app: FastAPI):
     configure_backup_job()
     configure_dividend_job()
     configure_portfolio_refresh_job()
+    Thread(target=_refresh_portfolio_fx_history, name="portfolio-fx-history", daemon=True).start()
     if _mcp_session_context is None:
         _mcp_session_context = portfolio_mcp.session_manager.run()
         await _mcp_session_context.__aenter__()
@@ -2606,6 +2607,13 @@ def _portfolio_provider_failures(payload: dict[str, Any]) -> None:
     payload["refresh_pending"] = False
 
 
+def _refresh_portfolio_fx_history() -> None:
+    try:
+        maintain_fx_histories(local_store, hub())
+    except Exception as exc:
+        logger.warning("Background FX history maintenance failed: %s", type(exc).__name__)
+
+
 def _refresh_portfolio_cache() -> None:
     """Refresh provider analytics off the request path."""
     global _portfolio_cache, _portfolio_refresh_in_progress, _portfolio_refresh_failure, _portfolio_refresh_progress
@@ -2633,6 +2641,7 @@ def _refresh_portfolio_cache() -> None:
             progress["failed"] = sum(value == "failed" for value in progress["states"].values())
     signature = None
     try:
+        _refresh_portfolio_fx_history()
         signature = portfolio_cache_signature()
         timeout_seconds = min(300, max(0.01, float(config.market_data.get("analysis_refresh_timeout_seconds", 120))))
         payload = _serialized_portfolio_payload(enriched_local_holdings(on_progress=record, timeout_seconds=timeout_seconds,

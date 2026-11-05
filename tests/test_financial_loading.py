@@ -46,6 +46,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(main,'_portfolio_cache_generation',0)
     monkeypatch.setattr(main,'_portfolio_refresh_progress',None)
     monkeypatch.setattr(main,'schedule_portfolio_refresh',lambda:True)
+    monkeypatch.setattr(main,'maintain_fx_histories',lambda *args:None)
     monkeypatch.setattr(main,'_resolve_supported_stock_market',lambda *a:('NASDAQ',{}))
     account = main.save_local_account({'type':'Investment','location':'USA','currency':'USD','username':'QA','account_id':'QA-1','persons':[{'name':'QA Owner','birth_date':'01/01/1990'}]})
     def add(symbol='FDUS',qty=10):

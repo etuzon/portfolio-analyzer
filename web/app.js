@@ -1584,6 +1584,7 @@ const NAV_MENU_ICONS = Object.freeze({
   people: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   retirement: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 18 0Z"/><path d="M12 12v9M8 21h8M7 12V9M17 12V9"/></svg>',
   research: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.35-4.35M11 8v6M8 11h6"/></svg>',
+  calculations: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M8 11h2M14 11h2M8 15h2M14 15h2M8 18h2M14 18h2"/></svg>',
   markets: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17 9 11l4 4 8-9"/><path d="M15 6h6v6"/></svg>',
   system: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.2 2.2-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56v.1h-3.12v-.1a1.7 1.7 0 0 0-1.03-1.56 1.7 1.7 0 0 0-1.88.34l-.06.06-2.2-2.2.06-.06A1.7 1.7 0 0 0 6.74 15a1.7 1.7 0 0 0-1.56-1.03h-.1v-3.12h.1A1.7 1.7 0 0 0 6.74 9.8a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.2-2.2.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.56v-.1h3.12v.1a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.2 2.2-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03h.1v3.12h-.1A1.7 1.7 0 0 0 19.4 15Z"/></svg>',
   help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.4 9a2.7 2.7 0 1 1 4.7 1.8c-.9.9-2.1 1.35-2.1 2.7M12 17h.01"/></svg>',
@@ -1637,12 +1638,17 @@ function ensureHierarchicalNav() {
         <button class="nav-item" type="button" data-modal="correlationModal">${esc(t("Correlation Matrix"))}</button>
         <button class="nav-item" type="button" data-modal="benchmarkModal">${esc(t("Benchmark Comparison"))}</button>
         <button class="nav-item" type="button" data-modal="optimizationModal">${esc(t("Mean–Variance Optimization"))}</button>
-        <button class="nav-item" type="button" data-modal="varModal">${esc(t("Value at Risk"))}</button>
         <button class="nav-item" type="button" data-modal="tradingJournalModal">${esc(t("Trading Journal"))}</button>
         <button class="nav-item" type="button" data-modal="xrayModal">${esc(t("X-Ray"))}</button>
         <button class="nav-item" type="button" data-modal="dividendCalendarModal">${esc(t("Dividend Calendar"))}</button>
         <button class="nav-item" type="button" data-modal="researchModal" data-research-section="outlook">${esc(t("companyOutlook"))}</button>
         <button class="nav-item" type="button" data-modal="researchModal" data-research-section="signals">${esc(t("signalRules"))}</button>
+      </div>
+    </details>
+    <details class="nav-menu">
+      ${navMenuSummary("calculations", t("Calculations"))}
+      <div class="nav-children">
+        <button class="nav-item" type="button" data-modal="varModal">${esc(t("Value at Risk"))}</button>
       </div>
     </details>
     <details class="nav-menu">
@@ -11556,7 +11562,6 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
       : t(data.refresh_pending ? "Updating analytics in the background" : data.refresh_state === "failed" ? "Financial data could not be updated. Use Refresh to retry." : "Analytics updated");
     $("status").textContent = `${state.items.length} ${t("portfolio positions")} · ${refreshText}`;
     renderPortfolio(state.items);
-    if (typeof loadVarSummary === "function" && (!data.refresh_pending || enrichmentRetry === 0)) loadVarSummary();
     if (typeof loadHeatmap === "function" && (!data.refresh_pending || enrichmentRetry === 0)) loadHeatmap();
     if (!$("macroScenarioModal")?.hidden) renderMacroScenario();
     if (hasActivePortfolioFilter(state.portfolioFilterCriteria)) {

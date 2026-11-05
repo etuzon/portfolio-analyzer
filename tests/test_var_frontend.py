@@ -21,7 +21,7 @@ const formatDate=value=>{const iso=parseDateInput(value);return iso?iso.split('-
 const nodes={},listeners={},pending=[];
 const document={activeElement:null,addEventListener(type,fn){(listeners[type]||=[]).push(fn);}};
 const target={_html:'',get innerHTML(){return this._html},set innerHTML(html){
- this._html=html;for(const id of Object.keys(nodes))if(!['varContent','varModal','varSummaryContent'].includes(id))delete nodes[id];
+ this._html=html;for(const id of Object.keys(nodes))if(!['varContent','varModal'].includes(id))delete nodes[id];
  for(const match of html.matchAll(/<(input|select|textarea|details|p|button)\b([^>]*\bid="([^"]*)"[^>]*)>/g)){
   const [,tag,attrs,id]=match;const content=['select','textarea'].includes(tag)?html.slice(match.index+match[0].length).split('</'+tag+'>')[0]:'';let value=decode((attrs.match(/\bvalue="([^"]*)"/)||[])[1]||'');
   if(tag==='textarea')value=decode(content);
@@ -29,7 +29,7 @@ const target={_html:'',get innerHTML(){return this._html},set innerHTML(html){
   nodes[id]={id,value,open:/\bopen\b/.test(attrs),disabled:/\bdisabled\b/.test(attrs),readOnly:/\breadonly\b/.test(attrs),focus(){document.activeElement=this;},textContent:''};
  }
 }};
-nodes.varContent=target;nodes.varModal={hidden:false};nodes.varSummaryContent={innerHTML:'',setAttribute(){}};
+nodes.varContent=target;nodes.varModal={hidden:false};
 const $=id=>nodes[id];const api=(path,options={})=>new Promise((resolve,reject)=>pending.push({path,options,resolve,reject}));
 const fx={currency:'USD',source:'Official <FX>',rates:[{date:'2025-01-01',rate:3.8},{date:'2026-01-01',rate:3.6}],revision:1,updated_at:'2026-01-02T00:00:00Z'};
 const data={status:'ok',reason:null,confidence:.95,horizon_days:30,currency:'ILS',var_ils:12000,expected_shortfall_ils:16000,var_without_fx_ils:7000,portfolio_value_ils:240000,sample_count:200,min_samples:100,from:'2025-01-01',to:'2026-01-01',valuation_date:'2026-01-02',accounts:[{id:'one',type:'Investment',account_id:'First'},{id:'two',type:'Investment',account_id:'Second'}],scope_complete:true,assets:[{symbol:'SAFE<asset>',stock_market:'NASDAQ',currency:'USD',quantity:20,value_ils:72000,current_price_date:'2026-01-01',status:'ok'}],cash:[{account_id:'one',currency:'USD',amount:1000,value_ils:3600,fx_date:'2026-01-01'}],fx:[{currency:'USD',source:'Official <FX>',count:400,from:'2025-01-01',to:'2026-01-01',current_rate:3.6,current_date:'2026-01-01',status:'ok'}],issues:[],warnings:['overlapping_scenarios','limited_history','fx_fixing_times'],scenarios:[{from:'2025-01-01',to:'2025-01-31',pnl_ils:-12000,loss_ils:12000},{from:'2025-02-01',to:'2025-03-03',pnl_ils:2000,loss_ils:-2000},{from:'2025-03-01',to:'2025-03-31',pnl_ils:-20000,loss_ils:20000}],currency_exposures:[{currency:'USD',value_ils:75600}],basis:'close',fx_histories:[fx]};
@@ -87,7 +87,7 @@ def test_fx_save_payload_revision_persists_on_success_and_reload_failure():
 (async()=>{seed();nodes.varFxSource.value='New source';nodes.varFxRates.value='date,rate\n01/01/2025,3.7\n01/01/2026,3.4';
 const save=maintainVarFx();assert.equal(pending[0].path,'/api/local/var-fx-history');const payload=JSON.parse(pending[0].options.body);assert.equal(payload.expected_revision,1);assert.equal(payload.currency,'USD');assert.equal(payload.rates[0].rate,3.7);
 pending[0].resolve({snapshot:{...fx,source:'New source',rates:payload.rates,revision:2}});await new Promise(r=>setImmediate(r));
-assert.ok(pending.some(row=>row.path==='/api/portfolio/var?account_id=&period=3y'));const modal=pending.find((row,index)=>index>0&&row.path.startsWith('/api/portfolio/var?')&&row!==pending[1]);assert.ok(modal);modal.reject(new Error('offline'));await save;assert.equal(varView.drafts.USD.expected_revision,2);assert.ok(varView.message.includes('saved, but VaR'));assert.equal(nodes.varFxSource.value,'New source');})();
+assert.equal(pending.length,2);const modal=pending[1];assert.ok(modal.path.startsWith('/api/portfolio/var?'));assert.ok(modal);modal.reject(new Error('offline'));await save;assert.equal(varView.drafts.USD.expected_revision,2);assert.ok(varView.message.includes('saved, but VaR'));assert.equal(nodes.varFxSource.value,'New source');})();
 ''')
 
 
@@ -101,7 +101,7 @@ const recover=discardVarFx();pending[2].resolve({...data,fx_histories:[{...fx,re
 
 def test_dirty_refresh_does_not_make_old_draft_overwrite_new_official_history():
     run_ui(r'''
-(async()=>{seed();nodes.varFxSource.value='Unsaved manual source';const refresh=maintainVarFx(true);assert.equal(pending[0].path,'/api/portfolio/var/fx-refresh');pending[0].resolve({snapshot:{...fx,revision:2,source:'Fresh official'}});await new Promise(r=>setImmediate(r));const modal=pending.find((row,index)=>index>1&&row.path.startsWith('/api/portfolio/var?'));modal.resolve({...data,fx_histories:[{...fx,revision:2,source:'Fresh official'}]});await refresh;assert.equal(nodes.varFxSource.value,'Unsaved manual source');assert.equal(varView.drafts.USD.expected_revision,1);assert.ok(target.innerHTML.includes('older saved version'));})();
+(async()=>{seed();nodes.varFxSource.value='Unsaved manual source';const refresh=maintainVarFx(true);assert.equal(pending[0].path,'/api/portfolio/var/fx-refresh');pending[0].resolve({snapshot:{...fx,revision:2,source:'Fresh official'}});await new Promise(r=>setImmediate(r));const modal=pending.find((row,index)=>index>0&&row.path.startsWith('/api/portfolio/var?'));modal.resolve({...data,fx_histories:[{...fx,revision:2,source:'Fresh official'}]});await refresh;assert.equal(nodes.varFxSource.value,'Unsaved manual source');assert.equal(varView.drafts.USD.expected_revision,1);assert.ok(target.innerHTML.includes('older saved version'));})();
 ''')
 
 
@@ -109,14 +109,6 @@ def test_scope_request_race_and_logout_suppress_old_user_data():
     run_ui(r'''
 (async()=>{seed();const old=loadVar();nodes.varAccount.value='two';for(const listener of listeners.change)listener({target:nodes.varAccount});assert.equal(pending.length,2);pending[1].resolve({...data,var_ils:22222});await new Promise(r=>setImmediate(r));pending[0].resolve({...data,var_ils:11111});await old;assert.equal(varView.data.var_ils,22222);
 nodes.varFxSource.value='PRIVATE draft';const late=loadVar();resetVar();pending[2].resolve(data);await late;assert.equal(varView.data,null);assert.deepEqual(varView.drafts,{});assert.ok(!target.innerHTML.includes('PRIVATE'));})();
-''')
-
-
-def test_dashboard_summary_stays_all_accounts_and_auth_reset_rejects_late_response():
-    run_ui(r'''
-(async()=>{seed();varView.account_id='two';const summary=loadVarSummary();assert.equal(pending[0].path,'/api/portfolio/var?account_id=&period=3y');pending[0].resolve(data);await summary;assert.ok(nodes.varSummaryContent.innerHTML.includes('₪ 12000'));assert.ok(nodes.varSummaryContent.innerHTML.includes('All investment accounts'));assert.ok(nodes.varSummaryContent.innerHTML.includes('about 5%'));
-varSummaryView.data={...data,scope_complete:false};renderVarSummary();assert.ok(!nodes.varSummaryContent.innerHTML.includes('₪ 12000'));
-const late=loadVarSummary();resetVar();pending[1].resolve(data);await late;assert.equal(varSummaryView.data,null);assert.ok(!nodes.varSummaryContent.innerHTML.includes('₪ 12000'));})();
 ''')
 
 
@@ -141,18 +133,21 @@ def test_reclassified_account_cannot_retain_old_risk_result():
 ''')
 
 
-def test_dashboard_unavailable_var_explains_grouped_missing_inputs_and_sample_requirement():
+def test_var_is_only_accessible_under_calculations_and_not_requested_by_dashboard():
+    html = (ROOT / 'web/index.html').read_text()
+    script = (ROOT / 'web/app.js').read_text()
+    var_script = (ROOT / 'web/var-ui.js').read_text()
+    sidebar = html.split('<aside class="sidebar"', 1)[1].split('</aside>', 1)[0]
+    calculations = sidebar.split('<span class="nav-menu-label">Calculations</span>', 1)[1].split('</details>', 1)[0]
+    assert calculations.count('data-modal="varModal"') == 1
+    assert sidebar.count('data-modal="varModal"') == 1
+    assert html.count('data-modal="varModal"') == 1
+    assert 'varSummary' not in html + script + var_script
+    assert 'loadVarSummary' not in script + var_script
+    assert 'navMenuSummary("calculations", t("Calculations"))' in script
+    assert 'if (id === "varModal") loadVar();' in script
     run_ui(r'''
-seed();varSummaryView.data={...data,status:'unavailable',scope_complete:false,reason:'coverage_incomplete',var_ils:null,sample_count:0,min_samples:100,issues:[
- {code:'stale_price',symbol:'FIRST'},{code:'stale_price',symbol:'SECOND'},
- {code:'missing_price_history',symbol:'SAFE<img>'},{code:'missing_fx_history',currency:'USD'}]};
-for(const language of ['en','he']){
- state.language=language;renderVarSummary();const html=nodes.varSummaryContent.innerHTML;
- assert.ok(html.includes('var-summary-issues'));assert.ok(html.includes('(2)'));assert.ok(html.includes('(1)'));
- assert.ok(html.includes('FIRST, SECOND'));assert.ok(html.includes('SAFE&lt;img&gt;'));assert.ok(!html.includes('SAFE<img>'));
- assert.ok(html.includes('0 / 100'));assert.ok(!html.includes('var-summary-amount'));
- if(language==='he'){assert.ok(html.includes('תרחישים תואמים של 30 ימים'));assert.ok(!html.includes('Matching historical exchange rates are missing.'));}
- else{assert.ok(html.includes('Matching 30-day scenarios'));assert.ok(html.includes('Matching historical exchange rates are missing.'));}
-}
-varSummaryView.data={...data,status:'ok',scope_complete:true};renderVarSummary();assert.ok(nodes.varSummaryContent.innerHTML.includes('var-summary-amount'));assert.ok(!nodes.varSummaryContent.innerHTML.includes('var-summary-issues'));
+(async()=>{assert.equal(pending.length,0);seed();assert.equal(pending.length,0);
+const load=loadVar();assert.equal(pending.length,1);pending[0].resolve(data);await load;
+assert.ok(target.innerHTML.includes('₪ 12000'));})();
 ''')

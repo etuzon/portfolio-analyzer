@@ -1,6 +1,5 @@
 /* Dated portfolio and currency scenarios; no price or FX movement is invented. */
 let varView={version:0,operation:0,loading:false,busy:false,data:null,accounts:[],error:"",message:"",account_id:"",period:"3y",fxCurrency:"",renderedCurrency:"",fxOpen:false,drafts:{}};
-let varSummaryView={version:0,loading:false,data:null,error:""};
 const VAR_HE=Object.freeze({
  "Matching 30-day scenarios":"תרחישים תואמים של 30 ימים",
  "Previous saved result shown; the latest recalculation failed.":"מוצגת התוצאה השמורה הקודמת; החישוב העדכני נכשל.",
@@ -44,7 +43,7 @@ function varSnapshot(currency=varView.fxCurrency){return (varView.data?.fx_histo
 function varCsv(rows){return "date,rate\n"+(rows || []).map(row=>`${formatDate(row.date)},${row.rate}`).join("\n");}
 function varDraft(currency=varView.fxCurrency){if(!currency)return null;const saved=varSnapshot(currency);return varView.drafts[currency] ||= {source:saved?.source || "",csv:varCsv(saved?.rates),expected_revision:saved?.revision || 0};}
 function varCapture(){const draft=varView.drafts[varView.renderedCurrency];if(draft){if($("varFxSource"))draft.source=$("varFxSource").value;if($("varFxRates"))draft.csv=$("varFxRates").value;}if($("varFxEditor"))varView.fxOpen=$("varFxEditor").open;}
-function resetVar(){varSummaryView={version:varSummaryView.version+1,loading:false,data:null,error:""};const old=varView;if($("varContent"))$("varContent").innerHTML="";varView={version:old.version+1,operation:old.operation+1,loading:false,busy:false,data:null,accounts:[],error:"",message:"",account_id:"",period:"3y",fxCurrency:"",renderedCurrency:"",fxOpen:false,drafts:{}};renderVar();}
+function resetVar(){const old=varView;if($("varContent"))$("varContent").innerHTML="";varView={version:old.version+1,operation:old.operation+1,loading:false,busy:false,data:null,accounts:[],error:"",message:"",account_id:"",period:"3y",fxCurrency:"",renderedCurrency:"",fxOpen:false,drafts:{}};renderVar();}
 function varCurrencies(){return [...new Set([...(varView.data?.fx || []).map(row=>row.currency),...(varView.data?.currency_exposures || []).map(row=>row.currency),...(varView.data?.issues || []).map(row=>row.currency)].filter(code=>code && code!=="ILS"))].sort();}
 
 function varHistogram(data){
@@ -69,7 +68,6 @@ function varCoverage(data){
  return html;
 }
 function renderVar(){
- renderVarSummary();
  const target=$("varContent");if(!target)return;varCapture();const v=varView,d=v.data,disabled=v.busy?" disabled":"",read=varCanWrite()?"":" readonly";
  let html=`<div class="var-controls"><label class="field"><span>${varEsc("Investment account")}</span><select id="varAccount"${disabled}><option value="">${varEsc("All investment accounts")}</option>${v.accounts.filter(row=>row.type==="Investment").map(row=>`<option value="${esc(row.id)}"${v.account_id===row.id?" selected":""}>${esc(accountLabel(row))}</option>`).join("")}</select></label><label class="field"><span>${varEsc("History")}</span><select id="varPeriod"${disabled}>${["1y","3y","5y"].map(period=>`<option value="${period}"${v.period===period?" selected":""}>${varEsc({"1y":"1 year","3y":"3 years","5y":"5 years"}[period])}</option>`).join("")}</select></label><button type="button" class="secondary" id="varReload"${v.loading||v.busy?" disabled":""}>${varEsc("Calculate / Reload")}</button></div><p id="varStatus" class="status-line var-status" role="status" aria-live="polite">${varEsc(v.loading?"Loading saved risk data…":v.error)}</p>`;
  if(d){
@@ -101,7 +99,7 @@ async function maintainVarFx(refresh=false){
  const v=varView;if(!varCanWrite()||v.busy||v.loading||!v.fxCurrency)return;varCapture();const currency=v.fxCurrency,draft=varDraft(),savedBefore=varSnapshot(currency),dirty=draft.source!==(savedBefore?.source || "") || draft.csv!==varCsv(savedBefore?.rates),focus=refresh?"varFxRefresh":"varFxSave";let payload={currency,expected_revision:draft.expected_revision};
  if(refresh)payload.period=v.period;else{if(!draft.source.trim()){v.message="Enter a source for the historical rates.";renderVar();return;}try{payload={...payload,source:draft.source.trim(),rates:varReadCsv(draft.csv)};}catch{v.message="Enter valid date,rate rows with positive finite rates and unique dates, up to 10000 rows.";renderVar();return;}}
  const operation=++v.operation;v.busy=true;v.message=refresh?"Refreshing FX history…":"Saving…";renderVar();
- try{const result=await api(refresh?"/api/portfolio/var/fx-refresh":"/api/local/var-fx-history",{method:refresh?"POST":"PUT",body:JSON.stringify(payload)});if(operation!==varView.operation)return;if(result.snapshot){const list=v.data.fx_histories ||= [],index=list.findIndex(row=>row.currency===currency);if(index>=0)list[index]=result.snapshot;else list.push(result.snapshot);if(!refresh || !dirty)Object.assign(draft,{expected_revision:result.snapshot.revision,source:result.snapshot.source,csv:varCsv(result.snapshot.rates)});v.renderedCurrency="";}loadVarSummary();const loaded=await loadVar();if(operation!==varView.operation)return;v.message=loaded?"Saved FX history. VaR recalculated.":"FX history saved, but VaR could not reload. Use Calculate / Reload to retry.";}
+ try{const result=await api(refresh?"/api/portfolio/var/fx-refresh":"/api/local/var-fx-history",{method:refresh?"POST":"PUT",body:JSON.stringify(payload)});if(operation!==varView.operation)return;if(result.snapshot){const list=v.data.fx_histories ||= [],index=list.findIndex(row=>row.currency===currency);if(index>=0)list[index]=result.snapshot;else list.push(result.snapshot);if(!refresh || !dirty)Object.assign(draft,{expected_revision:result.snapshot.revision,source:result.snapshot.source,csv:varCsv(result.snapshot.rates)});v.renderedCurrency="";}const loaded=await loadVar();if(operation!==varView.operation)return;v.message=loaded?"Saved FX history. VaR recalculated.":"FX history saved, but VaR could not reload. Use Calculate / Reload to retry.";}
  catch(error){if(operation!==varView.operation)return;v.message=varFailure(error,refresh?"Could not refresh FX history. Saved history and your draft are retained.":"Could not save FX history. Your draft is retained. Correct the reported issue and retry.");}
  if(operation!==varView.operation)return;v.busy=false;renderVar();if(!$("varModal")?.hidden)$(focus)?.focus?.({preventScroll:true});
 }
@@ -111,29 +109,3 @@ document.addEventListener("change",event=>{const v=varView;if(v.busy)return;if([
 document.addEventListener("input",event=>{if(event.target.closest?.("#varContent"))varCapture();});
 document.addEventListener("submit",event=>{if(event.target.id==="varFxForm"){event.preventDefault();maintainVarFx(false);}});
 document.addEventListener("click",event=>{if(event.target.closest?.("#varReload")&&!varView.busy&&!varView.loading)loadVar();if(event.target.closest?.("#varFxRefresh"))maintainVarFx(true);if(event.target.closest?.("#varFxDiscard"))discardVarFx();});
-
-function varSummaryIssues(data){
- const groups=new Map();
- for(const issue of data.issues || []){
-  const code=typeof issue.code==="string"?issue.code:"coverage_incomplete";
-  if(!groups.has(code))groups.set(code,[]);
-  const context=issue.symbol || (issue.currency?currencyDisplayLabel(issue.currency):"");
-  groups.get(code).push(context);
- }
- return groups.size?`<ul class="section-note var-summary-issues">${[...groups].map(([code,rows])=>{const contexts=[...new Set(rows.filter(Boolean))];return `<li>${varEsc(varReason(code))} <bdi>(${rows.length})</bdi>${contexts.length?` <bdi>${esc(contexts.slice(0,6).join(", "))}${contexts.length>6?` +${contexts.length-6}`:""}</bdi>`:""}</li>`;}).join("")}</ul>`:"";
-}
-function renderVarSummary(){
- const target=$("varSummaryContent");if(!target)return;const v=varSummaryView,d=v.data;
- target.setAttribute?.("aria-busy",String(v.loading));
- if(v.loading&&!d){target.innerHTML=`<p class="section-note">${varEsc("Loading saved risk data…")}</p>`;return;}
- let html=`<p class="section-note">${varEsc("All investment accounts")} · ${varEsc("3 years")}</p>${v.loading?`<p class="section-note">${varEsc("Loading saved risk data…")}</p>`:""}`;
- if(d?.status==="ok"&&d.scope_complete!==false&&varKnown(d.var_ils)&&d.var_ils>=0)html+=`<strong class="var-summary-amount"><bdi>${esc(varMoney(d.var_ils))}</bdi></strong><p class="section-note">${varEsc("Estimated threshold; losses can be larger in about 5% of model scenarios.")}</p>`;
- else html+=`<strong>${varEsc("Unavailable")}</strong><p class="section-note">${varEsc(v.error || (d?.status==="empty"?"No recorded holdings or cash in this account scope.":varReason(d?.reason)))}</p>${d?varSummaryIssues(d):""}${d?.status!=="empty"&&varKnown(d?.sample_count)&&varKnown(d?.min_samples)?`<p class="section-note">${varEsc("Matching 30-day scenarios")}: <bdi>${esc(varNumber(d.sample_count,0))} / ${esc(varNumber(d.min_samples,0))}</bdi></p>`:""}<p class="section-note">${varEsc("Open Details to review coverage and historical FX data.")}</p>`;
- if(d?.valuation_date)html+=`<p class="section-note">${varEsc("Valuation date")}: <bdi>${esc(formatDate(d.valuation_date))}</bdi></p>`;
- target.innerHTML=html;
-}
-async function loadVarSummary(){
- const v=varSummaryView,version=++v.version;v.loading=true;v.error="";renderVarSummary();
- try{const data=await api("/api/portfolio/var?account_id=&period=3y");if(version!==varSummaryView.version)return false;v.data=data;v.loading=false;renderVarSummary();return true;}
- catch{if(version!==varSummaryView.version)return false;v.loading=false;v.data=null;v.error="Could not load VaR. Open Details to retry.";renderVarSummary();return false;}
-}
