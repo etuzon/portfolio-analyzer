@@ -196,7 +196,7 @@ const esc=value=>value;const t=value=>value;const navMenuSummary=(_icon,label)=>
 ensureHierarchicalNav();
 const portfolio=nav.innerHTML.split('</details>')[0];
 assert.ok(portfolio.includes('data-modal="positionsModal"'));
-assert.ok(portfolio.indexOf('data-modal="securitiesModal">')<portfolio.indexOf('data-modal="positionsModal"'));
+assert.ok(portfolio.indexOf('data-modal="positionsModal"')<portfolio.indexOf('data-modal="securitiesModal">'));
 """)
     reports = html[html.index('<div id="reportsModal"'):html.index('<div id="positionsModal"')]
     assert 'tradeHistoryTable' not in reports

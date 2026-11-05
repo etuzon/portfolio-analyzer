@@ -83,7 +83,7 @@ let completeHistory;
 const loadSecurityDetail = () => new Promise(resolve => { completeHistory = resolve; });
 const event = (key, shiftKey = false) => ({key, shiftKey, target: document.activeElement,
   preventDefault() { this.prevented = true; }});
-""" + js_functions("openAlertSignalChart", "openSecurityDetail", "openModal", "closeModal") + SOURCE[start:end] + r"""
+""" + js_functions("openAlertSignalChart", "openSecurityDetail", "openModal", "closeModal", "moveWorkspaceTab") + SOURCE[start:end] + r"""
 (async () => {
   // Explicit returnFocus must work even when the browser has focused something else.
   document.activeElement = new HTMLElement('dashboard');

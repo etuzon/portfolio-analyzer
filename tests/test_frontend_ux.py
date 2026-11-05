@@ -338,7 +338,7 @@ def test_dashboard_header_does_not_repeat_overview_label():
     assert '>Home</button>' not in sidebar
     assert '<span class="nav-menu-label">Dashboard</span>' not in sidebar
     assert 'id="dashboardHome" href="/" data-dashboard-home' in sidebar
-    assert sidebar.index('<span class="nav-menu-label">Markets</span>') < sidebar.index('data-modal="reportsModal"') < sidebar.index('<span class="nav-menu-label">System</span>')
+    assert sidebar.index('<span class="nav-menu-label">Portfolio</span>') < sidebar.index('data-modal="reportsModal"') < sidebar.index('<span class="nav-menu-label">Research</span>')
     assert 'overview: "ראשי"' in script
     assert '"Home": "ראשי"' in i18n
 
@@ -363,25 +363,24 @@ def test_help_menu_covers_every_navigation_group_with_accessible_submenus():
     i18n = (ROOT / "web/i18n.js").read_text()
 
     sidebar = html.split('<aside class="sidebar"', 1)[1].split("</aside>", 1)[0]
-    system_menu = sidebar.split('<span class="nav-menu-label">System</span>', 1)[1].split("</details>", 1)[0]
+    system_menu = sidebar.split('<span class="nav-menu-label">Settings</span>', 1)[1].split("</details>", 1)[0]
     help_menu = sidebar.split('<span class="nav-menu-label">Help</span>', 1)[1].split("</details>", 1)[0]
-    assert 'data-modal="settingsModal">Settings</button>' in system_menu
+    assert 'data-modal="settingsModal">Application Settings</button>' in system_menu
     assert 'data-modal="aboutModal"' not in system_menu
     assert 'data-modal="aboutModal">About</button>' in help_menu
-    assert 'data-modal="helpModal">Help</button>' in help_menu
-    assert help_menu.index('data-modal="aboutModal"') < help_menu.index('data-modal="helpModal"')
+    assert 'data-modal="helpModal">User Guide</button>' in help_menu
+    assert help_menu.index('data-modal="helpModal"') < help_menu.index('data-modal="aboutModal"')
 
     help_dialog = html.split('id="helpModal"', 1)[1].split('id="securityDetailModal"', 1)[0]
     assert 'role="dialog" aria-modal="true" aria-labelledby="helpTitle" aria-describedby="helpIntro"' in help_dialog
     assert 'data-modal-initial-focus aria-label="Close"' in help_dialog
-    assert help_dialog.count('<details class="help-group"') == 9
+    assert help_dialog.count('<details class="help-group"') == 8
     assert '<details class="help-group" open>' in help_dialog
-    for group in ["Dashboard", "Portfolio Data", "People", "Retirement", "Research", "Calculations", "Markets", "System", "Help"]:
+    for group in ["Dashboard", "Portfolio", "Research", "Calculations", "Accounts &amp; People", "Retirement &amp; Benefits", "Settings", "Help"]:
         assert f"<summary><span>{group}</span>" in help_dialog
     for feature in [
-        "Home", "Reports", "Accounts", "Brokers", "Employee Stock Options", "Securities", "Prices", "Events",
-        "Family Members", "Account Ownership", "Pensions &amp; Funds", "Retirement Projections", "Company Reports",
-        "Company Outlook", "Portfolio Signals", "Market Screener", "Market Banner", "Users", "Settings", "About",
+        "Home", "Portfolio Reports", "Accounts", "Brokers", "Employee Stock Options", "Transactions", "Prices", "Dividends &amp; Events",
+        "Family Members", "Account Ownership", "Pensions &amp; Funds", "Retirement Projections", "Company Analysis", "Portfolio Signals", "Market Screener", "Market Banner", "Users", "Application Settings", "About",
     ]:
         assert f"<h3>{feature}</h3>" in help_dialog
     assert 'class="help-command" dir="ltr" data-i18n-skip' in help_dialog
@@ -391,7 +390,7 @@ def test_help_menu_covers_every_navigation_group_with_accessible_submenus():
     assert 'help: "Help"' in script
     assert 'help: "עזרה"' in script
     assert 'const defaultOpen = "";' in script
-    assert 'data-modal="helpModal">${esc(t("help"))}</button>' in script
+    assert 'data-modal="helpModal">${esc(t("User Guide"))}</button>' in script
     assert 'if (id === "helpModal") requestAnimationFrame' in script
 
     assert '.help-directory {' in styles

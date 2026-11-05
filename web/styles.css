@@ -7470,7 +7470,8 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
   flex: 0 0 auto;
 }
 
-.research-tabs {
+.research-tabs,
+.dividends-tabs {
   display: inline-flex;
   gap: 4px;
   margin-top: 14px;
@@ -7478,6 +7479,21 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
   border: 1px solid #2b2f36;
   border-radius: 8px;
   background: #0d0f13;
+}
+
+.dividends-tabs {
+  max-width: 100%;
+  margin-block: 0 16px;
+}
+
+.dividends-tabs .research-tab {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.dividends-tabs .research-tab:focus-visible {
+  outline: 2px solid #64d2ff;
+  outline-offset: 2px;
 }
 
 .research-tab {

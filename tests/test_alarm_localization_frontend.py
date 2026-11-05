@@ -10,7 +10,7 @@ def run_alarm_js(body):
     source = (ROOT / 'web/app.js').read_text()
     names = ('t', 'alarmText', 'alarmValue', 'alarmDueText', 'dividendAlarmMessage',
              'dividendAlarms', 'vestingAlarms', 'alarmDismissalId', 'currentAlarms',
-             'renderAlarms', 'clearAlarms', 'saveVestingAlertSettings', 'applyLanguage')
+             'renderAlarms', 'clearAlarms', 'saveVestingAlertSettings', 'setResearchSection', 'applyLanguage')
     functions = []
     for name in names:
         start = re.search(rf'^function {name}\(', source, re.M).start()

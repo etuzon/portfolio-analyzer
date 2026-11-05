@@ -43,7 +43,8 @@ def test_dashboard_mount_and_background_load_replace_research_modal_and_help():
     loader = app[app.index('async function loadPortfolio('):app.index('async function loadPortfolio(')+10000]
     assert 'if (typeof loadHeatmap === "function" && (!data.refresh_pending || enrichmentRetry === 0)) loadHeatmap();' in loader
     assert 'await loadHeatmap()' not in loader
-    dashboard_help = html[html.index('<span>Dashboard</span>'):html.index('<span>Portfolio Data</span>')]
+    dashboard_start = html.index('<span>Dashboard</span>')
+    dashboard_help = html[dashboard_start:html.index('<summary><span>Portfolio</span>', dashboard_start)]
     assert '<h3>Portfolio stocks heatmap</h3>' in dashboard_help
     assert 'Research → Stock heatmap' not in html + translations
     assert 'Loading is nonblocking; failed reloads retain previous results for retry.' in html

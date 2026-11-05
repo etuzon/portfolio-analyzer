@@ -1605,73 +1605,66 @@ function ensureHierarchicalNav() {
   const defaultOpen = "";
   nav.innerHTML = `
     <details class="nav-menu"${defaultOpen}>
-      ${navMenuSummary("portfolio", t("portfolioData"))}
+      ${navMenuSummary("portfolio", t("Portfolio"))}
       <div class="nav-children">
-        <button class="nav-item" type="button" data-modal="accountsModal">${esc(t("accounts"))}</button>
-        <button class="nav-item" type="button" data-modal="brokersModal">${esc(t("brokers"))}</button>
-        <button class="nav-item" type="button" data-modal="securitiesModal" data-securities-workflow="employee-options">${esc(t("employeeOptions"))}</button>
-        <button class="nav-item" type="button" data-modal="securitiesModal">${esc(t("securities"))}</button>
-        <button class="nav-item" type="button" data-modal="tradeSimulatorModal">${esc(t("Trade Simulation"))}</button>
         <button class="nav-item" type="button" data-modal="positionsModal">${esc(t("positions"))}</button>
+        <button class="nav-item" type="button" data-modal="securitiesModal">${esc(t("Transactions"))}</button>
+        <button class="nav-item" type="button" data-modal="tradingJournalModal">${esc(t("Trading Journal"))}</button>
+        <button class="nav-item" type="button" data-modal="eventsModal">${esc(t("Dividends & Events"))}</button>
         <button class="nav-item" type="button" data-modal="pricesModal">${esc(t("prices"))}</button>
-        <button class="nav-item" type="button" data-modal="eventsModal">${esc(t("events"))}</button>
-      </div>
-    </details>
-    <details class="nav-menu">
-      ${navMenuSummary("people", t("people"))}
-      <div class="nav-children">
-        <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="familyMembersSection" data-modal-focus="newFamilyMember">${esc(t("familyMembers"))}</button>
-        <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="accountOwnershipSection" data-modal-focus="familyAttachAccount">${esc(t("accountOwnership"))}</button>
-      </div>
-    </details>
-    <details class="nav-menu">
-      ${navMenuSummary("retirement", t("retirement"))}
-      <div class="nav-children">
-        <button class="nav-item" type="button" data-modal="fundsModal" data-modal-target="fundsTitle" data-modal-focus="showFundCreate">${esc(t("pensionsFunds"))}</button>
-        <button class="nav-item" type="button" data-modal="fundsModal" data-modal-target="simulatorPanel" data-modal-focus="simPersonSource">${esc(t("retirementProjections"))}</button>
+        <button class="nav-item" type="button" data-modal="reportsModal">${esc(t("Portfolio Reports"))}</button>
       </div>
     </details>
     <details class="nav-menu">
       ${navMenuSummary("research", t("research"))}
       <div class="nav-children">
-        <button class="nav-item" type="button" data-modal="researchModal" data-research-section="finance">${esc(t("companyReports"))}</button>
-        <button class="nav-item" type="button" data-modal="correlationModal">${esc(t("Correlation Matrix"))}</button>
-        <button class="nav-item" type="button" data-modal="benchmarkModal">${esc(t("Benchmark Comparison"))}</button>
-        <button class="nav-item" type="button" data-modal="optimizationModal">${esc(t("Mean–Variance Optimization"))}</button>
-        <button class="nav-item" type="button" data-modal="tradingJournalModal">${esc(t("Trading Journal"))}</button>
-        <button class="nav-item" type="button" data-modal="xrayModal">${esc(t("X-Ray"))}</button>
-        <button class="nav-item" type="button" data-modal="dividendCalendarModal">${esc(t("Dividend Calendar"))}</button>
-        <button class="nav-item" type="button" data-modal="researchModal" data-research-section="outlook">${esc(t("companyOutlook"))}</button>
+        <button class="nav-item" type="button" data-modal="marketModal">${esc(t("marketScreener"))}</button>
+        <button class="nav-item" type="button" data-modal="researchModal" data-research-section="finance">${esc(t("Company Analysis"))}</button>
         <button class="nav-item" type="button" data-modal="researchModal" data-research-section="signals">${esc(t("signalRules"))}</button>
+        <button class="nav-item" type="button" data-modal="macroScenarioModal">${esc(t("Macro Scenarios"))}</button>
       </div>
     </details>
     <details class="nav-menu">
       ${navMenuSummary("calculations", t("Calculations"))}
       <div class="nav-children">
+        <button class="nav-item" type="button" data-modal="tradeSimulatorModal">${esc(t("Trade Simulation"))}</button>
         <button class="nav-item" type="button" data-modal="varModal">${esc(t("Value at Risk"))}</button>
+        <button class="nav-item" type="button" data-modal="correlationModal">${esc(t("Correlation Matrix"))}</button>
+        <button class="nav-item" type="button" data-modal="benchmarkModal">${esc(t("Benchmark Comparison"))}</button>
+        <button class="nav-item" type="button" data-modal="optimizationModal">${esc(t("Portfolio Optimization"))}</button>
+        <button class="nav-item" type="button" data-modal="xrayModal">${esc(t("X-Ray"))}</button>
       </div>
     </details>
     <details class="nav-menu">
-      ${navMenuSummary("markets", t("marketsAlerts"))}
+      ${navMenuSummary("people", t("Accounts & People"))}
       <div class="nav-children">
-        <button class="nav-item" type="button" data-modal="marketModal">${esc(t("marketScreener"))}</button>
-        <button class="nav-item" type="button" data-modal="macroScenarioModal">${esc(t("macroScenarios"))}</button>
+        <button class="nav-item" type="button" data-modal="accountsModal">${esc(t("accounts"))}</button>
+        <button class="nav-item" type="button" data-modal="brokersModal">${esc(t("brokers"))}</button>
+        <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="familyMembersSection" data-modal-focus="newFamilyMember">${esc(t("familyMembers"))}</button>
+        <button class="nav-item" type="button" data-modal="familyModal" data-modal-target="accountOwnershipSection" data-modal-focus="familyAttachAccount">${esc(t("accountOwnership"))}</button>
+      </div>
+    </details>
+    <details class="nav-menu">
+      ${navMenuSummary("retirement", t("Retirement & Benefits"))}
+      <div class="nav-children">
+        <button class="nav-item" type="button" data-modal="fundsModal" data-modal-target="fundsTitle" data-modal-focus="showFundCreate">${esc(t("pensionsFunds"))}</button>
+        <button class="nav-item" type="button" data-modal="fundsModal" data-modal-target="simulatorPanel" data-modal-focus="simPersonSource">${esc(t("retirementProjections"))}</button>
+        <button class="nav-item" type="button" data-modal="securitiesModal" data-securities-workflow="employee-options">${esc(t("employeeOptions"))}</button>
+      </div>
+    </details>
+    <details class="nav-menu">
+      ${navMenuSummary("system", t("settings"))}
+      <div class="nav-children">
+        <button class="nav-item" type="button" data-modal="settingsModal">${esc(t("Application Settings"))}</button>
         <button class="nav-item" type="button" data-modal="bannerModal">${esc(t("marketBanner"))}</button>
-      </div>
-    </details>
-    <button class="nav-menu-link" type="button" data-modal="reportsModal"><span class="nav-menu-icon" aria-hidden="true">${NAV_MENU_ICONS.reports}</span><span class="nav-menu-label">${esc(t("reports"))}</span></button>
-    <details class="nav-menu">
-      ${navMenuSummary("system", t("system"))}
-      <div class="nav-children">
         ${canAdmin() ? `<button class="nav-item" type="button" data-modal="usersModal">${esc(t("users"))}</button>` : ""}
-        <button class="nav-item" type="button" data-modal="settingsModal">${esc(t("settings"))}</button>
       </div>
     </details>
     <details class="nav-menu">
       ${navMenuSummary("help", t("help"))}
       <div class="nav-children">
+        <button class="nav-item" type="button" data-modal="helpModal">${esc(t("User Guide"))}</button>
         <button class="nav-item" type="button" data-modal="aboutModal">${esc(t("about"))}</button>
-        <button class="nav-item" type="button" data-modal="helpModal">${esc(t("help"))}</button>
       </div>
     </details>`;
   if (chatLauncher) {
@@ -2068,6 +2061,8 @@ function applyLanguage() {
   });
   ensureHierarchicalNav();
   bindNavAccordion();
+  setResearchSection(state.researchSection);
+  if ($("securitiesTitle")) $("securitiesTitle").textContent = t(employeeOptionsWorkflowActive() ? "Employee Stock Options" : "Transactions");
   renderCurrentUser();
   renderAlarms();
   renderMacroScenario();
@@ -7944,7 +7939,7 @@ function setSecuritiesWorkflow(workflow = "general") {
   $("instrumentDefinitionBadge").hidden = true;
   $("accountTransactionBadge").hidden = true;
   $("securitiesEyebrow").textContent = employeeOptions ? "Equity compensation" : "Manual transactions";
-  $("securitiesTitle").textContent = employeeOptions ? "Employee Stock Options" : "Securities";
+  $("securitiesTitle").textContent = t(employeeOptions ? "Employee Stock Options" : "Transactions");
   $("securitiesSubtitle").textContent = employeeOptions
     ? "Add, review, edit, or delete a grant and its complete vesting schedule."
     : "Define an instrument, then record it in an account.";
@@ -8601,7 +8596,7 @@ function openDividendAlarm(eventId) {
   state.focusedEventId = eventId;
   const alarmsModal = $("alarmsModal");
   if (alarmsModal && !alarmsModal.hidden) closeModal(alarmsModal);
-  openModal("eventsModal");
+  openModal("eventsModal", document.activeElement, { dividendsSection: "events" });
   setTimeout(focusEventRow, 100);
 }
 
@@ -13223,17 +13218,60 @@ async function loadBrandVersion() {
 function setResearchSection(section = "finance") {
   const selected = ["finance", "outlook", "signals"].includes(section) ? section : "finance";
   state.researchSection = selected;
+  if ($("researchTitle")) $("researchTitle").textContent = t(selected === "signals" ? "Portfolio Signals" : "Company Analysis");
+  if ($("researchTabs")) $("researchTabs").hidden = selected === "signals";
+  if ($("researchDescription")) $("researchDescription").hidden = selected === "signals";
   document.querySelectorAll("[data-research-panel]").forEach((panel) => {
     const active = panel.dataset.researchPanel === selected;
     panel.hidden = !active;
     panel.setAttribute("aria-hidden", String(!active));
   });
   document.querySelectorAll("[data-research-tab]").forEach((tab) => {
+    tab.hidden = tab.dataset.researchTab === "signals";
     const active = tab.dataset.researchTab === selected;
+    tab.classList.toggle("active", active);
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active && !tab.hidden ? 0 : -1;
+  });
+}
+
+function setDividendsSection(section = "calendar", { load = true } = {}) {
+  const selected = section === "events" ? "events" : "calendar";
+  document.querySelectorAll("[data-dividends-panel]").forEach((panel) => {
+    const active = panel.dataset.dividendsPanel === selected;
+    panel.hidden = !active;
+    panel.setAttribute("aria-hidden", String(!active));
+  });
+  document.querySelectorAll("[data-dividends-tab]").forEach((tab) => {
+    const active = tab.dataset.dividendsTab === selected;
     tab.classList.toggle("active", active);
     tab.setAttribute("aria-selected", String(active));
     tab.tabIndex = active ? 0 : -1;
   });
+  if (!load) return;
+  if (selected === "calendar") {
+    loadDividendCalendar();
+  } else {
+    $("eventsStatus").textContent = t("Loading events…");
+    loadEvents().catch(() => {
+      $("eventsStatus").textContent = t("Could not load events. Select Events again to retry.");
+    });
+  }
+}
+
+function moveWorkspaceTab(event, selector) {
+  const active = event.target.closest?.(selector);
+  if (!active || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return false;
+  const tabs = [...active.closest('[role="tablist"]').querySelectorAll(selector)].filter((tab) => !tab.hidden && !tab.disabled);
+  const index = tabs.indexOf(active);
+  if (index < 0 || !tabs.length) return false;
+  const forward = state.language === "he" ? -1 : 1;
+  const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+    : (index + (event.key === "ArrowRight" ? forward : -forward) + tabs.length) % tabs.length;
+  event.preventDefault();
+  tabs[next].focus();
+  tabs[next].click();
+  return true;
 }
 
 const modalReturnFocus = new Map();
@@ -13293,6 +13331,10 @@ function returnToDashboard() {
 window.addEventListener("resize", positionModalHomeLinks);
 
 function openModal(id, returnFocus = document.activeElement, destination = {}) {
+  if (id === "dividendCalendarModal") {
+    id = "eventsModal";
+    destination = { ...destination, dividendsSection: "calendar" };
+  }
   const modal = $(id);
   if (!modal) return;
   if (returnFocus instanceof HTMLElement) modalReturnFocus.set(id, returnFocus);
@@ -13323,7 +13365,6 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
     loadTradingJournal();
   }
   if (id === "xrayModal") loadXray();
-  if (id === "dividendCalendarModal") loadDividendCalendar();
   if (id === "securityDetailModal") {
     const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : null;
     if (parentModal && parentModal !== modal) {
@@ -13378,7 +13419,7 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
   }
   if (id === "pricesModal") loadLocalPrices();
   if (id === "eventsModal") {
-    loadEvents().catch((error) => { $("eventsStatus").textContent = `Error: ${error.message}`; });
+    setDividendsSection(destination.dividendsSection || "calendar");
   }
   if (id === "alarmsModal") {
     state.alarmsLoadFailed = false;
@@ -13511,20 +13552,7 @@ document.addEventListener("keydown", (event) => {
       return;
     }
   }
-  const activeResearchTab = event.target.closest?.("[data-research-tab]");
-  if (activeResearchTab && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
-    const tabs = [...document.querySelectorAll("[data-research-tab]")];
-    const currentIndex = tabs.indexOf(activeResearchTab);
-    const nextIndex = event.key === "Home"
-      ? 0
-      : event.key === "End"
-        ? tabs.length - 1
-        : (currentIndex + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
-    event.preventDefault();
-    tabs[nextIndex].focus();
-    tabs[nextIndex].click();
-    return;
-  }
+  if (moveWorkspaceTab(event, "[data-research-tab]") || moveWorkspaceTab(event, "[data-dividends-tab]")) return;
 
   const activeModal = [...document.querySelectorAll(".modal:not([hidden])")].at(-1);
   if (!activeModal) {
@@ -13625,6 +13653,7 @@ document.addEventListener("click", (event) => {
     openModal(modalId, mobileNavigation ? $("navigationToggle") : modalTrigger, {
       targetId: modalTrigger.dataset.modalTarget || "",
       focusId: modalTrigger.dataset.modalFocus || "",
+      dividendsSection: modalTrigger.dataset.dividendsSection || "calendar",
     });
     if (mobileNavigation) setMobileNavigation(false);
   }
@@ -13671,6 +13700,9 @@ document.addEventListener("click", (event) => {
     setStatusMessage("accountsStatus", "Create an ESOP account for your employee stock option grants.");
     requestAnimationFrame(() => $("localUsername")?.focus());
   }
+
+  const dividendsTab = event.target.closest("[data-dividends-tab]")?.dataset.dividendsTab;
+  if (dividendsTab) setDividendsSection(dividendsTab);
 
   const researchTab = event.target.closest("[data-research-tab]")?.dataset.researchTab;
   if (researchTab) setResearchSection(researchTab);

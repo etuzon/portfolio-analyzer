@@ -83,8 +83,8 @@ def test_static_calendar_and_help_copy_translates():
         def handle_data(self,value):
             if value.strip():self.parts.append(value.strip())
     html=(ROOT/'web/index.html').read_text()
-    modal='<div id="dividendCalendarModal"'+html.split('<div id="dividendCalendarModal"',1)[1].split('<div id="xrayModal"',1)[0]
-    help_entry=html.split('<h3>Dividend Calendar</h3>',1)[1].split('</article>',1)[0]
+    modal='<div id="eventsModal"'+html.split('<div id="eventsModal"',1)[1].split('<div id="reportsModal"',1)[0]
+    help_entry=html.split('<h3>Dividends &amp; Events</h3>',1)[1].split('</article>',1)[0]
     parser=Text();parser.feed(modal+help_entry)
     source="const window={};\n"+(ROOT/'web/i18n.js').read_text()+f'\nconst parts={json.dumps(parser.parts)};'
     source+="process.stdout.write(JSON.stringify(parts.filter(x=>/[A-Za-z]/.test(x)&&window.PortfolioI18n.translate(x,'he')===x)));"
