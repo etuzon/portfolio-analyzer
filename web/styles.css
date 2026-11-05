@@ -5424,6 +5424,14 @@ table {
     outline: 2px solid #64d2ff;
     outline-offset: 2px;
   }
+
+  .holdings-table-wrap .holdings-table th:nth-child(1) {
+    width: calc(27% - 144px);
+  }
+
+  .holdings-table-wrap .holdings-table th:nth-child(3) {
+    width: 144px;
+  }
 }
 
 .holdings-table th:nth-child(1) {
@@ -5498,7 +5506,7 @@ td {
 }
 
 .holdings-table td.holding-risk-cell {
-  padding-inline-end: 16px;
+  padding-inline-end: 10px;
 }
 
 .holdings-table td.holding-risk-cell .risk-badge {
