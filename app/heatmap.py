@@ -1,7 +1,7 @@
 """Read-only security exposure and latest observed native-price movement."""
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from hashlib import sha256
 import math
 
@@ -21,6 +21,26 @@ def _unrealized(holdings, price):
         return None
     return _finite_total(row.quantity * price - row.cost_basis if row.quantity >= 0
                          else abs(row.cost_basis) - abs(row.quantity) * price for row in holdings)
+
+
+def _recorded_exposure(holdings):
+    """Use local recorded amounts as estimates, never as observed prices."""
+    values, bases = [], set()
+    for row in holdings:
+        if row.quantity == 0:
+            return None, None, "unavailable"
+        value, cost = row.market_value, row.cost_basis
+        if _finite(value) and value != 0 and value * row.quantity > 0:
+            basis = "cost_basis" if _finite(cost) and math.isclose(abs(value), abs(cost)) else "recorded_value"
+        elif _finite(cost) and cost != 0:
+            value = abs(cost) if row.quantity > 0 else -abs(cost)
+            basis = "cost_basis"
+        else:
+            return None, None, "unavailable"
+        values.append(value)
+        bases.add(basis)
+    return (_finite_total(values), _finite_total(abs(value) for value in values),
+            next(iter(bases)) if len(bases) == 1 else "mixed")
 
 
 def _fx_evidence(market_hub, histories, currencies, today):
@@ -91,6 +111,7 @@ def stock_heatmap(store, market_hub, fx_histories=None, *, account_id="", today=
                  "secondary_symbol": holdings[0].secondary_symbol, "issues": [], "accounts": [],
                  "price": None, "price_date": None, "previous_price": None, "previous_date": None,
                  "change_percent": None, "gross_value_ils": None, "value_ils": None, "basis": "close",
+                 "valuation_basis": "unavailable", "valuation_status": "unavailable",
                  "cost_basis_native": None, "unrealized_pnl_native": None, "unrealized_pnl_ils": None}
         issues = asset["issues"]
         if len(classes) > 1:
@@ -104,7 +125,7 @@ def stock_heatmap(store, market_hub, fx_histories=None, *, account_id="", today=
         # both valuation and movement so local raw overrides never mix scales.
         history = {}
         if "classification_conflict" not in issues:
-            history = _history(store, _RecentEvidence(market_hub), asset, today-timedelta(days=45), today)[0]
+            history = _history(store, _RecentEvidence(market_hub), asset, date.min, today)[0]
         if asset["name"].strip().upper() == symbol and asset.get("history_identity") == "verified" and callable(getattr(market_hub, "cached_view", None)):
             manual = store.manual_security(symbol, market)
             profile = market_hub.cached_view().profile(symbol, stock_market=asset.get("resolved_stock_market") or market,
@@ -138,7 +159,12 @@ def stock_heatmap(store, market_hub, fx_histories=None, *, account_id="", today=
         fx_status = "ok" if currency == "ILS" else fx.get(currency, {}).get("status", "missing_fx")
         if fx_status != "ok":
             issues.append(fx_status)
-        valuation_ok = not any(code in issues for code in ("classification_conflict", "invalid_position", "missing_price", "unverified_listing", "stale_price", "missing_fx", "stale_fx", "invalid_value"))
+        structural_ok = not any(code in issues for code in ("classification_conflict", "invalid_position", "unverified_listing", "invalid_value"))
+        # Local holding values can themselves come from a rejected local quote.
+        # Do not let a fallback bypass currency/class/date qualification. With no
+        # price records, the recorded amount/cost remains an explicit estimate.
+        recorded_ok = structural_ok and not history and not store.price_history(symbol, market)
+        valuation_ok = structural_ok and rate is not None
         per_account = {}
         for row in holdings:
             per_account.setdefault(row.account_id, []).append(row)
@@ -147,8 +173,18 @@ def stock_heatmap(store, market_hub, fx_histories=None, *, account_id="", today=
             quantities = [row.quantity for row in positions]
             quantity = _finite_total(quantities) if quantities_valid else None
             gross = _finite_total(abs(value) for value in quantities) if quantities_valid else None
-            signed_value = quantity*asset["price"]*rate if valuation_ok and quantity is not None else None
-            gross_value = gross*asset["price"]*rate if valuation_ok and gross is not None else None
+            basis = "unavailable"
+            native_value = native_gross = None
+            if structural_ok and quantity is not None and gross is not None:
+                if asset["price"] is not None:
+                    native_value, native_gross = quantity * asset["price"], gross * asset["price"]
+                    basis = "saved_price"
+                elif recorded_ok:
+                    native_value, native_gross, basis = _recorded_exposure(positions)
+                    if native_value is not None and native_gross is not None and "estimated_value" not in issues:
+                        issues.append("estimated_value")
+            signed_value = native_value * rate if valuation_ok and native_value is not None else None
+            gross_value = native_gross * rate if valuation_ok and native_gross is not None else None
             if any(value is not None and not math.isfinite(value) for value in (signed_value, gross_value)):
                 signed_value = gross_value = None
                 if "invalid_value" not in issues:
@@ -157,6 +193,9 @@ def stock_heatmap(store, market_hub, fx_histories=None, *, account_id="", today=
             pnl = _unrealized(positions, native_price)
             pnl_ils = _finite_total([pnl * rate]) if pnl is not None and fx_status == "ok" else None
             asset["accounts"].append({"account_id": key, "quantity": quantity, "gross_value_ils": gross_value, "value_ils": signed_value,
+                                      "valuation_basis": basis,
+                                      "valuation_status": "unavailable" if gross_value is None else "estimated" if basis != "saved_price"
+                                          else "stale" if "stale_price" in issues or fx_status == "stale_fx" else "current",
                                       "cost_basis_native": cost, "unrealized_pnl_native": pnl, "unrealized_pnl_ils": pnl_ils,
                                       "pnl_status": "invalid_cost_basis" if cost is None else "ok" if pnl is not None else "unavailable"})
         for field in ("cost_basis_native", "unrealized_pnl_native", "unrealized_pnl_ils"):
@@ -167,6 +206,11 @@ def stock_heatmap(store, market_hub, fx_histories=None, *, account_id="", today=
             if asset["gross_value_ils"] is None or asset["value_ils"] is None:
                 issues.append("invalid_value")
                 asset["gross_value_ils"] = asset["value_ils"] = None
+        if asset["gross_value_ils"] is not None:
+            bases = {row["valuation_basis"] for row in asset["accounts"]}
+            asset["valuation_basis"] = next(iter(bases)) if len(bases) == 1 else "mixed"
+            statuses = {row["valuation_status"] for row in asset["accounts"]}
+            asset["valuation_status"] = "estimated" if "estimated" in statuses else "stale" if "stale" in statuses else "current"
         # _history's weekly optimizer eligibility is irrelevant to two quotes.
         for key in ("eligible", "status", "basis", "from", "to", "adjusted_available"):
             asset.pop(key, None)

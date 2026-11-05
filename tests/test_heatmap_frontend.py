@@ -26,7 +26,7 @@ const row=(account_id,quantity,gross_value_ils)=>({account_id,quantity,gross_val
 const a={id:'A|NASDAQ|USD',symbol:'AAA',name:'Alpha <company>',stock_market:'NASDAQ',currency:'USD',asset_class:'EQUITY',quantity:5,gross_quantity:15,gross_value_ils:6000,value_ils:2000,price:110,price_date:'2026-11-03',previous_price:100,previous_date:'2026-11-02',change_percent:10,basis:'close',source:'local',status:'ok',issues:[],accounts:[row('one',10,4000),row('two',-5,2000)]};
 const b={...a,id:'B|TASE|ILS',symbol:'BBB',name:'Beta',stock_market:'TASE',currency:'ILS',asset_class:'ETF',quantity:20,gross_quantity:20,gross_value_ils:4000,value_ils:4000,change_percent:null,previous_price:null,previous_date:null,status:'partial',issues:['missing_previous_price'],accounts:[row('two',20,4000)]};
 const c={...a,id:'C|NASDAQ|EUR',symbol:'CCC',currency:'EUR',asset_class:'MUTUAL_FUND',gross_value_ils:null,value_ils:null,change_percent:-1,status:'partial',issues:['missing_fx'],accounts:[row('one',10,null)]};
-const data={accounts:[{id:'one',type:'Investment',account_id:'First'},{id:'two',type:'Investment',account_id:'Second'},{id:'empty',type:'Investment',account_id:'Empty'}],assets:[a,b,c],as_of:'2026-11-03',excluded:[{symbol:'BOND',stock_market:'TASE',account_id:'two',reason:'unsupported_asset'}],fx:[{currency:'USD',rate:4,date:'2026-11-03',source:'Saved <rates>',status:'ok'}]};
+const data={accounts:[{id:'one',type:'Investment',account_id:'First'},{id:'two',type:'Investment',account_id:'Second'},{id:'empty',type:'Investment',account_id:'Empty'}],assets:[a,b,c],as_of:'2026-11-03',excluded:[{symbol:'OPTION',stock_market:'TASE',account_id:'two',reason:'unsupported_asset'}],fx:[{currency:'USD',rate:4,date:'2026-11-03',source:'Saved <rates>',status:'ok'}]};
 function seed(){resetHeatmap();heatmapView.data=structuredClone(data);renderHeatmap();}
 ''' + (ROOT / 'web/heatmap-ui.js').read_text() + '\n' + body
     result = subprocess.run(['node'], input=script, text=True, capture_output=True, cwd=ROOT)
@@ -39,7 +39,7 @@ seed();let html=target.innerHTML;
 assert.ok(html.includes('₪ 10000.00'));
 assert.ok(html.includes('Long and short exposure'));
 assert.ok(html.includes('Holdings not shown on the map'));
-assert.ok(html.includes('The total covers priced holdings only'));
+assert.ok(html.includes('Weights cover known gross holdings only'));
 assert.ok(html.includes('No change / unavailable'));
 assert.ok(html.includes('data-heatmap-asset="0"'));
 assert.ok(html.includes('All listings and values'));
@@ -59,6 +59,27 @@ seed();heatmapView.selected={id:a.id,account_id:''};renderHeatmapSelection();let
 assert.ok(html.includes('03/11/2026'));assert.ok(html.includes('02/11/2026'));assert.ok(html.includes('+10.00%'));assert.ok(html.includes('60.00%'));assert.ok(html.includes('Alpha &lt;company&gt;'));assert.ok(!html.includes('Alpha <company>'));assert.ok(html.includes('-5.0000'));assert.ok(html.includes('First'));assert.ok(html.includes('Second'));assert.ok(html.includes('₪ 6000.00'));assert.ok(html.includes('₪ 2000.00'));
 heatmapView.selected={id:a.id,account_id:'two'};renderHeatmapSelection();html=nodes.heatmapSelection.innerHTML;assert.ok(html.includes('33.33%'));assert.ok(!html.includes('First'));assert.ok(html.includes('Short exposure'));
 heatmapView.selected={id:b.id,account_id:''};renderHeatmapSelection();html=nodes.heatmapSelection.innerHTML;assert.ok(html.includes('A previous price observation is missing.'));assert.ok(html.includes('Unavailable'));assert.ok(!html.includes('>0.00%</bdi>'));
+''')
+
+
+def test_supported_fund_and_bond_without_moves_show_weights_and_honest_valuation():
+    run_ui(r'''
+seed();
+const fund={...a,id:'fund',symbol:'5139324',name:'Recorded fund',asset_class:'MUTUALFUND',currency:'ILS',stock_market:'TASE',quantity:100,gross_quantity:100,price:null,price_date:null,previous_price:null,previous_date:null,change_percent:null,gross_value_ils:1000,value_ils:1000,valuation_basis:'cost_basis',valuation_status:'estimated',unrealized_pnl_native:9999,unrealized_pnl_ils:9999,issues:['missing_price','estimated_value'],accounts:[{...row('one',100,1000),valuation_basis:'cost_basis',valuation_status:'estimated'}]};
+const bond={...a,id:'bond',symbol:'BOND',asset_class:'BOND',quantity:1000,gross_quantity:1000,price:.75,price_date:'2026-07-31',change_percent:null,gross_value_ils:3000,value_ils:3000,valuation_basis:'saved_price',valuation_status:'stale',issues:['stale_price'],accounts:[{...row('two',1000,3000),valuation_basis:'saved_price',valuation_status:'stale'}]};
+heatmapView.data.assets=[fund,bond];heatmapView.data.excluded=[];
+for(const language of ['en','he']){
+ state.language=language;renderHeatmap();const tiles=heatmapTileMap(heatmapScope());
+ assert.equal((tiles.match(/class="heatmap-tile"/g)||[]).length,2);
+ assert.ok(tiles.includes(language==='he'?'25.0% משקל':'25.0% weight'));
+ assert.ok(tiles.includes(language==='he'?'75.0% משקל':'75.0% weight'));
+ assert.equal((tiles.match(/background:#27354b/g)||[]).length,2);
+ assert.ok(!target.innerHTML.includes('heatmap-unsized'));
+ const tooltip=heatmapTooltipHtml(fund);assert.ok(tooltip.includes(language==='he'?'אומדן לפי עלות':'Cost-based estimate'));assert.ok(!tooltip.includes('9999'));
+ heatmapView.selected={id:'bond',account_id:''};renderHeatmapSelection();assert.ok(nodes.heatmapSelection.innerHTML.includes('31/07/2026'));
+}
+state.language='en';const accountTooltip=heatmapTooltipHtml(bond,[bond]);assert.ok(accountTooltip.includes('100.0% weight'));assert.ok(!accountTooltip.includes('75.0% weight'));
+heatmapView.categories={stocks:true,bonds:false,funds:true};renderHeatmap();assert.deepEqual(heatmapScope().map(row=>row.id),['fund']);
 ''')
 
 
@@ -112,7 +133,7 @@ def test_independent_account_assets_override_unusable_combined_listing():
 seed();heatmapView.data.assets[0].gross_value_ils=null;heatmapView.data.assets[0].accounts[0].gross_value_ils=null;heatmapView.data.assets[0].issues=['classification_conflict'];heatmapView.data.account_assets={one:[{...structuredClone(a),accounts:[row('one',10,4000)],quantity:10,gross_quantity:10,gross_value_ils:4000,value_ils:4000,issues:[]}],two:[]};
 heatmapView.account_id='one';renderHeatmap();assert.equal(heatmapScope().length,1);assert.equal(heatmapScope()[0].gross_value_ils,4000);assert.ok(target.innerHTML.includes('₪ 4000.00'));assert.ok(!target.innerHTML.includes('Holdings not shown on the map'));
 heatmapView.selected={id:a.id,account_id:'one'};renderHeatmapSelection();assert.ok(!nodes.heatmapSelection.innerHTML.includes('classifications conflict'));
-state.language='he';assert.equal(heatmapFxSource('external_import_market_data'),'נתוני שוק ממקור מיובא');assert.equal(heatmapFxSource('bank_of_israel_fx'),'בנק ישראל');assert.equal(heatmapFxSource('My exact citation'),'My exact citation');
+state.language='he';assert.equal(heatmapFxSource('external_import_market_data'),'נתוני שוק ממקור מיובא');assert.equal(heatmapFxSource('bank_of_israel_fx'),'בנק ישראל');assert.equal(heatmapFxSource('Recorded daily FX quotes'),'שערי מטבע יומיים שנשמרו');assert.equal(heatmapFxSource('My exact citation'),'My exact citation');
 ''')
 
 
@@ -146,8 +167,8 @@ state.language='he';assert.equal(heatmapText(heatmapReason('unverified_listing')
 def test_asset_checkboxes_filter_all_account_and_grouped_totals_and_empty_choice():
     run_ui(r'''
 seed();const bond={...structuredClone(a),id:'bond',symbol:'BOND',asset_class:'BOND',quantity:2,gross_value_ils:500,value_ils:500,accounts:[row('one',2,500)]};heatmapView.data.assets.push(bond);
-assert.deepEqual(heatmapCategories(),{stocks:true,bonds:false,funds:true});assert.equal(heatmapScope().length,3);renderHeatmap();assert.ok(target.innerHTML.includes('id="heatmapCategory-stocks" data-heatmap-category="stocks" checked'));assert.ok(!target.innerHTML.includes('id="heatmapCategory-bonds" data-heatmap-category="bonds" checked'));
-for(const category of ['stocks','funds'])for(const listener of listeners.change)listener({target:{id:`heatmapCategory-${category}`,checked:false}});
+assert.deepEqual(heatmapCategories(),{stocks:true,bonds:true,funds:true});assert.equal(heatmapScope().length,4);renderHeatmap();assert.ok(target.innerHTML.includes('id="heatmapCategory-stocks" data-heatmap-category="stocks" checked'));assert.ok(target.innerHTML.includes('id="heatmapCategory-bonds" data-heatmap-category="bonds" checked'));
+for(const category of ['stocks','bonds','funds'])for(const listener of listeners.change)listener({target:{id:`heatmapCategory-${category}`,checked:false}});
 assert.equal(heatmapScope().length,0);assert.ok(target.innerHTML.includes('Choose Stocks, Bonds or Funds'));assert.ok(!target.innerHTML.includes('heatmap-canvas'));
 for(const listener of listeners.change)listener({target:{id:'heatmapCategory-bonds',checked:true}});assert.deepEqual(heatmapScope().map(asset=>asset.symbol),['BOND']);assert.ok(target.innerHTML.includes('₪ 500.00'));assert.ok(!target.innerHTML.includes('₪ 10000.00'));assert.equal(heatmapValueFraction(heatmapScope()[0],heatmapScope()),100);
 heatmapView.layout='accounts';renderHeatmap();assert.ok(target.innerHTML.includes('data-heatmap-account="one"'));assert.deepEqual(heatmapCategories(),{stocks:false,bonds:true,funds:false});assert.equal(pending.length,0);

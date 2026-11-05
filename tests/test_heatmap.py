@@ -72,9 +72,14 @@ def test_market_currency_identity_and_disallowed_assets_are_not_merged():
 
 
 @pytest.mark.parametrize("fx,code",[({},"missing_fx"),({"USD":{"rates":[{"date":"2026-10-01","rate":4}]}},"stale_fx")])
-def test_missing_fx_prevents_size_but_native_price_move_remains(fx,code):
+def test_missing_fx_prevents_size_but_last_known_fx_can_size_a_marked_holding(fx,code):
     asset,=calc(fx=fx)["assets"]
-    assert asset["gross_value_ils"] is None and code in asset["issues"]
+    assert code in asset["issues"]
+    if code == "missing_fx":
+        assert asset["gross_value_ils"] is None
+    else:
+        assert asset["gross_value_ils"] == 4400
+        assert asset["valuation_status"] == "stale"
     assert asset["change_percent"]==pytest.approx(10)
 
 
@@ -135,8 +140,84 @@ def test_verified_cached_company_name_fills_missing_name_without_replacing_user_
 def test_missing_or_stale_price_never_invents_zero_change(rows,code):
     asset,=calc(hub=Hub(rows))["assets"]
     assert asset["change_percent"] is None and code in asset["issues"]
-    if code in {"stale_price","missing_price"}: assert asset["gross_value_ils"] is None
+    if code == "missing_price": assert asset["gross_value_ils"] is None
     else: assert asset["gross_value_ils"] is not None
+
+
+def test_actual_ils_fund_without_prices_and_old_us_bond_keep_known_gross_weights(tmp_path):
+    from app.local_portfolio import LocalPortfolioStore
+    store = LocalPortfolioStore(tmp_path / "portfolio.sqlite3")
+    def account(currency, location):
+        return store.save_account({"type":"Investment", "account_id":"Synthetic heatmap",
+            "location":location, "currency":currency,
+            "persons":[{"name":"Synthetic", "birth_date":"01/01/1990"}]})
+    ils, usd = account("ILS", "Israel"), account("USD", "USA")
+    store.add_transaction({"account_db_id":ils["id"], "symbol":"5139324", "stock_market":"TASE",
+        "asset_class":"MUTUALFUND", "action":"BUY", "quantity":100,
+        "price_input":1000, "trade_date":"2026-11-02"})
+    store.add_transaction({"account_db_id":usd["id"], "symbol":"SYNTHBOND", "stock_market":"MANUAL",
+        "asset_class":"BOND", "action":"BUY", "quantity":1000,
+        "price_input":70, "trade_date":"2026-07-01"})
+    store.save_price({"symbol":"SYNTHBOND", "stock_market":"MANUAL", "asset_class":"BOND",
+        "location":"USA", "currency":"USD", "price_input":75, "price_date":"2026-07-31"})
+    before, token = store.export_data(), store.change_token()
+    result = calc(store, Hub([]))
+    fund = next(row for row in result["assets"] if row["symbol"] == "5139324")
+    bond = next(row for row in result["assets"] if row["symbol"] == "SYNTHBOND")
+    assert fund["gross_value_ils"] == 1000
+    assert fund["valuation_basis"] == "cost_basis" and fund["valuation_status"] == "estimated"
+    assert fund["price"] is None and fund["change_percent"] is None
+    assert fund["unrealized_pnl_native"] is None and "estimated_value" in fund["issues"]
+    assert bond["price"] == .75 and bond["gross_value_ils"] == 3000
+    assert bond["price_date"] == "2026-07-31" and bond["valuation_status"] == "stale"
+    assert bond["change_percent"] is None and bond["unrealized_pnl_native"] is None
+    total = sum(row["gross_value_ils"] for row in result["assets"])
+    assert fund["gross_value_ils"] / total == .25 and bond["gross_value_ils"] / total == .75
+    assert result["account_assets"][ils["id"]][0]["gross_value_ils"] == 1000
+    assert not result["excluded"]
+    assert store.export_data()["data"] == before["data"] and store.change_token() == token
+
+
+def test_last_known_bond_price_keeps_absolute_short_and_long_exposure():
+    local=[{"currency":"USD","asset_class":"BOND","price_date":"2026-07-31","price":.75}]
+    positions=[holding("BOND",stock_market="MANUAL",asset_class="BOND",quantity=1000),
+               holding("BOND",account_id="b",stock_market="MANUAL",asset_class="BOND",quantity=-500)]
+    bond,=calc(Store(positions,local),Hub([]))["assets"]
+    assert bond["gross_value_ils"] == 4500 and bond["value_ils"] == 1500
+    assert bond["valuation_status"] == "stale" and bond["change_percent"] is None
+
+
+@pytest.mark.parametrize("asset_class", ["EQUITY", "STOCK", "RSU", "ETF", "MUTUALFUND", "BOND"])
+def test_recorded_values_can_size_each_supported_security_without_a_quote(asset_class):
+    position=holding(asset_class=asset_class,market_value=250,cost_basis=200)
+    asset,=calc(Store([position]),Hub([]))["assets"]
+    assert asset["gross_value_ils"] == 1000
+    assert asset["valuation_basis"] == "recorded_value" and asset["valuation_status"] == "estimated"
+    assert asset["price"] is None and asset["change_percent"] is None
+    assert asset["unrealized_pnl_native"] is None
+
+
+@pytest.mark.parametrize("price_patch", [{"currency":"EUR"},{"asset_class":"ETF"},{"price_date":"2026-11-04"},{"price":-1}])
+def test_recorded_fallback_cannot_bypass_rejected_local_price_evidence(price_patch):
+    local=[{"currency":"USD","asset_class":"EQUITY","price_date":"2026-11-03","price":100,**price_patch}]
+    asset,=calc(Store([holding(market_value=1000,cost_basis=900)],local),Hub([]))["assets"]
+    assert asset["gross_value_ils"] is None and asset["valuation_status"] == "unavailable"
+    assert asset["change_percent"] is None and "estimated_value" not in asset["issues"]
+
+
+def test_recorded_value_never_replaces_missing_fx_or_identity_conflicts():
+    position=holding(market_value=1000,cost_basis=900)
+    asset,=calc(Store([position]),Hub([]),fx={})["assets"]
+    assert asset["gross_value_ils"] is None and "missing_fx" in asset["issues"]
+    conflicting=calc(Store([position,holding(account_id="b",asset_class="ETF",market_value=1000)]),Hub([]))
+    assert conflicting["assets"][0]["gross_value_ils"] is None
+    assert "classification_conflict" in conflicting["assets"][0]["issues"]
+
+
+def test_zero_quantity_with_residual_cost_cannot_invent_exposure():
+    asset,=calc(Store([holding(quantity=0,market_value=1000,cost_basis=1000)]),Hub([]))["assets"]
+    assert asset["gross_value_ils"] is None and asset["value_ils"] is None
+    assert asset["valuation_status"] == "unavailable" and asset["change_percent"] is None
 
 
 def test_local_raw_override_never_mixes_adjusted_values_and_normalized_ils_no_fx():
