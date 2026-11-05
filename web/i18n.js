@@ -1033,6 +1033,8 @@
     "Underlying sector": "ענף נכסי הבסיס",
     "Technology / Broad market": "טכנולוגיה / שוק רחב",
     "Currency exposure source": "מקור חשיפת המטבע",
+    "Reported holdings: allocations from a published fund report. Manual estimate: your own assessment. Both use the same calculation; reports are not downloaded or verified automatically. Unknown leaves exposure unclassified, even when a named currency is selected.": "החזקות מדווחות: חלוקת המטבעות לפי דוח שפורסם על הקרן. הערכה ידנית: חלוקה לפי ההערכה שלכם. שתי האפשרויות משתמשות באותו חישוב; דוחות אינם מורדים או מאומתים אוטומטית. בחירה בלא ידוע משאירה את החשיפה לא מסווגת, גם כשנבחר מטבע חשיפה מוצהר.",
+    "Currency exposure source: choose Reported holdings for allocations from a published fund report, or Manual estimate for your own assessment. Both use the same calculation; reports are not downloaded or verified automatically. Unknown leaves the currency exposure unclassified, even when a named currency is selected. Hover over or focus the help icon beside the field for this explanation.": "מקור חשיפת המטבע: בחרו בהחזקות מדווחות לחלוקת מטבעות לפי דוח שפורסם על הקרן, או בהערכה ידנית לחלוקה לפי ההערכה שלכם. שתי האפשרויות משתמשות באותו חישוב; דוחות אינם מורדים או מאומתים אוטומטית. בחירה בלא ידוע משאירה את חשיפת המטבע לא מסווגת, גם כשנבחר מטבע חשיפה מוצהר. הצביעו על סמל העזרה ליד השדה או העבירו אליו את המיקוד להצגת ההסבר.",
     "Named FX exposure": "מטבע חשיפה מוצהר",
     "Named exposure": "חשיפה מוצהרת",
     "Policy maximum": "תקרת מדיניות",
