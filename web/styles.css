@@ -960,6 +960,13 @@ html[dir="rtl"] .assistant-table-wrap table { direction: rtl; }
 .alarm-item:focus-visible { outline:2px solid var(--alarm-color); outline-offset:3px; }
 .alarm-risk-details { white-space:pre-line; overflow-wrap:anywhere; line-height:1.6; }
 .alarm-settings-disclosure { margin-block:8px; }
+.alarm-clear-controls { display:flex; flex-wrap:wrap; align-items:end; gap:10px; margin-block:12px; }
+.alarm-clear-controls .field { flex:1 1 160px; min-width:min(100%,160px); }
+.alarm-clear-controls select { width:100%; min-width:0; }
+.alarm-clear-controls > button { flex:0 0 auto; min-height:42px; }
+.alarm-entry { display:grid; grid-template-columns:minmax(0,1fr) 44px; align-items:start; gap:6px; min-width:0; }
+.alarm-entry > .alarm-clear-one { width:44px; min-width:44px; height:44px; min-height:44px; color:var(--alarm-color); border:1px solid var(--alarm-border); background:var(--alarm-background); }
+.alarm-clear-one:focus-visible { outline:2px solid var(--alarm-color); outline-offset:2px; }
 .alarm-settings-disclosure > summary { padding-block:10px; min-height:44px; cursor:pointer; color:#c6cede; }
 .alarm-settings-disclosure > summary:focus-visible { outline:2px solid #8bd1ff; outline-offset:3px; }
 .alarms-list-head { flex-wrap:wrap; }
@@ -2641,6 +2648,9 @@ textarea.muted-control {
   margin-top: 4px;
 }
 
+.currency-allocation-card .donut-legend > span { flex-wrap:wrap; row-gap:3px; }
+.currency-exposure-amount { margin-inline-start:auto; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+
 .asset-mix-card .donut-legend {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -2963,6 +2973,12 @@ textarea.muted-control {
 .account-trend-card .chart-legend {
   gap: 8px;
 }
+
+.account-trend-controls, .report-history-chart-controls { display:flex; flex-wrap:wrap; align-items:end; gap:10px; margin-block:8px; min-width:0; }
+.history-currency-control { display:flex; flex-direction:column; gap:5px; flex:1 1 210px; min-width:min(100%,210px); color:#aeb4bd; font-size:11px; font-weight:650; }
+.history-currency-control select { width:100%; max-width:100%; min-width:0; min-height:38px; border-radius:7px; background:#202124; color:#d9dee7; padding:6px 8px; font-size:12px; }
+.report-history-chart-controls .report-chart-metrics { flex:2 1 360px; }
+.account-trend-card svg g[tabindex]:focus-visible, .report-chart svg g[tabindex]:focus-visible { outline:2px solid #8bd1ff; outline-offset:3px; }
 
 .account-trend-card .chart-legend span {
   white-space: nowrap;
@@ -5275,6 +5291,47 @@ textarea.muted-control {
   grid-template-columns: repeat(4, minmax(150px, 1fr)) minmax(180px, auto);
 }
 
+#accountEditModal .account-edit-form { grid-template-columns:minmax(150px,1fr) minmax(180px,1.4fr) minmax(120px,.8fr) minmax(180px,1fr); align-items:start; gap:12px; }
+#accountEditModal .account-edit-form > .field { min-width:0; }
+#accountEditModal .account-edit-form input, #accountEditModal .account-edit-form select { min-width:0; box-sizing:border-box; }
+#accountEditModal .account-edit-wide, #accountEditModal .account-edit-tools { grid-column:span 2; }
+#accountEditModal .account-edit-tools { display:flex; flex-wrap:wrap; align-items:end; gap:8px; padding-top:21px; }
+#accountEditModal .account-edit-tools > button { min-width:0; flex:1 1 130px; white-space:normal; }
+#accountEditModal .account-edit-form > .person-list, #accountEditModal .account-owner-rule, #accountEditModal .form-actions { grid-column:1 / -1; }
+#accountEditModal .form-actions, .account-cash-actions { display:flex; flex-wrap:nowrap; align-items:stretch; gap:10px; width:100%; max-width:420px; }
+#accountEditModal .form-actions > button, .account-cash-actions > button { flex:1 1 0; min-width:0; padding-inline:10px; white-space:normal; }
+.account-edit-cash { margin-block:10px; }
+.account-current-cash { display:flex; flex-wrap:wrap; align-items:center; gap:10px; color:#d9dee7; font-size:13px; min-width:0; }
+.account-current-cash > span { min-width:0; overflow-wrap:anywhere; }
+.account-management-item > .account-current-cash { grid-column:1 / -1; }
+.currency-strip .account-current-cash { grid-column:1 / -1; display:flex; padding:2px 0 0; min-height:0; gap:8px; background:transparent; border-radius:0; }
+.currency-strip .account-current-cash > span { padding:0; min-height:0; background:transparent; font-size:11px; overflow-wrap:anywhere; }
+.currency-strip .account-current-cash > button { min-height:28px; padding:3px 8px; font-size:11px; }
+.account-cash-card { width:min(100%,540px); }
+.account-cash-account { overflow-wrap:anywhere; color:#c6cede; }
+.account-cash-current { display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; padding:12px; background:#1b1b1d; border-radius:8px; }
+.account-cash-current strong { color:#f7f9ff; font-size:20px; overflow-wrap:anywhere; }
+.account-cash-form { display:grid; gap:12px; min-width:0; }
+.account-cash-form > .field, .account-cash-context > .field { min-width:0; }
+.account-cash-context { display:grid; grid-template-columns:minmax(100px,.8fr) minmax(150px,1.2fr); gap:10px; }
+.account-cash-form input { width:100%; min-width:0; box-sizing:border-box; }
+.account-cash-form input[readonly] { color:#aeb8c8; }
+#accountCashTarget { min-height:44px; font-size:18px; color:#f7f9ff; }
+.account-cash-difference { margin:0; color:#8bd1ff; font-weight:650; overflow-wrap:anywhere; }
+#accountCashReload { justify-self:start; }
+@media (max-width:900px) {
+  #accountEditModal .account-edit-form { grid-template-columns:minmax(0,1fr) minmax(0,1.3fr); }
+}
+@media (max-width:540px) {
+  #accountEditModal .account-edit-form { grid-template-columns:minmax(0,1fr); }
+  #accountEditModal .account-edit-wide, #accountEditModal .account-edit-tools { grid-column:auto; }
+  #accountEditModal .account-edit-type { max-width:240px; }
+  #accountEditModal .account-edit-currency { max-width:180px; }
+  #accountEditModal .account-edit-opening { width:100%; max-width:240px; }
+  #accountEditModal .account-edit-tools { padding-top:0; }
+  .account-cash-context { grid-template-columns:minmax(85px,.7fr) minmax(125px,1.3fr); }
+}
+
 .tab-bar {
   display: flex;
   flex-wrap: wrap;
@@ -7408,9 +7465,10 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
   gap: 6px;
 }
 
-.report-chart-metrics [aria-pressed="true"] {
-  border-color: var(--ux-blue);
-  color: var(--ux-blue);
+.report-chart-metrics button.secondary[aria-pressed="true"] {
+  border-color: #427da7;
+  background: #172936;
+  color: #8bd1ff;
 }
 
 .report-plot-scroll {

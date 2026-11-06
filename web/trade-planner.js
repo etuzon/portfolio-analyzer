@@ -75,7 +75,7 @@
     let cash = number(account.initial_cash);
     if (cash === null) return null;
     for (const tx of transactions.filter((tx) => String(tx.account_db_id) === String(account.id))) {
-      const sign = { BUY: -1, SELL: 1, SHORT: 1, DIVIDEND: 1, INTEREST: 1, FEE: -1 }[tx.action];
+      const sign = { BUY: -1, SELL: 1, SHORT: 1, DIVIDEND: 1, INTEREST: 1, FEE: -1, CASH_IN: 1, CASH_OUT: -1 }[tx.action];
       if (!sign) continue;
       // Multi-currency ledger cash does not establish settled cash in a given
       // currency. Exclude it instead of treating FX estimates as buying power.

@@ -394,19 +394,22 @@
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
-        <div class="management-form account-form">
-          <label class="field"><span>Type</span><select id="editAccountType" title="Investment, long-term savings, or bank account"></select></label>
-          <label class="field"><span>Country</span><select id="editAccountLocation" title="Account country. Israel uses agorot for security prices; USA bonds use cents."></select></label>
-          <label class="field"><span>Currency</span><select id="editAccountCurrency" title="Account base currency"></select></label>
-          <label class="field"><span>Initial cash</span><input id="editInitialCash" type="number" step="0.01" placeholder="0" title="Opening cash balance. Buy/sell/short transactions affect cash; add/remove security does not." /></label>
-          <label class="field"><span>Username</span><input id="editUsername" placeholder="Owner / login" title="Owner or username shown in account reports" /></label>
-          <label class="field"><span>Account ID (optional)</span><input id="editAccountId" placeholder="Account ID (optional)" title="Optional identifier supplied by the broker, bank, pension company, or import source" /></label>
-          <label class="field"><span>Broker</span><select id="editAccountBroker" title="Broker, bank, pension company, or platform"></select></label>
-          <label class="field"><span>Comments</span><input id="editAccountComments" placeholder="Comments" title="Optional operational notes for finance managers" /></label>
-          <label class="field"><span>Existing person</span><select id="editAccountFamilyMember"></select></label>
-          <button id="attachEditAccountPerson" class="secondary" type="button">Add existing person</button>
-          <button class="secondary" type="button" data-modal="brokersModal">Manage brokers</button>
-          <button class="secondary" type="button" data-modal="familyModal">Manage people</button>
+        <div id="editAccountCash" class="account-edit-cash"></div>
+        <div class="management-form account-form account-edit-form">
+          <label class="field account-edit-type"><span>Type</span><select id="editAccountType" title="Investment, long-term savings, or bank account"></select></label>
+          <label class="field account-edit-country"><span>Country</span><select id="editAccountLocation" title="Account country. Israel uses agorot for security prices; USA bonds use cents."></select></label>
+          <label class="field account-edit-currency"><span>Currency</span><select id="editAccountCurrency" title="Account base currency"></select></label>
+          <label class="field account-edit-opening"><span>Opening cash</span><input id="editInitialCash" type="number" step="0.01" placeholder="0" aria-describedby="editOpeningCashHint" title="Opening cash balance. Buy/sell/short transactions affect cash; add/remove security does not." /><small id="editOpeningCashHint">To set today's balance, use Update cash.</small></label>
+          <label class="field account-edit-wide"><span>Username</span><input id="editUsername" placeholder="Owner / login" title="Owner or username shown in account reports" /></label>
+          <label class="field account-edit-wide"><span>Account ID (optional)</span><input id="editAccountId" placeholder="Account ID (optional)" title="Optional identifier supplied by the broker, bank, pension company, or import source" /></label>
+          <label class="field account-edit-wide"><span>Broker</span><select id="editAccountBroker" title="Broker, bank, pension company, or platform"></select></label>
+          <label class="field account-edit-wide"><span>Comments</span><input id="editAccountComments" placeholder="Comments" title="Optional operational notes for finance managers" /></label>
+          <label class="field account-edit-wide"><span>Existing person</span><select id="editAccountFamilyMember"></select></label>
+          <div class="account-edit-tools">
+            <button id="attachEditAccountPerson" class="secondary" type="button">Add existing person</button>
+            <button class="secondary" type="button" data-modal="brokersModal">Manage brokers</button>
+            <button class="secondary" type="button" data-modal="familyModal">Manage people</button>
+          </div>
           <div id="editAccountPersons" class="person-list"></div>
           <div class="info-strip account-owner-rule" role="note">Every account needs at least one person. Long-Term Savings and ESOP accounts must have exactly one person.</div>
           <div class="form-actions">
@@ -415,6 +418,27 @@
           </div>
         </div>
         <p id="editAccountStatus" class="status-line"></p>
+      </section>
+    </div>
+
+    <div id="accountCashModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card account-cash-card" role="dialog" aria-modal="true" aria-labelledby="accountCashTitle">
+        <div class="section-head"><h2 id="accountCashTitle">Update current cash</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <p id="accountCashAccount" class="account-cash-account"></p>
+        <p class="account-cash-current"><span>Current cash</span><strong id="accountCashCurrent" dir="ltr"></strong></p>
+        <form id="accountCashForm" class="account-cash-form" novalidate>
+          <div class="account-cash-context">
+            <label class="field"><span>Currency</span><input id="accountCashCurrency" readonly dir="ltr" /></label>
+            <label class="field"><span>Effective date</span><input id="accountCashDate" readonly dir="ltr" /></label>
+          </div>
+          <label class="field"><span>New current cash balance</span><input id="accountCashTarget" type="number" step="any" inputmode="decimal" dir="ltr" aria-describedby="accountCashHint accountCashStatus" /></label>
+          <p id="accountCashHint" class="section-note">Enter the balance in this account's currency. Zero and negative cash are allowed; only the difference is recorded locally.</p>
+          <p id="accountCashDifference" class="account-cash-difference" aria-live="polite"></p>
+          <p id="accountCashStatus" class="status-line" role="status" aria-live="polite" tabindex="-1"></p>
+          <button id="accountCashReload" class="secondary compact-button" type="button">Reload current cash</button>
+          <div class="account-cash-actions"><button id="accountCashSave" type="submit">Save current cash</button><button class="secondary" type="button" data-close>Cancel</button></div>
+        </form>
       </section>
     </div>
 
@@ -1098,10 +1122,14 @@
             <div class="help-group-content">
               <article class="help-feature">
                 <h3>Home</h3>
+                <p>In Account value trend, choose an account and Currency display. An individual account starts in Recorded account currency; Dashboard currency converts its history using current saved exchange rates. With All accounts, each recorded currency option includes only accounts in that currency. A grouped total is unavailable on dates when an included account has no valid point. Missing or mixed-currency evidence creates gaps. Switching views uses loaded history, preserves your reading position and is available to viewers. Use Refresh to reread history. Recorded currency removes dashboard conversion, not currency exposure within holdings. Balance changes include deposits and withdrawals; they are not investment returns. Older saved records inherit the account's declared currency; changing that currency does not verify their original denomination.</p>
                 <p>Hover over an account summary to see its account type, location, source currencies and cash balance on separate lines.</p>
+                <p>Hover over the total portfolio value to see the securities and cash totals, plus each account's cash balance in its own currency. Zero and negative cash balances remain visible; unavailable opening balances are not treated as zero.</p>
                 <p>Select the portfolio title or logo to return to the dashboard.</p>
                 <p>Use Area to choose investments, long-term savings, employee equity, or all areas. View switches between Glance and Full; Edit lets you arrange or hide cards. Compact summaries use narrower cards and fill available gaps beside taller charts. Card widths follow the dashboard’s available space. Edit keeps your saved arrangement; the display can place later cards in earlier gaps, while keyboard and single-column reading order follow the saved sequence.</p>
                 <p>Analytics refresh in the background while preserving your reading position, keyboard focus and expanded card details. Hover or focus a data-gap count to see which input is unavailable; unavailable dividend history does not confirm zero dividends. Currency tooltips use symbols and retain the converted base-currency value.</p>
+                <p>Economic currency exposure shows each currency's percentage and equivalent amount in that currency, using saved exchange rates. These amounts describe economic exposure, not cash balances or the security's trading currency. Unknown and Other currencies show a labeled base-currency equivalent. Missing source or conversion rates leave the amount unavailable; use Refresh to retry.</p>
+                <p>Portfolio edits and Refresh load the latest data. A lightweight notification connection reports background analysis progress without repeatedly downloading or redrawing the dashboard and holdings. Displayed results stay in place while the status count advances; one completed snapshot is applied when analysis finishes. Changes from another open session also notify this page. Unchanged notifications do no work. Your page position, active filters, keyboard focus and expanded details are preserved. If the connection is interrupted it reconnects while retaining displayed data; use Refresh to retry a failed load or unavailable notifications. Loading never blocks the page.</p>
                 <p>Unrealized P/L bars and totals use the chart currency shown beside Total P/L. Hover over a bar or focus it with the keyboard to read the holding's P/L in its local currency and converted to ILS at the current saved exchange rate; this does not measure historical FX gains or losses. Missing ILS conversion is shown as unavailable. Holdings without P/L or chart-currency conversion are omitted, and the total remains unavailable until those inputs are complete. Refresh the dashboard to retry missing inputs.</p>
                 <p>Net income shows the percentage change between the two latest available annual reports: (current − previous) / abs(previous) × 100. Green means an increase, red a decrease, and blue exactly no change. The two report dates remain visible; they may not be consecutive years. A zero or missing previous value leaves the percentage unavailable. A smaller loss can produce a positive change. Risk uses a compact score and symbol; its tooltip explains the risk band. In High / Low, Data available means the range was calculated from sufficient dated price history; Partial indicates limited history.</p>
               </article>
@@ -1122,7 +1150,7 @@
                 <p>Open Alarms to review existing Buy, Sell and Watch signals, current portfolio and account risk warnings, and vesting and dividend notices. The header count combines displayed items; repeated matches for the same symbol and signal type count once. Its color reflects the highest attention level present; open the popup for labeled counts and details.</p>
                 <p>Red marks Sell signals and existing High or Extreme risk scores (61–100); amber marks Watch, Elevated risk (41–60), modeled borrowing, incomplete risk inputs and unconfirmed dividend payments. Green marks complete Buy signals and locally recorded dividend payments; it does not mean an investment is safe. Buy or Watch signals with missing rule or provider inputs are amber; Sell remains red. Blue marks scheduled dividends and purple marks vesting. Text and symbols explain each color.</p>
                 <p>Risk alarms use the existing dashboard model and full non-employee-equity scope, independent of holdings filters. Missing valuations, quantities, opening cash balances or conversion FX, unfinished or failed analytics updates prevent a complete risk assessment. Limited model inputs retain their existing data-quality penalty. Select a risk row for its current score, contributing factors and missing data; a score is not a probability of loss or a trading instruction.</p>
-                <p>Select a signal to review its matching Buy, Sell or Watch evidence in Portfolio Signals. Clear event notices only hides dividend and vesting notices; it never dismisses risk warnings or signals and never deletes source transactions. Dismiss signals in Portfolio Signals using the existing expiry setting. Viewers may inspect these notices; signal dismissal follows editing permissions.</p>
+                <p>Select an alarm to review its evidence. Use × to clear one alarm, choose Color or Type and Clear matching to clear that group, or Clear all alarms. Color and Type apply together when both are selected. Clearing hides notices without changing holdings, transactions or risk scores. Risk warnings stay hidden for the unchanged assessment and return when its financial inputs change. Signals use the existing dismissal expiry setting; failed dismissals stay visible and can be retried. Clearing requires editing permission; viewers may inspect alarms.</p>
                 <p>Dividend payment recorded means a local event was processed, not that external broker settlement was verified. Cash posting is shown only with a positive net amount and a recorded transaction. Past pending dates, failed or skipped records and invalid dates remain amber for review; they do not prove nonpayment. Use Portfolio → Dividends &amp; Events → Events to inspect or scan dividend records.</p>
                 <p>Opening Alarms rereads events and saved rule results without placing trades or fetching market quotes. Loading is nonblocking. Source failures retain available results and identify what could not be updated. Reopen Alarms to retry events or signals; use dashboard Refresh to retry portfolio inputs. New portfolio assessments and signal updates refresh the colors and counts while preserving the popup reading position. Expand Vesting notice settings to adjust the existing lead-time window, then Save notice.</p>
               </article>
@@ -1208,8 +1236,9 @@
               </article>
               <article class="help-feature">
                 <h3>Portfolio Reports</h3>
-                <p>Choose people, account category, account, and location, then Generate report. Current balances use the latest recorded values; the history dates affect only Account history. Download PDF exports the displayed report, so regenerate it after changing scope filters.</p>
-                <p>Use Update history for the selected date range. Balance changes may include deposits and withdrawals, and historical amounts use current exchange rates. Manage history records to add or correct a dated balance; saving the same account and date replaces that record.</p>
+                <p>Choose people, account category, account, and location, then Generate report. Current balances use the latest recorded values; the history dates affect only Account history. Download PDF exports the generated report scope in dashboard currency; on-screen history currency and measure choices do not change the PDF. Regenerate the report after changing scope filters.</p>
+                <p>Use Update history for the selected date range. Currency display switches the loaded history between Recorded account currency and Dashboard currency without fetching data or changing the report scope. Each recorded currency option shows only accounts with that declared currency; unlike currencies are never added. Native values need no dashboard exchange rate. Missing or mixed-currency history is shown as a gap. Viewers may change chart views. Manage history records to add or correct a dated balance; saving the same account and date replaces that record. Changing an account's declared currency does not verify the denomination of older saved records.</p>
+                <p>Account value includes cash and can change with deposits and withdrawals; it is not investment performance. Recorded P/L amount and Recorded profit % use saved values, while calculated P/L follows the existing open-position method; neither is a period return or complete realized performance. Recorded account currency removes dashboard conversion, not currency exposure within holdings. Dashboard currency uses current saved exchange rates. Choose the chart measure and read the currency shown on the axis, legend and tooltips; an unavailable value remains a gap. Update history retries unavailable records.</p>
               </article>
             </div>
           </details>
@@ -1337,6 +1366,9 @@
               <article class="help-feature">
                 <h3>Accounts</h3>
                 <p>Create Investment, Bank, Long-Term Savings, or ESOP accounts. Choose the broker and attach existing family members before saving. Every account requires a person; Long-Term Savings and ESOP require exactly one.</p>
+                <p>Current cash appears beside each account in Accounts and on its dashboard account chip, in the account's own currency. Use Update cash there or in Edit account to set today's actual balance. The dialog reads current local cash, shows its currency and today's date in Israel, and starts with that balance. Enter the new balance, including zero or a negative balance for borrowing, review the adjustment and Save current cash. Opening cash in Edit account changes the starting balance; it is not the current-balance target. Fields are sized for their contents, and Save changes and Cancel stay together.</p>
+                <p>Administrators and Operators can update cash; Viewers can inspect balances. The update records only the difference as a local cash adjustment, without changing holdings, opening cash or an external source. Future activity can change the balance again. Unknown opening cash, missing currency, mixed-currency cash entries, invalid entries or future cash-affecting dates block an update until corrected. After a local cash adjustment, Sync import retains that adjustment and preserves the account's opening cash; newly imported activity can still affect current cash. Accounts with cash updates cannot change currency; create another account for a different currency.</p>
+                <p>Saving keeps the dialog open and prevents duplicate submissions and cancellation until the result arrives. A changed balance requires Reload current cash and a new review before saving. An interrupted save retains the entered amount and retries the same update without duplication; reload current cash before choosing another target. A failed save retains the draft. Success refreshes the account list and dashboard once; if that refresh fails, the cash remains saved and Refresh retries the displayed totals. Cancel before saving makes no change. The cash update and its dated cash increase or decrease persist locally and in backups; they are not security trades.</p>
               </article>
               <article class="help-feature">
                 <h3>Brokers</h3>
@@ -1663,10 +1695,16 @@
         </details>
         <div class="alarms-list-head">
           <p id="alarmsStatus" class="status-line" role="status" aria-live="polite">Vesting and dividend alarms</p>
-          <button id="clearAlarms" class="secondary compact-button" type="button">Clear event notices</button>
+          <button id="clearAlarms" class="secondary compact-button" type="button">Clear all alarms</button>
         </div>
         <div id="alarmPrioritySummary" class="alarm-priority-summary" aria-label="Alarm types"></div>
-        <p class="section-note">Risk warnings update with your portfolio. Dismiss signals in Portfolio Signals.</p>
+        <div class="alarm-clear-controls">
+          <label class="field"><span>Color</span><select id="alarmClearColor"><option value="">Any color</option></select></label>
+          <label class="field"><span>Type</span><select id="alarmClearType"><option value="">All types</option></select></label>
+          <button id="clearMatchingAlarms" class="secondary compact-button" type="button">Clear matching</button>
+        </div>
+        <p id="alarmClearStatus" class="status-line" role="status" aria-live="polite" tabindex="-1"></p>
+        <p class="section-note">Cleared risk warnings return when the assessment changes. Signals use your dismissal expiry setting.</p>
         <div id="alarmsList" class="stack"></div>
       </section>
     </div>
@@ -1753,7 +1791,7 @@
         <p id="reportValuationNote" class="section-note" role="status"></p>
         <div id="reportRetirementSummary" class="report-retirement-summary"></div>
         <section class="report-history-section" aria-labelledby="reportHistoryTitle">
-          <div class="report-section-heading"><h3 id="reportHistoryTitle">Account history</h3><p class="section-note">Balance changes can include deposits and withdrawals; they are not investment returns. Historical amounts use current exchange rates.</p></div>
+          <div class="report-section-heading"><h3 id="reportHistoryTitle">Account history</h3><p class="section-note">Choose dates, currency display and chart measure to explore saved account history.</p></div>
           <div class="report-history-controls report-screen-only">
             <label class="field"><span>From</span><input id="reportFrom" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
             <label class="field"><span>To</span><input id="reportTo" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
@@ -2801,7 +2839,8 @@
   <script src="/heatmap-ui.js?v=1"></script>
   <script src="/risk-data-gaps-ui.js?v=1"></script>
   <script src="/risk-history-ui.js?v=1"></script>
-  <script src="/alarm-priority-ui.js?v=1"></script>
+  <script src="/alarm-priority-ui.js?v=2"></script>
+  <script src="/account-cash-ui.js?v=1"></script>
   <script src="/app.js?v=0.9.15-cash-risk"></script>
   </body>
 </html>

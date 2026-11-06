@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import hmac
 import io
 import json
@@ -28,7 +29,7 @@ from apscheduler.triggers.cron import CronTrigger
 import anyio
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from mcp.server.transport_security import TransportSecuritySettings
@@ -39,6 +40,7 @@ from .alerts import ALERT_JOB_ID, AlertStore, alert_rule_options, start_schedule
 from .assistant_chats import AssistantChats, ChatError
 from .assistant_rest import AssistantRestGateway
 from .auth import API_ACCESS_MODES, AUTH_ROLES, PASSWORD_MIN_LENGTH, REMEMBER_SESSION_DAYS, SESSION_COOKIE_NAME, AuthStore
+from .portfolio_notifications import PortfolioNotifications
 from .config import data_dir, load_config
 from .diagnostics import Diagnostics, TRACE_ID
 from .company_logos import CompanyLogoService
@@ -55,7 +57,7 @@ from .benchmark_data import benchmark_comparison, benchmark_inputs, save_portfol
 from .xray import XrayError, build_xray, read_snapshot, require_fund, save_manual_report, snapshot_key
 from .dividend_calendar import build_dividend_calendar
 from .external_import import ExternalImportClient
-from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, SUPPORTED_MANAGEMENT_CURRENCIES, LocalPortfolioStore, validate_portfolio_ownership
+from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, SUPPORTED_MANAGEMENT_CURRENCIES, CashBalanceError, LocalPortfolioStore, validate_portfolio_ownership
 from .llm_assistant import AssistantError, PortfolioAssistant, assistant_settings
 from .metrics import analyze_holding, moving_averages, screen, support_resistance, technical_signals, to_dict, volume_metrics
 from .mcp_server import create_portfolio_mcp_server
@@ -226,6 +228,7 @@ _portfolio_refresh_in_progress = False
 _portfolio_cache_generation = 0
 _portfolio_refresh_failure: dict[str, Any] | None = None
 _portfolio_refresh_progress: dict[str, Any] | None = None
+_portfolio_notifications = PortfolioNotifications()
 _alert_run_lock = RLock()
 _alert_runs_in_progress: set[str] = set()
 _full_restore_lock = RLock()
@@ -2624,6 +2627,7 @@ def _refresh_portfolio_cache() -> None:
         generation = _portfolio_cache_generation
         progress = {"total": 0, "completed": 0, "failed": 0, "states": {}, "results": {}}
         _portfolio_refresh_progress = progress
+    _portfolio_notifications.notify()
 
     def record(key, state, analysis, total):
         serialized = to_dict(analysis) if analysis is not None else None
@@ -2642,6 +2646,7 @@ def _refresh_portfolio_cache() -> None:
                 progress["results"][key] = serialized
             progress["completed"] = sum(value in {"ready", "failed"} for value in progress["states"].values())
             progress["failed"] = sum(value == "failed" for value in progress["states"].values())
+        _portfolio_notifications.notify()
     signature = None
     try:
         _refresh_portfolio_fx_history()
@@ -2677,6 +2682,7 @@ def _refresh_portfolio_cache() -> None:
     finally:
         with _portfolio_cache_lock:
             _portfolio_refresh_in_progress = False
+        _portfolio_notifications.notify()
 
 
 def schedule_portfolio_refresh() -> bool:
@@ -2690,6 +2696,7 @@ def schedule_portfolio_refresh() -> bool:
             return False
         _portfolio_refresh_failure = None
         _portfolio_refresh_in_progress = True
+    _portfolio_notifications.notify()
     Thread(target=_refresh_portfolio_cache, name="portfolio-analytics-refresh", daemon=True).start()
     return True
 
@@ -2822,6 +2829,7 @@ def clear_portfolio_cache() -> None:
             portfolio_cache_path().unlink()
         except OSError:
             pass
+    _portfolio_notifications.notify()
 
 
 def _login_attempt_key(request: Request, username: Any) -> str:
@@ -3386,10 +3394,51 @@ def get_risk_history(base_currency: str = "ILS", days: int = 90):
 
 @app.get("/api/portfolio")
 def portfolio(refresh: bool = False):
-    # A user-requested refresh is allowed to wait for enriched data.  Regular
-    # dashboard loads remain non-blocking and are refreshed by the client when
-    # the background worker completes.
-    return portfolio_payload(force_refresh=refresh, defer_enrichment=True)
+    # Reads return saved evidence without waiting for providers. Explicit
+    # Refresh starts a worker; notifications announce its completed snapshot.
+    revision = _portfolio_notifications.revision
+    payload = portfolio_payload(force_refresh=refresh, defer_enrichment=True)
+    # A change during payload assembly must remain observable on subscription.
+    payload["update_revision"] = revision
+    return payload
+
+
+def portfolio_update_status() -> dict[str, Any]:
+    """Read worker metadata only: no ledger scans, payload builds or providers."""
+    with _portfolio_cache_lock:
+        pending = _portfolio_refresh_in_progress
+        failed = bool(_portfolio_refresh_failure) or (_portfolio_cache or {}).get("payload", {}).get("refresh_state") == "failed"
+        progress = _portfolio_refresh_progress or {}
+        return {
+            "update_revision": _portfolio_notifications.revision,
+            "generation": _portfolio_cache_generation,
+            "refresh_state": "refreshing" if pending else "failed" if failed else "ready",
+            "refresh_pending": pending,
+            "refresh_progress": {key: progress.get(key, 0) for key in ("total", "completed", "failed")},
+        }
+
+
+@app.get("/api/portfolio/updates")
+async def portfolio_updates(request: Request):
+    async def notifications():
+        async with _portfolio_notifications.subscribe() as changed:
+            previous = None
+            while True:
+                # Clear before reading so a worker update between the snapshot
+                # and wait cannot be lost. Bursts coalesce to the latest state.
+                changed.clear()
+                if await request.is_disconnected():
+                    return
+                status = portfolio_update_status()
+                if status != previous:
+                    yield f"data: {json.dumps(status)}\n\n"
+                    previous = status
+                try:
+                    await asyncio.wait_for(changed.wait(), timeout=15)
+                except TimeoutError:
+                    yield ": keep-alive\n\n"
+
+    return StreamingResponse(notifications(), media_type="text/event-stream", headers={"X-Accel-Buffering": "no"})
 
 
 @app.get("/api/portfolio/benchmark")
@@ -3737,6 +3786,25 @@ def import_source():
 @app.get("/api/local/accounts")
 def list_local_accounts():
     return {"items": local_store.list_accounts(), "status": local_store.status()}
+
+
+@app.get("/api/local/accounts/{account_id}/cash-balance")
+def get_account_cash_balance(account_id: str):
+    try:
+        return local_store.account_cash_balance(account_id)
+    except CashBalanceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"reason": exc.reason, "recovery": exc.recovery}) from exc
+
+
+@app.post("/api/local/accounts/{account_id}/cash-balance")
+def update_account_cash_balance(account_id: str, payload: dict[str, Any]):
+    try:
+        result = local_store.update_account_cash(account_id, payload or {})
+        if result["adjusted"]:
+            clear_portfolio_cache()
+        return result
+    except CashBalanceError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"reason": exc.reason, "recovery": exc.recovery}) from exc
 
 
 @app.get("/api/local/brokers")

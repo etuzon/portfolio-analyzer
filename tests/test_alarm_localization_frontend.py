@@ -28,7 +28,8 @@ const nodes = Object.fromEntries(['alarmsCount','alarmsStatus','alarmsList',
   'alarmSettingsStatus','vestingAlertDays','clearAlarms','alarmsButton'].map(id =>
   [id, {textContent: '', innerHTML: '', value: '30', dataset:{},setAttribute() {},classList: {toggle() {}}}]));
 const $ = id => nodes[id];
-const document = {documentElement: {}, querySelector: () => null, querySelectorAll: () => []};
+const document = {addEventListener() {}, documentElement: {}, querySelector: () => null, querySelectorAll: () => []};
+const canWrite = () => true;
 const state = {language: 'he', baseCurrency: 'USD', localEvents: [], items: [],
   dismissedAlarmIds: [], vestingAlertDays: 30};
 let lots = [];

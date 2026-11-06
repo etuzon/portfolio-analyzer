@@ -83,6 +83,7 @@ const nodes=Object.fromEntries(['alarmsButton','alarmsCount','alarmsPrioritySymb
  'alarmsStatus','clearAlarms','alarmSettingsStatus','vestingAlertDays','alarmsList'].map(id=>[id,{
  textContent:'',innerHTML:'',dataset:{},classList:{toggle(){}},setAttribute(k,v){this[k]=v}}]));
 const $=id=>nodes[id];
+const document={addEventListener(){},activeElement:null};
 '''
         + SETUP + source_js() + "\n" + body
     )
@@ -106,8 +107,9 @@ assert.equal(alarmAppearance(groups.find(x=>x.signalType==='buy')).tone,'green')
 assert.equal(alarmAppearance(groups.find(x=>x.signalType==='watch')).tone,'amber');
 renderAlarms();assert.equal(nodes.alarmsButton.dataset.alarmTone,'red');
 assert.equal(nodes.alarmsCount.textContent,'7');
-clearAlarms();assert.equal(nodes.alarmsCount.textContent,'5');
-assert.equal(nodes.alarmsButton.dataset.alarmTone,'red');assert.equal(nodes.clearAlarms.disabled,true);
+clearSelectedAlarms({key:'dividend:qa-event'});clearSelectedAlarms({key:'dividend:recorded'});
+assert.equal(nodes.alarmsCount.textContent,'5');
+assert.equal(nodes.alarmsButton.dataset.alarmTone,'red');assert.equal(nodes.clearAlarms.disabled,false);
 assert.equal(JSON.stringify({accounts:state.localAccounts,items:state.allPortfolioItems,
  signals:state.alertData,events:state.localEvents}),original);
 state.alertClientDismissals=[{symbol:'QA',signal:'sell',expires_at:'2099-01-01T00:00:00Z'}];
@@ -266,7 +268,7 @@ state.language='he';
 for(const paragraph of paragraphs){assert.notEqual(t(paragraph),paragraph);assert.match(t(paragraph),/[א-ת]/u)}
 state.language='en';for(const paragraph of paragraphs)assert.ok(!/[א-ת]/u.test(t(paragraph)));
 assert.ok(paragraphs.some(x=>x.includes('does not mean an investment is safe')));
-assert.ok(paragraphs.some(x=>x.includes('never dismisses risk warnings or signals')));
+assert.ok(paragraphs.some(x=>x.includes('Clearing hides notices without changing holdings, transactions or risk scores')));
 assert.ok(paragraphs.some(x=>x.includes('not that external broker settlement was verified')));
 ''')
 
@@ -298,6 +300,10 @@ const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const scheduleAlertRefresh=()=>{};
 const loadAlerts=async()=>renderAlerts(state.alertData,{signalsOnly:true});
 const loadEvents=async()=>{};
+async function dismissAlertSignal(symbol,signal){
+ state.alertClientDismissals.push({symbol,signal,expires_at:'2099-01-01T00:00:00Z'});
+ renderAlarms();
+}
 const loadCompanyOutlookHistory=async()=>{};
 const formatDateTime=()=> '06/11/2026';
 const alertReasonText=()=>'';
@@ -461,11 +467,11 @@ def test_browser_header_modal_navigation_viewer_and_keyboard(tmp_path, width, la
             assert evaluate("$('alarmsModal').inert") is False
             assert evaluate("Boolean(document.activeElement.dataset.openRiskAlarm)") is True
             assert evaluate("$('clearAlarms').disabled") is True
-            evaluate("state.auth.user.role='Operator';renderAlarms();applyRolePermissions();$('clearAlarms').click()")
-            assert evaluate("$('alarmsCount').textContent") == '5'
-            assert evaluate("$('alarmsButton').dataset.alarmTone") == 'red'
+            evaluate("(async()=>{state.auth.user.role='Operator';renderAlarms();applyRolePermissions();await clearAlarms()})()")
+            assert evaluate("$('alarmsCount').textContent") == '0'
+            assert evaluate("$('alarmsButton').dataset.alarmTone") == 'neutral'
             evaluate("state.portfolioRefreshPending=true;renderAlarms()")
-            assert evaluate("$('alarmsCount').textContent") == '4'
+            assert evaluate("$('alarmsCount').textContent") == '1'
             evaluate("state.alertData={...state.alertData,active_signals:[{symbol:'NEWBUY',signal:'buy'}]};renderAlerts(state.alertData,{signalsOnly:true})")
             assert evaluate("$('alarmsCount').textContent") == '2'
             assert evaluate("$('alarmsButton').dataset.alarmTone") == 'amber'

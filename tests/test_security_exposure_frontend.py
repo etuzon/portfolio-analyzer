@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_fund_economic_fx_exposure_is_not_inferred_from_ils_trading_currency():
     source = (ROOT / "web/app.js").read_text()
     functions = []
-    for name in ("assetRiskFactor", "economicCurrencyExposure", "currencyAllocationGroups"):
+    for name in ("assetRiskFactor", "economicCurrencyExposure", "checkedAccountShareAmount", "currencyAllocationGroups"):
         start = source.index(f"function {name}(")
         end = source.find("\nfunction ", start + 1)
         functions.append(source[start:end if end != -1 else None])

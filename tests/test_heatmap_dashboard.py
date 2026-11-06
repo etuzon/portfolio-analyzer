@@ -41,7 +41,7 @@ def test_dashboard_mount_and_background_load_replace_research_modal_and_help():
     renderer = app[app.index('function renderAnalytics('):app.index('function renderPortfolio(')]
     assert renderer.count('if (typeof renderHeatmap === "function") renderHeatmap();') == 2
     loader = app[app.index('async function loadPortfolio('):app.index('async function loadPortfolio(')+10000]
-    assert 'if (typeof loadHeatmap === "function" && (!data.refresh_pending || enrichmentRetry === 0)) loadHeatmap();' in loader
+    assert 'if (typeof loadHeatmap === "function") loadHeatmap();' in loader
     assert 'await loadHeatmap()' not in loader
     dashboard_start = html.index('<span>Dashboard</span>')
     dashboard_help = html[dashboard_start:html.index('<summary><span>Portfolio</span>', dashboard_start)]

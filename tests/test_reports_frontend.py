@@ -23,7 +23,8 @@ def run(script):
 BASE = """
 const assert = require('node:assert/strict');
 const nodes = {};
-const $ = id => nodes[id] ||= {innerHTML:'',textContent:'',value:'',setAttribute(){},removeAttribute(){}};
+const $ = id => nodes[id] ||= {innerHTML:'',textContent:'',value:'',style:{minHeight:''},closest:()=>null,getBoundingClientRect:()=>({height:0}),setAttribute(){},removeAttribute(){}};
+const preserveRenderedInteraction=()=>()=>{};
 const state = {baseCurrency:'ILS',language:'en',fxRates:{'USD/ILS':3,'EUR/ILS':4},localAccounts:[],activeReportFilters:{}};
 const sum = values => values.reduce((a,b)=>a+b,0);
 const t = text => text;
@@ -82,14 +83,16 @@ assert.doesNotMatch($('reportsByType').innerHTML,/100%/);
 
 
 def test_history_uses_elapsed_dates_and_preserves_account_colors_across_measures():
-    run(BASE + MONEY_FUNCTIONS + functions('renderAccountTrend') + r"""
+    run(BASE + MONEY_FUNCTIONS + functions('historyCurrencyOptions','historyCurrencySelection','historyPointAmount','historyLinePath','historyCurrencyControl','renderAccountTrend') + r"""
 const trend={accounts:[{account:{label:'One',currency:'ILS'},points:[
-  {date:'2026-10-01',value:100,profit_percent:0},
-  {date:'2026-10-02',value:105,profit_percent:5},
-  {date:'2026-10-11',value:110,profit_percent:10}]}]};
+  {date:'2026-10-01',value:100,profit_percent:0,native_available:true,native_currency:'ILS'},
+  {date:'2026-10-02',value:105,profit_percent:5,native_available:true,native_currency:'ILS'},
+  {date:'2026-10-11',value:110,profit_percent:10,native_available:true,native_currency:'ILS'}]}]};
 renderAccountTrend(trend);
 let chart=$('accountTrendChart').innerHTML;
-assert.match(chart,/M 100 40.545[^L]*L 178 /); // one day is 1/10 of the plot width
+const coordinates=chart.match(/d="M ([\d.]+) ([\d.]+) L ([\d.]+) ([\d.]+) L ([\d.]+) ([\d.]+)"/);
+assert.ok(coordinates);assert.equal(Number(coordinates[1]),100);assert.equal(Number(coordinates[3]),178); // one day is 1/10 of the plot width
+assert.ok(Math.abs(Number(coordinates[2])-40.54545)<0.051); // SVG coordinates are rounded to one decimal.
 assert.match(chart,/01\/10\/2026/);
 assert.match(chart,/11\/10\/2026/);
 assert.match(chart,/stroke="blue"/);
@@ -105,11 +108,13 @@ assert.doesNotMatch($('accountTrendChart').innerHTML,/NaN|Infinity/);
 state.reportTrendMetric='value';
 trend.accounts[0].account.currency='GBP';
 renderAccountTrend(trend);
-assert.match($('accountTrendChart').innerHTML,/No chart values available/);
+assert.match($('accountTrendChart').innerHTML,/No comparable history values/);
+state.reportTrendCurrencyMode='base';
 trend.accounts.push({account:{label:'Two',currency:'ILS'},points:[{date:'2026-10-01',value:50}]});
 renderAccountTrend(trend);
 assert.match($('accountTrendChart').innerHTML,/stroke="green"/);
-assert.doesNotMatch($('accountTrendChart').innerHTML,/stroke="blue"/);
+assert.doesNotMatch($('accountTrendChart').innerHTML,/<path d="[^"]+"[^>]*stroke="blue"/);
+assert.match($('accountTrendChart').innerHTML,/Not available/);
 
 """)
 

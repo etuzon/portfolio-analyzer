@@ -51,7 +51,7 @@
       if (cash === null) return null;
       for (const tx of context.transactions || []) {
         if (String(tx.account_db_id) !== String(account.id)) continue;
-        const sign = { BUY: -1, SELL: 1, SHORT: 1, DIVIDEND: 1, INTEREST: 1, FEE: -1 }[upper(tx.action)];
+        const sign = { BUY: -1, SELL: 1, SHORT: 1, DIVIDEND: 1, INTEREST: 1, FEE: -1, CASH_IN: 1, CASH_OUT: -1 }[upper(tx.action)];
         if (!sign) continue;
         const day = Date.parse(tx.trade_date);
         if (!Number.isFinite(day)) return null;

@@ -12,7 +12,8 @@ import calendar
 from pathlib import Path
 import tempfile
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -60,6 +61,18 @@ EXPOSURE_ASSET_FOCUSES = {
 COMPANY_OUTLOOK_ACCURACY_TARGET_PERCENT = 75.0
 COMPANY_OUTLOOK_MIN_EVALUATED_PREDICTIONS = 30
 TRANSACTION_ACTIONS = ["ADD", "REMOVE", "BUY", "SELL", "SHORT", "DIVIDEND", "INTEREST", "FEE"]
+CASH_LEDGER_ACTIONS = {"BUY", "SELL", "SHORT", "DIVIDEND", "INTEREST", "FEE", "CASH_IN", "CASH_OUT"}
+CASH_ADJUSTMENT_SOURCE = "cash_adjustment"
+
+
+class CashBalanceError(ValueError):
+    def __init__(self, reason: str, recovery: str, status_code: int = 400):
+        super().__init__(reason)
+        self.reason = reason
+        self.recovery = recovery
+        self.status_code = status_code
+
+
 PENSION_INSURANCE_RATES_PATH = Path(__file__).resolve().parent.parent / "reference-data" / "pension-insurance-rates.yaml"
 PENSION_INSURANCE_RATES: dict[int, dict[str, Any]] | None = None
 EXPORT_TABLES = {
@@ -1438,6 +1451,13 @@ class LocalPortfolioStore:
             "created_at": str(payload.get("created_at") or _now()),
         }
         with self._connect() as conn:
+            conn.execute("begin immediate")
+            existing = conn.execute("select currency from accounts where id = ?", (account_id,)).fetchone()
+            if existing and existing["currency"] != record["currency"] and conn.execute(
+                "select 1 from transactions where account_db_id = ? and source = ? limit 1",
+                (account_id, CASH_ADJUSTMENT_SOURCE),
+            ).fetchone():
+                raise ValueError("Accounts with cash updates cannot change currency. Create a separate account in the new currency.")
             conn.execute(
                 """
                 insert into accounts
@@ -1461,6 +1481,93 @@ class LocalPortfolioStore:
                 conn.execute("update funds set persons = ?, birth_date = ? where account_id = ?", (record["persons"], persons[0]["birth_date"], record["id"]))
             row = conn.execute("select * from accounts where id = ?", (record["id"],)).fetchone()
         return self._account_out(row or record)
+
+    def account_cash_balance(self, account_db_id: str) -> dict[str, Any]:
+        with self._connect() as conn:
+            conn.execute("begin")
+            return self._account_cash_balance(conn, account_db_id)
+
+    def _account_cash_balance(self, conn: sqlite3.Connection, account_db_id: str) -> dict[str, Any]:
+        account = conn.execute("select * from accounts where id = ?", (account_db_id,)).fetchone()
+        if not account:
+            raise CashBalanceError("account_not_found", "reload_accounts", 404)
+        currency = str(account["currency"] or "").upper().strip()
+        today = datetime.now(ZoneInfo("Asia/Jerusalem")).date().isoformat()
+        transactions = [_dict(row) for row in conn.execute(
+            "select * from transactions where account_db_id = ? order by id", (account_db_id,),
+        ).fetchall() if str(row["action"]).upper() in CASH_LEDGER_ACTIONS]
+        # Hash raw dependencies so any cash change invalidates an open form.
+        revision_inputs = [account_db_id, currency, account["initial_cash"], today,
+                           [[tx.get(k) for k in ("id", "action", "quantity", "price", "currency", "trade_date")]
+                            for tx in transactions]]
+        revision = hashlib.sha256(json.dumps(revision_inputs, default=str, separators=(",", ":")).encode()).hexdigest()
+        reason = ""
+        cash = _finite_cash_number(account["initial_cash"])
+        if not currency or len(currency) != 3 or not currency.isalpha():
+            reason = "missing_account_currency"
+        elif cash is None:
+            reason = "invalid_initial_cash"
+        for tx in transactions:
+            day = _parse_date(tx.get("trade_date"))
+            quantity, price = _finite_cash_number(tx.get("quantity")), _finite_cash_number(tx.get("price"))
+            if day is None:
+                reason = reason or "invalid_cash_transaction_date"
+            elif day.isoformat() > today:
+                reason = reason or "future_cash_transactions"
+            elif str(tx.get("currency") or "").upper().strip() != currency:
+                reason = reason or "mixed_cash_currencies"
+            elif quantity is None or price is None or quantity < 0 or price < 0:
+                reason = reason or "invalid_cash_transaction"
+            elif cash is not None:
+                cash += _cash_delta(tx)
+                if not math.isfinite(cash):
+                    reason = reason or "invalid_cash_transaction"
+        return {"account_id": account_db_id, "currency": currency, "cash": None if reason else cash,
+                "available": not bool(reason), "reason": reason, "effective_date": today, "cash_revision": revision}
+
+    def update_account_cash(self, account_db_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        target = _finite_cash_number(payload.get("target_cash"))
+        if target is None:
+            raise CashBalanceError("invalid_target_cash", "enter_finite_current_balance")
+        try:
+            request_id = str(UUID(str(payload.get("request_id") or "")))
+        except (ValueError, TypeError, AttributeError):
+            raise CashBalanceError("invalid_request_id", "reload_cash_balance") from None
+        transaction_id = "cash-adjustment-" + request_id
+        with self._connect() as conn:
+            # Serialize recomputation, CAS, insertion and snapshots across processes.
+            conn.execute("begin immediate")
+            existing = conn.execute("select * from transactions where id = ?", (transaction_id,)).fetchone()
+            context = self._account_cash_balance(conn, account_db_id)
+            if existing:
+                intent = _json_object(existing["comments"])
+                if (existing["source"] != CASH_ADJUSTMENT_SOURCE or existing["account_db_id"] != account_db_id
+                        or intent.get("target_cash") != target or existing["currency"] != context["currency"]):
+                    raise CashBalanceError("request_id_conflict", "reload_cash_balance", 409)
+                return {**context, "adjusted": True, "delta": _cash_delta(_dict(existing)),
+                        "transaction_id": transaction_id, "request_id": request_id, "replayed": True}
+            if payload.get("cash_revision") != context["cash_revision"]:
+                raise CashBalanceError("cash_revision_conflict", "reload_cash_balance", 409)
+            if not context["available"]:
+                raise CashBalanceError(context["reason"], "review_account_cash_ledger")
+            delta = target - context["cash"]
+            if not math.isfinite(delta):
+                raise CashBalanceError("invalid_target_cash", "enter_finite_current_balance")
+            if delta == 0:
+                return {**context, "adjusted": False, "delta": 0.0, "transaction_id": None,
+                        "request_id": request_id, "replayed": False}
+            account = conn.execute("select location from accounts where id = ?", (account_db_id,)).fetchone()
+            record = {"id": transaction_id, "account_db_id": account_db_id,
+                      "action": "CASH_IN" if delta > 0 else "CASH_OUT", "symbol": "", "stock_market": "",
+                      "asset_class": "CASH", "quantity": abs(delta), "price_input": 1.0, "price": 1.0,
+                      "vest_date": "", "purchase_price": 0.0, "strike_price": 0.0, "security_id": "",
+                      "transition_id": "", "vesting_schedule": "{}", "currency": context["currency"],
+                      "location": account["location"], "trade_date": context["effective_date"],
+                      "source": CASH_ADJUSTMENT_SOURCE, "comments": json.dumps({"target_cash": target}), "created_at": _now()}
+            self._insert_transaction(conn, record)
+            self._refresh_transaction_snapshots(conn, [record])
+            return {**self._account_cash_balance(conn, account_db_id), "adjusted": True, "delta": delta,
+                    "transaction_id": transaction_id, "request_id": request_id, "replayed": False}
 
     def delete_account(self, account_db_id: str) -> bool:
         with self._connect() as conn:
@@ -2314,6 +2421,8 @@ class LocalPortfolioStore:
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         account = account or self._account(payload.get("account_db_id"))
+        if str(payload.get("action") or "").upper() in {"CASH_IN", "CASH_OUT"} or payload.get("source") == CASH_ADJUSTMENT_SOURCE:
+            raise ValueError("Use Update cash on the account to change its current cash balance")
         action = _choice(payload.get("action"), TRANSACTION_ACTIONS, "BUY")
         symbol = _clean_security_symbol(payload.get("symbol"))
         stock_market = str(payload.get("stock_market") or "").upper().strip()
@@ -2524,6 +2633,8 @@ class LocalPortfolioStore:
             existing = conn.execute("select * from transactions where id = ?", (transaction_id,)).fetchone()
         if not existing:
             raise ValueError("Security transaction not found")
+        if existing["source"] == CASH_ADJUSTMENT_SOURCE or existing["action"] in {"CASH_IN", "CASH_OUT"}:
+            raise ValueError("Cash updates are read-only. Use Update cash on the account to correct the current balance.")
         if str(existing["transition_id"] or "").strip():
             raise ValueError("Lifecycle-generated transactions are read-only")
         merged = {**_dict(existing), **(payload or {}), "id": transaction_id, "created_at": existing["created_at"]}
@@ -2547,6 +2658,8 @@ class LocalPortfolioStore:
     def delete_transaction(self, transaction_id: str) -> bool:
         with self._connect() as conn:
             row = conn.execute("select * from transactions where id = ?", (transaction_id,)).fetchone()
+            if row and (row["source"] == CASH_ADJUSTMENT_SOURCE or row["action"] in {"CASH_IN", "CASH_OUT"}):
+                raise ValueError("Cash updates are read-only. Use Update cash on the account to correct the current balance.")
             if row and str(row["transition_id"] or "").strip():
                 raise ValueError("Lifecycle-generated transactions are read-only")
             before = int(bool(row))
@@ -3495,6 +3608,8 @@ class LocalPortfolioStore:
             transactions = [tx for tx in transactions if not _is_external_import_source(tx["source"])]
         positions: dict[tuple[str, str, str], dict[str, Any]] = {}
         for tx in sorted(transactions, key=lambda item: item["trade_date"]):
+            if tx["action"] in {"CASH_IN", "CASH_OUT"}:
+                continue
             key = (tx["account_db_id"], tx["symbol"], tx["stock_market"])
             position = positions.setdefault(
                 key,
@@ -3699,6 +3814,7 @@ class LocalPortfolioStore:
             accounts_by_key: dict[tuple[str, str], dict[str, Any]] = {}
             skipped_accounts: list[dict[str, Any]] = []
             updated_account_cash = 0
+            preserved_local_cash = []
             imported_positions = 0
             updated_positions = 0
             attached_positions = 0
@@ -3750,9 +3866,13 @@ class LocalPortfolioStore:
                 accounts_by_key[key] = account
                 if cash_item and abs(float(account.get("initial_cash") or 0) - _number(cash_item.get("cash"), 0)) > 1e-9:
                     with self._connect() as conn:
-                        conn.execute("update accounts set initial_cash = ? where id = ?", (_number(cash_item.get("cash"), 0), account["id"]))
+                        conn.execute("begin immediate")
+                        if conn.execute("select 1 from transactions where account_db_id = ? and source = ? limit 1", (account["id"], CASH_ADJUSTMENT_SOURCE)).fetchone():
+                            preserved_local_cash.append({"account_id": account["id"], "reason": "local_cash_adjustment_preserved"})
+                        else:
+                            conn.execute("update accounts set initial_cash = ? where id = ?", (_number(cash_item.get("cash"), 0), account["id"]))
+                            updated_account_cash += 1
                     accounts_by_key[key] = self._account_out(self._account(account["id"]))
-                    updated_account_cash += 1
 
             if source_transactions:
                 updated_positions = self._delete_imported_positions_for_accounts({account["id"] for account in accounts_by_key.values()})
@@ -3845,6 +3965,8 @@ class LocalPortfolioStore:
             return {
                 "accounts": 0,
                 "account_cash_updated": updated_account_cash,
+                "account_cash_preserved": len(preserved_local_cash),
+                "preserved_cash_accounts": preserved_local_cash,
                 "positions": imported_positions,
                 "updated_positions": updated_positions,
                 "attached_positions": attached_positions,
@@ -4059,10 +4181,20 @@ class LocalPortfolioStore:
         ]
 
     def _trend_for_account(self, account: dict[str, Any], from_date: date, to_date: date) -> list[dict[str, Any]]:
-        computed = self._computed_trend_for_account(account, from_date, to_date)
         snapshots = self._snapshot_points(account["id"], from_date, to_date)
+        computed = self._computed_trend_for_account(
+            account, from_date, to_date,
+            extra_dates=[date.fromisoformat(point["date"]) for point in snapshots],
+        )
         by_date = {point["date"]: point for point in computed}
         for point in snapshots:
+            currency = str(account.get("currency") or "").strip().upper()
+            calculated = by_date.get(point["date"], {})
+            daily = str(point.get("source") or "").casefold() == "daily"
+            point["native_currency"] = currency
+            point["native_available"] = bool(currency) and (bool(calculated.get("native_available")) if daily else True)
+            point["native_unavailable_reason"] = calculated.get("native_unavailable_reason", "mixed_transaction_currencies") if daily and not point["native_available"] else "" if currency else "missing_account_currency"
+            point["native_provenance"] = "computed_single_currency" if daily else "recorded_account_currency"
             by_date[point["date"]] = point
         return [by_date[day] for day in sorted(by_date)]
 
@@ -4089,6 +4221,13 @@ class LocalPortfolioStore:
                 ).fetchall()
             ]
         dates = sorted({from_date, to_date, *(extra_dates or []), *price_dates, *[date.fromisoformat(tx["trade_date"]) for tx in transactions if from_date <= date.fromisoformat(tx["trade_date"]) <= to_date]})
+        currency = str(account.get("currency") or "").strip().upper()
+        # A mixed-currency cash movement remains relevant even after a position
+        # closes. Do not relabel sums of different units as native history.
+        foreign_dates = [tx["trade_date"] for tx in transactions
+                         if float(tx.get("quantity") or 0) != 0
+                         and str(tx.get("currency") or "").strip().upper() != currency]
+        first_foreign_date = min(foreign_dates, default=None)
         points = []
         for day in dates:
             positions: dict[tuple[str, str], dict[str, Any]] = {}
@@ -4097,6 +4236,8 @@ class LocalPortfolioStore:
                 if date.fromisoformat(tx["trade_date"]) > day:
                     continue
                 cash += _cash_delta(tx)
+                if tx["action"] in {"CASH_IN", "CASH_OUT"}:
+                    continue
                 key = (tx["symbol"], tx["stock_market"])
                 position = positions.setdefault(
                     key,
@@ -4130,6 +4271,7 @@ class LocalPortfolioStore:
                     average = abs(position["cost_basis"] / position["quantity"]) if position["quantity"] else 0
                     unrealized += abs(position["quantity"]) * (average - latest)
             profit = realized + unrealized
+            native_available = bool(currency) and (first_foreign_date is None or day.isoformat() < first_foreign_date)
             points.append(
                 {
                     "date": day.isoformat(),
@@ -4137,6 +4279,10 @@ class LocalPortfolioStore:
                     "cash": cash,
                     "profit": profit,
                     "profit_percent": _ratio_percent(profit, abs(basis)) or 0,
+                    "native_currency": currency,
+                    "native_available": native_available,
+                    "native_unavailable_reason": "" if native_available else "mixed_transaction_currencies" if currency else "missing_account_currency",
+                    "native_provenance": "computed_single_currency",
                 }
             )
         return points
@@ -4145,7 +4291,7 @@ class LocalPortfolioStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                select snapshot_date, value, cash, profit, profit_percent
+                select snapshot_date, value, cash, profit, profit_percent, source
                 from account_snapshots
                 where account_db_id = ? and snapshot_date between ? and ?
                 order by snapshot_date
@@ -4159,6 +4305,7 @@ class LocalPortfolioStore:
                 "cash": float(row["cash"]),
                 "profit": float(row["profit"]),
                 "profit_percent": float(row["profit_percent"]),
+                "source": row["source"],
                 "saved": True,
             }
             for row in rows
@@ -5007,13 +5154,23 @@ def _broker_country(location: Any) -> str:
     return "USA"
 
 
+def _finite_cash_number(value: Any) -> float | None:
+    if value is None or isinstance(value, bool) or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
 def _cash_delta(tx: dict[str, Any]) -> float:
     value = float(tx["quantity"] or 0) * float(tx["price"] or 0)
     if tx["action"] == "BUY":
         return -value
-    if tx["action"] in {"SELL", "SHORT", "DIVIDEND", "INTEREST"}:
+    if tx["action"] in {"SELL", "SHORT", "DIVIDEND", "INTEREST", "CASH_IN"}:
         return value
-    if tx["action"] == "FEE":
+    if tx["action"] in {"FEE", "CASH_OUT"}:
         return -value
     return 0.0
 

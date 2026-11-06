@@ -1,4 +1,4 @@
-"""Behavioral regressions for long refreshes, transport recovery and stale responses."""
+"""Behavioral regressions for change notifications, recovery and stale responses."""
 from pathlib import Path
 import subprocess
 import re
@@ -8,7 +8,7 @@ SOURCE=Path(__file__).resolve().parents[1] / 'web/app.js'
 
 def run_js(body):
     source=SOURCE.read_text()
-    start=source.index('let portfolioEnrichment')
+    start=source.index('let portfolioUpdateSource')
     end=source.index('\nasync function loadLocalOptions',start)
     script=source[start:end]+'''\nconst assert=require('node:assert/strict');
 const nodes={};
@@ -26,48 +26,72 @@ const t=(x)=>x;
 const portfolioItems=(items)=>items;
 const isEquityCompAccount=()=>false;
 const populateOptions=()=>{};
-const renderPortfolio=()=>{};
+let renderCount=0;
+const renderPortfolio=()=>renderCount++;
 const renderMacroScenario=()=>{};
 const hasActivePortfolioFilter=()=>false;
 const pending=new Map();let timerCounter=0;
 const setTimeout=(callback)=>{pending.set(++timerCounter,callback);return timerCounter;};
 const clearTimeout=(id)=>pending.delete(id);
 const window={setTimeout,clearTimeout};
+class EventSource {
+ static CLOSED=2;static CONNECTING=0;static sources=[];
+ constructor(path){this.path=path;this.closed=false;this.readyState=1;EventSource.sources.push(this);}
+ close(){this.closed=true;this.readyState=2;}
+}
 const otherApi=async(path)=>path.includes('account-trends') ? {accounts:[]} : {items:[],quotes:[]};
-const payload=(qty,pendingFlag=false)=>({count:1,items:[{holding:{symbol:'FDUS',quantity:qty}}],status:{portfolio_cache:'fixture'},refresh_pending:pendingFlag});
-async function tick(){assert.equal(pending.size,1,'loading must retain exactly one scheduled retry');const [id,callback]=pending.entries().next().value;pending.delete(id);await callback();await new Promise(resolve=>setImmediate(resolve));}
+const payload=(qty,pendingFlag=false)=>({count:1,items:[{holding:{symbol:'FDUS',quantity:qty}}],status:{portfolio_cache:'fixture'},refresh_pending:pendingFlag,refresh_state:pendingFlag?'refreshing':'ready',update_revision:1});
+async function notify(data,source=EventSource.sources.at(-1)){source.onmessage({data:JSON.stringify(data)});await new Promise(resolve=>setImmediate(resolve));}
 '''+body
     result=subprocess.run(['node'],input=script,text=True,capture_output=True)
     assert result.returncode==0,result.stderr
     assert 'completed' in result.stdout, 'async regression did not reach its terminal assertion'
 
 
-def test_continues_loading_after_forty_pending_responses():
+def test_many_progress_notifications_do_not_refetch_or_redraw_the_portfolio():
     run_js('''
 let calls=0;
-const api=async(path)=>path.startsWith('/api/portfolio') ? payload(++calls,calls<=45) : otherApi(path);
-(async()=>{await loadPortfolio();for(let i=0;i<45;i++)await tick();assert.equal(calls,46);assert.equal(state.items[0].holding.quantity,46);assert.equal(pending.size,0);console.log('completed');})().catch(error=>{console.error(error);process.exitCode=1;});
+const api=async(path)=>path.startsWith('/api/portfolio') ? payload(++calls,calls===1) : otherApi(path);
+(async()=>{
+ await loadPortfolio();
+ for(let i=0;i<45;i++)await notify({refresh_state:'refreshing',refresh_pending:true,update_revision:i+2,refresh_progress:{total:50,completed:i,failed:0}});
+ assert.equal(calls,1);assert.equal(renderCount,1);assert.equal(state.items[0].holding.quantity,1);
+ assert.equal(pending.size,0,'active analysis must not schedule repeated full loads');
+ const source=EventSource.sources.at(-1);
+ await notify({refresh_state:'ready',refresh_pending:false,update_revision:99},source);
+ await notify({refresh_state:'ready',refresh_pending:false,update_revision:99},source);
+ assert.equal(calls,2);assert.equal(renderCount,2);assert.equal(state.items[0].holding.quantity,2);
+ console.log('completed');
+})().catch(error=>{console.error(error);process.exitCode=1;});
 ''')
 
 
-def test_transient_transport_failure_keeps_retrying_until_completion():
+def test_notification_disconnect_retains_data_and_reconnect_completion_loads_once():
     run_js('''
 let calls=0;
-const api=async(path)=>{if(!path.startsWith('/api/portfolio'))return otherApi(path);++calls;if(calls===2)throw new Error('temporary disconnect');return payload(calls,calls<3);};
-(async()=>{await loadPortfolio();await tick();await tick();assert.equal(calls,3);assert.equal(state.items[0].holding.quantity,3);assert.equal(pending.size,0);console.log('completed');})().catch(error=>{console.error(error);process.exitCode=1;});
+const api=async(path)=>path.startsWith('/api/portfolio') ? payload(++calls,calls===1) : otherApi(path);
+(async()=>{
+ await loadPortfolio();const source=EventSource.sources.at(-1);source.readyState=EventSource.CONNECTING;source.onerror();
+ assert.equal(calls,1);assert.equal(state.items[0].holding.quantity,1);assert.ok($('status').textContent.includes('Reconnecting'));
+ assert.equal(source.closed,false);
+ await notify({refresh_state:'ready',refresh_pending:false,update_revision:2},source);
+ assert.equal(calls,2);assert.equal(state.items[0].holding.quantity,2);assert.equal(pending.size,0);
+ console.log('completed');
+})().catch(error=>{console.error(error);process.exitCode=1;});
 ''')
 
 
-def test_manual_refresh_keeps_polling_and_terminal_failure_offers_retry():
+def test_manual_refresh_waits_for_notification_and_terminal_failure_offers_retry():
     run_js('''
 let calls=0;const paths=[];
 const api=async(path)=>{
  if(!path.startsWith('/api/portfolio'))return otherApi(path);
  paths.push(path);calls++;
- return calls<3?payload(12,true):{...payload(12),refresh_state:'failed'};
+ return calls===1?payload(12,true):{...payload(12),refresh_state:'failed'};
 };
 (async()=>{
- await loadPortfolio({refresh:true});await tick();await tick();
+ await loadPortfolio({refresh:true});
+ await notify({refresh_state:'failed',refresh_pending:false,update_revision:2});
  assert.ok(paths[0].includes('refresh=true'));assert.equal(paths[1],'/api/portfolio');
  assert.equal(state.items[0].holding.quantity,12);assert.equal(pending.size,0);
  assert.ok($('status').textContent.includes('Use Refresh to retry'));
@@ -171,7 +195,7 @@ const api=async(path)=>{
 };
 (async()=>{
  await loadPortfolio();assert.ok($('status').textContent.includes('1/2 securities completed'));
- await tick();assert.equal(pending.size,0);assert.ok($('status').textContent.includes('1/2 securities updated'));
+ await notify({refresh_state:'failed',refresh_pending:false,update_revision:2});assert.equal(pending.size,0);assert.ok($('status').textContent.includes('1/2 securities updated'));
  assert.ok($('status').textContent.includes('1 updates failed'));assert.ok(!$('status').textContent.includes('Analytics updated'));
  console.log('completed');
 })().catch(error=>{console.error(error);process.exitCode=1;});

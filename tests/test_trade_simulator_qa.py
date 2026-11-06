@@ -139,7 +139,7 @@ def test_pending_snapshot_survives_account_market_fx_and_background_updates():
 
 def test_actual_dashboard_load_preserves_pending_and_completed_simulation():
     source = (Path(__file__).resolve().parents[1] / "web/app.js").read_text()
-    start = source.index("let portfolioEnrichmentRetryTimer")
+    start = source.index("let portfolioUpdateSource")
     end = source.index("\nasync function loadLocalOptions", start)
     run_ui('''
 const HISTORY_START_DATE='2020-01-01';

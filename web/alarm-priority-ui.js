@@ -98,6 +98,7 @@ function alarmSourceNotes() {
 }
 
 function renderAlarmPriority(alarms) {
+  renderAlarmClearControls(alarms);
   const grouped = new Map();
   for (const alarm of alarms) {
     const appearance = alarmAppearance(alarm);
@@ -128,6 +129,179 @@ function renderAlarmPriority(alarms) {
   if (summary) summary.innerHTML = groups.map((group) => `<span class="alarm-summary-chip" data-alarm-tone="${group.tone}"><span aria-hidden="true">${esc(group.icon)}</span>${esc(t(group.label))}${group.limited ? ` · ${esc(t("Limited data"))}` : ""}<b>${group.count}</b></span>`).join("");
   return notes;
 }
+
+function alarmStableEvidence(value) {
+  if (Array.isArray(value)) return value.map(alarmStableEvidence).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, alarmStableEvidence(value[key])]));
+  return typeof value === "number" && !Number.isFinite(value) ? String(value) : value;
+}
+
+function alarmModelEvidence(value) {
+  // Model summation can differ by floating-point noise after an order-only
+  // change. Normalize computed values only; raw financial inputs stay exact.
+  if (typeof value === "number" && Number.isFinite(value)) return Number(value.toPrecision(12));
+  if (Array.isArray(value)) return value.map(alarmModelEvidence);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, alarmModelEvidence(item)]));
+  return value;
+}
+
+function riskAlarmDismissalId(alarm) {
+  // Preserve financial evidence, including changes hidden by a rounded score.
+  // Localized copy, fetch timestamps and presentation order are not evidence.
+  const holdings = portfolioItems(state.allPortfolioItems || []).map((item) => {
+    const h = item.holding || {};
+    return {
+      holding: Object.fromEntries(["account_id", "symbol", "stock_market", "currency", "asset_class", "quantity", "market_value", "cost_basis", "country", "sector", "issuer"].map((key) => [key, h[key]])),
+      value: checkedAccountShareAmount(h.market_value, h.currency),
+      analytics_state: item.analytics_state, missing: item.missing || [],
+      industry: industryLabel(item), country: countryLabel(item), issuer: issuerLabel(item),
+      asset_factor: assetRiskFactor(item), volatility: volatilityProxy(item),
+      exposure: item.exposure_profile ? Object.fromEntries(["asset_focus", "geography", "sector_exposure", "fx_basis", "fx_reference_currency", "currency_exposures", "fx_policy_limit_percent", "as_of"].map((key) => [key, item.exposure_profile[key]])) : null,
+    };
+  });
+  const accounts = portfolioAccounts().map((account) => ({ id: account.id, currency: account.currency,
+    initial_cash: account.initial_cash, cash: accountCashBalance(account),
+    converted_cash: checkedAccountShareAmount(accountCashBalance(account), account.currency),
+    horizon: accountHorizonYears(account) }));
+  const risk = alarm.risk || {};
+  const evidence = JSON.stringify(alarmStableEvidence({ key: alarm.key, level: alarm.level,
+    source_state: state.portfolioSourceState, pending: Boolean(state.portfolioRefreshPending),
+    model: alarmModelEvidence({ score: risk.score, components: risk.components, quality_details: risk.quality_details,
+      cash_debt: risk.cash_debt, net_equity: risk.net_equity, unlevered_score: risk.unlevered_score }),
+    base_currency: state.baseCurrency, holdings, accounts }));
+  // Two independent 32-bit accumulators keep local dismissal IDs compact.
+  let first = 2166136261, second = 5381;
+  for (let index = 0; index < evidence.length; index += 1) {
+    first = Math.imul(first ^ evidence.charCodeAt(index), 16777619);
+    second = Math.imul(second, 33) ^ evidence.charCodeAt(index);
+  }
+  const userId = state.auth?.user?.id ?? state.auth?.user?.username ?? "anonymous";
+  return `${alarm.key}:user:${userId}:${(first >>> 0).toString(36)}${(second >>> 0).toString(36)}`;
+}
+
+function visiblePriorityAlarms() {
+  const dismissed = new Set(state.dismissedAlarmIds || []);
+  return [...portfolioSignalAlarms(), ...portfolioRiskAlarms().map((alarm) => ({ ...alarm, dismissalId: riskAlarmDismissalId(alarm) }))]
+    .filter((alarm) => alarm.kind !== "risk" || !dismissed.has(alarm.dismissalId));
+}
+
+function displayedAlarms() {
+  const { dividends, vesting } = currentAlarms();
+  return [...vesting, ...dividends, ...visiblePriorityAlarms()];
+}
+
+function alarmClearKey(alarm) {
+  return alarm.kind === "signal" ? `signal:${alarm.key}` : alarm.kind === "risk" ? alarm.dismissalId : alarmDismissalId(alarm);
+}
+
+function alarmMatchesClearSelection(alarm) {
+  const appearance = alarmAppearance(alarm);
+  return (!$("alarmClearColor")?.value || appearance.tone === $("alarmClearColor").value)
+    && (!$("alarmClearType")?.value || appearance.label === $("alarmClearType").value);
+}
+
+function renderAlarmClearControls(alarms) {
+  const colors = { red: "Red", amber: "Amber", green: "Green", blue: "Blue", purple: "Purple", neutral: "Gray" };
+  for (const [id, field, emptyLabel] of [["alarmClearColor", "tone", "Any color"], ["alarmClearType", "label", "All types"]]) {
+    const select = $(id);
+    if (!select) continue;
+    const previous = select.value;
+    const counts = new Map();
+    alarms.forEach((alarm) => { const key = alarmAppearance(alarm)[field]; counts.set(key, (counts.get(key) || 0) + 1); });
+    // Keep a selected category after its last alarm is cleared so the action
+    // never silently broadens to all remaining alarms.
+    if (previous && !counts.has(previous)) counts.set(previous, 0);
+    const html = `<option value="">${esc(t(emptyLabel))}</option>` + [...counts.entries()].map(([key, count]) =>
+      `<option value="${esc(key)}">${esc(alarmText("{label} ({count})", { label: t(field === "tone" ? colors[key] : key), count }))}</option>`).join("");
+    if (select.innerHTML !== html) { select.innerHTML = html; select.value = previous; }
+    select.disabled = Boolean(state.alarmClearPending);
+  }
+  const disabled = !canWrite() || Boolean(state.alarmClearPending);
+  if ($("clearMatchingAlarms")) $("clearMatchingAlarms").disabled = disabled || !alarms.some(alarmMatchesClearSelection);
+  if ($("clearAlarms")) $("clearAlarms").disabled = disabled || !alarms.length;
+  if ($("alarmClearStatus")) $("alarmClearStatus").textContent = state.alarmClearMessage
+    ? alarmText(state.alarmClearMessage.template, state.alarmClearMessage.values) : "";
+}
+
+function renderAlarmListItem(alarm) {
+  const appearance = alarmAppearance(alarm);
+  const incomplete = alarm.incomplete ? ` · ${t("Some rule data is unavailable")}` : "";
+  const clearLabel = alarmText("Clear alarm: {title} · {type}", { title: alarm.title, type: t(appearance.label) });
+  return `<div class="alarm-entry" data-alarm-tone="${appearance.tone}">
+    <button class="alarm-item" data-alarm-tone="${appearance.tone}" type="button" ${alarmActionAttributes(alarm)}>
+      <span class="alarm-heading"><b>${esc(alarm.title)}</b><span class="alarm-kind"><span aria-hidden="true">${esc(appearance.icon)}</span> ${esc(t(appearance.label))}</span></span>
+      <span class="alarm-details"><span class="alarm-body">${esc(alarm.body)}${esc(incomplete)}</span><small class="alarm-meta">${esc(alarm.meta)}</small></span>
+    </button>
+    <button class="icon-button alarm-clear-one" type="button" data-clear-alarm="${esc(alarmClearKey(alarm))}" aria-label="${esc(clearLabel)}" title="${esc(clearLabel)}"${!canWrite() || state.alarmClearPending ? " disabled" : ""}>×</button>
+  </div>`;
+}
+
+async function clearSelectedAlarms({ all = false, key = "" } = {}) {
+  if (!canWrite() || state.alarmClearPending) return;
+  const userId = state.auth?.user?.id;
+  const csrfToken = state.auth?.csrfToken;
+  const sameSession = () => state.auth?.user?.id === userId && state.auth?.csrfToken === csrfToken;
+  const selected = displayedAlarms().filter((alarm) => key ? alarmClearKey(alarm) === key : all || alarmMatchesClearSelection(alarm));
+  if (!selected.length) return;
+  const focused = document.activeElement;
+  const clearControls = [...($("alarmsList")?.querySelectorAll?.("[data-clear-alarm]") || [])];
+  const focusedIndex = clearControls.indexOf(focused);
+  const adjacentKeys = focusedIndex < 0 ? [] : [...clearControls.slice(focusedIndex + 1), ...clearControls.slice(0, focusedIndex).reverse()]
+    .map((button) => button.dataset.clearAlarm);
+  const restoreFocus = $("alarmsModal")?.contains(focused);
+  state.alarmClearPending = true;
+  state.alarmClearMessage = { template: "Clearing alarms…", values: {} };
+  renderAlarms();
+  let cleared = 0, failed = 0;
+  try {
+    const local = selected.filter((alarm) => alarm.kind !== "signal");
+    if (local.length) {
+      const previous = [...(state.dismissedAlarmIds || [])];
+      state.dismissedAlarmIds = [...new Set([...previous, ...local.map(alarmClearKey)])];
+      try { saveAlarmDismissals(); cleared += local.length; }
+      catch { state.dismissedAlarmIds = previous; failed += local.length; }
+    }
+    // The established dismissal API owns permission, TTL and persistence.
+    // Serialize calls because each response contains a full saved-signal state.
+    for (const alarm of selected.filter((entry) => entry.kind === "signal")) {
+      if (!sameSession()) return;
+      try {
+        await dismissAlertSignal(alarm.symbol, alarm.signalType);
+        if (!sameSession()) return;
+        if (portfolioSignalAlarms().some((entry) => entry.key === alarm.key)) failed += 1;
+        else cleared += 1;
+      } catch { failed += 1; }
+    }
+    if (!sameSession()) return;
+    state.clearedAlarmCount = cleared;
+    state.alarmClearMessage = { template: failed ? "Cleared {count} alarms. {failed} could not be cleared; try again." : "Cleared {count} alarms.", values: { count: cleared, failed } };
+  } finally {
+    if (sameSession()) {
+      state.alarmClearPending = false;
+      renderAlarms();
+      if (restoreFocus && !$("alarmsModal").hidden && !$("alarmsModal").inert
+        && (!document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected)) {
+        const replacement = focused?.dataset?.clearAlarm
+          ? [...$("alarmsList").querySelectorAll("[data-clear-alarm]")].find((button) => button.dataset.clearAlarm === focused.dataset.clearAlarm) : null;
+        const remaining = [...($("alarmsList")?.querySelectorAll?.("[data-clear-alarm]") || [])];
+        const adjacent = adjacentKeys.map((candidate) => remaining.find((button) => button.dataset.clearAlarm === candidate && !button.disabled)).find(Boolean);
+        (replacement || adjacent || (focused?.isConnected && !focused.disabled ? focused : $("alarmClearStatus")))?.focus({ preventScroll: true });
+      }
+    }
+  }
+}
+
+if (typeof document !== "undefined") document.addEventListener("change", (event) => {
+  if (["alarmClearColor", "alarmClearType"].includes(event.target.id)) renderAlarmClearControls(displayedAlarms());
+});
+if (typeof document !== "undefined") document.addEventListener("click", (event) => {
+  const control = event.target.closest("[data-clear-alarm], #clearMatchingAlarms");
+  if (!control) return;
+  clearSelectedAlarms({ key: control.dataset.clearAlarm || "" }).catch(() => {
+    state.alarmClearMessage = { template: "Alarms could not be cleared. Try again.", values: {} };
+    renderAlarms();
+  });
+});
 
 function alarmActionAttributes(alarm) {
   if (alarm.kind === "signal") return `data-open-signal-alarm="${esc(alarm.symbol)}" data-alarm-signal-type="${esc(alarm.signalType)}"`;
@@ -166,7 +340,9 @@ function renderAlarmRiskDetails(alarm) {
   const restore = typeof preserveRenderedInteraction === "function" ? preserveRenderedInteraction(data) : () => {};
   if (!alarm) {
     $("alarmRiskTitle").textContent = t("Risk details");
-    $("alarmRiskDetails").textContent = t("This risk warning no longer applies to the current assessment.");
+    const current = portfolioRiskAlarms().find((entry) => entry.key === $("alarmRiskModal")?.dataset.alarmKey);
+    const cleared = current && (state.dismissedAlarmIds || []).includes(riskAlarmDismissalId(current));
+    $("alarmRiskDetails").textContent = t(cleared ? "This risk warning has been cleared for the current assessment." : "This risk warning no longer applies to the current assessment.");
     data.innerHTML = "";
     return;
   }

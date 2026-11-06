@@ -644,11 +644,15 @@ async function api(path, options = {}) {
       let message = `${response.status} ${response.statusText}`;
       let code = "";
       let requestId = "";
+      let reason = "";
+      let recovery = "";
       try {
         const data = await response.json();
         message = data.detail?.message || (typeof data.detail === "string" ? data.detail : message);
         code = data.detail?.code || "";
         requestId = data.detail?.request_id || "";
+        reason = data.detail?.reason || "";
+        recovery = data.detail?.recovery || "";
       } catch {
         // Keep the HTTP status text when the API returns no JSON body.
       }
@@ -657,6 +661,9 @@ async function api(path, options = {}) {
       const failure = new Error(message);
       failure.code = code;
       failure.requestId = requestId;
+      failure.status = response.status;
+      failure.reason = reason;
+      failure.recovery = recovery;
       throw failure;
     }
     if (!["GET", "HEAD", "OPTIONS"].includes(String(method).toUpperCase()) && endpoint.startsWith("/api/local/")
@@ -1159,7 +1166,7 @@ const WRITE_CONTROL_IDS = new Set([
   "saveXrayReport", "fetchXrayIssuer", "chooseXrayReportFile",
   "addAlertCondition", "newAlertRule", "addBannerItem", "addPensionPeriod", "addPensionRate", "addPensionScenario",
   "applyBackupSchedule", "attachAccountToMember", "attachEditAccountPerson", "attachLocalAccountPerson",
-  "captureHistorySnapshot", "chooseFullRestore", "chooseImportData", "clearAlarms", "dashboardEdit",
+  "captureHistorySnapshot", "chooseFullRestore", "chooseImportData", "clearAlarms", "clearMatchingAlarms", "accountCashSave", "dashboardEdit",
   "dashboardReset", "importSource", "newEmployeeOptionGrant", "newPensionScenario", "runAlerts",
   "runBackupNow", "runCompanyOutlook", "runCompanyOutlookBacktest", "runDividendEvents", "saveAlarmSettings",
   "saveAlert", "saveApiAccessSettings", "saveBackupSettings", "saveBroker", "saveDetailPrice", "saveDisplaySettings", "saveEditAccount",
@@ -1181,7 +1188,7 @@ const WRITE_DATA_ACTIONS = new Set([
   "data-remove-banner", "data-run-alert", "data-schedule-pension-scenario", "data-toggle-alert", "data-use-manual-security",
   "data-user-enabled", "data-delete-user",
   "data-remove-exposure-currency",
-  "data-position-action", "data-dismiss-alert-signal",
+  "data-position-action", "data-dismiss-alert-signal", "data-clear-alarm", "data-update-account-cash",
 ]);
 
 function currentUser() {
@@ -1260,6 +1267,8 @@ function renderCurrentUser() {
 
 function setAuthenticatedSession(payload) {
   if (state.auth.user?.id !== payload?.user?.id) {
+    state.alarmClearPending = false;
+    state.alarmClearMessage = null;
     clearBrokerForm();
     if (typeof resetTradePlannerViews === "function") resetTradePlannerViews();
     if (typeof resetTradeSimulator === "function") resetTradeSimulator();
@@ -1295,9 +1304,11 @@ function showLogin(message = "") {
   if (typeof resetTradePlannerViews === "function") resetTradePlannerViews();
   if (typeof resetTradeSimulator === "function") resetTradeSimulator();
   state.portfolioRefreshPending = false;
+  state.alarmClearPending = false;
+  state.alarmClearMessage = null;
+  state.alertDismissPending = [];
   state.portfolioLoadVersion = (state.portfolioLoadVersion || 0) + 1;
-  clearTimeout(portfolioEnrichmentRetryTimer);
-  portfolioEnrichmentRetryTimer = null;
+  stopPortfolioUpdates();
   state.auth = { user: null, csrfToken: "", forcedPasswordChange: false };
   state.authenticatedAppStarted = false;
   if (typeof resetRiskHistory === "function") resetRiskHistory();
@@ -1827,6 +1838,7 @@ function defaultDashboard() {
     area: "all",
     edit: false,
     accountTrendAccountId: "total",
+    accountTrendCurrencyMode: "",
     widgets: DASHBOARD_WIDGETS.map((widget, index) => ({ id: widget.id, view: widget.view, order: index })),
   };
 }
@@ -1840,6 +1852,7 @@ function loadDashboardSettings() {
     base.area = DASHBOARD_AREAS.includes(saved.area) ? saved.area : base.area;
     base.edit = false;
     base.accountTrendAccountId = saved.accountTrendAccountId || localStorage.getItem(DASHBOARD_ACCOUNT_STORAGE_KEY) || base.accountTrendAccountId;
+    base.accountTrendCurrencyMode = typeof saved.accountTrendCurrencyMode === "string" ? saved.accountTrendCurrencyMode : "";
     state.longTermView = ["total", "people", "funds"].includes(saved.longTermView)
       ? saved.longTermView
       : localStorage.getItem(DASHBOARD_LONG_TERM_STORAGE_KEY) || state.longTermView;
@@ -2415,22 +2428,30 @@ function assetMixGroups(items) {
 
 function currencyAllocationGroups(items) {
   const totals = {};
+  const unavailableAmounts = new Set();
   items.forEach((item) => {
     const value = normalizedField(item, "market_value");
+    const amountAvailable = checkedAccountShareAmount(item.holding.market_value, item.holding.currency) !== null;
     const exposure = economicCurrencyExposure(item);
     exposure.allocations.forEach(({ currency, percent }) => {
       totals[currency] = (totals[currency] || 0) + value * Number(percent || 0) / 100;
+      if (!amountAvailable && Number(percent) > 0) unavailableAmounts.add(currency);
     });
-    if (exposure.unknownPercent > 0) totals.Unknown = (totals.Unknown || 0) + value * exposure.unknownPercent / 100;
+    if (exposure.unknownPercent > 0) {
+      totals.Unknown = (totals.Unknown || 0) + value * exposure.unknownPercent / 100;
+      if (!amountAvailable) unavailableAmounts.add("Unknown");
+    }
   });
   portfolioAccounts().forEach((account) => {
     const currency = account.currency || state.baseCurrency;
     const cash = accountCashValue(account);
     if (cash <= 0.005) return;
     totals[currency] = (totals[currency] || 0) + cash;
+    if (accountNativeCashBalance(account) === null
+      || checkedAccountShareAmount(accountCashBalance(account), account.currency) === null) unavailableAmounts.add(currency);
   });
   return Object.entries(totals)
-    .map(([label, value]) => ({ label, value }))
+    .map(([label, value]) => ({ label, value, ...(unavailableAmounts.has(label) ? { amountUnavailable: true } : {}) }))
     .sort((left, right) => Number(right.value || 0) - Number(left.value || 0));
 }
 
@@ -2465,7 +2486,6 @@ function groupByAccount(items) {
       ? account.id
       : Object.keys(groups).find((key) => groups[key].account === label);
     const cashLocal = accountCashBalance(account);
-    if (!matchingKey && Math.abs(cashLocal) <= 1e-9) return;
     const key = matchingKey || account.id || label;
     const group = groups[key] || {
       account: label,
@@ -2540,10 +2560,36 @@ function accountShareBadge(share) {
   return `<span class="account-risk-portfolio-share" role="group" aria-label="${esc(label)}" title="${esc(label)}">${chart}<bdi dir="auto">${esc(value)}</bdi></span>`;
 }
 
-function accountCashBalance(account) {
+function accountCashBalance(account, asOfDate = null) {
   if (!account) return 0;
-  const transactions = state.localTransactions.filter((tx) => String(tx.account_db_id || "") === String(account.id || ""));
+  const transactions = state.localTransactions.filter((tx) => String(tx.account_db_id || "") === String(account.id || "")
+    && (!asOfDate || String(tx.trade_date || "") <= asOfDate));
   return Number(account.initial_cash || 0) + sum(transactions.map(transactionCashImpact));
+}
+
+function accountNativeCashBalance(account) {
+  const validNumber = (value) => ["number", "string"].includes(typeof value)
+    && String(value).trim() !== "" && Number.isFinite(Number(value));
+  const currency = String(account?.currency || "").trim().toUpperCase();
+  if (!currency || !validNumber(account?.initial_cash)) return null;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit" })
+    .formatToParts(new Date()).map((part) => [part.type, part.value]));
+  const today = `${parts.year}-${parts.month}-${parts.day}`;
+  for (const tx of state.localTransactions || []) {
+    if (String(tx.account_db_id || "") !== String(account.id || "")) continue;
+    if (!["BUY", "SELL", "SHORT", "DIVIDEND", "INTEREST", "FEE", "CASH_IN", "CASH_OUT"].includes(tx.action)) continue;
+    if (!validNumber(tx.quantity) || !validNumber(tx.price) || Number(tx.quantity) < 0 || Number(tx.price) < 0) return null;
+    const impact = transactionCashImpact(tx);
+    if (!Number.isFinite(impact) || (impact !== 0 && String(tx.currency || "").trim().toUpperCase() !== currency)) return null;
+    if (impact !== 0) {
+      const day = String(tx.trade_date || "");
+      const stamp = Date.parse(`${day}T00:00:00Z`);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !Number.isFinite(stamp)
+        || new Date(stamp).toISOString().slice(0, 10) !== day || day > today) return null;
+    }
+  }
+  const balance = accountCashBalance(account);
+  return Number.isFinite(balance) ? balance : null;
 }
 
 function accountCashValue(account) {
@@ -3380,12 +3426,15 @@ function filterPortfolioItems(items, criteria) {
 function setSelectOptions(id, values, label) {
   const select = $(id);
   const current = select.value;
-  select.innerHTML = `<option value="">${label}</option>` + values
+  // Keep an active filter even if an update removes its last matching holding.
+  // Resetting the control would silently broaden the next Apply operation.
+  const options = [...new Set([...values, current].filter(Boolean))];
+  select.innerHTML = `<option value="">${esc(optionLabel(label))}</option>` + options
     .filter(Boolean)
     .sort((a, b) => a.localeCompare(b))
     .map((value) => `<option value="${esc(value)}">${esc(id === "currency" ? currencyDisplayLabel(value) : optionLabel(value))}</option>`)
     .join("");
-  select.value = values.includes(current) ? current : "";
+  select.value = current;
 }
 
 function setOptions(id, values, label = "") {
@@ -3566,6 +3615,17 @@ function renderPortfolioValueDashboard(items) {
   const securitiesValue = sum(items.map((item) => normalizedField(item, "market_value")));
   const cashValue = sum(portfolioAccounts().map((account) => normalizedAmount(accountCashBalance(account), account.currency || state.baseCurrency)));
   const primaryValue = securitiesValue + cashValue;
+  const cashByAccount = portfolioAccounts().map((account) => {
+    const currency = String(account.currency || "").trim();
+    const balance = accountNativeCashBalance(account);
+    return `${accountLabel(account)} · ${optionLabel("Cash")}: ${balance !== null ? money(balance, currency, 2) : optionLabel("Not available")}`;
+  });
+  const totalTooltip = [
+    `${optionLabel("Portfolio value")}: ${money(primaryValue, state.baseCurrency, 0)}`,
+    `${optionLabel("Securities")}: ${money(securitiesValue, state.baseCurrency, 0)}`,
+    `${optionLabel("Cash")}: ${money(cashValue, state.baseCurrency, 0)}`,
+    ...(cashByAccount.length ? [optionLabel("Cash by account"), ...cashByAccount] : []),
+  ].join("\n");
   const primaryProfit = sum(items.map((item) => normalizedField(item, "unrealized_profit")));
   const accountTotals = groupByAccount(items).sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
   const symbols = new Set(items.map((item) => item.holding.symbol)).size;
@@ -3588,7 +3648,9 @@ function renderPortfolioValueDashboard(items) {
         `${optionLabel("Source currencies")}: ${account.currencies.map(currencyDisplayLabel).join(", ")}`,
         account.cashCurrency ? `${optionLabel("Cash")}: ${money(account.cashLocal || 0, account.cashCurrency, 2)}` : "",
       ].filter(Boolean).join("\n");
-      return `<span class="account-chip" title="${esc(title)}"><b>${esc(account.account)}</b><span class="account-chip-values"><strong>${money(account.value, state.baseCurrency, 0)}</strong>${localLine}</span>${riskBadge(accountRisk, true)}</span>`;
+      const localAccount = state.localAccounts.find((item) => String(item.id) === String(account.accountId));
+      const cashSummary = typeof accountCashSummaryHtml === "function" ? accountCashSummaryHtml(localAccount, { compact: true, entry: "dashboard" }) : "";
+      return `<span class="account-chip" title="${esc(title)}"><b>${esc(account.account)}</b><span class="account-chip-values"><strong>${money(account.value, state.baseCurrency, 0)}</strong>${localLine}</span>${riskBadge(accountRisk, true)}${cashSummary}</span>`;
     })
     .join("");
   const accountShares = accountShareSnapshot();
@@ -3631,7 +3693,7 @@ function renderPortfolioValueDashboard(items) {
         <div class="portfolio-summary-metrics">
           <div class="portfolio-summary-value">
             <p class="eyebrow">Portfolio value</p>
-            <div class="balance-value" title="Securities ${money(securitiesValue, state.baseCurrency, 0)} + cash ${money(cashValue, state.baseCurrency, 0)}">${money(primaryValue, state.baseCurrency)}</div>
+            <div class="balance-value" tabindex="0" role="note" aria-label="${esc(totalTooltip)}" title="${esc(totalTooltip)}">${money(primaryValue, state.baseCurrency)}</div>
           </div>
           <div class="portfolio-summary-profit">
             <p class="eyebrow">${esc(optionLabel("Holding Profit"))}</p>
@@ -3738,7 +3800,7 @@ function renderFundsOverviewDashboard() {
     ...longTermAccountItems.map((item) => item.holding.account),
   ].filter(Boolean));
   const securitiesValue = sum(longTermAccountItems.map((item) => normalizedField(item, "market_value")));
-  const accountCash = sum(longTermLocalAccounts.map((account) => normalizedAmount(account.initial_cash, account.currency || state.baseCurrency)));
+  const accountCash = sum(longTermLocalAccounts.map((account) => normalizedAmount(accountCashBalance(account), account.currency || state.baseCurrency)));
   const pensionSaved = sum(funds.filter((fund) => fund.kind === "Pension").map((fund) => fund.amount));
   const providentSaved = sum(funds.filter((fund) => fund.kind === "Provident Fund").map((fund) => fund.amount));
   const savingsSaved = sum(funds.filter((fund) => fund.kind === "Savings Fund").map((fund) => fund.amount));
@@ -3814,7 +3876,7 @@ function preserveRenderedInteraction(root) {
   if (!root) return () => {};
   const active = root.contains(document.activeElement) ? document.activeElement : null;
   const rowKey = active?.closest("[data-portfolio-position]")?.dataset.portfolioPosition;
-  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-profit-holding-key|data-open-(signal|risk|dividend|vesting)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
+  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-open-(signal|risk|dividend|vesting)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
   const detailStates = [...root.querySelectorAll("details")].map((node) => ({ open: node.open, className: node.className, id: node.id }));
   const tagName = active?.tagName, className = active?.className;
   return () => {
@@ -3915,217 +3977,153 @@ function addCurrencyAmount(bucket, currency, value) {
   bucket[code] = (bucket[code] || 0) + Number(value || 0);
 }
 
-function aggregateTrendAccounts(accounts) {
-  const byDate = {};
-  accounts.forEach((account) => {
-    (account.points || []).forEach((point) => {
-      const currency = account.account.currency || state.baseCurrency;
-      const bucket = byDate[point.date] || { date: point.date, value: 0, cash: 0, profit: 0, value_by_currency: {}, cash_by_currency: {}, profit_by_currency: {} };
-      bucket.value += normalizedAmount(point.value, currency);
-      bucket.cash += normalizedAmount(point.cash, currency);
-      bucket.profit += normalizedAmount(point.profit, currency);
-      addCurrencyAmount(bucket.value_by_currency, currency, point.value);
-      addCurrencyAmount(bucket.cash_by_currency, currency, point.cash);
-      addCurrencyAmount(bucket.profit_by_currency, currency, point.profit);
-      byDate[point.date] = bucket;
-    });
+function historyCurrencyOptions(accounts) {
+  const currencies = [...new Set(accounts.map((entry) => entry.account?.currency).filter(Boolean))].sort();
+  return [...currencies.map((currency) => ({ value: `native:${currency}`, currency,
+    label: t(accounts.length === 1 ? "Recorded account currency ({currency})" : "Recorded {currency} accounts").replace("{currency}", currency) })),
+    { value: "base", currency: state.baseCurrency, label: t("Dashboard currency ({currency})").replace("{currency}", state.baseCurrency) }];
+}
+
+function historyCurrencySelection(accounts, requested) {
+  const options = historyCurrencyOptions(accounts);
+  const mode = options.some((option) => option.value === requested) ? requested
+    : accounts.length === 1 && accounts[0].account?.currency ? `native:${accounts[0].account.currency}` : "base";
+  const currency = mode === "base" ? state.baseCurrency : mode.slice(7);
+  return { options, mode, currency, native: mode !== "base",
+    accounts: mode === "base" ? accounts : accounts.filter((entry) => entry.account?.currency === currency) };
+}
+
+function historyPointAmount(point, field, currency, mode = "base") {
+  const value = point?.[field];
+  if (value === null || value === undefined || value === "" || !Number.isFinite(Number(value))) return null;
+  if (mode !== "base") return mode === `native:${currency}` && point.native_available === true && point.native_currency === currency ? Number(value) : null;
+  return reportAmount(value, currency, state.baseCurrency);
+}
+
+function historyLinePath(points, x, y, field = "value") {
+  let connected = false;
+  return points.map((point, index) => {
+    if (!Number.isFinite(point[field])) { connected = false; return ""; }
+    const segment = `${connected ? "L" : "M"} ${x(point, index).toFixed(1)} ${y(point[field]).toFixed(1)}`;
+    connected = true;
+    return segment;
+  }).filter(Boolean).join(" ");
+}
+
+function aggregateTrendAccounts(accounts, mode = "base") {
+  if (mode !== "base") accounts = accounts.filter((entry) => mode === `native:${entry.account?.currency}`);
+  const dates = [...new Set(accounts.flatMap((entry) => (entry.points || []).map((point) => point.date).filter((date) => Number.isFinite(Date.parse(date)))))].sort();
+  const series = accounts.map((entry) => new Map(trendSeriesForAccount(entry, mode).map((point) => [point.date, point])));
+  return dates.map((date) => {
+    const members = series.map((points) => points.get(date));
+    const result = { date, value_by_currency: {}, cash_by_currency: {}, profit_by_currency: {} };
+    for (const field of ["value", "cash", "profit"]) {
+      result[field] = members.some((point) => !Number.isFinite(point?.[field])) ? null : sum(members.map((point) => point[field]));
+      accounts.forEach((entry, index) => {
+        const value = members[index]?.[`${field}_by_currency`]?.[entry.account.currency];
+        if (Number.isFinite(value)) addCurrencyAmount(result[`${field}_by_currency`], entry.account.currency, value);
+      });
+    }
+    return result;
   });
-  return Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function trendAccountOptions() {
   return [{ id: "total", label: "All accounts" }].concat((state.accountTrend.accounts || []).map((account) => ({
-    id: account.account.id,
-    label: accountLabel(account.account),
+    id: account.account.id, label: accountLabel(account.account),
   })));
 }
 
 function selectedTrendPoints() {
+  const accounts = state.accountTrend.accounts || [];
   const selected = state.dashboard?.accountTrendAccountId || "total";
-  if (selected === "total") return aggregateTrendAccounts(state.accountTrend.accounts || []);
-  const account = (state.accountTrend.accounts || []).find((item) => item.account.id === selected);
-  return trendSeriesForAccount(account);
+  const scoped = selected === "total" ? accounts : accounts.filter((entry) => entry.account.id === selected);
+  const selection = historyCurrencySelection(scoped, state.dashboard?.accountTrendCurrencyMode);
+  return selected === "total" ? aggregateTrendAccounts(selection.accounts, selection.mode) : trendSeriesForAccount(selection.accounts[0], selection.mode);
 }
 
-function trendSeriesForAccount(account) {
+function trendSeriesForAccount(account, mode = "base") {
   if (!account) return [];
-  const currency = account.account.currency || state.baseCurrency;
+  const currency = account.account.currency;
   return (account.points || []).map((point) => ({
     ...point,
-    value: normalizedAmount(point.value, currency),
-    cash: normalizedAmount(point.cash, currency),
-    profit: normalizedAmount(point.profit, currency),
-    value_by_currency: { [currency]: Number(point.value || 0) },
-    cash_by_currency: { [currency]: Number(point.cash || 0) },
-    profit_by_currency: { [currency]: Number(point.profit || 0) },
-  })).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    value: historyPointAmount(point, "value", currency, mode),
+    cash: historyPointAmount(point, "cash", currency, mode),
+    profit: historyPointAmount(point, "profit", currency, mode),
+    value_by_currency: { [currency]: point.value }, cash_by_currency: { [currency]: point.cash }, profit_by_currency: { [currency]: point.profit },
+  })).filter((point) => Number.isFinite(Date.parse(point.date))).sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
 function localTrendAmount(point, field) {
-  const values = point?.[`${field}_by_currency`] || {};
-  return Object.entries(values)
-    .filter(([currency]) => currency !== state.baseCurrency)
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([currency, value]) => money(value, currency, 0))
-    .join(" · ");
+  return Object.entries(point?.[`${field}_by_currency`] || {}).filter(([currency, value]) => currency !== state.baseCurrency && Number.isFinite(value))
+    .sort(([left], [right]) => left.localeCompare(right)).map(([currency, value]) => money(value, currency, 0)).join(" · ");
 }
 
-function trendAmount(point, field) {
-  const base = money(point?.[field], state.baseCurrency, 0);
-  const local = localTrendAmount(point, field);
-  return local ? `${base} (${local})` : base;
+function trendAmount(point, field, currency = state.baseCurrency, mode = "base") {
+  if (!Number.isFinite(point?.[field])) return t("Not available");
+  const value = money(point[field], currency, 0);
+  const local = mode === "base" ? localTrendAmount(point, field) : "";
+  return local ? `${value} (${local})` : value;
+}
+
+function historyCurrencyControl(selection, id, attribute) {
+  return `<label class="history-currency-control"><span>${esc(t("Currency display"))}</span><select id="${id}" ${attribute} aria-label="${esc(t("Currency display"))}">${selection.options.map((option) => `<option value="${esc(option.value)}"${option.value === selection.mode ? " selected" : ""}>${esc(option.label)}</option>`).join("")}</select></label>`;
 }
 
 function renderAccountValueTrend() {
   const accounts = state.accountTrend.accounts || [];
   const options = trendAccountOptions();
-  if (!accounts.length) {
-    return `
-      <div class="chart-card account-trend-card">
-        <div class="chart-header">
-          <div class="chart-title">Account value trend</div>
-        </div>
-        <div class="empty">No account history in this date range</div>
-      </div>`;
-  }
-  if (!options.some((option) => option.id === state.dashboard.accountTrendAccountId)) {
-    state.dashboard.accountTrendAccountId = "total";
-  }
-  const points = selectedTrendPoints();
-  if (!points.length) {
-    return `
-      <div class="chart-card account-trend-card">
-        <div class="chart-header">
-          <div class="chart-title">Account value trend</div>
-          <select data-account-trend-select title="Account trend source">
-            ${options.map((option) => `<option value="${esc(option.id)}"${option.id === state.dashboard.accountTrendAccountId ? " selected" : ""}>${esc(option.label)}</option>`).join("")}
-          </select>
-        </div>
-        <div class="empty">No account history in this date range</div>
-      </div>`;
-  }
-  const width = 640;
-  const height = 230;
-  const padLeft = 76;
-  const padRight = 22;
-  const padTop = 22;
-  const padBottom = 42;
-  const plotWidth = width - padLeft - padRight;
-  const plotHeight = height - padTop - padBottom;
-  const accountSeries = state.dashboard.accountTrendAccountId === "total"
-    ? accounts.map((account) => ({
-      id: account.account.id,
-      label: accountLabel(account.account),
-      points: trendSeriesForAccount(account),
-    })).filter((series) => series.points.length)
-    : [];
-  const selectedLabel = options.find((option) => option.id === state.dashboard.accountTrendAccountId)?.label || "All accounts";
-  const valueNumbers = points.map((point) => Number(point.value || 0));
-  const cashNumbers = points.map((point) => Number(point.cash || 0)).filter((value) => Math.abs(value) > 0.0001);
-  const accountValueNumbers = accountSeries.flatMap((series) => series.points.map((point) => Number(point.value || 0)));
-  const domainValues = valueNumbers.concat(cashNumbers, accountValueNumbers);
-  const rawMin = Math.min(...domainValues);
-  const rawMax = Math.max(...domainValues, 1);
-  const rawSpan = rawMax - rawMin || Math.max(Math.abs(rawMax), 1);
-  const min = rawMin >= 0 ? Math.max(0, rawMin - rawSpan * 0.08) : rawMin - rawSpan * 0.08;
-  const max = rawMax + rawSpan * 0.08;
-  const allCashZero = !cashNumbers.length;
-  const x = (_point, index) => padLeft + (index / Math.max(1, points.length - 1)) * plotWidth;
-  const yValue = (value) => padTop + plotHeight - ((Number(value || 0) - min) / (max - min || 1)) * plotHeight;
-  const y = (point, field) => field === "cash" && allCashZero ? height - padBottom : yValue(point[field]);
-  const valuePath = linePath(points, x, (point) => y(point, "value"));
-  const cashPath = linePath(points, x, (point) => y(point, "cash"));
-  const yTicks = [max, min + (max - min) * 0.67, min + (max - min) * 0.33, min];
-  const xTicks = points.length <= 3
-    ? points
-    : [points[0], points[Math.floor((points.length - 1) / 2)], points.at(-1)];
-  const accountPaths = accountSeries.map((series, index) => {
-    const path = linePath(series.points, (_point, pointIndex) => x(_point, pointIndex), (point) => yValue(point.value));
-    return `<path class="account-trend-account-line" d="${path}" fill="none" stroke="${colorAt(index)}"></path>`;
+  if (!options.some((option) => option.id === state.dashboard.accountTrendAccountId)) state.dashboard.accountTrendAccountId = "total";
+  const total = state.dashboard.accountTrendAccountId === "total";
+  const scoped = total ? accounts : accounts.filter((entry) => entry.account.id === state.dashboard.accountTrendAccountId);
+  const selection = historyCurrencySelection(scoped, state.dashboard.accountTrendCurrencyMode);
+  state.dashboard.accountTrendCurrencyMode = selection.mode;
+  const points = total ? aggregateTrendAccounts(selection.accounts, selection.mode) : trendSeriesForAccount(selection.accounts[0], selection.mode);
+  const selectedLabel = t(options.find((option) => option.id === state.dashboard.accountTrendAccountId)?.label || "All accounts");
+  const controls = `<div class="account-trend-controls"><label class="history-currency-control"><span>${esc(t("Account"))}</span><select id="dashboardAccountTrendAccount" data-account-trend-select aria-label="${esc(t("Account trend source"))}">${options.map((option) => `<option value="${esc(option.id)}"${option.id === state.dashboard.accountTrendAccountId ? " selected" : ""}>${esc(t(option.label))}</option>`).join("")}</select></label>${historyCurrencyControl(selection, "dashboardAccountTrendCurrency", "data-account-trend-currency")}</div>`;
+  const last = points.at(-1);
+  const header = `<div class="chart-header"><div><div class="chart-title">${esc(t("Account value trend"))}</div><small class="chart-subtitle">${esc(selectedLabel)} · ${esc(selection.currency)}${last ? ` · ${esc(t("Value"))} ${esc(trendAmount(last, "value", selection.currency, selection.mode))} · ${esc(t("Cash"))} ${esc(trendAmount(last, "cash", selection.currency, selection.mode))}` : ""}</small></div></div>${controls}`;
+  const note = `<p class="section-note">${esc(t("Balance changes include deposits and withdrawals; they are not investment returns."))} ${esc(t(selection.native ? "Recorded account currency removes dashboard conversion, not currency exposure within holdings." : "Historical amounts use current saved exchange rates."))}</p>`;
+  const accountSeries = total ? selection.accounts.map((entry) => ({ account: entry.account, points: trendSeriesForAccount(entry, selection.mode) })) : [];
+  const values = points.flatMap((point) => [point.value, point.cash]).concat(accountSeries.flatMap((entry) => entry.points.map((point) => point.value))).filter(Number.isFinite);
+  const missing = points.some((point) => !Number.isFinite(point.value) || !Number.isFinite(point.cash));
+  const gapNote = missing ? `<p class="section-note">${esc(t(selection.native ? "Some history points are unavailable in recorded account currency. Missing or mixed-currency evidence is shown as a gap." : "Some history points are unavailable because a value, account record or exchange rate is missing."))}</p>` : "";
+  if (!values.length) return `<div class="chart-card account-trend-card">${header}<div class="empty">${esc(t(points.length ? "No comparable history values are available in this currency view." : "No account history in this date range"))}</div>${gapNote}${note}</div>`;
+  const width = 640, height = 230, left = 82, right = 22, top = 22, bottom = 188;
+  const rawMin = Math.min(...values), rawMax = Math.max(...values, 1), span = rawMax - rawMin || Math.max(Math.abs(rawMax), 1);
+  const min = rawMin >= 0 ? Math.max(0, rawMin - span * .08) : rawMin - span * .08, max = rawMax + span * .08;
+  const firstDate = Date.parse(points[0].date), lastDate = Date.parse(points.at(-1).date);
+  const x = (point) => left + (Date.parse(point.date) - firstDate) / (lastDate - firstDate || 1) * (width - left - right);
+  const y = (value) => bottom - (value - min) / (max - min || 1) * (bottom - top);
+  const ticks = [max, min + (max - min) * .67, min + (max - min) * .33, min];
+  const dateTicks = points.length <= 3 ? points : [points[0], points[Math.floor((points.length - 1) / 2)], points.at(-1)];
+  const accountLines = accountSeries.map((entry, index) => {
+    const lookup = new Map(entry.points.map((point) => [point.date, point]));
+    const aligned = points.map((point) => lookup.get(point.date) || { date: point.date, value: null });
+    return `<path class="account-trend-account-line" d="${historyLinePath(aligned, x, y)}" fill="none" stroke="${colorAt(index)}"><title>${esc(accountLabel(entry.account))}</title></path>`;
   }).join("");
-  const last = points.at(-1) || {};
-  const latestTooltip = `${selectedLabel}\nLatest total amount: ${trendAmount(last, "value")}\nLatest cash: ${trendAmount(last, "cash")}\nDate: ${formatDate(last.date || "")}`;
-  const valueMarkers = points.map((point, index) => {
-    const cx = x(point, index);
-    const cy = y(point, "value");
-    const tooltip = `${formatDate(point.date)}\n${selectedLabel}\nTotal amount: ${trendAmount(point, "value")}`;
-    return `
-      <circle class="trend-hit" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="18" fill="transparent">
-        <title>${esc(tooltip)}</title>
-      </circle>
-      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3.5" fill="#21a7ff">
-        <title>${esc(tooltip)}</title>
-      </circle>
-    `;
-  }).join("");
-  const cashMarkers = points.map((point, index) => {
-    const cx = x(point, index);
-    const cy = y(point, "cash");
-    const tooltip = `${formatDate(point.date)}\n${selectedLabel}\nCash: ${trendAmount(point, "cash")}`;
-    return `
-      <circle class="trend-hit" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="18" fill="transparent">
-        <title>${esc(tooltip)}</title>
-      </circle>
-      <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3" fill="#ffae18">
-        <title>${esc(tooltip)}</title>
-      </circle>
-    `;
-  }).join("");
-  return `
-    <div class="chart-card account-trend-card">
-      <div class="chart-header">
-        <div>
-          <div class="chart-title">Account value trend</div>
-          <small class="chart-subtitle">${state.language === "he"
-            ? `${esc(optionLabel(selectedLabel))} · שווי ${esc(trendAmount(last, "value"))} · מזומן ${esc(trendAmount(last, "cash"))}`
-            : `${esc(selectedLabel)} · Value ${esc(trendAmount(last, "value"))} · Cash ${esc(trendAmount(last, "cash"))}`}</small>
-        </div>
-        <div class="chart-legend">
-          <span><i style="background:#21a7ff"></i>Total amount</span>
-          <span><i style="background:#ffae18"></i>Cash</span>
-          <select data-account-trend-select title="Account trend source">
-            ${options.map((option) => `<option value="${esc(option.id)}"${option.id === state.dashboard.accountTrendAccountId ? " selected" : ""}>${esc(option.label)}</option>`).join("")}
-          </select>
-        </div>
-      </div>
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Historic account total amount and cash">
-        <defs>
-          <linearGradient id="accountTrendFill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stop-color="#21a7ff" stop-opacity="0.28" />
-            <stop offset="100%" stop-color="#21a7ff" stop-opacity="0" />
-          </linearGradient>
-        </defs>
-        ${yTicks.map((tick) => {
-          const tickY = yValue(tick);
-          return `
-            <line class="chart-grid" x1="${padLeft}" y1="${tickY.toFixed(1)}" x2="${width - padRight}" y2="${tickY.toFixed(1)}"></line>
-            <text class="axis-label y-axis-label" x="${padLeft - 8}" y="${(tickY + 3).toFixed(1)}">${money(tick, state.baseCurrency, 0)}</text>
-          `;
-        }).join("")}
-        <text class="axis-title" x="16" y="${padTop + plotHeight / 2}" transform="rotate(-90 16 ${padTop + plotHeight / 2})">Amount</text>
-        <line class="axis-line" x1="${padLeft}" y1="${height - padBottom}" x2="${width - padRight}" y2="${height - padBottom}"></line>
-        <line class="axis-line" x1="${padLeft}" y1="${padTop}" x2="${padLeft}" y2="${height - padBottom}"></line>
-        <path d="${valuePath} L ${x(points.at(-1) || {}, points.length - 1).toFixed(1)} ${height - padBottom} L ${padLeft} ${height - padBottom} Z" fill="url(#accountTrendFill)"></path>
-        ${accountPaths}
-        <path d="${valuePath}" fill="none" stroke="#21a7ff" stroke-width="4" stroke-linejoin="round"></path>
-        <path d="${cashPath}" fill="none" stroke="#ffae18" stroke-width="3" stroke-linejoin="round" stroke-dasharray="7 6"></path>
-        <path class="trend-hit-line" d="${valuePath}" fill="none">
-          <title>${esc(latestTooltip)}</title>
-        </path>
-        <path class="trend-hit-line" d="${cashPath}" fill="none">
-          <title>${esc(`${selectedLabel}\nCash line\nLatest cash: ${trendAmount(last, "cash")}\nDate: ${formatDate(last.date || "")}`)}</title>
-        </path>
-        ${valueMarkers}
-        ${cashMarkers}
-        ${xTicks.map((point, index) => {
-          const pointIndex = points.findIndex((item) => item.date === point.date);
-          const tickX = x(point, pointIndex);
-          const anchor = index === 0 ? "start" : index === xTicks.length - 1 ? "end" : "middle";
-          return `<text class="axis-label" x="${tickX.toFixed(1)}" y="${height - 12}" text-anchor="${anchor}">${esc(formatDate(point.date || ""))}</text>`;
-        }).join("")}
-        <text class="axis-title" x="${padLeft + plotWidth / 2}" y="${height - 2}">Date</text>
-      </svg>
-    </div>`;
+  const markers = ["value", "cash"].map((field) => points.filter((point) => Number.isFinite(point[field])).map((point) => {
+    const tooltip = `${formatDate(point.date)} · ${selectedLabel} · ${t(field === "value" ? "Total amount" : "Cash")}: ${trendAmount(point, field, selection.currency, selection.mode)}`;
+    return `<g tabindex="0" role="img" aria-label="${esc(tooltip)}"><circle class="trend-hit" cx="${x(point).toFixed(1)}" cy="${y(point[field]).toFixed(1)}" r="14" fill="transparent"><title>${esc(tooltip)}</title></circle><circle cx="${x(point).toFixed(1)}" cy="${y(point[field]).toFixed(1)}" r="3.5" fill="${field === "value" ? "#21a7ff" : "#ffae18"}"><title>${esc(tooltip)}</title></circle></g>`;
+  }).join("")).join("");
+  return `<div class="chart-card account-trend-card">${header}<div class="chart-legend"><span><i style="background:#21a7ff"></i>${esc(t("Total amount"))}</span><span><i style="background:#ffae18"></i>${esc(t("Cash"))}</span></div>${gapNote}<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(`${t("Historic account total amount and cash")} · ${selection.currency}`)}">${ticks.map((tick) => `<line class="chart-grid" x1="${left}" y1="${y(tick).toFixed(1)}" x2="${width-right}" y2="${y(tick).toFixed(1)}"></line><text class="axis-label y-axis-label" x="${left-8}" y="${(y(tick)+3).toFixed(1)}">${esc(money(tick, selection.currency, 0))}</text>`).join("")}<text class="axis-title" x="16" y="${top+(bottom-top)/2}" transform="rotate(-90 16 ${top+(bottom-top)/2})">${esc(selection.currency)}</text>${accountLines}<path d="${historyLinePath(points, x, y)}" fill="none" stroke="#21a7ff" stroke-width="4" stroke-linejoin="round"></path><path d="${historyLinePath(points, x, y, "cash")}" fill="none" stroke="#ffae18" stroke-width="3" stroke-dasharray="7 6"></path>${markers}${dateTicks.map((point, index) => `<text class="axis-label" x="${x(point).toFixed(1)}" y="218" text-anchor="${index === 0 ? "start" : index === dateTicks.length-1 ? "end" : "middle"}">${esc(formatDate(point.date))}</text>`).join("")}</svg>${note}</div>`;
+}
+
+function rerenderAccountValueTrend() {
+  const card = document.querySelector('[data-widget="account_trend"]');
+  if (!card) return;
+  const restoreView = preservePortfolioViewport();
+  const restoreInteraction = preserveRenderedInteraction(card);
+  const toolbar = card.querySelector(".dashboard-widget-toolbar");
+  const template = document.createElement("template");
+  template.innerHTML = renderAccountValueTrend();
+  try {
+    card.replaceChildren(...template.content.firstElementChild.childNodes);
+    if (toolbar) card.prepend(toolbar);
+    const board = $("analyticsBoard");
+    if (board && !state.dashboard.edit) layoutDashboardCards(board);
+    restoreInteraction();
+  } finally { restoreView(); }
 }
 
 function longTermPersonKey(person) {
@@ -4173,8 +4171,7 @@ function longTermAccountSeries(dates) {
           values[date] = latest;
         });
       } else {
-        const current = normalizedAmount(account.initial_cash || 0, account.currency || state.baseCurrency);
-        dates.forEach((date) => { values[date] = current; });
+        dates.forEach((date) => { values[date] = normalizedAmount(accountCashBalance(account, date), account.currency || state.baseCurrency); });
       }
       return { account, values };
     });
@@ -4437,7 +4434,8 @@ function renderDonut(groups, title, centerLabel, total, centerSub = null, extraC
         ${visibleGroups.map((group, index) => {
           const dash = total ? (group.value / total) * circumference : 0;
           const percent = total ? Math.round(group.value / total * 100) : 0;
-          const tooltip = `${tooltipLabel(group.label)}\n${money(group.value, state.baseCurrency, 0)}\n${percent}%`;
+          const baseAmount = group.amountUnavailable ? optionLabel("Not available") : money(group.value, state.baseCurrency, 0);
+          const tooltip = `${tooltipLabel(group.label)}\n${baseAmount}\n${percent}%${group.localAmountText ? `\n${group.localAmountText}` : ""}`;
           const circle = `<circle cx="65" cy="65" r="42" fill="none" stroke="${colorAt(index)}" stroke-width="14" stroke-dasharray="${dash.toFixed(1)} ${(circumference - dash).toFixed(1)}" stroke-dashoffset="${(-offset).toFixed(1)}" transform="rotate(-90 65 65)"><title>${esc(tooltip)}</title></circle>`;
           offset += dash;
           return circle;
@@ -4450,23 +4448,35 @@ function renderDonut(groups, title, centerLabel, total, centerSub = null, extraC
         ${visibleGroups.map((group, index) => {
           const percent = total ? Math.round(group.value / total * 100) : 0;
           const cashAmount = group.label === "Cash" ? ` · ${money(group.value, state.baseCurrency, 0)}` : "";
-          const tooltip = `${tooltipLabel(group.label)} · ${money(group.value, state.baseCurrency, 0)} · ${percent}%`;
-          return `<span title="${esc(tooltip)}"><i style="background:${colorAt(index)}"></i>${esc(groupLabel(group.label))} ${percent}%${cashAmount}</span>`;
+          const localAmount = group.localAmountText ? `<bdi class="currency-exposure-amount" dir="auto">${esc(group.localAmountText)}</bdi>` : "";
+          const baseAmount = group.amountUnavailable ? optionLabel("Not available") : money(group.value, state.baseCurrency, 0);
+          const tooltip = `${tooltipLabel(group.label)} · ${baseAmount} · ${percent}%${group.localAmountText ? ` · ${group.localAmountText}` : ""}`;
+          return `<span title="${esc(tooltip)}"><i style="background:${colorAt(index)}"></i>${esc(groupLabel(group.label))} ${percent}%${cashAmount}${localAmount}</span>`;
         }).join("")}
       </div>
     </div>`;
 }
 
 function renderCurrencyAllocation(groups, total) {
+  const quotes = Object.entries(state.fxRates || {}).map(([pair, rate]) => ({ pair, quote: { rate } }));
+  const convert = PortfolioTradePlanner.converter(quotes, state.baseCurrency);
   const known = groups.filter((group) => group.label !== "Unknown");
   const unknown = groups.find((group) => group.label === "Unknown");
   const visible = known.slice(0, 4);
   const other = sum(known.slice(4).map((group) => group.value));
-  if (other) visible.push({ label: "Other currencies", value: other });
+  if (other) visible.push({ label: "Other currencies", value: other, amountUnavailable: known.slice(4).some((group) => group.amountUnavailable) });
   if (unknown) visible.push(unknown);
   visible.sort((left, right) => right.value - left.value);
   const topPercent = total ? Math.round((visible[0]?.value || 0) / total * 100) : 0;
-  return renderDonut(visible, "Economic currency exposure", `${topPercent}%`, total, [visible[0]?.label || state.baseCurrency], "currency-allocation-card");
+  const displayed = visible.map((group) => {
+    const aggregate = ["Unknown", "Other currencies"].includes(group.label);
+    const currency = aggregate ? state.baseCurrency : group.label;
+    const amount = group.amountUnavailable || typeof group.value !== "number" || !Number.isFinite(group.value)
+      ? null : convert(group.value, state.baseCurrency, currency);
+    const text = amount !== null && Number.isFinite(amount) ? money(amount, currency, 0) : optionLabel("Not available");
+    return { ...group, localAmountText: aggregate ? `${optionLabel("Base equivalent")}: ${text}` : text };
+  });
+  return renderDonut(displayed, "Economic currency exposure", `${topPercent}%`, total, [visible[0]?.label || state.baseCurrency], "currency-allocation-card");
 }
 
 function cashByCurrencyData() {
@@ -5372,11 +5382,42 @@ function renderAnalytics(items) {
   }
 }
 
+function preservePortfolioViewport() {
+  const root = document.querySelector(".workspace");
+  if (!root) return () => {};
+  const restoreInteraction = preserveRenderedInteraction(root);
+  const originalMinHeight = root.style.minHeight;
+  const height = root.getBoundingClientRect().height;
+  const x = window.scrollX, y = window.scrollY;
+  const active = document.activeElement;
+  const selection = typeof active?.selectionStart === "number"
+    ? [active.selectionStart, active.selectionEnd, active.selectionDirection] : null;
+  const scrollPositions = dashboardScrollPositions(root);
+  const scrollers = [...root.querySelectorAll("*")].filter((node) => node.scrollTop || node.scrollLeft)
+    .map((node) => ({ node, top: node.scrollTop, left: node.scrollLeft }));
+  if (height > 0) root.style.minHeight = `${height}px`;
+  return () => {
+    restoreInteraction();
+    restoreDashboardScrollPositions(root, scrollPositions);
+    scrollers.forEach(({ node, top, left }) => {
+      if (node.isConnected) { node.scrollTop = top; node.scrollLeft = left; }
+    });
+    if (selection && document.activeElement === active) active.setSelectionRange(...selection);
+    root.style.minHeight = originalMinHeight;
+    window.scrollTo({ left: x, top: y, behavior: "instant" });
+  };
+}
+
 function renderPortfolio(items) {
-  const rows = portfolioItems(items);
-  renderSummary(rows);
-  renderAnalytics(rows);
-  renderRows(rows);
+  const restore = preservePortfolioViewport();
+  try {
+    const rows = portfolioItems(items);
+    renderSummary(rows);
+    renderAnalytics(rows);
+    renderRows(rows);
+  } finally {
+    restore();
+  }
 }
 
 function rerenderPortfolioIfLoaded() {
@@ -5999,13 +6040,15 @@ function renderFundAccountOwners() {
   renderFundAccountOwner("editFundAccount", "editFundAccountOwner");
 }
 
-async function loadLocalAccounts() {
+async function loadLocalAccounts({ renderDashboard = true } = {}) {
   const data = await api("/api/local/accounts");
   state.localAccounts = data.items || [];
   refreshLocalAccountSelects();
   refreshFamilyAccountSelects();
-  renderFundsOverview();
-  rerenderPortfolioIfLoaded();
+  if (renderDashboard) {
+    renderFundsOverview();
+    rerenderPortfolioIfLoaded();
+  }
   const importedAccounts = state.localAccounts.filter(isImportedAccount).length;
   const manualAccounts = state.localAccounts.length - importedAccounts;
   $("accountsSummary").innerHTML = [
@@ -6051,6 +6094,7 @@ function renderLocalAccountsList() {
           <button class="secondary compact-button" type="button" data-delete-account="${esc(account.id)}"${removalDisabled ? " disabled" : ""}>Remove</button>
           ${removalHelp}
         </div>
+        ${typeof accountCashSummaryHtml === "function" ? accountCashSummaryHtml(account, { entry: "accounts" }) : ""}
         <div class="sub">${esc(optionLabel("Initial cash"))} ${fmt(account.initial_cash)}${(account.persons || []).length ? ` · ${(account.persons || []).map(personLabel).map(esc).join(" · ")}` : ""} · ${esc(cleanSourceLabel(account.comments) || optionLabel("No comments"))}</div>
       </div>
     `;
@@ -6134,6 +6178,7 @@ function editLocalAccount(accountId) {
   state.editAccountPersons = (account.persons || []).map((person) => ({ ...person }));
   $("editAccountStatus").textContent = accountLabel(account);
   renderPersonLists();
+  if (typeof renderAccountEditCash === "function") renderAccountEditCash(account);
   openModal("accountEditModal");
 }
 
@@ -6194,6 +6239,9 @@ async function importSourceToLocal() {
     setStatusMessage("accountsStatus", state.language === "he"
       ? `יובאו ${result.positions || 0} החזקות ועודכנו ${result.account_cash_updated || 0} חשבונות.`
       : `Imported ${result.positions || 0} positions and updated ${result.account_cash_updated || 0} accounts.`);
+  }
+  if (result.account_cash_preserved) {
+    $("accountsStatus").textContent += ` ${t("Local cash updates were preserved for {count} accounts.").replace("{count}", fmt(result.account_cash_preserved, 0))}`;
   }
   renderImportSkippedAccounts();
   await loadLocalAccounts();
@@ -6261,8 +6309,8 @@ function prepareSkippedImportAccount(index) {
 
 function transactionCashImpact(tx) {
   const value = Number(tx.quantity || 0) * Number(tx.price || 0);
-  if (tx.action === "BUY") return -value;
-  if (tx.action === "SELL" || tx.action === "SHORT" || tx.action === "DIVIDEND" || tx.action === "INTEREST") return value;
+  if (tx.action === "BUY" || tx.action === "CASH_OUT") return -value;
+  if (tx.action === "SELL" || tx.action === "SHORT" || tx.action === "DIVIDEND" || tx.action === "INTEREST" || tx.action === "CASH_IN") return value;
   if (tx.action === "FEE") return -value;
   return 0;
 }
@@ -8530,7 +8578,7 @@ async function loadLocalSecurities() {
   if (state.items?.length) renderAnalytics(state.items);
   const visibleTransactions = employeeOptionsWorkflowActive()
     ? state.localTransactions.filter((tx) => tx.instrument_type === "EMPLOYEE_STOCK_OPTION")
-    : state.localTransactions;
+    : state.localTransactions.filter((tx) => !["CASH_IN", "CASH_OUT"].includes(tx.action));
   $("securitiesList").innerHTML = visibleTransactions.length ? visibleTransactions.map((tx) => `
     <div class="stack-item management-item">
       <b>${esc(tx.action)} ${esc(tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (tx.company_name || tx.security_name || "Employee option") : `${tx.symbol}${tx.secondary_symbol ? ` · ${tx.secondary_symbol}` : ""}`)}</b>
@@ -8769,19 +8817,12 @@ function currentAlarms({ includeDismissed = false } = {}) {
 }
 
 function clearAlarms() {
-  if (typeof canWrite === "function" && !canWrite()) return;
-  const { dividends, vesting } = currentAlarms();
-  const alarms = [...vesting, ...dividends];
-  if (!alarms.length) return;
-  state.dismissedAlarmIds = [...state.dismissedAlarmIds, ...alarms.map(alarmDismissalId)];
-  state.clearedAlarmCount = alarms.length;
-  saveAlarmDismissals();
-  renderAlarms();
+  return clearSelectedAlarms({ all: true });
 }
 
 function renderAlarms() {
   const { dividends, vesting } = currentAlarms();
-  const extras = typeof portfolioSignalAlarms === "function" ? [...portfolioSignalAlarms(), ...portfolioRiskAlarms()] : [];
+  const extras = typeof visiblePriorityAlarms === "function" ? visiblePriorityAlarms() : [];
   const alarms = [...vesting, ...dividends, ...extras];
   if (typeof alarmAppearance === "function") alarms.sort((a, b) => ALARM_PRIORITY[alarmAppearance(a).tone] - ALARM_PRIORITY[alarmAppearance(b).tone]);
   const count = $("alarmsCount");
@@ -8790,7 +8831,7 @@ function renderAlarms() {
   if (button) button.classList.toggle("has-alarms", alarms.length > 0);
   const notes = typeof renderAlarmPriority === "function" ? renderAlarmPriority(alarms) : [];
   const clearButton = $("clearAlarms");
-  if (clearButton) clearButton.disabled = dividends.length + vesting.length === 0 || (typeof canWrite === "function" && !canWrite());
+  if (clearButton) clearButton.disabled = alarms.length === 0 || !canWrite() || Boolean(state.alarmClearPending);
   const status = $("alarmsStatus");
   if (status) {
     const summary = alarms.length ? alarmText("Alarms: {count}", { count: alarms.length }) : state.clearedAlarmCount
@@ -8810,14 +8851,8 @@ function renderAlarms() {
   const restoreInteraction = typeof preserveRenderedInteraction === "function" ? preserveRenderedInteraction(list) : () => {};
   const scroller = list.closest?.(".modal-card");
   const scrollTop = scroller?.scrollTop;
-  list.innerHTML = alarms.length ? alarms.map((alarm) => {
-    const appearance = alarmAppearance(alarm);
-    const incomplete = alarm.incomplete ? ` · ${t("Some rule data is unavailable")}` : "";
-    return `<button class="alarm-item" data-alarm-tone="${appearance.tone}" type="button" ${alarmActionAttributes(alarm)}>
-      <span class="alarm-heading"><b>${esc(alarm.title)}</b><span class="alarm-kind"><span aria-hidden="true">${esc(appearance.icon)}</span> ${esc(t(appearance.label))}</span></span>
-      <span class="alarm-details"><span class="alarm-body">${esc(alarm.body)}${esc(incomplete)}</span><small class="alarm-meta">${esc(alarm.meta)}</small></span>
-    </button>`;
-  }).join("") : `<div class="empty">${esc(notes.length ? notes.join(" ") : t("No current alarms."))}</div>`;
+  list.innerHTML = alarms.length ? alarms.map(renderAlarmListItem).join("")
+    : `<div class="empty">${esc(notes.length ? notes.join(" ") : t("No current alarms."))}</div>`;
   restoreInteraction();
   if (scroller && Number.isFinite(scrollTop)) scroller.scrollTop = scrollTop;
   if ($("alarmRiskModal")?.hidden === false) renderAlarmRiskDetails(extras.find(alarm => alarm.key === $("alarmRiskModal").dataset.alarmKey));
@@ -8945,7 +8980,7 @@ function tradeHistoryAmount(value, currency) {
 }
 
 function tradeHistoryActionLabel(action) {
-  const labels = { BUY: "Buy", SELL: "Sell", ADD: "Add", REMOVE: "Remove", SHORT: "Short", DIVIDEND: "Dividend", INTEREST: "Interest", FEE: "Fee" };
+  const labels = { BUY: "Buy", SELL: "Sell", ADD: "Add", REMOVE: "Remove", SHORT: "Short", DIVIDEND: "Dividend", INTEREST: "Interest", FEE: "Fee", CASH_IN: "Cash balance increase", CASH_OUT: "Cash balance decrease" };
   return t(labels[action] || "Other activity");
 }
 
@@ -9382,53 +9417,69 @@ async function exportReportsPdf() {
 
 function renderAccountTrend(trend) {
   state.activeReportTrend = trend;
-  const metric = state.reportTrendMetric || "value";
-  const isValue = metric === "value";
-  const accounts = (trend.accounts || []).map((account, index) => ({
-    ...account,
-    color: colorAt(index),
-    points: (account.points || []).map((point) => ({
-      ...point,
-      plotted: isValue ? reportAmount(point.value, account.account?.currency) : (point.profit_percent == null ? null : Number(point.profit_percent)),
-    })).filter((point) => point.plotted !== null && Number.isFinite(point.plotted) && Number.isFinite(Date.parse(point.date))),
-  })).filter((account) => account.points.length);
-  const series = accounts.flatMap((account) => account.points);
-  const control = `<div class="report-chart-metrics" role="group" aria-label="${esc(t("Chart measure"))}">${[["value", "Account value"], ["profit_percent", "Recorded profit %"]].map(([key, label]) => `<button type="button" class="secondary compact-button" data-report-metric="${key}" aria-pressed="${metric === key}">${esc(t(label))}</button>`).join("")}</div>`;
-  const dates = (trend.accounts || []).flatMap((account) => (account.points || []).map((point) => point.date)).filter((day) => Number.isFinite(Date.parse(day))).sort();
-  const startDate = dates[0];
-  const endDate = dates.at(-1);
+  const root = $("accountTrendChart");
+  if (!root) return;
+  const scope = (trend.accounts || []).map((entry) => `${entry.account?.id}:${entry.account?.currency}`).sort().join("|");
+  if (state.reportTrendCurrencyScope !== scope) state.reportTrendCurrencyMode = "";
+  state.reportTrendCurrencyScope = scope;
+  const selection = historyCurrencySelection(trend.accounts || [], state.reportTrendCurrencyMode);
+  state.reportTrendCurrencyMode = selection.mode;
+  const metric = ["value", "profit", "profit_percent"].includes(state.reportTrendMetric) ? state.reportTrendMetric : "value";
+  const isAmount = metric !== "profit_percent";
+  const metricLabel = t(metric === "value" ? "Account value" : metric === "profit" ? "Recorded P/L amount" : "Recorded profit %");
+  const controls = `<div class="report-history-chart-controls"><div class="report-chart-metrics" role="group" aria-label="${esc(t("Chart measure"))}">${[["value", "Account value"], ["profit", "Recorded P/L amount"], ["profit_percent", "Recorded profit %"]].map(([key, label]) => `<button type="button" class="secondary compact-button" data-report-metric="${key}" aria-pressed="${metric === key}">${esc(t(label))}</button>`).join("")}</div>${historyCurrencyControl(selection, "reportHistoryCurrency", "data-report-trend-currency")}</div>`;
+  const accounts = selection.accounts.map((entry, index) => ({ ...entry, color: colorAt(index),
+    points: (entry.points || []).filter((point) => Number.isFinite(Date.parse(point.date))).map((point) => ({ ...point,
+      plotted: isAmount ? historyPointAmount(point, metric, entry.account?.currency, selection.mode)
+        : point.profit_percent !== null && point.profit_percent !== undefined && point.profit_percent !== "" && Number.isFinite(Number(point.profit_percent))
+          && (!selection.native || point.native_available === true && point.native_currency === entry.account?.currency) ? Number(point.profit_percent) : null,
+    })).sort((a, b) => String(a.date).localeCompare(String(b.date))),
+  }));
+  const valid = accounts.flatMap((entry) => entry.points.filter((point) => Number.isFinite(point.plotted)));
+  const dates = [...new Set(accounts.flatMap((entry) => entry.points.map((point) => point.date)))].sort();
+  const startDate = dates[0], endDate = dates.at(-1);
   const period = startDate ? `${formatDate(startDate)} – ${formatDate(endDate)}` : "";
-  if (!series.length) {
-    $("accountTrendChart").innerHTML = control + `<div class="empty">${esc(t("No chart values available. Check the date range and exchange rates."))}</div>`;
-    return;
+  const missing = accounts.some((entry) => entry.points.some((point) => !Number.isFinite(point.plotted)));
+  const note = `<p class="section-note">${esc(t(metric === "value" ? "Balance changes include deposits and withdrawals; they are not investment returns." : "Recorded P/L uses saved values; calculated P/L covers open positions and is not a period return."))} ${esc(t(selection.native ? "Recorded account currency removes dashboard conversion, not currency exposure within holdings." : "Historical amounts use current saved exchange rates."))}</p>`;
+  const gapNote = missing ? `<p class="section-note">${esc(t(selection.native ? "Some history points are unavailable in recorded account currency. Missing or mixed-currency evidence is shown as a gap." : "Some history points are unavailable because a value, account record or exchange rate is missing."))}</p>` : "";
+  const header = `<div class="chart-header"><div><div class="chart-title">${esc(metricLabel)}</div><small class="chart-subtitle"><bdi dir="ltr">${esc(period)}</bdi> · ${esc(selection.currency)}${!isAmount ? ` · ${esc(t("Saved or calculated P/L %; not a period return"))}` : ""}</small></div></div>${controls}`;
+  const draw = () => {
+    if (!valid.length) return `${header}<div class="empty">${esc(t("No comparable history values are available in this currency view."))}</div>${gapNote}${note}`;
+    const width = 920, height = 270, left = 100, right = 40, top = 22, bottom = 226;
+    const minimum = Math.min(...valid.map((point) => point.plotted), 0), maximum = Math.max(...valid.map((point) => point.plotted), 1);
+    const first = Date.parse(startDate), last = Date.parse(endDate);
+    const x = (point) => left + (Date.parse(point.date) - first) / (last - first || 1) * (width - left - right);
+    const y = (value) => bottom - (value - minimum) / (maximum - minimum || 1) * (bottom - top);
+    const display = (value) => !Number.isFinite(value) ? t("Not available") : isAmount ? compactMoney(value, selection.currency) : pct(value);
+    const grid = [0, .5, 1].map((fraction) => {
+      const value = minimum + (maximum - minimum) * fraction;
+      return `<line x1="${left}" y1="${y(value)}" x2="${width-right}" y2="${y(value)}"></line><text x="${left-12}" y="${y(value)+4}" text-anchor="end">${esc(display(value))}</text>`;
+    }).join("");
+    const lines = accounts.map((entry) => {
+      const path = historyLinePath(entry.points, x, y, "plotted");
+      const markers = entry.points.filter((point) => Number.isFinite(point.plotted)).map((point) => {
+        const tooltip = `${accountLabel(entry.account)} · ${formatDate(point.date)} · ${metricLabel}: ${isAmount ? money(point.plotted, selection.currency, 2) : pct(point.plotted)}`;
+        return `<g tabindex="0" role="img" aria-label="${esc(tooltip)}"><circle cx="${x(point)}" cy="${y(point.plotted)}" r="4" fill="${entry.color}"><title>${esc(tooltip)}</title></circle></g>`;
+      }).join("");
+      return `<g><title>${esc(accountLabel(entry.account))}</title><path d="${path}" fill="none" stroke="${entry.color}" stroke-width="3"/>${markers}</g>`;
+    }).join("");
+    const legend = accounts.map((entry) => {
+      const point = entry.points.at(-1);
+      return `<div class="report-trend-account"><b><i style="--line-color:${entry.color}"></i>${esc(accountLabel(entry.account))}</b><span>${esc(display(point?.plotted))}${point ? ` · ${esc(formatDate(point.date))}` : ""}</span></div>`;
+    }).join("");
+    return `${header}${gapNote}<div class="report-plot-scroll"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(`${metricLabel} · ${isAmount ? selection.currency : "%"}`)}"><title>${esc(t("Account history"))} · ${esc(period)}</title>${grid}${lines}<text x="${left}" y="256">${esc(formatDate(startDate))}</text>${startDate !== endDate ? `<text x="${width-right}" y="256" text-anchor="end">${esc(formatDate(endDate))}</text>` : ""}</svg></div><div class="report-trend-legend">${legend}</div>${note}`;
+  };
+  const restore = preserveRenderedInteraction(root);
+  const scroller = root.closest(".modal-card");
+  const scrollTop = scroller?.scrollTop, scrollLeft = scroller?.scrollLeft;
+  const previousMin = root.style.minHeight;
+  const height = root.getBoundingClientRect().height;
+  if (height > 0) root.style.minHeight = `${height}px`;
+  try { root.innerHTML = draw(); restore(); }
+  finally {
+    root.style.minHeight = previousMin;
+    if (scroller) { scroller.scrollTop = scrollTop; scroller.scrollLeft = scrollLeft; }
   }
-  const width = 920, height = 270, left = 100, right = 40, top = 22, bottom = 226;
-  const minimum = Math.min(...series.map((point) => point.plotted), 0);
-  const maximum = Math.max(...series.map((point) => point.plotted), 1);
-  const first = Date.parse(startDate), last = Date.parse(endDate);
-  const x = (day) => left + (Date.parse(day) - first) / (last - first || 1) * (width - left - right);
-  const y = (value) => bottom - (value - minimum) / (maximum - minimum || 1) * (bottom - top);
-  const display = (value) => isValue ? compactMoney(value, state.baseCurrency) : pct(value);
-  const grid = [0, 0.5, 1].map((fraction) => {
-    const value = minimum + (maximum - minimum) * fraction;
-    return `<line x1="${left}" y1="${y(value)}" x2="${width - right}" y2="${y(value)}"></line><text x="${left - 12}" y="${y(value) + 4}" text-anchor="end">${esc(display(value))}</text>`;
-  }).join("");
-  const lines = accounts.map((account) => {
-    const path = account.points.map((point, i) => `${i ? "L" : "M"} ${x(point.date)} ${y(point.plotted)}`).join(" ");
-    // Isolated observations need a visible marker; they cannot form a line.
-    const markers = account.points.length === 1 ? account.points : [account.points[0], account.points.at(-1)];
-    return `<g><title>${esc(accountLabel(account.account))}</title><path d="${path}" fill="none" stroke="${account.color}" stroke-width="3"/>${markers.map((point) => `<circle cx="${x(point.date)}" cy="${y(point.plotted)}" r="4" fill="${account.color}"><title>${esc(`${accountLabel(account.account)} · ${formatDate(point.date)} · ${display(point.plotted)}`)}</title></circle>`).join("")}</g>`;
-  }).join("");
-  const legend = accounts.map((account) => {
-    const lastPoint = account.points.at(-1);
-    return `<div class="report-trend-account"><b><i style="--line-color:${account.color}"></i>${esc(accountLabel(account.account))}</b><span>${esc(display(lastPoint.plotted))} · ${esc(formatDate(lastPoint.date))}</span></div>`;
-  }).join("");
-  const missing = (trend.accounts || []).filter((account) => (account.points || []).some((point) => isValue && reportAmount(point.value, account.account?.currency) === null)).length;
-  $("accountTrendChart").innerHTML = `
-    <div class="chart-header"><div><div class="chart-title">${esc(t(isValue ? "Account value" : "Recorded profit %"))}</div><small class="chart-subtitle"><bdi dir="ltr">${esc(period)}</bdi> · ${isValue ? esc(currencyDisplayLabel(state.baseCurrency)) : esc(t("Saved or calculated P/L %; not a period return"))}</small></div>${control}</div>
-    ${missing ? `<p class="section-note">${esc(t("Some history values are hidden because an exchange rate is missing."))}</p>` : ""}
-    <div class="report-plot-scroll"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(t(isValue ? "Account value" : "Recorded profit %"))}"><title>${esc(t("Account history"))} · ${esc(period)}</title>${grid}${lines}<text x="${left}" y="256">${esc(formatDate(startDate))}</text>${startDate !== endDate ? `<text x="${width - right}" y="256" text-anchor="end">${esc(formatDate(endDate))}</text>` : ""}</svg></div>
-    <div class="report-trend-legend">${legend}</div>`;
 }
 
 function financeReportMetricTooltip(metric, row, previous) {
@@ -11740,22 +11791,72 @@ async function removeSecurityExposure() {
   }
 }
 
-let portfolioEnrichmentRetryTimer = null;
-const PORTFOLIO_ENRICHMENT_RETRY_MS = 1500;
+let portfolioUpdateSource = null;
 
-async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
+function stopPortfolioUpdates() {
+  portfolioUpdateSource?.close();
+  portfolioUpdateSource = null;
+}
+
+function portfolioRefreshText(data) {
+  const progress = data.refresh_progress;
+  return data.refresh_pending && progress?.total
+    ? `${t("Updating analytics")}: ${progress.completed}/${progress.total} ${t("securities completed")}`
+    : data.refresh_state === "failed" && progress?.failed
+      ? `${t("Update finished")}: ${progress.completed - progress.failed}/${progress.total} ${t("securities updated")} · ${progress.failed} ${t("updates failed. Use Refresh to retry.")}`
+      : t(data.refresh_pending ? "Updating analytics in the background" : data.refresh_state === "failed" ? "Financial data could not be updated. Use Refresh to retry." : "Analytics updated");
+}
+
+function watchPortfolioUpdates(version, revision) {
+  stopPortfolioUpdates();
+  if (typeof EventSource !== "function") {
+    if (state.portfolioRefreshPending) $("status").textContent = t("Update notifications are unavailable. Use Refresh to load the latest results.");
+    return;
+  }
+  const source = new EventSource("/api/portfolio/updates");
+  let connectionInterrupted = false;
+  portfolioUpdateSource = source;
+  source.onmessage = (event) => {
+    if (source !== portfolioUpdateSource || version !== state.portfolioLoadVersion) return;
+    let data;
+    try { data = JSON.parse(event.data); } catch { return; }
+    if (!["refreshing", "ready", "failed"].includes(data.refresh_state)) return;
+    if (!data.refresh_pending && (state.portfolioRefreshPending || (revision !== undefined && data.update_revision !== revision))) {
+      stopPortfolioUpdates();
+      // Only completion replaces the displayed data. Duplicate/old callbacks
+      // cannot reload again after the source has been detached.
+      loadPortfolio({ notification: true }).catch(() => {});
+      return;
+    }
+    // The first idle event and a reconnect with unchanged data do no work.
+    if (!data.refresh_pending && !connectionInterrupted) return;
+    connectionInterrupted = false;
+    revision = data.update_revision;
+    if (data.refresh_pending) {
+      state.portfolioRefreshPending = true;
+      state.portfolioSourceState = "refreshing";
+    }
+    const count = hasActivePortfolioFilter(state.portfolioFilterCriteria)
+      ? filterPortfolioItems(state.allPortfolioItems, state.portfolioFilterCriteria).length : state.items.length;
+    $("status").textContent = `${count} ${t(hasActivePortfolioFilter(state.portfolioFilterCriteria) ? "portfolio positions matched" : "portfolio positions")} · ${portfolioRefreshText(data)}`;
+  };
+  source.onerror = () => {
+    if (source !== portfolioUpdateSource || version !== state.portfolioLoadVersion) return;
+    connectionInterrupted = true;
+    if (source.readyState === EventSource.CLOSED) {
+      $("status").textContent = t("Update notifications are unavailable. Use Refresh to load the latest results.");
+      stopPortfolioUpdates();
+    } else {
+      $("status").textContent = t("Connection interrupted. Reconnecting to update notifications; displayed data is retained. Use Refresh to retry.");
+    }
+  };
+}
+
+async function loadPortfolio({ refresh = false, notification = false } = {}) {
   const version = (state.portfolioLoadVersion || 0) + 1;
   state.portfolioLoadVersion = version;
-  clearTimeout(portfolioEnrichmentRetryTimer);
-  portfolioEnrichmentRetryTimer = null;
-  const retry = () => {
-    portfolioEnrichmentRetryTimer = setTimeout(() => {
-      portfolioEnrichmentRetryTimer = null;
-      if (version !== state.portfolioLoadVersion) return;
-      loadPortfolio({ enrichmentRetry: enrichmentRetry + 1 }).catch(() => {});
-    }, Math.min(PORTFOLIO_ENRICHMENT_RETRY_MS * (1 + Math.floor(enrichmentRetry / 10)), 15000));
-  };
-  $("status").textContent = refresh ? "Refreshing analytics" : "Preparing dashboard";
+  stopPortfolioUpdates();
+  if (!notification) $("status").textContent = t(refresh ? "Refreshing analytics" : "Preparing dashboard");
   setLoading(true, refresh ? "Refreshing portfolio analytics" : "Loading portfolio analytics");
   appLog("portfolio.load.start", { refresh });
   try {
@@ -11791,21 +11892,21 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
       accounts: (trend.accounts || []).filter((entry) => !isEquityCompAccount(entry.account)),
     };
     populateOptions(allItems);
-    const progress = data.refresh_progress;
-    const refreshText = data.refresh_pending && progress?.total
-      ? `${t("Updating analytics")}: ${progress.completed}/${progress.total} ${t("securities completed")}`
-      : data.refresh_state === "failed" && progress?.failed
-        ? `${t("Update finished")}: ${progress.completed - progress.failed}/${progress.total} ${t("securities updated")} · ${progress.failed} ${t("updates failed. Use Refresh to retry.")}`
-      : t(data.refresh_pending ? "Updating analytics in the background" : data.refresh_state === "failed" ? "Financial data could not be updated. Use Refresh to retry." : "Analytics updated");
+    const refreshText = portfolioRefreshText(data);
     $("status").textContent = `${state.items.length} ${t("portfolio positions")} · ${refreshText}`;
-    renderPortfolio(state.items);
-    if (typeof loadHeatmap === "function" && (!data.refresh_pending || enrichmentRetry === 0)) loadHeatmap();
-    if (!$("macroScenarioModal")?.hidden) renderMacroScenario();
-    if (hasActivePortfolioFilter(state.portfolioFilterCriteria)) {
-      const matches = filterPortfolioItems(state.allPortfolioItems, state.portfolioFilterCriteria);
-      renderRows(matches);
-      $("status").textContent = `${matches.length} ${t("portfolio positions matched")} · ${refreshText}`;
+    const restoreView = typeof preservePortfolioViewport === "function" ? preservePortfolioViewport() : () => {};
+    try {
+      renderPortfolio(state.items);
+      if (!$("macroScenarioModal")?.hidden) renderMacroScenario();
+      if (hasActivePortfolioFilter(state.portfolioFilterCriteria)) {
+        const matches = filterPortfolioItems(state.allPortfolioItems, state.portfolioFilterCriteria);
+        renderRows(matches);
+        $("status").textContent = `${matches.length} ${t("portfolio positions matched")} · ${refreshText}`;
+      }
+    } finally {
+      restoreView();
     }
+    if (typeof loadHeatmap === "function") loadHeatmap();
     appLog("portfolio.load.done", {
       count: state.items.length,
       equity_comp_positions_excluded: allItems.length - state.items.length,
@@ -11818,8 +11919,8 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
         message: "Portfolio has no local position transactions. Use Accounts > Sync import to import positions.",
       });
     }
-    if (data.refresh_pending) retry();
-    else if (data.refresh_state !== "failed" && typeof recordRiskHistory === "function") {
+    watchPortfolioUpdates(version, data.update_revision);
+    if (!data.refresh_pending && data.refresh_state !== "failed" && typeof recordRiskHistory === "function") {
       recordRiskHistory().then(() => {
         if (typeof loadRiskHistory === "function" && $("riskHistoryModal")?.hidden === false) loadRiskHistory({capture:false});
       });
@@ -11828,10 +11929,7 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
     if (version !== state.portfolioLoadVersion) return;
     state.portfolioAlarmLoadFailed = true;
     if (typeof renderAlarms === "function") renderAlarms();
-    if (version === state.portfolioLoadVersion && state.portfolioRefreshPending) {
-      $("status").textContent = t("Connection interrupted. Retrying the analytics update.");
-      retry();
-    }
+    $("status").textContent = t("Portfolio data could not be updated. Displayed data is retained. Use Refresh to retry.");
     throw error;
   } finally {
     setLoading(false);
@@ -11895,12 +11993,12 @@ async function loadBanner() {
 }
 
 function renderBanner(items) {
+  const previousFx = JSON.stringify(state.bannerFxRates || {});
   state.bannerFxRates = items.reduce((rates, item) => {
     if (item.type === "fx" && item.value) rates[item.symbol] = Number(item.value);
     return rates;
   }, {});
   updateFxRates();
-  if (state.items.length) renderPortfolio(state.items);
   $("bannerItems").innerHTML = items.length ? items.map((item) => {
     const hasValue = item.value !== null && item.value !== undefined;
     const status = Object.entries(item.status || {}).map(([name, value]) => `${name}: ${value}`).join(", ");
@@ -11920,7 +12018,7 @@ function renderBanner(items) {
       </div>
     </div>`;
   }).join("") : '<div class="empty">No banner items</div>';
-  if (state.items.length) renderPortfolio(state.items);
+  if (state.items.length && previousFx !== JSON.stringify(state.bannerFxRates)) renderPortfolio(state.items);
 }
 
 function renderBannerSettings() {
@@ -12279,6 +12377,8 @@ async function loadAlerts() {
 
 async function dismissAlertSignal(symbol, signal, button) {
   if (!canWrite()) return;
+  const sessionUserId = state.auth?.user?.id;
+  const sessionToken = state.auth?.csrfToken;
   const normalized = String(symbol || "").trim().toUpperCase();
   if (!normalized || !["buy", "sell", "watch"].includes(signal)) return;
   const key = `${normalized}|${signal}`;
@@ -12299,14 +12399,17 @@ async function dismissAlertSignal(symbol, signal, button) {
   let nextState = null;
   try {
     const result = await api("/api/alerts/dismiss", { method: "POST", body: JSON.stringify({ symbol: normalized, signal }) });
+    if (state.auth?.user?.id !== sessionUserId || state.auth?.csrfToken !== sessionToken) return;
     if (!result.dismissed || !result.state || !result.expires_at) throw new Error("Invalid dismissal response");
     state.alertClientDismissals ||= [];
     state.alertClientDismissals.push({ symbol: normalized, signal, expires_at: result.expires_at });
     state.alertDismissStatus = { template: "{symbol} signal dismissed until {date}.", values: { symbol: normalized, date: formatDateTime(result.expires_at) } };
     nextState = result.state;
   } catch {
+    if (state.auth?.user?.id !== sessionUserId || state.auth?.csrfToken !== sessionToken) return;
     state.alertDismissStatus = { template: "Could not dismiss the signal. Try again.", values: {} };
   } finally {
+    if (state.auth?.user?.id !== sessionUserId || state.auth?.csrfToken !== sessionToken) return;
     state.alertDismissPending = state.alertDismissPending.filter((entry) => entry !== key);
     state.alertDismissRevision = (state.alertDismissRevision || 0) + 1;
     const shouldRestoreFocus = restoreFocus && (document.activeElement === button || document.activeElement === document.body);
@@ -13573,6 +13676,7 @@ function positionModalHomeLinks() {
 }
 
 function returnToDashboard() {
+  if (typeof accountCashSaving === "function" && accountCashSaving()) return;
   document.querySelectorAll(".modal:not([hidden])").forEach((modal) => {
     modal.hidden = true;
     modal.inert = false;
@@ -13729,10 +13833,12 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
 
 function closeModal(modal) {
   if (!modal) return;
+  if (modal.id === "accountCashModal" && accountCashSaving()) return;
+  if (modal.id === "accountCashModal") modalReturnFocus.set(modal.id, accountCashReturnFocus());
   if (modal.id === "brokerEditorModal" && state.brokerSaving) return;
   if (modal.id === "instrumentEditorModal" && state.manualSecuritySaving && !state.manualSecuritySaved) return;
   if (modal.id === "assistantModal") saveAssistantDraft();
-  if (["securityDetailModal", "tradingJournalModal", "brokerEditorModal", "instrumentEditorModal", "alarmRiskModal"].includes(modal.id) && modal.dataset.parentModalId) {
+  if (["securityDetailModal", "tradingJournalModal", "brokerEditorModal", "instrumentEditorModal", "alarmRiskModal", "accountCashModal"].includes(modal.id) && modal.dataset.parentModalId) {
     const parentModal = $(modal.dataset.parentModalId);
     if (parentModal) {
       parentModal.inert = false;
@@ -13789,7 +13895,7 @@ function closeModal(modal) {
     if (focusTarget instanceof HTMLElement) {
       const parentMenu = focusTarget.closest("details");
       if (parentMenu && !parentMenu.open) parentMenu.open = true;
-      focusTarget.focus({ preventScroll: ["tradeHistoryDetailModal", "securityDetailModal", "alarmRiskModal"].includes(modal.id) });
+      focusTarget.focus({ preventScroll: ["tradeHistoryDetailModal", "securityDetailModal", "alarmRiskModal", "accountCashModal"].includes(modal.id) });
     }
   });
 }
@@ -14479,9 +14585,17 @@ document.addEventListener("change", (event) => {
   const accountTrendSelect = event.target.closest("[data-account-trend-select]");
   if (accountTrendSelect) {
     state.dashboard.accountTrendAccountId = accountTrendSelect.value;
+    state.dashboard.accountTrendCurrencyMode = "";
     localStorage.setItem(DASHBOARD_ACCOUNT_STORAGE_KEY, accountTrendSelect.value);
+    rerenderAccountValueTrend();
     saveDashboardSettings();
-    renderAnalytics(state.items || []);
+  }
+
+  const accountTrendCurrency = event.target.closest("[data-account-trend-currency]");
+  if (accountTrendCurrency) {
+    state.dashboard.accountTrendCurrencyMode = accountTrendCurrency.value;
+    rerenderAccountValueTrend();
+    saveDashboardSettings();
   }
 
   const longTermPensionToggle = event.target.closest("[data-long-term-include-pension]");
@@ -14860,10 +14974,15 @@ $("loadReports").addEventListener("click", () => loadReports().catch(() => {}));
 $("updateReportHistory").addEventListener("click", () => loadReports().catch(() => {}));
 $("accountTrendChart").addEventListener("click", (event) => {
   const metric = event.target.closest("[data-report-metric]")?.dataset.reportMetric;
-  if (!["value", "profit_percent"].includes(metric)) return;
+  if (!["value", "profit", "profit_percent"].includes(metric)) return;
   state.reportTrendMetric = metric;
   if (state.activeReportTrend) renderAccountTrend(state.activeReportTrend);
-  $("accountTrendChart").querySelector(`[data-report-metric="${metric}"]`)?.focus();
+  $("accountTrendChart").querySelector(`[data-report-metric="${metric}"]`)?.focus({ preventScroll: true });
+});
+$("accountTrendChart").addEventListener("change", (event) => {
+  if (!event.target.matches("[data-report-trend-currency]")) return;
+  state.reportTrendCurrencyMode = event.target.value;
+  if (state.activeReportTrend) renderAccountTrend(state.activeReportTrend);
 });
 $("positionPerson").addEventListener("change", () => updatePositionFilters({ scopeChanged: true }));
 $("positionAccountType").addEventListener("change", () => updatePositionFilters({ scopeChanged: true }));

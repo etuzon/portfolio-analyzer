@@ -84,6 +84,8 @@ def build_trade_history(
     scoped: list[tuple[tuple[str, ...], str, dict[str, Any]]] = []
     security_ids: dict[tuple[str, ...], set[str]] = defaultdict(set)
     for tx in transactions:
+        if tx.get("action") in {"CASH_IN", "CASH_OUT"} or tx.get("source") == "cash_adjustment":
+            continue
         if tx.get("account_db_id") not in accounts:
             continue
         trade_day = _day(tx.get("trade_date"))
