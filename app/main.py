@@ -2768,9 +2768,9 @@ def portfolio_payload(force_refresh: bool = False, defer_enrichment: bool = Fals
 def portfolio_cache_signature() -> str | None:
     if not hasattr(local_store, "change_token"):
         return None
-    # Rebuild aggregates that retained recorded holding values after quotes
-    # refreshed. Raw provider caches and saved portfolio history remain intact.
-    return f"v10:{local_store.change_token()}"
+    # Rebuild aggregates with the current dated-local-quote cutoff. Raw
+    # provider caches and saved portfolio history remain intact.
+    return f"v11:{local_store.change_token()}"
 
 
 def read_portfolio_cache() -> dict[str, Any] | None:
@@ -4229,6 +4229,24 @@ def delete_local_price(price_id: str):
     return {"deleted": True}
 
 
+def _with_local_valuation(reader):
+    """One coherent dashboard valuation view for current reports and history.
+
+    The deferred portfolio path uses retained market data only and shares the
+    existing bounded background refresh. No graph starts a synchronous fetch.
+    Revision checks also cover mutations whose SQLite writes predate cache
+    invalidation, and the PDF captures summary and history together.
+    """
+    for _attempt in range(2):
+        with _portfolio_cache_lock, local_store._sync_lock:
+            before = (portfolio_cache_signature(), _portfolio_cache_generation)
+            items = portfolio_payload(defer_enrichment=True).get("items", [])
+            result = reader(items)
+            if before == (portfolio_cache_signature(), _portfolio_cache_generation):
+                return result
+    raise HTTPException(status_code=409, detail="Portfolio changed while loading; retry the request")
+
+
 @app.get("/api/local/account-trends")
 def local_account_trends(
     account_id: str = "",
@@ -4243,7 +4261,7 @@ def local_account_trends(
     to_date = _parse_query_date(date_to) or date.today()
     if to_date < from_date:
         to_date = from_date
-    return local_store.account_trends(
+    return _with_local_valuation(lambda items: local_store.account_trends(
         {
             "account_id": account_id,
             "account_type": account_type,
@@ -4252,8 +4270,8 @@ def local_account_trends(
             "person_name": person_name,
             "from": from_date.isoformat(),
             "to": to_date.isoformat(),
-        }
-    )
+        }, valuation_items=items,
+    ))
 
 
 @app.get("/api/local/account-snapshots")
@@ -4271,7 +4289,7 @@ def list_account_snapshots(
     if to_date < from_date:
         to_date = from_date
     return {
-        "items": local_store.list_account_snapshots(
+        "items": _with_local_valuation(lambda items: local_store.list_account_snapshots(
             {
                 "account_id": account_id,
                 "account_type": account_type,
@@ -4280,8 +4298,8 @@ def list_account_snapshots(
                 "person_name": person_name,
                 "from": from_date.isoformat(),
                 "to": to_date.isoformat(),
-            }
-        )
+            }, valuation_items=items,
+        ))
     }
 
 
@@ -4320,15 +4338,43 @@ def local_reports(
     person_id: str = "",
     person_name: str = "",
 ):
-    return local_store.reports(
+    return _with_local_valuation(lambda items: local_store.reports(
         {
             "account_id": account_id,
             "account_type": account_type,
             "location": location,
             "person_id": person_id,
             "person_name": person_name,
-        }
-    )
+        }, valuation_items=items,
+    ))
+
+
+@app.get("/api/local/report-view")
+def local_report_view(
+    account_id: str = "",
+    account_type: str = "",
+    location: str = "",
+    person_id: str = "",
+    person_name: str = "",
+    date_from: str = "",
+    date_to: str = "",
+):
+    """Build the displayed report, chart and history table from one revision."""
+    from_date = _clamped_history_start(date_from)
+    to_date = max(_parse_query_date(date_to) or date.today(), from_date)
+    filters = {
+        "account_id": account_id,
+        "account_type": account_type,
+        "location": location,
+        "person_id": person_id,
+        "person_name": person_name,
+    }
+    history_filters = {**filters, "from": from_date.isoformat(), "to": to_date.isoformat()}
+    return _with_local_valuation(lambda items: {
+        "report": local_store.reports(filters, valuation_items=items),
+        "trend": local_store.account_trends(history_filters, valuation_items=items),
+        "snapshots": {"items": local_store.list_account_snapshots(history_filters, valuation_items=items)},
+    })
 
 
 @app.get("/api/local/reports.pdf")
@@ -4353,14 +4399,16 @@ def local_reports_pdf(
         "person_id": person_id,
         "person_name": person_name,
     }
-    report = local_store.reports(filters)
-    trend = local_store.account_trends(
-        {
-            **filters,
-            "from": from_date.isoformat(),
-            "to": to_date.isoformat(),
-        }
-    )
+    report, trend = _with_local_valuation(lambda items: (
+        local_store.reports(filters, valuation_items=items),
+        local_store.account_trends(
+            {
+                **filters,
+                "from": from_date.isoformat(),
+                "to": to_date.isoformat(),
+            }, valuation_items=items,
+        ),
+    ))
     content = build_portfolio_report_pdf(
         report,
         trend,
@@ -5391,6 +5439,7 @@ portfolio_mcp = create_portfolio_mcp_server(
     lambda: auth_store,
     lambda: local_store,
     clear_portfolio_cache,
+    _with_local_valuation,
 )
 portfolio_mcp_app = portfolio_mcp.streamable_http_app(
     streamable_http_path="/",

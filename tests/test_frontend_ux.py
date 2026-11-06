@@ -1097,7 +1097,7 @@ def test_portfolio_reports_filter_complete_accounts_by_person_and_download_pdf()
     assert "function reportAccountMatchesPrimaryFilters(account)" in script
     assert 'person_id: valueOf("reportPerson")' in script
     assert 'person_name: selectedReportPersonName()' in script
-    assert 'api(`/api/local/reports?${params}`)' in script
+    assert 'api(`/api/local/report-view?${trendParams}`)' in script
     assert 'fetch(`/api/local/reports.pdf?${params}`)' in script
     assert 'await downloadResponse(response, `portfolio-report-${todayString()}.pdf`)' in script
     assert "window.print()" not in script

@@ -77,6 +77,7 @@ def create_portfolio_mcp_server(
     get_auth_store: Callable[[], AuthStore],
     get_local_store: Callable[[], LocalPortfolioStore],
     clear_portfolio_cache: Callable[[], None],
+    with_local_valuation: Callable[[Callable], Any] | None = None,
 ) -> MCPServer:
     server = MCPServer(
         name="portfolio-analyzer",
@@ -88,6 +89,16 @@ def create_portfolio_mcp_server(
             "Never present portfolio output as investment advice. Dates are dd/mm/yyyy."
         ),
     )
+
+    def read_report(filters):
+        if with_local_valuation is None:
+            return get_local_store().reports(filters)
+        return with_local_valuation(lambda items: get_local_store().reports(filters, valuation_items=items))
+
+    def read_trends(filters):
+        if with_local_valuation is None:
+            return get_local_store().account_trends(filters)
+        return with_local_valuation(lambda items: get_local_store().account_trends(filters, valuation_items=items))
 
     @server.tool(annotations=READ_ONLY_TOOL, structured_output=True)
     def get_access_status(ctx: Context) -> dict[str, Any]:
@@ -112,7 +123,7 @@ def create_portfolio_mcp_server(
     ) -> dict[str, Any]:
         """List matching accounts with owners, value, holdings, and linked long-term funds."""
         _mcp_user(ctx, get_auth_store())
-        report = get_local_store().reports(
+        report = read_report(
             {
                 "person_id": person_id,
                 "person_name": person_name,
@@ -133,7 +144,7 @@ def create_portfolio_mcp_server(
     ) -> dict[str, Any]:
         """Return a complete portfolio report filtered by person, category, account, or location."""
         _mcp_user(ctx, get_auth_store())
-        return get_local_store().reports(
+        return read_report(
             {
                 "person_id": person_id,
                 "person_name": person_name,
@@ -156,7 +167,7 @@ def create_portfolio_mcp_server(
     ) -> dict[str, Any]:
         """Return account value and profit history. Enter dates as dd/mm/yyyy."""
         _mcp_user(ctx, get_auth_store())
-        result = get_local_store().account_trends(
+        result = read_trends(
             {
                 "from": _stored_date(date_from, "From date"),
                 "to": _stored_date(date_to, "To date"),

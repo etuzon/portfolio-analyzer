@@ -291,12 +291,13 @@ def test_external_import_is_explicit(monkeypatch):
 
 def test_account_trends_clamp_requested_start_date(monkeypatch):
     class Store:
-        def account_trends(self, filters):
+        def account_trends(self, filters, **_options):
             self.filters = filters
             return {"filters": filters}
 
     store = Store()
     monkeypatch.setattr(main, "local_store", store)
+    monkeypatch.setattr(main, "_with_local_valuation", lambda reader: reader([]))
 
     result = main.local_account_trends(date_from="2025-07-30", date_to="2026-07-30")
 
@@ -306,11 +307,11 @@ def test_account_trends_clamp_requested_start_date(monkeypatch):
 
 def test_portfolio_report_pdf_uses_the_same_scope_and_period(monkeypatch):
     class Store:
-        def reports(self, filters):
+        def reports(self, filters, **_options):
             self.report_filters = filters
             return {"accounts": 0, "holdings": 0, "funds": {"count": 0}, "account_details": [], "scope": filters}
 
-        def account_trends(self, filters):
+        def account_trends(self, filters, **_options):
             self.trend_filters = filters
             return {"accounts": []}
 
@@ -322,6 +323,7 @@ def test_portfolio_report_pdf_uses_the_same_scope_and_period(monkeypatch):
         return b"%PDF-1.7\nreport"
 
     monkeypatch.setattr(main, "local_store", store)
+    monkeypatch.setattr(main, "_with_local_valuation", lambda reader: reader([]))
     monkeypatch.setattr(main, "build_portfolio_report_pdf", build_pdf)
 
     response = main.local_reports_pdf(

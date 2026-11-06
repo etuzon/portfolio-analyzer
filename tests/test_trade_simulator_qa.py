@@ -157,15 +157,25 @@ const renderMacroScenario=()=>{};
 const hasActivePortfolioFilter=()=>false;
 const setCoreFxRates=data=>{state.fxRates=data.quotes;};
 nodes.status={textContent:''};nodes.macroScenarioModal={hidden:true};
+let refreshJourneyCompleted=false;
+process.on('beforeExit',()=>assert.ok(refreshJourneyCompleted,'dashboard refresh assertions did not complete'));
 async function dashboardRefresh(cash,refreshPending){
  const offset=pending.length;
  const update=loadPortfolio();
- pending[offset].resolve({count:1,items:[{holding:{symbol:'NEW',quantity:cash/10,market_value:cash}}],refresh_pending:refreshPending});
- pending[offset+1].resolve({accounts:[]});
- pending[offset+2].resolve({quotes:[{pair:'USD/ILS',quote:{rate:cash/100}}]});
- pending[offset+3].resolve({items:[{id:'one',account_id:'A1',type:'Investment',currency:'USD',initial_cash:cash}]});
- pending[offset+4].resolve({items:[{account_db_id:'one',action:'DEPOSIT',amount:cash-1000}]});
- pending[offset+5].resolve({items:[],industries:[]});
+ const resolvePath=(path,value)=>{
+  const request=pending.slice(offset).find(row=>row.path===path);
+  assert.ok(request,'missing request '+path);request.resolve(value);
+ };
+ assert.ok(!pending.slice(offset).some(row=>row.path.startsWith('/api/local/account-trends')));
+ resolvePath('/api/portfolio',{count:1,items:[{holding:{symbol:'NEW',quantity:cash/10,market_value:cash}}],refresh_pending:refreshPending});
+ resolvePath('/api/fx',{quotes:[{pair:'USD/ILS',quote:{rate:cash/100}}]});
+ resolvePath('/api/local/accounts',{items:[{id:'one',account_id:'A1',type:'Investment',currency:'USD',initial_cash:cash}]});
+ resolvePath('/api/local/securities',{items:[{account_db_id:'one',action:'DEPOSIT',amount:cash-1000}]});
+ resolvePath('/api/local/security-industry-overrides',{items:[],industries:[]});
+ await new Promise(resolve=>setImmediate(resolve));
+ const trendRequest=pending.slice(offset).find(row=>row.path.startsWith('/api/local/account-trends'));
+ assert.ok(trendRequest,'history did not load after the portfolio response');
+ trendRequest.resolve({accounts:[]});
  await update;
  assert.equal(state.localAccounts[0].initial_cash,cash);
 }
@@ -184,6 +194,7 @@ async function dashboardRefresh(cash,refreshPending){
  await dashboardRefresh(9000,false);
  assert.equal(tradeSimulatorView.status,'ready');
  assert.equal(JSON.stringify(tradeSimulatorView.result),result);
+ refreshJourneyCompleted=true;
 })();
 ''', integration_source=source[start:end])
 

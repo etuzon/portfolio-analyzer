@@ -10279,7 +10279,6 @@ async function loadReports() {
     $("reportsExportStatus").textContent = t("Enter a valid history range: From must be on or before To (dd/mm/yyyy).");
     return;
   }
-  const params = reportQueryParams(filters);
   const trendParams = reportQueryParams(filters, { includeDates: true });
   const button = $("loadReports");
   const historyButton = $("updateReportHistory");
@@ -10290,11 +10289,7 @@ async function loadReports() {
   button.setAttribute("aria-busy", "true");
   $("reportsExportStatus").textContent = "Generating report";
   try {
-    const [report, trend, snapshots] = await Promise.all([
-      api(`/api/local/reports?${params}`),
-      api(`/api/local/account-trends?${trendParams}`),
-      api(`/api/local/account-snapshots?${trendParams}`),
-    ]);
+    const { report, trend, snapshots } = await api(`/api/local/report-view?${trendParams}`);
     if (version !== state.reportLoadVersion) return;
     state.activeReportFilters = filters;
     state.activeReport = report;
@@ -11932,14 +11927,16 @@ async function loadPortfolio({ refresh = false, notification = false } = {}) {
       date_to: todayString(),
     });
     const portfolioPath = refresh ? "/api/portfolio?refresh=true" : "/api/portfolio";
-    const [data, trend, fxData, accountData, transactionData, classificationData] = await Promise.all([
+    const [data, fxData, accountData, transactionData, classificationData] = await Promise.all([
       api(portfolioPath),
-      api(`/api/local/account-trends?${trendParams}`),
       api("/api/fx").catch(() => ({ quotes: [] })),
       api("/api/local/accounts"),
       api("/api/local/securities"),
       api("/api/local/security-industry-overrides"),
     ]);
+    if (version !== state.portfolioLoadVersion) return;
+    // History must not capture an older refresh state than the headline data.
+    const trend = await api(`/api/local/account-trends?${trendParams}`);
     if (version !== state.portfolioLoadVersion) return;
     state.portfolioRefreshPending = Boolean(data.refresh_pending);
     state.portfolioSourceState = data.refresh_state || "unknown";
@@ -12808,6 +12805,10 @@ function renderMacroPortfolioImpact(result) {
     .filter((item) => item.exposedValue > 0)
     .sort((left, right) => right.exposedValue - left.exposedValue)
     .slice(0, 12);
+  const probabilityContext = optionLabel(exposures.some((item) => item.probabilityBasis === "Conditional")
+    ? "Assuming this event occurs: {trigger}. Each percentage is the chance of reaching the row's outcome along its modeled path."
+    : "Selected event: {trigger}. Each percentage includes both the event's chance and the chance of reaching the row's outcome along its modeled path.")
+    .replace("{trigger}", optionLabel(result.triggerLabel || result.label));
   const rows = exposures.map((item) => {
     const symbols = item.holdings.map((holding) => holding.holding?.symbol).filter(Boolean).join(", ");
     const estimate = item.entry.direction === "mixed"
@@ -12817,14 +12818,14 @@ function renderMacroPortfolioImpact(result) {
       <td data-label="Outcome"><b>${esc(optionLabel(item.entry.label))}</b><small title="${esc(symbols)}">${esc(fmt(item.holdings.length, 0))} ${esc(optionLabel("matching holdings"))}</small></td>
       <td data-label="Exposed value">${esc(money(item.exposedValue, state.baseCurrency))}</td>
       <td data-label="Portfolio share">${esc(macroPercent(item.exposurePercent))}</td>
-      <td data-label="Probability"><b>${esc(macroPercent(item.probability))}</b><small>${esc(optionLabel(item.probabilityBasis))}</small></td>
+      <td data-label="Outcome chance"><span class="macro-probability-value"><b><bdi dir="ltr">${esc(macroPercent(item.probability))}</bdi></b><small>${esc(optionLabel(item.probabilityBasis === "Conditional" ? "If the event occurs" : "Including event chance"))}</small></span></td>
       <td data-label="Impact assumption">${esc(macroImpactLabel(item.entry))}</td>
       <td data-label="Probability-weighted impact">${estimate}</td>
     </tr>`;
   }).join("");
   panel.innerHTML = `
     <div class="macro-panel-head"><div><h3 id="macroPortfolioImpactTitle">${esc(optionLabel("Portfolio exposure"))}</h3><p>${esc(optionLabel("Impact magnitude is an editable directional portfolio-value shock assumption, not a forecast. Estimated impact equals probability × impact magnitude × exposed portfolio value."))}</p></div><div class="macro-portfolio-total"><span>${esc(optionLabel("Portfolio value analyzed"))}</span><b>${esc(money(totalPortfolioValue, state.baseCurrency))}</b></div></div>
-    ${rows ? `<div class="table-wrap"><table class="macro-exposure-table"><thead><tr><th>${esc(optionLabel("Outcome"))}</th><th>${esc(optionLabel("Exposed value"))}</th><th>${esc(optionLabel("Portfolio share"))}</th><th>${esc(optionLabel("Probability"))}</th><th>${esc(optionLabel("Impact assumption"))}</th><th>${esc(optionLabel("Probability-weighted impact"))}</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="empty">${esc(optionLabel("No holdings matched this workflow's terminal exposure tags."))}</div>`}
+    ${rows ? `<p id="macroProbabilityContext" class="macro-probability-context">${esc(probabilityContext)}</p><div class="table-wrap"><table class="macro-exposure-table" aria-describedby="macroProbabilityContext"><thead><tr><th>${esc(optionLabel("Outcome"))}</th><th>${esc(optionLabel("Exposed value"))}</th><th>${esc(optionLabel("Portfolio share"))}</th><th>${esc(optionLabel("Outcome chance"))}</th><th>${esc(optionLabel("Impact assumption"))}</th><th>${esc(optionLabel("Probability-weighted impact"))}</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="empty">${esc(optionLabel("No holdings matched this workflow's terminal exposure tags."))}</div>`}
     <p class="macro-exposure-note">${esc(optionLabel("Do not add these rows together: outcomes can overlap, share holdings, and be correlated. Matching uses available holding country, sector, industry, currency, asset class, symbol, and name metadata."))}</p>`;
 }
 

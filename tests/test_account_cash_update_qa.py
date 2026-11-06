@@ -401,8 +401,7 @@ def test_inline_cash_balance_native_activation_permissions_and_focus(tmp_path, c
     assert update_cash not in trigger["text"], trigger
     assert "Synthetic Dollar" in trigger["label"], trigger
     assert trigger["tooltip"] == update_cash, trigger
-    assert trigger["icon"] and trigger["iconOpacity"] == "1" and trigger["iconDisplay"] != "none", trigger
-    assert abs(trigger["iconHeight"] - 14) <= 1 and abs(trigger["iconWidth"] - 14) <= 1, trigger
+    assert trigger["icon"] is False, trigger
     assert trigger["chipHeight"] <= 100, trigger
     assert trigger["left"] >= 0 and trigger["right"] <= width and trigger["height"] >= 28, trigger
     evaluate("qaTrigger().focus({preventScroll:true});")
@@ -439,7 +438,7 @@ def test_inline_cash_balance_native_activation_permissions_and_focus(tmp_path, c
         evaluate("$('accountCashModal').querySelector('button[data-close]').click();")
         browser_wait(evaluate, "document.activeElement===qaTrigger()")
     assert evaluate("qa.posts.length") == 0
-    # Tap the balance text, away from the pencil, on a touch-capable viewport.
+    # Tap the balance text on a touch-capable viewport.
     command("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
     point = evaluate("(()=>{qaTrigger().blur();const r=qaTrigger().querySelector('bdi').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()")
     command("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{**point, "radiusX": 1, "radiusY": 1}]})

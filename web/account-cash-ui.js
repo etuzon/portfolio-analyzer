@@ -25,9 +25,8 @@ function accountCashSummaryHtml(account, { button = true, compact = false, entry
   const label = `${esc(t("Current cash"))}:`;
   const balance = `<bdi dir="ltr">${esc(amount)}</bdi>`;
   const editable = button && canWrite();
-  const pencil = '<svg class="account-cash-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m16 3 5 5M4 15 16 3l5 5L9 20l-6 1Z"/></svg>';
   const content = editable
-    ? `<button class="account-cash-edit ux-tooltip" type="button" data-update-account-cash="${esc(account.id)}" data-cash-entry="${esc(entry)}" aria-label="${esc(`${t("Update cash for {account}").replace("{account}", name)}. ${t("Current cash")}: ${amount}`)}" aria-haspopup="dialog" aria-controls="accountCashModal" title="" data-tooltip="${esc(t("Update cash"))}"><span class="account-cash-label">${label}</span><span class="account-cash-value">${balance}${pencil}</span></button>`
+    ? `<button class="account-cash-edit ux-tooltip" type="button" data-update-account-cash="${esc(account.id)}" data-cash-entry="${esc(entry)}" aria-label="${esc(`${t("Update cash for {account}").replace("{account}", name)}. ${t("Current cash")}: ${amount}`)}" aria-haspopup="dialog" aria-controls="accountCashModal" title="" data-tooltip="${esc(t("Update cash"))}"><span class="account-cash-label">${label}</span><span class="account-cash-value">${balance}</span></button>`
     : `<span class="account-cash-readonly">${label} ${balance}</span>`;
   return `<span class="account-current-cash${compact ? " account-current-cash-compact" : ""}">${content}</span>`;
 }

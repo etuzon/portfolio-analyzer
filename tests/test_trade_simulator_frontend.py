@@ -31,7 +31,7 @@ const document={activeElement:null,addEventListener:(name,handler)=>{(handlers[n
 const security={holding:{symbol:'NEW',stock_market:'NASDAQ',currency:'USD',asset_class:'EQUITY'},price_ranges:{'1m':{current:100,current_date:'2026-10-29'}}};
 const ctx={accounts:state.localAccounts,transactions:[],items:[],base_currency:'USD',fx_quotes:[],calculated_at:'2026-10-30T12:00:00Z',securities:[{symbol:'NEW',stock_market:'NASDAQ',security}]};
 let calls=0,pending=[];
-const api=()=>{calls++;return new Promise((resolve,reject)=>pending.push({resolve,reject}));};
+const api=path=>{calls++;return new Promise((resolve,reject)=>pending.push({path,resolve,reject}));};
 ''' + (ROOT / "web/trade-simulator-ui.js").read_text() + "\n" + integration_source + "\n" + body
     completed = subprocess.run(["node"], input=script, cwd=ROOT, text=True, capture_output=True)
     assert completed.returncode == 0, completed.stderr

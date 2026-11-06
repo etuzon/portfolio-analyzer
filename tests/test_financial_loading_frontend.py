@@ -212,3 +212,27 @@ assert.ok(result.includes('מניה'));assert.ok(!result.includes('share'));
 """
     result=subprocess.run(['node'],input=script,text=True,capture_output=True)
     assert result.returncode==0,result.stderr
+
+
+def test_account_history_waits_for_the_portfolio_response_before_capturing_quotes():
+    run_js('''
+let resolvePortfolio, historyCalls=0, readyQuote=false;
+const api=async(path)=>{
+ if(path==='/api/portfolio')return new Promise(resolve=>{resolvePortfolio=()=>{readyQuote=true;resolve(payload(900));};});
+ if(path.includes('account-trends')){
+  historyCalls++;
+  return {accounts:[{account:{id:'one',currency:'USD'},points:[{date:'2026-10-30',value:readyQuote?8445.97:96834.97}]}]};
+ }
+ return otherApi(path);
+};
+(async()=>{
+ const loading=loadPortfolio();
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(historyCalls,0,'history captured stale prices before current portfolio completed');
+ resolvePortfolio();await loading;
+ assert.equal(historyCalls,1);
+ assert.equal(state.accountTrend.accounts[0].points[0].value,8445.97);
+ assert.equal(state.items[0].holding.quantity,900);
+ console.log('completed');
+})().catch(error=>{console.error(error);process.exitCode=1;});
+''')

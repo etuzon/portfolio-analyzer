@@ -1,4 +1,9 @@
-.benchmark-controls { display:grid; grid-template-columns: minmax(180px,1.3fr) repeat(3,minmax(148px,1fr)) auto auto; gap:12px; align-items:end; }
+.benchmark-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+.benchmark-controls > .field:first-child { flex:1 1 220px; }
+.benchmark-controls > .field:nth-child(2),.benchmark-controls > .field:nth-child(3) { flex:0 0 150px; }
+.benchmark-controls > .field:nth-child(4) { flex:0 1 190px; }
+.benchmark-control-actions { display:flex; flex:0 1 auto; flex-wrap:wrap; align-items:center; gap:10px; max-width:100%; }
+.benchmark-control-actions > button { width:max-content; max-width:100%; min-height:38px; }
 .benchmark-controls .field { min-width:0; }
 .benchmark-controls input,.benchmark-controls select { width:100%; min-width:0; box-sizing:border-box; }
 .benchmark-results { margin-block:18px; }
@@ -38,9 +43,9 @@
 .benchmark-history td,.benchmark-history th { white-space:nowrap; font-variant-numeric:tabular-nums; text-align:start; }
 .benchmark-save-status { min-height:1.5em; }
 #benchmarkContent [role="status"] { overflow-wrap:anywhere; }
-@media(max-width:1050px) { .benchmark-controls { grid-template-columns:repeat(2,minmax(148px,1fr)); } .benchmark-controls button { width:max-content; } }
 @media(max-width:600px) {
- .benchmark-controls,.benchmark-editor,.benchmark-kpis { grid-template-columns:minmax(0,1fr); }
+ .benchmark-editor,.benchmark-kpis { grid-template-columns:minmax(0,1fr); }
+ .benchmark-controls > .field:first-child,.benchmark-control-actions { flex-basis:100%; }
  .benchmark-editor .benchmark-wide { grid-column:auto; }
  .benchmark-kpi strong { font-size:27px; }
  .benchmark-actions button { min-height:42px; }

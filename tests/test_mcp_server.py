@@ -19,6 +19,7 @@ def _environment(tmp_path, monkeypatch):
     auth.change_password(admin["id"], "admin", "mcp-admin-password")
     monkeypatch.setattr(main, "local_store", store)
     monkeypatch.setattr(main, "auth_store", auth)
+    monkeypatch.setattr(main, "portfolio_payload", lambda **_options: {"items": []})
     return store, auth
 
 

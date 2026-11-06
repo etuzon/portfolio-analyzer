@@ -38,9 +38,24 @@
 .xray-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-block:12px; }
 .xray-controls .field { flex:1 1 220px; min-width:160px; }
 .xray-controls select { min-width:160px; }
-.xray-report-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
+.xray-report-fields { display:grid; grid-template-columns:160px minmax(200px,1fr) minmax(240px,1.4fr); align-items:end; gap:12px; }
+.xray-report-fields .field { min-width:0; }
+.xray-report-fields input { width:100%; min-width:0; }
+#xrayReportDate { width:160px; max-width:100%; }
 .xray-editor { margin-block:16px; padding:12px; border:1px solid var(--ux-stroke); border-radius:8px; }
-.xray-editor textarea { width:100%; min-height:140px; padding:12px; font-family:monospace; resize:vertical; background:var(--ux-panel-soft); color:var(--ux-text); }
+.xray-editor textarea { width:100%; height:180px; min-height:140px; padding:12px; font-family:monospace; resize:vertical; background:var(--ux-panel-soft); color:var(--ux-text); }
+#xrayReportForm { display:grid; gap:12px; min-width:0; }
+#xrayReportForm .xray-controls { margin-block:0; }
+#xrayReportForm .xray-controls > .field { flex:0 1 420px; min-width:0; }
+#xrayReportForm .xray-controls select { width:100%; min-width:0; }
+#xrayReportForm button { width:max-content; max-width:100%; justify-self:start; white-space:normal; }
+@media (max-width:760px) {
+ .xray-report-fields { grid-template-columns:160px minmax(0,1fr); }
+ .xray-report-fields > .field:last-child { grid-column:1 / -1; }
+}
+@media (max-width:540px) {
+ .xray-report-fields { grid-template-columns:minmax(0,1fr); }
+}
 .xray-scroll { max-width:100%; max-height:50vh; overflow:auto; }
 .xray-table { min-width:580px; table-layout:fixed; }
 .xray-table th:first-child { width:25%; }
@@ -1676,24 +1691,31 @@ textarea.muted-control {
 
 .retirement-scenario-facts {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 8px;
   margin: 0;
 }
 
 .retirement-scenario-facts > div {
+  grid-column: span 5;
   min-width: 0;
   padding: 8px;
   border-radius: 7px;
   background: #202329;
 }
 
+.retirement-scenario-facts > div:nth-child(2) {
+  grid-column: span 2;
+}
+
+.retirement-scenario-facts > div:nth-child(n + 4) {
+  grid-column: span 6;
+}
+
 .retirement-scenario-facts dt,
 .retirement-scenario-facts dd {
   margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .retirement-scenario-facts dt {
@@ -1902,16 +1924,18 @@ textarea.muted-control {
   white-space: normal;
 }
 
-.fund-actions {
+.fund-form .fund-actions {
   grid-column: 1 / -1;
   display: flex;
+  flex-wrap: nowrap;
   justify-content: flex-start;
   gap: 8px;
   margin-top: 6px;
 }
 
-.fund-actions button {
-  min-width: 120px;
+.fund-form .fund-actions button {
+  min-width: 0;
+  white-space: normal;
 }
 
 .fund-history-card {
@@ -2159,6 +2183,15 @@ textarea.muted-control {
   text-align: right;
 }
 
+.dashboard-projection-table .compact-projection-table th,
+.dashboard-projection-table .compact-projection-table td {
+  text-align: center;
+}
+
+.dashboard-projection-table .compact-projection-table td:first-child {
+  text-align: start;
+}
+
 .projection-table th,
 .projection-table td,
 .projection-result-table th,
@@ -2188,10 +2221,16 @@ textarea.muted-control {
 
 .projection-result-table td {
   min-width: 170px;
+  text-align: center;
+}
+
+.projection-result-table th {
+  text-align: center;
 }
 
 .projection-result-table td:first-child {
   min-width: 240px;
+  text-align: start;
 }
 
 .projection-result-table td b,
@@ -3359,12 +3398,12 @@ textarea.muted-control {
   white-space: nowrap;
 }
 
-.equity-comp-table th:first-child,
 .equity-comp-table td:first-child {
   text-align: start;
 }
 
 .equity-comp-table th {
+  text-align: center;
   background: #121922;
   color: #8794aa;
   font-weight: 850;
@@ -4008,10 +4047,30 @@ textarea.muted-control {
 }
 
 .market-screener-primary {
-  display: grid;
-  grid-template-columns: minmax(190px, 1.35fr) repeat(4, minmax(130px, 0.85fr)) minmax(190px, 1.1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: end;
+}
+
+.market-screener-primary > label {
+  flex: 1 1 140px;
+}
+
+.market-screener-primary > .market-query-field {
+  flex-basis: 220px;
+}
+
+.market-screener-primary > .market-industry-field {
+  flex-basis: 180px;
+}
+
+.market-screener-primary > .market-country-field {
+  flex-basis: 90px;
+}
+
+.market-screener-primary > .market-sort-field {
+  flex: 0 1 300px;
 }
 
 .market-screener-primary label,
@@ -4040,6 +4099,9 @@ textarea.muted-control {
 
 .market-screener-actions {
   display: flex;
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+  justify-content: flex-end;
   gap: 7px;
 }
 
@@ -4073,7 +4135,7 @@ textarea.muted-control {
 
 .market-filter-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(130px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
   gap: 8px;
 }
 
@@ -4087,6 +4149,8 @@ textarea.muted-control {
   border-radius: 6px;
   background: #171c24;
   text-transform: none;
+  grid-column: 1 / -1;
+  justify-self: start;
 }
 
 .market-missing-toggle input {
@@ -4345,6 +4409,55 @@ textarea.muted-control {
   max-width: 100%;
 }
 
+.employee-wizard-grid.employee-grant-terms-grid {
+  grid-template-columns: minmax(180px, 1.4fr) minmax(175px, 1.25fr) repeat(3, minmax(145px, 1fr));
+  align-items: end;
+}
+
+.employee-wizard-grid.vesting-basics-grid {
+  grid-template-columns: minmax(240px, 1.7fr) minmax(150px, 1fr) 160px minmax(220px, 1.4fr);
+  align-items: end;
+}
+
+.employee-grant-terms-grid > .employee-grant-company,
+.employee-grant-terms-grid > .employee-grant-id {
+  grid-column: span 2;
+}
+
+@media (max-width: 1100px) {
+  .employee-wizard-grid.vesting-basics-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .employee-wizard-grid.employee-grant-terms-grid {
+    grid-template-columns: repeat(3, minmax(150px, 1fr));
+  }
+
+  .employee-grant-terms-grid > .employee-grant-id {
+    grid-column: span 1;
+  }
+}
+
+@media (max-width: 760px) {
+  .employee-wizard-grid.employee-grant-terms-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 540px) {
+  .employee-wizard-grid.vesting-basics-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .employee-wizard-grid.employee-grant-terms-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .employee-grant-terms-grid > .employee-grant-company {
+    grid-column: span 1;
+  }
+}
+
 .employee-wizard-advanced {
   margin-top: 12px;
   padding: 10px 12px;
@@ -4382,10 +4495,8 @@ textarea.muted-control {
 }
 
 .employee-vesting-sentence {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  gap: 12px;
   margin-top: 12px;
   padding: 14px;
   border: 1px solid rgba(155, 77, 255, 0.45);
@@ -4397,13 +4508,26 @@ textarea.muted-control {
   line-height: 1.5;
 }
 
+.employee-vesting-clause {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .employee-vesting-sentence label {
   display: inline-flex;
 }
 
 .employee-vesting-sentence input {
-  width: 92px;
-  min-width: 92px;
+  width: 120px;
+  min-width: 120px;
+}
+
+.employee-vesting-sentence input[inputmode="numeric"] {
+  width: 84px;
+  min-width: 84px;
 }
 
 .employee-vesting-sentence select {
@@ -5303,15 +5427,21 @@ textarea.muted-control {
   grid-template-columns: repeat(4, minmax(150px, 1fr)) minmax(180px, auto);
 }
 
-#accountEditModal .account-edit-form { grid-template-columns:minmax(150px,1fr) minmax(180px,1.4fr) minmax(120px,.8fr) minmax(180px,1fr); align-items:start; gap:12px; }
+#accountEditModal > .modal-card { width:min(100%,960px); min-width:0; overflow-x:hidden; }
+#accountEditModal .account-edit-form { grid-template-columns:repeat(4,minmax(0,1fr)); align-items:start; gap:12px; }
 #accountEditModal .account-edit-form > .field { min-width:0; }
+#accountEditModal .account-edit-country { max-width:280px; }
+#accountEditModal .account-edit-currency { width:164px; max-width:100%; }
+#accountEditModal .account-edit-opening { width:200px; max-width:100%; }
 #accountEditModal .account-edit-form input, #accountEditModal .account-edit-form select { min-width:0; box-sizing:border-box; }
 #accountEditModal .account-edit-wide, #accountEditModal .account-edit-tools { grid-column:span 2; }
-#accountEditModal .account-edit-tools { display:flex; flex-wrap:wrap; align-items:end; gap:8px; padding-top:21px; }
-#accountEditModal .account-edit-tools > button { min-width:0; flex:1 1 130px; white-space:normal; }
+#accountEditModal .account-edit-tools { display:flex; flex-wrap:wrap; align-items:center; align-self:end; gap:8px; }
+#accountEditModal .account-edit-tools > button { min-width:0; flex:0 1 auto; white-space:normal; }
 #accountEditModal .account-edit-form > .person-list, #accountEditModal .account-owner-rule, #accountEditModal .form-actions { grid-column:1 / -1; }
 #accountEditModal .form-actions, .account-cash-actions { display:flex; flex-wrap:nowrap; align-items:stretch; gap:10px; width:100%; max-width:420px; }
 #accountEditModal .form-actions > button, .account-cash-actions > button { flex:1 1 0; min-width:0; padding-inline:10px; white-space:normal; }
+#accountEditModal .form-actions { width:auto; max-width:100%; }
+#accountEditModal .form-actions > button { flex:0 1 auto; padding-inline:16px; }
 .account-edit-cash { margin-block:10px; }
 .account-current-cash { display:flex; align-items:center; color:#d9dee7; font-size:13px; min-width:0; max-width:100%; }
 .account-current-cash > span { min-width:0; overflow-wrap:anywhere; }
@@ -5321,7 +5451,6 @@ textarea.muted-control {
 .account-current-cash .account-cash-edit { display:inline-flex; flex:0 1 auto; flex-wrap:wrap; align-items:center; justify-content:flex-start; gap:4px; width:auto; max-width:100%; height:auto; min-height:32px; padding:3px 2px; border:1px solid transparent; border-radius:4px; background:transparent; color:#b9d7f8; font:inherit; text-align:start; line-height:1.4; }
 .account-cash-edit > .account-cash-value { display:inline-flex; align-items:center; gap:5px; }
 .account-cash-edit bdi { white-space:nowrap; }
-.account-cash-edit .account-cash-pencil { width:14px; height:14px; min-height:0; flex:0 0 14px; }
 .account-cash-edit:not(:disabled):hover { background:#203044; color:#e0efff; }
 .account-cash-edit::after { width:max-content; max-width:min(240px,calc(100vw - 40px)); }
 .account-cash-edit:disabled::after { display:none; }
@@ -5350,15 +5479,16 @@ textarea.muted-control {
   .account-cash-fields { grid-template-columns:88px 140px; }
   .account-cash-target { grid-column:1 / -1; }
 }
-@media (max-width:900px) {
+@media (max-width:1000px) {
   #accountEditModal .account-edit-form { grid-template-columns:minmax(0,1fr) minmax(0,1.3fr); }
+  #accountEditModal .account-edit-wide, #accountEditModal .account-edit-tools { grid-column:auto; }
 }
 @media (max-width:540px) {
   #accountEditModal .account-edit-form { grid-template-columns:minmax(0,1fr); }
   #accountEditModal .account-edit-wide, #accountEditModal .account-edit-tools { grid-column:auto; }
   #accountEditModal .account-edit-type { max-width:240px; }
   #accountEditModal .account-edit-currency { max-width:180px; }
-  #accountEditModal .account-edit-opening { width:100%; max-width:240px; }
+  #accountEditModal .account-edit-opening { width:200px; max-width:100%; }
   #accountEditModal .account-edit-tools { padding-top:0; }
 }
 
@@ -6380,12 +6510,6 @@ tbody tr:hover {
     flex-direction: column;
   }
 
-  .employee-vesting-sentence label,
-  .employee-vesting-sentence input,
-  .employee-vesting-sentence select {
-    width: 100%;
-  }
-
   .employee-wizard-actions {
     align-items: stretch;
     flex-direction: column-reverse;
@@ -6472,8 +6596,8 @@ tbody tr:hover {
 .broker-name-button:not(:disabled):hover { text-decoration:underline; }
 .broker-name-button:focus-visible { outline:2px solid var(--ux-blue); outline-offset:4px; }
 .broker-row-actions { flex-wrap:wrap; justify-content:flex-end; }
-.broker-editor-card { width:min(100% - 32px,620px); }
-.broker-editor-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+#brokerEditorModal > .broker-editor-card { width:min(100%,540px); min-width:0; }
+.broker-editor-form { display:grid; grid-template-columns:minmax(0,1fr) 180px; gap:14px; }
 .broker-editor-form .field { min-width:0; }
 .broker-editor-form .field:first-child,
 .broker-editor-form .broker-comments-field,
@@ -6482,7 +6606,8 @@ tbody tr:hover {
 .broker-editor-form input,.broker-editor-form select,.broker-editor-form textarea { width:100%; min-width:0; box-sizing:border-box; }
 .broker-editor-form textarea { resize:vertical; padding:10px; min-height:84px; background:var(--ux-panel-soft); color:var(--ux-text); border:1px solid var(--ux-stroke); border-radius:7px; font:inherit; }
 .broker-editor-status:empty { display:none; }
-.broker-editor-actions { justify-content:flex-end; }
+.broker-editor-actions { justify-content:flex-start; flex-wrap:nowrap; }
+.broker-editor-actions > button { flex:0 1 auto; min-width:0; max-width:100%; white-space:normal; }
 @media(max-width:550px) {
  .broker-management-item { grid-template-columns:minmax(0,1fr); }
  .broker-row-actions { justify-content:flex-start; }
@@ -6836,15 +6961,18 @@ tbody tr:hover {
 #familyMembersList { min-width: 0; grid-template-columns: minmax(0, 1fr); }
 .family-member-item .attached-account-list > * { min-width: 0; max-width: 100%; }
 
-.family-member-editor { width: min(620px, calc(100vw - 24px)); }
-.family-member-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 16px; }
-.family-member-fields .field { min-width: 0; }
+#familyMemberModal > .family-member-editor { width: min(100%,620px); min-width:0; }
+.family-member-fields { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); align-items:end; gap: 14px; margin-top: 16px; }
+.family-member-fields > .field { min-width: 0; grid-column:span 3; }
+.family-member-fields > [for="familyMemberGender"],
+.family-member-fields > [for="familyMemberBirthDate"],
+.family-member-fields > [for="familyMemberRetireAge"] { grid-column:span 2; }
 .family-member-fields input,
 .family-member-fields select,
 .family-member-fields textarea { width: 100%; min-width: 0; }
-.family-member-fields .date-field,
-.family-member-fields input[type="number"] { min-width: 140px; }
-.family-member-comments { grid-column: 1 / -1; }
+.family-member-fields .date-field { width:160px; min-width:160px; max-width:100%; }
+.family-member-fields input[type="number"] { width:120px; min-width:120px; max-width:100%; }
+.family-member-fields > .family-member-comments { grid-column: 1 / -1; }
 .family-member-fields textarea {
   resize: vertical;
   min-height: 88px;
@@ -6857,11 +6985,13 @@ tbody tr:hover {
   line-height: 1.5;
 }
 .family-member-fields :is(input, select, textarea):focus-visible { outline: 2px solid var(--ux-blue); outline-offset: 2px; }
-.family-member-editor .modal-toolbar { justify-content: flex-end; margin-top: 12px; }
+.family-member-editor .modal-toolbar { justify-content:flex-start; flex-wrap:nowrap; gap:8px; margin-top:12px; }
+.family-member-editor .modal-toolbar > button { flex:0 1 auto; min-width:0; white-space:normal; }
 .family-member-delete-note { color: var(--ux-muted); font-size: 11px; }
 
 @media (max-width: 600px) {
   .family-member-fields { grid-template-columns: minmax(0, 1fr); }
+  .family-member-fields > .field { grid-column:1 / -1; }
   .family-member-item { grid-template-columns: minmax(0, 1fr); }
   .family-member-actions { justify-self: end; }
 }
@@ -7767,12 +7897,13 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 
 .outlook-primary-form {
   display: grid;
-  grid-template-columns: minmax(210px, 1fr) minmax(190px, 0.65fr) minmax(170px, max-content);
+  grid-template-columns: minmax(210px, 1fr) 160px max-content;
   align-items: end;
   gap: 14px;
 }
 
 .outlook-workbench .field {
+  min-width: 0;
   gap: 6px;
 }
 
@@ -7817,7 +7948,8 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 }
 
 .outlook-primary-action {
-  min-width: 170px;
+  width: max-content;
+  min-width: 0;
   min-height: 40px;
   white-space: nowrap;
 }
@@ -7908,7 +8040,7 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 
 .outlook-backtest-panel {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(190px, 230px) minmax(130px, max-content);
+  grid-template-columns: minmax(240px, 1fr) 150px max-content;
   align-items: end;
   gap: 14px;
   padding: 13px 14px;
@@ -7935,7 +8067,8 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 }
 
 #runCompanyOutlookBacktest {
-  min-width: 130px;
+  width: max-content;
+  min-width: 0;
   white-space: nowrap;
 }
 
@@ -8382,7 +8515,7 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 
 .signal-condition-row {
   display: grid;
-  grid-template-columns: minmax(210px, 1.6fr) minmax(185px, 1fr) minmax(110px, 0.55fr) auto;
+  grid-template-columns: minmax(210px, 1fr) minmax(160px, 220px) 120px 38px;
   align-items: end;
   gap: 8px;
   padding: 10px;
@@ -8394,6 +8527,12 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 .signal-condition-row select,
 .signal-condition-row input {
   width: 100%;
+  min-width: 0;
+}
+
+.signal-condition-row > label,
+.signal-condition-metric,
+.signal-condition-control {
   min-width: 0;
 }
 
@@ -8465,6 +8604,24 @@ html[dir="rtl"] .signal-condition-help::after {
 .signal-remove-condition {
   width: 38px;
   border-radius: 7px;
+}
+
+@media (max-width: 480px) {
+  .signal-conditions > .signal-condition-row {
+    grid-template-columns: 120px 38px minmax(0, 1fr);
+  }
+
+  .signal-condition-row > label:first-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .signal-condition-row > label:last-of-type {
+    grid-column: 1;
+  }
+
+  .signal-condition-row > .signal-remove-condition {
+    grid-column: 2;
+  }
 }
 
 .signal-form-actions {
@@ -8634,11 +8791,22 @@ html[dir="rtl"] .signal-condition-help::after {
   align-items: end;
 }
 
-.trade-simulator-form, .trade-simulator-row-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(170px, 100%), 1fr)); gap: 12px; align-items: end; }
+.trade-simulator-form { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+.trade-simulator-form > .management-field { flex:0 1 180px; }
+.trade-simulator-form > .management-field:first-child { flex:1.4 1 240px; }
+.trade-simulator-form > .management-field:nth-child(2) { flex:1 1 180px; }
+.trade-simulator-form > .management-field:nth-child(4) { flex-basis:110px; }
+.trade-simulator-form > .management-field:nth-child(5) { flex-basis:160px; }
+.trade-simulator-entry-actions { display:flex; flex:0 1 auto; flex-wrap:wrap; align-items:end; gap:12px; max-width:100%; }
+.trade-simulator-entry-actions > .management-field { flex:0 1 160px; }
+.trade-simulator-entry-actions > button { flex:0 0 auto; width:max-content; min-height:38px; white-space:nowrap; }
+.trade-simulator-row-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr)); gap:12px; align-items:end; }
 .trade-simulator-form .management-field, .trade-simulator-row-fields .management-field { min-width: 0; }
 .trade-simulator-form input, .trade-simulator-form select, .trade-simulator-row-fields input, .trade-simulator-row-fields select { width: 100%; min-width: 0; box-sizing: border-box; }
 .trade-simulator-form input[type="number"], .trade-simulator-row-fields input[type="number"] { min-width: 140px; font-variant-numeric: tabular-nums; }
-.trade-simulator-form > button { width: auto; min-height: 40px; justify-self: start; }
+@media (max-width: 600px) {
+  .trade-simulator-entry-actions { flex-basis:100%; }
+}
 .trade-simulator-basket-heading, .trade-simulator-row-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .trade-simulator-basket-heading { margin: 20px 0 12px; }
 .trade-simulator-rows, .trade-simulator-results { display: grid; gap: 14px; min-width: 0; }
@@ -9897,10 +10065,6 @@ html[dir="rtl"] .settings-menu-button.active {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .market-screener-primary,
-  .market-filter-grid {
-    grid-template-columns: repeat(3, minmax(140px, 1fr));
-  }
 }
 
 @media (max-width: 760px) {
@@ -9955,6 +10119,16 @@ html[dir="rtl"] .settings-menu-button.active {
 
   .retirement-scenario-facts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .retirement-scenario-facts > div,
+  .retirement-scenario-facts > div:nth-child(2),
+  .retirement-scenario-facts > div:nth-child(n + 4) {
+    grid-column: span 1;
+  }
+
+  .retirement-scenario-facts > div:first-child {
+    grid-column: 1 / -1;
   }
 
   .retirement-list-header-actions {
@@ -10179,11 +10353,6 @@ html[dir="rtl"] .settings-menu-button.active {
     grid-row: 2;
   }
 
-  .market-screener-primary,
-  .market-filter-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .market-screener-actions,
   .market-missing-toggle {
     grid-column: 1 / -1;
@@ -10337,12 +10506,9 @@ html[dir="rtl"] .settings-menu-button.active {
     grid-template-columns: 1fr;
   }
 
-  .outlook-primary-form,
   .outlook-advanced-grid,
-  .outlook-backtest-panel,
   .outlook-history-item,
   .signal-rule-grid,
-  .signal-condition-row,
   .signal-lower-grid {
     grid-template-columns: 1fr;
   }
@@ -10363,7 +10529,15 @@ html[dir="rtl"] .settings-menu-button.active {
   }
 
   .signal-remove-condition {
-    width: 100%;
+    width: 38px;
+  }
+
+  .signal-condition-row {
+    grid-template-columns: minmax(0, 1fr) 120px 38px;
+  }
+
+  .signal-condition-metric {
+    grid-column: 1 / -1;
   }
 
   .account-report-breakdowns {
@@ -10428,9 +10602,38 @@ html[dir="rtl"] .settings-menu-button.active {
     padding: 12px;
   }
 
+  .outlook-primary-form,
+  .outlook-backtest-panel {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+  }
+
+  .outlook-symbol-field,
+  .outlook-backtest-copy {
+    flex: 1 1 100%;
+  }
+
+  .outlook-primary-form > .field:not(.outlook-symbol-field) {
+    flex: 0 0 160px;
+  }
+
+  .outlook-backtest-panel > .field {
+    flex: 0 0 150px;
+  }
+
   .outlook-primary-action,
   #runCompanyOutlookBacktest {
-    width: 100%;
+    flex: 0 0 auto;
+    width: max-content;
+  }
+
+  .outlook-primary-action {
+    align-self: center;
+  }
+
+  #runCompanyOutlookBacktest {
+    align-self: flex-end;
   }
 
   .outlook-advanced summary {
@@ -10610,8 +10813,14 @@ html[dir="rtl"] .settings-menu-button.active {
 
 .macro-scenario-card {
   width: min(1460px, 100%) !important;
+  min-width: 0;
+  overflow-x: hidden;
   display: grid;
   gap: 14px;
+}
+
+.macro-scenario-card > * {
+  min-width: 0;
 }
 
 .macro-scenario-heading {
@@ -10654,8 +10863,9 @@ html[dir="rtl"] .settings-menu-button.active {
 
 .macro-prior-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(180px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(3, minmax(148px, 170px)) minmax(220px, 340px);
+  align-items: end;
+  gap: 12px 16px;
 }
 
 .macro-prior-grid .field {
@@ -10664,9 +10874,11 @@ html[dir="rtl"] .settings-menu-button.active {
 
 .probability-input {
   display: grid;
-  grid-template-columns: minmax(90px, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  min-width: 126px;
+  width: 148px;
+  max-width: 100%;
+  min-width: 0;
   border: 1px solid #354055;
   border-radius: 7px;
   overflow: hidden;
@@ -10680,12 +10892,18 @@ html[dir="rtl"] .settings-menu-button.active {
 
 .probability-input input {
   width: 100%;
-  min-width: 90px;
+  min-width: 0;
+  padding-inline: 8px;
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
   direction: ltr;
+  font-size: 13px;
+}
+
+.probability-input input::placeholder {
+  font-size: 12px;
 }
 
 .probability-input input:focus {
@@ -10700,7 +10918,7 @@ html[dir="rtl"] .settings-menu-button.active {
 }
 
 .probability-input.compact {
-  width: 124px;
+  width: 148px;
 }
 
 .macro-scenario-tabs,
@@ -10728,7 +10946,7 @@ html[dir="rtl"] .settings-menu-button.active {
 
 .macro-trigger-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
   gap: 8px;
 }
 
@@ -10772,14 +10990,14 @@ html[dir="rtl"] .settings-menu-button.active {
   align-content: center;
   justify-items: end;
   gap: 5px;
-  min-width: 138px;
+  min-width: 0;
   padding: 8px;
   border-inline-start: 1px solid #303b4b;
 }
 
 .macro-trigger-card > label > span:first-child {
   color: #8fa0b8;
-  font-size: 9px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -10907,13 +11125,16 @@ html[dir="rtl"] .settings-menu-button.active {
   width: 170px;
 }
 
-.macro-probability-table th:nth-child(2),
+.macro-probability-table th:nth-child(2) {
+  width: 340px;
+}
+
 .macro-probability-table th:nth-child(4) {
-  width: 280px;
+  width: 240px;
 }
 
 .macro-probability-table th:nth-child(5) {
-  width: 145px;
+  width: 172px;
 }
 
 .macro-probability-table td {
@@ -10933,7 +11154,8 @@ html[dir="rtl"] .settings-menu-button.active {
 .macro-node-meta {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  align-items: center;
+  gap: 5px;
   margin-top: 6px;
 }
 
@@ -10949,18 +11171,26 @@ html[dir="rtl"] .settings-menu-button.active {
 
 .macro-impact-input {
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
-  gap: 3px;
+  align-self: start;
+  min-height: 32px;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 11px;
 }
 
 .macro-impact-input input {
-  width: 42px;
-  min-width: 42px;
+  width: calc(9ch + 18px);
+  min-width: calc(9ch + 18px);
   border: 0;
   padding: 0;
   background: transparent;
   color: #e6eefb;
   font: inherit;
+  font-size: 12px;
+  direction: ltr;
   text-align: end;
 }
 
@@ -10987,18 +11217,84 @@ html[dir="rtl"] .settings-menu-button.active {
 }
 
 .macro-exposure-table {
-  min-width: 980px;
+  min-width: 1180px;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.macro-exposure-table th:first-child {
+  width: calc(100% - 800px);
+}
+
+.macro-exposure-table th:nth-child(2) {
+  width: 160px;
+}
+
+.macro-exposure-table th:nth-child(3) {
+  width: 110px;
+}
+
+.macro-exposure-table th:nth-child(4) {
+  width: 190px;
+}
+
+.macro-exposure-table th:nth-child(5) {
+  width: 140px;
+}
+
+.macro-exposure-table th:nth-child(6) {
+  width: 200px;
 }
 
 .macro-exposure-table td:first-child {
-  display: grid;
-  gap: 4px;
-  min-width: 280px;
+  display: table-cell;
+  min-width: 0;
+  text-align: start;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-.macro-exposure-table td,
-.macro-exposure-table th {
+.macro-exposure-table td:first-child > b,
+.macro-exposure-table td:first-child > small {
+  display: block;
+}
+
+.macro-exposure-table td:first-child > small {
+  margin-top: 4px;
+}
+
+.macro-exposure-table td:not(:first-child) {
   white-space: nowrap;
+}
+
+.macro-exposure-table th {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.macro-exposure-table th,
+.macro-exposure-table td:not(:first-child) {
+  text-align: center;
+}
+
+.macro-probability-value {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.macro-probability-value small {
+  max-width: 22ch;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.macro-probability-context {
+  margin: 0 0 12px;
+  color: #aebbd0;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .macro-exposure-table b.positive {
@@ -11140,11 +11436,14 @@ html[dir="rtl"] .settings-menu-button.active {
 }
 
 @media (max-width: 900px) {
-  .macro-prior-grid,
   .macro-scenario-tabs,
   .macro-scenario-overview,
   .macro-end-states {
     grid-template-columns: 1fr;
+  }
+
+  .macro-prior-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .macro-panel-head {
@@ -11169,11 +11468,17 @@ html[dir="rtl"] .settings-menu-button.active {
   }
 
   .macro-trigger-card > label {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     justify-items: start;
     border-inline-start: 0;
     border-top: 1px solid #303b4b;
+  }
+}
+
+@media (max-width: 480px) {
+  .macro-prior-grid {
+    grid-template-columns: 1fr;
   }
 }
 

@@ -163,9 +163,9 @@ const loadTradeHistory=()=>{};
 (async()=>{
   const older=loadReports();
   const newer=loadReports();
-  pending[3]({accounts:2});pending[4]({accounts:[]});pending[5]({items:[]});
+  pending[1]({report:{accounts:2},trend:{accounts:[]},snapshots:{items:[]}});
   await newer;
-  pending[0]({accounts:1});pending[1]({accounts:[]});pending[2]({items:[]});
+  pending[0]({report:{accounts:1},trend:{accounts:[]},snapshots:{items:[]}});
   await older;
   assert.equal(state.activeReport.accounts,2);
   assert.equal($('reportsDetails').innerHTML,'2');
@@ -203,4 +203,28 @@ const loadPortfolio = async () => {};
   assert.equal(writes.length, 1);
   assert.equal(writes[0].value, '0');
 })().catch(error => { console.error(error); process.exitCode = 1; });
+""")
+
+
+def test_report_summary_chart_and_history_rows_come_from_one_coherent_response():
+    run(BASE + functions('loadReports') + """
+const currentReportFilters=()=>({account_id:'one',date_from:'2026-10-01',date_to:'2026-10-30'});
+const valueOf=()=>'';
+const dateValue=()=>'';
+const reportQueryParams=(filters,options)=>{
+ assert.equal(options.includeDates,true);
+ return 'account_id=one&date_from=2026-10-01&date_to=2026-10-30';
+};
+const paths=[];let chartValue;
+const api=async path=>{paths.push(path);return {report:{accounts:1,value:8445.97},
+ trend:{accounts:[{points:[{value:8445.97}]}]},snapshots:{items:[{value:8445.97}]}};};
+const renderReportSummary=report=>{$('reportsDetails').innerHTML=String(report.value);};
+const renderAccountTrend=trend=>{chartValue=trend.accounts[0].points[0].value;};
+const renderHistorySnapshots=()=>{};
+(async()=>{
+ await loadReports();
+ assert.deepEqual(paths,['/api/local/report-view?account_id=one&date_from=2026-10-01&date_to=2026-10-30']);
+ assert.equal(Number($('reportsDetails').innerHTML),chartValue);
+ assert.equal(chartValue,state.historySnapshots[0].value);
+})().catch(error=>{console.error(error);process.exitCode=1;});
 """)

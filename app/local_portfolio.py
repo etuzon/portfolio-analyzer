@@ -21,6 +21,19 @@ from .config import data_dir
 from .metrics import moving_averages, price_range_metrics, support_resistance, technical_signals, volume_metrics
 from .models import Holding, Ohlcv, SymbolAnalysis, Trend
 from .outlook_scoring import OUTLOOK_EVALUATION_VERSION, OUTLOOK_MODEL_VERSION
+from .portfolio_refresh import prefer_recorded_prices, revalue_holding, valuation_quote
+
+
+def _valuation_key(holding):
+    return tuple(holding.get(field, "") for field in ("account_id", "symbol", "stock_market", "currency"))
+
+
+def _valuation_ranges(items):
+    """Already normalized, revision-matched dashboard evidence; never fetch here."""
+    return {_valuation_key(item.get("holding") or {}): item.get("price_ranges") or {}
+            for item in (items or [])
+            if not ((item.get("holding") or {}).get("data_source") == "MANUAL"
+                    and not (item.get("holding") or {}).get("secondary_symbol"))}
 
 
 ACCOUNT_TYPES = ["Investment", "Long-Term Savings", "Bank", "ESOP"]
@@ -3209,7 +3222,7 @@ class LocalPortfolioStore:
             conn.execute("delete from price_history where id = ?", (price_id,))
         return bool(before)
 
-    def list_account_snapshots(self, filters: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    def list_account_snapshots(self, filters: dict[str, Any] | None = None, *, valuation_items: list[dict] | None = None) -> list[dict[str, Any]]:
         filters = filters or {}
         args: list[Any] = []
         where = []
@@ -3249,7 +3262,21 @@ class LocalPortfolioStore:
                 """,
                 args,
             ).fetchall()
-        return [self._snapshot_out(row) for row in rows]
+        items = [self._snapshot_out(row) for row in rows]
+        if valuation_items is not None and any(str(item.get("source") or "").casefold() == "daily" for item in items):
+            # The history table and graph expose the same derived daily values.
+            # Export/backup and internal raw reads retain the original records.
+            dates = [item["snapshot_date"] for item in items]
+            trend = self.account_trends({**filters, "from": min(dates), "to": max(dates)}, valuation_items=valuation_items)
+            points = {(entry["account"]["id"], point["date"]): point
+                      for entry in trend["accounts"] for point in entry["points"]}
+            for item in items:
+                if str(item.get("source") or "").casefold() != "daily":
+                    continue
+                point = points.get((item["account_db_id"], item["snapshot_date"]), {})
+                item.update({field: point[field] for field in ("value", "cash", "profit", "profit_percent") if field in point})
+                item["recomputed"] = True
+        return items
 
     def save_account_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
         account = self._account(payload.get("account_db_id") or payload.get("account_id"))
@@ -3284,6 +3311,7 @@ class LocalPortfolioStore:
                   profit_percent = excluded.profit_percent,
                   source = excluded.source,
                   updated_at = excluded.updated_at
+                where lower(excluded.source) != 'daily' or lower(account_snapshots.source) = 'daily'
                 """,
                 record,
             )
@@ -3309,7 +3337,7 @@ class LocalPortfolioStore:
             if not points:
                 continue
             point = points[-1]
-            self.save_account_snapshot(
+            snapshot = self.save_account_snapshot(
                 {
                     "account_id": account["id"],
                     "snapshot_date": day.isoformat(),
@@ -3320,7 +3348,7 @@ class LocalPortfolioStore:
                     "source": "daily",
                 }
             )
-            saved += 1
+            saved += int(str(snapshot.get("source") or "").casefold() == "daily")
         return {"date": day.isoformat(), "snapshots": saved}
 
     def list_funds(self) -> list[dict[str, Any]]:
@@ -3650,13 +3678,14 @@ class LocalPortfolioStore:
             accounts = {row["id"]: {**row, "label": _account_label(row)} for row in self._filtered_accounts(filters)}
             return build_trade_history(self.list_transactions(), accounts, self.list_prices(), as_of_date, filters)
 
-    def account_trends(self, filters: dict[str, Any]) -> dict[str, Any]:
+    def account_trends(self, filters: dict[str, Any], *, valuation_items: list[dict] | None = None) -> dict[str, Any]:
         from_date = _parse_date(filters.get("from")) or (date.today() - timedelta(days=365))
         to_date = _parse_date(filters.get("to")) or date.today()
         accounts = self._filtered_accounts(filters)
         points_by_account = []
+        valuation_ranges = _valuation_ranges(valuation_items)
         for account in accounts:
-            points = self._trend_for_account(account, from_date, to_date)
+            points = self._trend_for_account(account, from_date, to_date, valuation_ranges=valuation_ranges)
             if points:
                 points_by_account.append({"account": account, "points": points})
         all_dates = sorted({point["date"] for item in points_by_account for point in item["points"]})
@@ -3677,9 +3706,14 @@ class LocalPortfolioStore:
                 holding.platform = account["management_company"]
         return holdings
 
-    def reports(self, filters: dict[str, Any] | None = None) -> dict[str, Any]:
+    def reports(self, filters: dict[str, Any] | None = None, *, valuation_items: list[dict] | None = None) -> dict[str, Any]:
         filters = filters or {}
         holdings = self.holdings()
+        valuation_ranges = _valuation_ranges(valuation_items)
+        for item in holdings:
+            ranges = valuation_ranges.get(_valuation_key(asdict(item.holding)))
+            if ranges is not None and not prefer_recorded_prices(item.price_ranges, ranges):
+                revalue_holding(item.holding, ranges)
         account_rows = self._filtered_accounts(filters)
         account_ids = {row["id"] for row in account_rows}
         filtered = [item for item in holdings if item.holding.account_id in account_ids]
@@ -4111,7 +4145,7 @@ class LocalPortfolioStore:
 
     def _analysis(self, position: dict[str, Any]) -> SymbolAnalysis:
         account = position["account"] or {}
-        prices = self._prices(position["symbol"], position["stock_market"], position["asset_class"], position["location"], position["currency"])
+        prices = self._prices(position["symbol"], position["stock_market"], position["asset_class"], position["location"], position["currency"], date.today())
         latest = prices[-1].adjusted_close if prices else abs(position["cost_basis"] / position["quantity"]) if position["quantity"] else 0
         quantity = position["quantity"]
         market_value = quantity * latest
@@ -4180,17 +4214,23 @@ class LocalPortfolioStore:
             for row in rows
         ]
 
-    def _trend_for_account(self, account: dict[str, Any], from_date: date, to_date: date) -> list[dict[str, Any]]:
+    def _trend_for_account(self, account: dict[str, Any], from_date: date, to_date: date, *, valuation_ranges: dict | None = None) -> list[dict[str, Any]]:
         snapshots = self._snapshot_points(account["id"], from_date, to_date)
         computed = self._computed_trend_for_account(
             account, from_date, to_date,
             extra_dates=[date.fromisoformat(point["date"]) for point in snapshots],
+            valuation_ranges=valuation_ranges,
         )
         by_date = {point["date"]: point for point in computed}
         for point in snapshots:
             currency = str(account.get("currency") or "").strip().upper()
             calculated = by_date.get(point["date"], {})
             daily = str(point.get("source") or "").casefold() == "daily"
+            if daily:
+                # Generated snapshots are derived state. Recompute on read so
+                # corrected dated evidence cannot be hidden by an old capture.
+                # Recorded statements retain their literal values below.
+                point.update(calculated)
             point["native_currency"] = currency
             point["native_available"] = bool(currency) and (bool(calculated.get("native_available")) if daily else True)
             point["native_unavailable_reason"] = calculated.get("native_unavailable_reason", "mixed_transaction_currencies") if daily and not point["native_available"] else "" if currency else "missing_account_currency"
@@ -4201,6 +4241,7 @@ class LocalPortfolioStore:
     def _computed_trend_for_account(
         self, account: dict[str, Any], from_date: date, to_date: date, *,
         connection: sqlite3.Connection | None = None, extra_dates: list[date] | None = None,
+        valuation_ranges: dict | None = None,
     ) -> list[dict[str, Any]]:
         with (nullcontext(connection) if connection is not None else self._connect()) as conn:
             transactions = [_dict(row) for row in conn.execute(
@@ -4220,7 +4261,10 @@ class LocalPortfolioStore:
                     (account["id"], from_date.isoformat(), to_date.isoformat()),
                 ).fetchall()
             ]
-        dates = sorted({from_date, to_date, *(extra_dates or []), *price_dates, *[date.fromisoformat(tx["trade_date"]) for tx in transactions if from_date <= date.fromisoformat(tx["trade_date"]) <= to_date]})
+        quote_dates = [quote[0] for key, ranges in (valuation_ranges or {}).items()
+                       if key[0] == account["id"] and (quote := valuation_quote(ranges))
+                       and from_date <= quote[0] <= to_date]
+        dates = sorted({from_date, to_date, *(extra_dates or []), *price_dates, *quote_dates, *[date.fromisoformat(tx["trade_date"]) for tx in transactions if from_date <= date.fromisoformat(tx["trade_date"]) <= to_date]})
         currency = str(account.get("currency") or "").strip().upper()
         # A mixed-currency cash movement remains relevant even after a position
         # closes. Do not relabel sums of different units as native history.
@@ -4262,6 +4306,13 @@ class LocalPortfolioStore:
                     continue
                 prices = self._prices(position["symbol"], position["stock_market"], position["asset_class"], position["location"], position["currency"], day)
                 latest = prices[-1].adjusted_close if prices else abs(position["cost_basis"] / position["quantity"]) if position["quantity"] else 0
+                ranges = (valuation_ranges or {}).get(_valuation_key({**position, "account_id": account["id"]}))
+                quote = valuation_quote(ranges)
+                # A quote can affect this day only after it was observed.
+                # As on the dashboard, market evidence wins equal-date ties;
+                # a strictly newer saved quote keeps precedence.
+                if quote and quote[0] <= day and (not prices or quote[0] >= prices[-1].date):
+                    latest = quote[1]
                 value += position["quantity"] * latest
                 basis += position["cost_basis"]
                 realized += position["realized_profit"]
