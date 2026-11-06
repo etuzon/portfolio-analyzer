@@ -150,7 +150,7 @@ const DASHBOARD_WIDGETS = [
   { id: "asset_mix", title: "Asset mix", view: "basic", size: "compact", area: "investments" },
   { id: "cash_currency", title: "Cash by currency", view: "basic", size: "compact", area: "investments" },
   { id: "industry_split", title: "Industry split", view: "basic", size: "wide", area: "investments" },
-  { id: "top_holdings", title: "Top holdings", view: "basic", size: "wide", area: "investments" },
+  { id: "top_holdings", title: "Top holdings", view: "basic", size: "medium", area: "investments" },
   { id: "bond_currency", title: "Bonds by currency", view: "basic", size: "compact", area: "investments" },
   { id: "coverage", title: "Provider data coverage", view: "expanded", size: "medium", area: "investments" },
   { id: "currency", title: "Currency allocation", view: "expanded", size: "compact", area: "investments" },
@@ -381,6 +381,10 @@ const OPTION_LABELS = {
 function optionLabel(value) {
   const label = OPTION_LABELS[value] || value;
   return window.PortfolioI18n?.translate(label, state.language) || label;
+}
+
+function industryDisplayLabel(value) {
+  return window.PortfolioI18n?.industry?.(value, state.language) || optionLabel(value);
 }
 
 function flagFor(code) {
@@ -1293,6 +1297,7 @@ function showLogin(message = "") {
   portfolioEnrichmentRetryTimer = null;
   state.auth = { user: null, csrfToken: "", forcedPasswordChange: false };
   state.authenticatedAppStarted = false;
+  if (typeof resetRiskHistory === "function") resetRiskHistory();
   document.querySelectorAll(".modal").forEach((modal) => { modal.hidden = true; });
   setAppAuthenticationLock(true);
   $("authOverlay").hidden = false;
@@ -1649,8 +1654,9 @@ function ensureHierarchicalNav() {
       </div>
     </details>
     <details class="nav-menu">
-      ${navMenuSummary("calculations", t("Calculations"))}
+      ${navMenuSummary("calculations", t("Analysis & Risk"))}
       <div class="nav-children">
+        <button class="nav-item" type="button" data-modal="riskHistoryModal">${esc(t("Risk history"))}</button>
         <button class="nav-item" type="button" data-modal="tradeSimulatorModal">${esc(t("Trade Simulation"))}</button>
         <button class="nav-item" type="button" data-modal="varModal">${esc(t("Value at Risk"))}</button>
         <button class="nav-item" type="button" data-modal="correlationModal">${esc(t("Correlation Matrix"))}</button>
@@ -2119,6 +2125,7 @@ function applyLanguage() {
   document.querySelectorAll(".modal:not([hidden])").forEach(mountModalHomeLink);
   applyAutoDirection();
   if ($("manualSecuritiesList")) renderManualSecuritiesList();
+  if (typeof renderRiskHistory === "function" && $("riskHistoryModal")?.hidden === false) renderRiskHistory();
   window.PortfolioI18n?.applyToDocument(state.language);
   window.PortfolioI18n?.observe();
 }
@@ -2803,6 +2810,7 @@ function riskTooltip(risk) {
     "",
     optionLabel("Main reasons:"),
     ...(drivers.length ? drivers.map((driver) => `• ${driver}`) : [`• ${optionLabel("No single factor stands out")}`]),
+    ...(typeof riskMissingDataTooltipLines === "function" ? riskMissingDataTooltipLines(risk.quality_details, state.language, { compact: true }) : []),
   ].join("\n");
 }
 
@@ -2974,6 +2982,7 @@ function riskScoreForItems(items, options = {}) {
     }];
   }));
   return { model: "portfolio-risk-v2", label, score, components, drivers, position_risks: positionRisks, cash_pct: cashPct,
+    quality_details: typeof riskMissingDataDetails === "function" ? riskMissingDataDetails(rows, { normalizeField: valueOfHolding, holdingsValue, totalValue, industryRows }) : [],
     cash_debt: cashDebt, net_equity: netEquity, unlevered_score: unleveredScore };
 }
 
@@ -3563,8 +3572,13 @@ function renderPortfolioValueDashboard(items) {
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([currency, value]) => money(value, currency, 0));
       const localLine = localAmounts.length ? `<small>${esc(localAmounts.join(" · "))}</small>` : "";
-      const cashText = account.cashCurrency ? `; ${optionLabel("Cash")}: ${money(account.cashLocal || 0, account.cashCurrency, 2)}` : "";
-      const title = `${optionLabel("Account")}: ${account.account}; ${optionLabel(account.type || "Account")}${account.location ? ` · ${countryDisplayLabel(account.location)}` : ""}; ${optionLabel("Source currencies")}: ${account.currencies.map(currencyDisplayLabel).join(", ")}${cashText}`;
+      const title = [
+        `${optionLabel("Account")}: ${account.account}`,
+        `${optionLabel("Account type")}: ${optionLabel(account.type || "Account")}`,
+        account.location ? `${optionLabel("Location")}: ${countryDisplayLabel(account.location)}` : "",
+        `${optionLabel("Source currencies")}: ${account.currencies.map(currencyDisplayLabel).join(", ")}`,
+        account.cashCurrency ? `${optionLabel("Cash")}: ${money(account.cashLocal || 0, account.cashCurrency, 2)}` : "",
+      ].filter(Boolean).join("\n");
       return `<span class="account-chip" title="${esc(title)}"><b>${esc(account.account)}</b><span class="account-chip-values"><strong>${money(account.value, state.baseCurrency, 0)}</strong>${localLine}</span>${riskBadge(accountRisk, true)}</span>`;
     })
     .join("");
@@ -3579,6 +3593,7 @@ function renderPortfolioValueDashboard(items) {
       const labels = allocation.bands.map((band) => `<span class="account-risk-allocation-label"><i class="account-risk-dot account-risk-${band.key}"></i>${esc(optionLabel(band.label))} <b>${esc(fmt(band.percent, 1))}%</b></span>`).join("");
       return `<article class="account-risk-allocation-card" title="${esc(optionLabel("Allocation is based on each holding's asset-risk category. Cash and money-market holdings are No risk only in the base currency; foreign-currency exposure is Low risk."))}">
         <div class="account-risk-allocation-heading"><b>${esc(entry.account)}</b><span class="account-risk-metrics">${riskBadge(entry.risk, true)}${accountShareBadge(share)}</span></div>
+        ${typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(entry.risk) : ""}
         <div class="account-risk-allocation-bar" role="img" aria-label="${esc(`${entry.account}: ${allocation.bands.map((band) => `${optionLabel(band.label)} ${fmt(band.percent, 1)}%`).join(", ")}`)}">${segments}</div>
         <div class="account-risk-allocation-labels">${labels}</div>
       </article>`;
@@ -3617,6 +3632,7 @@ function renderPortfolioValueDashboard(items) {
             <span>${esc(optionLabel("Total portfolio risk"))}</span>
             ${riskBadge(state.riskSnapshot.total)}
             <small>${esc(optionLabel("0 is very low · 100 is extreme"))}</small>
+            ${typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(state.riskSnapshot.total) : ""}
           </div>
         </div>
         <details class="summary-drawer">
@@ -3822,7 +3838,7 @@ function renderRows(items) {
     const securityName = String(h.name || "").trim();
     const companyLine = securityName || String(h.symbol || "").trim();
     const industry = industryLabel(item);
-    const industryLine = `<div class="security-industry">${esc(optionLabel("Industry"))}: ${esc(industry ? optionLabel(industry) : optionLabel("Not available"))}</div>`;
+    const industryLine = `<div class="security-industry">${esc(optionLabel("Industry"))}: ${esc(industry ? industryDisplayLabel(industry) : optionLabel("Not available"))}</div>`;
     const exposure = item.exposure_profile;
     const exposureText = exposure
       ? [exposure.asset_focus && optionLabel(EXPOSURE_FOCUS_LABELS[exposure.asset_focus] || exposure.asset_focus),
@@ -4556,6 +4572,47 @@ function renderBondsByCurrency(items) {
     </div>`;
 }
 
+function industryHoldingsBySecurity(items) {
+  const groups = new Map();
+  for (const item of items) {
+    const h = item.holding;
+    const symbol = String(h.symbol || "Unknown");
+    const market = String(h.stock_market || item.exchange || holdingMarketKey(h)).toUpperCase();
+    const identity = [symbol.toUpperCase(), market, h.currency || "", h.asset_class || "", h.asset_sub_class || "",
+      h.option_type || "", h.underlying_symbol || "", h.expiration_date || "", h.strike_price ?? "", h.contract_multiplier ?? ""].join("|");
+    if (!groups.has(identity)) groups.set(identity, { symbol, name:h.name || symbol, stockMarket:holdingMarketKey(h),
+      assetClass:String(h.asset_class || "").toUpperCase(), assetSubClass:String(h.asset_sub_class || "").toUpperCase(),
+      industrySource:item.industry_source || "", nativeCurrency:h.currency || "", listingMarket:market,
+      strikePrice:h.strike_price, expirationDate:h.expiration_date || "", optionType:h.option_type || "", value:0, accounts:new Map() });
+    const group = groups.get(identity);
+    const value = Math.abs(normalizedField(item, "market_value"));
+    group.value += value;
+    if (item.industry_source === "manual") group.industrySource = "manual";
+    const account = (state.localAccounts || []).find(row => row.id === h.account_id);
+    const accountId = h.account_id || h.account || "Unassigned";
+    const label = h.account || account?.account_id || optionLabel("Unassigned");
+    if (!group.accounts.has(accountId)) group.accounts.set(accountId, {label, quantity:0, value:0});
+    const row = group.accounts.get(accountId);
+    row.value += value;
+    row.quantity = row.quantity !== null && Number.isFinite(h.quantity) ? row.quantity + h.quantity : null;
+  }
+  return [...groups.values()].map(group => ({...group, accounts:[...group.accounts.values()]})).sort((a,b) => b.value-a.value);
+}
+
+function industryHoldingHtml(holding) {
+  const title = [
+    `${holding.name}: ${optionLabel("Gross value")}: ${money(holding.value, state.baseCurrency, 0)}`,
+    `${optionLabel("Stock market")}: ${holding.listingMarket} · ${optionLabel("Currency")}: ${currencyDisplayLabel(holding.nativeCurrency)}`,
+    holding.strikePrice !== null && holding.strikePrice !== undefined ? `${optionLabel("Strike")}: ${fmt(holding.strikePrice, 4)}` : "",
+    holding.expirationDate ? `${optionLabel("Expiration Date")}: ${formatDate(holding.expirationDate)}` : "",
+    ...holding.accounts.map(account => `${optionLabel("Account")}: ${account.label} · ${optionLabel("Quantity")}: ${account.quantity === null ? optionLabel("Not available") : fmt(account.quantity, 4)} · ${optionLabel("Gross value")}: ${money(account.value, state.baseCurrency, 0)}`),
+  ].filter(Boolean).join("\n");
+  const isBond = holding.assetClass === "BOND" || holding.assetSubClass === "BOND";
+  if (isBond) return `<span tabindex="0" title="${esc(title)}">${esc(holding.symbol)}</span>`;
+  const actionLabel = holding.industrySource === "manual" ? "Edit manual industry" : "Classify industry";
+  return `<button class="industry-holding-button${holding.industrySource === "manual" ? " is-manual" : ""}" type="button" data-classify-industry-symbol="${esc(holding.symbol)}" data-classify-industry-market="${esc(holding.stockMarket)}" title="${esc(`${optionLabel(actionLabel)}\n${title}`)}"><span>${esc(holding.symbol)}</span><i aria-hidden="true">✎</i><span class="sr-only">${esc(optionLabel(actionLabel))}</span></button>`;
+}
+
 function renderIndustrySplit(items) {
   const groups = Object.values(items.reduce((result, item) => {
     const label = industryLabel(item) || "Not classified";
@@ -4563,19 +4620,10 @@ function renderIndustrySplit(items) {
     const group = result[label] || { label, value: 0, holdings: [], items: [] };
     group.value += value;
     group.items.push(item);
-    group.holdings.push({
-      symbol: item.holding.symbol || "Unknown",
-      name: item.holding.name || item.holding.symbol || "Unknown",
-      stockMarket: holdingMarketKey(item.holding),
-      assetClass: String(item.holding.asset_class || "").toUpperCase(),
-      assetSubClass: String(item.holding.asset_sub_class || "").toUpperCase(),
-      industrySource: item.industry_source || "",
-      value,
-    });
     result[label] = group;
     return result;
   }, {}))
-    .map((group) => ({ ...group, label: optionLabel(group.label), holdings: group.holdings.sort((a, b) => b.value - a.value) }))
+    .map((group) => ({ ...group, label: industryDisplayLabel(group.label), holdings: industryHoldingsBySecurity(group.items) }))
     .sort((a, b) => b.value - a.value);
   const total = sum(groups.map((group) => group.value));
   const combinedCash = sum(portfolioAccounts().map(accountRiskCashValue));
@@ -4611,6 +4659,9 @@ function renderIndustrySplit(items) {
             <div class="industry-split-row">
               <div class="industry-split-head">
                 <b>${esc(group.label)}</b>
+                <div class="industry-holdings">
+                  ${group.holdings.map((holding) => industryHoldingHtml(holding)).join("")}
+                </div>
                 <div class="industry-split-metrics">
                   <span>${money(group.value, state.baseCurrency, 0)} · ${fmt(percent, 1)}%</span>
                   <small>${esc(optionLabel("Industry risk"))}</small>
@@ -4619,15 +4670,6 @@ function renderIndustrySplit(items) {
               </div>
               <div class="industry-split-track" title="${esc(`${group.label}: ${fmt(percent, 1)}%`)}">
                 <i style="width:${Math.max(percent, 0.8)}%;background:${colorAt(index)}"></i>
-              </div>
-              <div class="industry-holdings">
-                ${group.holdings.map((holding) => {
-                  const title = `${holding.name}: ${money(holding.value, state.baseCurrency, 0)}`;
-                  const isBond = holding.assetClass === "BOND" || holding.assetSubClass === "BOND";
-                  if (isBond) return `<span title="${esc(title)}">${esc(holding.symbol)}</span>`;
-                  const actionLabel = holding.industrySource === "manual" ? "Edit manual industry" : "Classify industry";
-                  return `<button class="industry-holding-button${holding.industrySource === "manual" ? " is-manual" : ""}" type="button" data-classify-industry-symbol="${esc(holding.symbol)}" data-classify-industry-market="${esc(holding.stockMarket)}" title="${esc(`${optionLabel(actionLabel)} · ${title}`)}"><span>${esc(holding.symbol)}</span><i aria-hidden="true">✎</i><span class="sr-only">${esc(optionLabel(actionLabel))}</span></button>`;
-                }).join("")}
               </div>
             </div>
           `;
@@ -9751,7 +9793,7 @@ function renderCompanyOutlook(outlook) {
       <tbody>${companies.map((company) => `
         <tr>
           <td data-label="${esc(t("Company"))}"><b>${esc(company.symbol)}</b><div class="sub">${esc(company.name || "")}</div></td>
-          <td data-label="${esc(t("Industry"))}">${esc(t(company.industry || "Not available"))}</td>
+          <td data-label="${esc(t("Industry"))}">${esc(industryDisplayLabel(company.industry || "Not available"))}</td>
           <td data-label="${esc(t("Fiscal date"))}">${esc(formatDate(company.fiscal_date))}</td>
           <td data-label="${esc(t("Revenue growth"))}">${pct(company.revenue_growth_percent)}</td>
           <td data-label="${esc(t("Operating margin"))}">${pct(company.operating_margin_percent)}</td>
@@ -11383,11 +11425,11 @@ function openIndustryClassification(symbol, stockMarket, returnFocus) {
   };
   $("industryClassificationSecurity").textContent = `${holding.symbol}${holding.name ? ` · ${holding.name}` : ""}`;
   $("industryClassificationProvider").textContent = provider
-    ? `${optionLabel("Provider classification")}: ${optionLabel(provider)}`
+    ? `${optionLabel("Provider classification")}: ${industryDisplayLabel(provider)}`
     : optionLabel("The provider did not classify this security.");
   $("industryClassificationSelect").innerHTML = [
     `<option value="">${esc(optionLabel("Choose an industry"))}</option>`,
-    ...catalog.map((industry) => `<option value="${esc(industry)}">${esc(optionLabel(industry))}</option>`),
+    ...catalog.map((industry) => `<option value="${esc(industry)}">${esc(industryDisplayLabel(industry))}</option>`),
   ].join("");
   $("industryClassificationSelect").value = catalog.includes(current) ? current : "";
   $("industryClassificationStatus").textContent = "";
@@ -11653,6 +11695,11 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
       });
     }
     if (data.refresh_pending) retry();
+    else if (data.refresh_state !== "failed" && typeof recordRiskHistory === "function") {
+      recordRiskHistory().then(() => {
+        if (typeof loadRiskHistory === "function" && $("riskHistoryModal")?.hidden === false) loadRiskHistory({capture:false});
+      });
+    }
   } catch (error) {
     if (version !== state.portfolioLoadVersion) return;
     if (version === state.portfolioLoadVersion && state.portfolioRefreshPending) {
@@ -12661,7 +12708,7 @@ async function runMarketScreener() {
   $("marketRows").innerHTML = data.items.length ? data.items.map((item) => `
     <tr>
       <td><div class="symbol">${esc(item.symbol)}</div><div class="sub">${esc(item.exchange || "Unknown exchange")}</div></td>
-      <td>${esc(item.name || "Unknown company")}<div class="sub">${esc([item.sector, item.industry, item.country ? countryDisplayLabel(item.country) : ""].filter(Boolean).join(" · ") || "Classification unavailable")}</div></td>
+      <td>${esc(item.name || "Unknown company")}<div class="sub">${esc([item.sector ? industryDisplayLabel(item.sector) : "", item.industry ? industryDisplayLabel(item.industry) : "", item.country ? countryDisplayLabel(item.country) : ""].filter(Boolean).join(" · ") || "Classification unavailable")}</div></td>
       <td>${item.price === null || item.price === undefined ? "∅" : money(item.price, item.currency || "USD", 2)}</td>
       <td>${marketMetricAmount(item.market_cap, item.currency)}</td>
       <td>${marketMetricPercent(item.dividend_yield_percent, 2)}<div class="sub">${item.annual_dividend === null || item.annual_dividend === undefined ? "" : `${money(item.annual_dividend, item.currency || "USD", 3)} / share`}</div></td>
@@ -13422,6 +13469,7 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
   if (id === "benchmarkModal") loadBenchmarkComparison();
   if (id === "optimizationModal") loadOptimization();
   if (id === "varModal") loadVar();
+  if (id === "riskHistoryModal") loadRiskHistory();
   if (["brokerEditorModal", "instrumentEditorModal"].includes(id)) {
     const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : $(id === "instrumentEditorModal" ? "securitiesModal" : "brokersModal");
     if (parentModal && parentModal !== modal && !parentModal.hidden) {

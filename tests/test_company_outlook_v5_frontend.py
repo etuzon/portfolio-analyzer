@@ -17,7 +17,9 @@ for(const id of ['companyOutlookEmpty','companyOutlookResults','companyOutlookSt
 const company=(symbol,score)=>({symbol,name:'',industry:'Computer Communications Equipment',fiscal_date:'2025-12-31',score,revenue_growth_percent:10,operating_margin_percent:15,net_margin_percent:10,free_cash_flow_margin_percent:8,current_ratio:2});
 const analysis=()=>({symbol:'NEWT',model_version:'report-outlook-v5',score:67.3,label:'Good',score_status:'scored',direction:'positive',rank:1,ranked_company_count:3,rank_tied:true,confidence:'Medium',coverage:{available_weight:45,total_weight:45,percent:100,usable_peer_count:2,missing_metrics:[]},industry:{health:'Stable',score:50},score_component_limits:{company_fundamentals:100},score_components:{company_fundamentals:67.3},companies:[company('NEWT',67.3),company('PEER',48.2)],related_industries:[],missing:[],peer_source:'explicit industry cohort'});
 """
-    run_js(SOURCE[start:end] + setup + body)
+    helper_start = SOURCE.index("function industryDisplayLabel(")
+    helper_end = helper_start + re.search(r"^}", SOURCE[helper_start:], re.M).end()
+    run_js(SOURCE[helper_start:helper_end] + SOURCE[start:end] + setup + body)
 
 
 def test_insufficient_analysis_does_not_show_zero_or_weak_and_reports_remain_visible():

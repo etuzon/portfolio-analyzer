@@ -1,0 +1,14 @@
+.risk-history-controls { display:grid; grid-template-columns:minmax(220px,2fr) minmax(170px,1fr) auto; gap:12px; align-items:end; }
+.risk-history-controls .field { min-width:0; }
+.risk-history-controls select { width:100%; min-width:0; box-sizing:border-box; }
+.risk-history-chart { overflow-x:auto; margin-block:12px; }
+.risk-history-chart svg { display:block; width:100%; min-width:580px; height:auto; color:#abb9cd; font-size:12px; direction:ltr; }
+.risk-history-chart text { fill:currentColor; }
+.risk-history-grid { stroke:#303a49; stroke-width:1; }
+.risk-history-line { fill:none; stroke:#8e81ff; stroke-width:2.5; }
+.risk-history-chart circle { fill:#b4aaff; stroke:#111a28; stroke-width:1.5; }
+.risk-history-chart circle:focus-visible { stroke:#fff; stroke-width:3; outline:none; }
+.risk-history-details { white-space:pre-wrap; overflow-wrap:anywhere; max-height:340px; overflow:auto; font:inherit; line-height:1.6; }
+#riskHistoryContent table { width:100%; }
+#riskHistoryContent caption { text-align:start; margin-block:8px; font-weight:700; }
+@media(max-width:700px){.risk-history-controls{grid-template-columns:minmax(0,1fr);}}

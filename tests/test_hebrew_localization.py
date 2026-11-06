@@ -67,7 +67,7 @@ def test_alert_progress_and_run_history_follow_active_language():
 def test_company_outlook_localizes_mermaid_labels_missing_data_and_report_copy():
     source = (ROOT / "web/app.js").read_text()
     functions = []
-    for name in ("t", "companyOutlookDiagramSource", "renderCompanyOutlook", "companyOutlookUsesCurrentFormula", "companyOutlookHasScore", "companyOutlookEvidenceReason", "companyOutlookRankText", "companyOutlookScoreHelp", "companyOutlookConfidenceHelp", "companyOutlookDataCoverage", "companyOutlookNarrative", "renderCompanyOutlookDiagramFallback", "outlookScoreText"):
+    for name in ("t", "industryDisplayLabel", "companyOutlookDiagramSource", "renderCompanyOutlook", "companyOutlookUsesCurrentFormula", "companyOutlookHasScore", "companyOutlookEvidenceReason", "companyOutlookRankText", "companyOutlookScoreHelp", "companyOutlookConfidenceHelp", "companyOutlookDataCoverage", "companyOutlookNarrative", "renderCompanyOutlookDiagramFallback", "outlookScoreText"):
         start = source.index(f"function {name}(")
         end = re.search(r"\n(?:async )?function ", source[start + 1:])
         functions.append(source[start:start + 1 + end.start()])
@@ -362,7 +362,7 @@ def test_populated_dashboard_values_are_localized_at_composition_time():
     assert 'optionLabel("No single factor stands out")' in script
     assert 'const missingField = text.slice(8).trim()' in script
     assert '`היעדר נתוני ${optionLabel(missingField)} מקטין את ודאות האומדן`' in script
-    assert '.map((group) => ({ ...group, label: optionLabel(group.label)' in script
+    assert '.map((group) => ({ ...group, label: industryDisplayLabel(group.label)' in script
     assert 'optionLabel("Holding Profit")' in script
     assert 'optionLabel("Total P/L")' in script
     assert 'optionLabel("units")' in script

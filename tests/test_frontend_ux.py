@@ -376,7 +376,7 @@ def test_help_menu_covers_every_navigation_group_with_accessible_submenus():
     assert 'data-modal-initial-focus aria-label="Close"' in help_dialog
     assert help_dialog.count('<details class="help-group"') == 8
     assert '<details class="help-group" open>' in help_dialog
-    for group in ["Dashboard", "Portfolio", "Research", "Calculations", "Accounts &amp; People", "Retirement &amp; Benefits", "Settings", "Help"]:
+    for group in ["Dashboard", "Portfolio", "Research", "Analysis &amp; Risk", "Accounts &amp; People", "Retirement &amp; Benefits", "Settings", "Help"]:
         assert f"<summary><span>{group}</span>" in help_dialog
     for feature in [
         "Home", "Portfolio Reports", "Accounts", "Brokers", "Employee Stock Options", "Transactions", "Prices", "Dividends &amp; Events",

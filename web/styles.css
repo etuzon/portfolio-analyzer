@@ -11103,3 +11103,19 @@ html[dir="rtl"] .settings-menu-button.active {
 .dividend-summary-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-block:10px; }
 @media(max-width:900px){ .dividend-summary-controls { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media(max-width:640px){ .dividend-summary-controls { grid-template-columns:minmax(0,1fr); } }
+
+/* Top holdings remain compact when a row has spare space. */
+.analytics-board > .dashboard-widget[data-widget="top_holdings"] { flex:0 1 calc(33.333% - 8px); min-width:320px; }
+.dashboard-widget[data-widget="top_holdings"] .mini-bars { gap:4px; min-height:118px; }
+.dashboard-widget[data-widget="top_holdings"] .mini-bar-wrap { gap:4px; }
+.dashboard-widget[data-widget="top_holdings"] .mini-bars-legend { gap:4px 6px; }
+@media(max-width:1000px){.analytics-board > .dashboard-widget[data-widget="top_holdings"]{flex-basis:calc(50% - 6px);}}
+@media(max-width:700px){.analytics-board > .dashboard-widget[data-widget="top_holdings"]{flex-basis:100%;min-width:0;}}
+
+/* Industry labels, unique securities and metrics share one compact row. */
+.industry-split-head { align-items:center; flex-wrap:wrap; gap:6px 12px; }
+.industry-split-head > b { flex:0 1 auto; }
+.industry-split-head > .industry-holdings { flex:1 1 160px; min-width:0; }
+.industry-split-row { padding:7px 10px; gap:5px; }
+.industry-split-head .industry-holding-button,.industry-split-head .industry-holdings > span { min-height:25px; padding:2px 6px; }
+@media(max-width:760px){.industry-split-head{flex-direction:row;}.industry-split-head > b{flex-basis:100%;}.industry-split-head > .industry-holdings{flex-basis:100%;}}

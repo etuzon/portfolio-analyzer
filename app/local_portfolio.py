@@ -838,7 +838,7 @@ class LocalPortfolioStore:
         # Saving a journal reason/review or reply must not refetch market data.
         data["app_preferences"] = [
             row for row in data.get("app_preferences", [])
-            if row.get("key") != "logging_settings" and not str(row.get("key") or "").startswith(("assistant_chats:", "assistant_context:", "trading_journal_v1:", "var_fx_v1:"))
+            if row.get("key") != "logging_settings" and not str(row.get("key") or "").startswith(("assistant_chats:", "assistant_context:", "trading_journal_v1:", "var_fx_v1:", "risk_history_v1:"))
         ]
         encoded = json.dumps(data, sort_keys=True, default=str).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()

@@ -150,18 +150,18 @@ def test_reclassified_account_cannot_retain_old_risk_result():
 ''')
 
 
-def test_var_is_only_accessible_under_calculations_and_not_requested_by_dashboard():
+def test_var_is_only_accessible_under_analysis_and_risk_and_not_requested_by_dashboard():
     html = (ROOT / 'web/index.html').read_text()
     script = (ROOT / 'web/app.js').read_text()
     var_script = (ROOT / 'web/var-ui.js').read_text()
     sidebar = html.split('<aside class="sidebar"', 1)[1].split('</aside>', 1)[0]
-    calculations = sidebar.split('<span class="nav-menu-label">Calculations</span>', 1)[1].split('</details>', 1)[0]
+    calculations = sidebar.split('<span class="nav-menu-label">Analysis &amp; Risk</span>', 1)[1].split('</details>', 1)[0]
     assert calculations.count('data-modal="varModal"') == 1
     assert sidebar.count('data-modal="varModal"') == 1
     assert html.count('data-modal="varModal"') == 1
     assert 'varSummary' not in html + script + var_script
     assert 'loadVarSummary' not in script + var_script
-    assert 'navMenuSummary("calculations", t("Calculations"))' in script
+    assert 'navMenuSummary("calculations", t("Analysis & Risk"))' in script
     assert 'if (id === "varModal") loadVar();' in script
     run_ui(r'''
 (async()=>{assert.equal(pending.length,0);seed();assert.equal(pending.length,0);

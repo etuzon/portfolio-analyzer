@@ -64,6 +64,7 @@ from .outlook_scoring import OUTLOOK_MODEL_VERSION, OUTLOOK_EVALUATION_VERSION, 
 from .providers import MarketDataHub, ProviderError
 from .portfolio_refresh import attach_market_analysis, refresh_positions, security_key
 from .report_pdf import build_portfolio_report_pdf
+from . import risk_history
 from .dividend_summary_pdf import build_dividend_summary_pdf
 from .trade_planner import planner_security
 
@@ -3305,6 +3306,82 @@ async def assistant_question(payload: dict[str, Any], request: Request):
 def clear_assistant_context(request: Request):
     """Compatibility action: begin a new chat while retaining prior conversations."""
     return {**create_assistant_chat(request), "cleared": True, "context_messages": 0}
+
+
+def _risk_history_guard():
+    return (portfolio_cache_signature(), _portfolio_cache_generation)
+
+
+def _risk_history_saved_fx(base_currency: str, items: list, accounts: list):
+    """Read retained FX only; observation paths never fetch providers."""
+    visible_accounts = [account for account in accounts if str(account.get("type") or "").upper() != "ESOP"]
+    esop_ids = {str(account["id"]) for account in accounts if str(account.get("type") or "").upper() == "ESOP"}
+    holdings = [item.get("holding") or {} for item in items]
+    currencies = {str(holding.get("currency") or "") for holding in holdings
+                  if str(holding.get("account_id") or "") not in esop_ids
+                  and str(holding.get("account_type") or "").upper() != "ESOP"
+                  and str(holding.get("asset_class") or holding.get("asset_sub_class") or "").upper() not in {"RSU", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"}}
+    currencies.update(str(account.get("currency") or "") for account in visible_accounts)
+    pairs = sorted({pair for currency in currencies if currency and currency != base_currency
+                    for pair in (f"{currency}/{base_currency}", f"{base_currency}/{currency}")})
+    market_hub = hub()
+    quotes = []
+    for pair in pairs:
+        for provider in market_hub.providers:
+            saved = market_hub.cache.get_security_snapshot(provider.name, pair, "fx")
+            if isinstance(saved, dict) and type(saved.get("rate")) in (int, float) and math.isfinite(saved["rate"]) and saved["rate"] > 0:
+                quotes.append({"pair": pair, "quote": deepcopy(saved), "status": {provider.name: "saved_evidence"}})
+                break
+    return {"quotes": quotes}
+
+
+def _risk_history_inputs(base_currency: str):
+    # All three paths use the same lock order. Stored history is excluded from
+    # financial change_token so recording never invalidates its own context.
+    with _portfolio_cache_lock, local_store._sync_lock:
+        before = _risk_history_guard()
+        payload = portfolio_payload(defer_enrichment=True)
+        if (payload.get("refresh_pending") or payload.get("refresh_state", "ready") != "ready"
+                or any(item.get("analytics_state", "ready") != "ready" for item in payload.get("items", []))):
+            raise risk_history.RiskHistoryError("risk_context_not_ready", 409)
+        accounts = local_store.list_accounts()
+        transactions = local_store.list_transactions()
+        fx_data = _risk_history_saved_fx(base_currency, payload.get("items", []), accounts)
+        after = _risk_history_guard()
+        if not before[0] or before != after or fx_data != _risk_history_saved_fx(base_currency, payload.get("items", []), accounts):
+            raise risk_history.RiskHistoryError("risk_context_stale", 409)
+        return {**risk_history.canonical_inputs(payload.get("items", []), accounts, transactions, fx_data, base_currency), "guard": before}
+
+
+def _risk_history_error(exc):
+    return HTTPException(status_code=exc.status, detail={"code": str(exc), "message": str(exc)})
+
+
+@app.get("/api/portfolio/risk-history/context")
+def risk_history_context(request: Request, base_currency: str = "ILS"):
+    try:
+        with _portfolio_cache_lock, local_store._sync_lock:
+            return risk_history.create_context(local_store, request.state.auth_user["id"], base_currency, _risk_history_inputs)
+    except risk_history.RiskHistoryError as exc:
+        raise _risk_history_error(exc) from exc
+
+
+@app.post("/api/portfolio/risk-history")
+def record_risk_history(request: Request, payload: dict[str, Any]):
+    try:
+        with _portfolio_cache_lock, local_store._sync_lock:
+            return risk_history.save_observation(local_store, request.state.auth_user["id"], payload, _risk_history_inputs, _risk_history_guard,
+                lambda context: _risk_history_saved_fx(context["base_currency"], context["items"], context["accounts"]))
+    except risk_history.RiskHistoryError as exc:
+        raise _risk_history_error(exc) from exc
+
+
+@app.get("/api/portfolio/risk-history")
+def get_risk_history(base_currency: str = "ILS", days: int = 90):
+    try:
+        return risk_history.list_observations(local_store, base_currency, days)
+    except risk_history.RiskHistoryError as exc:
+        raise _risk_history_error(exc) from exc
 
 
 @app.get("/api/portfolio")

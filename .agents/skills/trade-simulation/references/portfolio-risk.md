@@ -43,3 +43,22 @@ FX, account/total dashboard parity, frozen snapshots and source immutability.
 [SEC margin guidance](https://www.investor.gov/introduction-investing/general-resources/news-alerts/alerts-bulletins/investor-bulletins-29)
 supports the general borrowing-risk rationale; it does not endorse this app's
 scoring formula or weights.
+
+## Observed risk history
+
+Risk history keeps `portfolio-risk-v2` unchanged. It records browser-calculated
+assessments from coherent server contexts, tagged `dashboard_client_calculated`.
+Canonical scope excludes ESOP/equity compensation and ignores transient holdings
+filters. Account IDs, model, base currency, component/gap details, actual saved FX
+and source revision are frozen. Saved FX can differ from newer live badge FX.
+Existing value/cash account snapshots do not support retrospective risk backfill.
+
+Capture requires a finished source, known required valuations/quantities/cash and
+positive conversion FX; deliberate data-quality penalties remain recordable.
+Generation, source signature and saved FX are rechecked at publication. Risk
+history preferences are excluded from the financial change token. Historical
+observations remain immutable after corrections. Charts show the last observation
+per Jerusalem day, with gaps for unobserved days and a dot for a single point.
+A missing-data score is weighted points, with serializable contributor details;
+it is not a count of absent records. See `tests/test_risk_history.py`, frontend
+history/independent QA and risk-data-gap tests.

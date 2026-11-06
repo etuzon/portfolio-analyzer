@@ -1,0 +1,30 @@
+.risk-data-quality {
+  min-width: 0;
+  margin-block: 8px;
+  color: var(--ux-muted, #aab4cf);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: start;
+}
+.risk-data-quality > summary {
+  cursor: pointer;
+  color: var(--ux-text, #e3eaf5);
+  padding-block: 6px;
+  border-radius: 5px;
+}
+.risk-data-quality > summary:focus-visible,
+.risk-data-quality-content:focus-visible {
+  outline: 2px solid #70b8ff;
+  outline-offset: 3px;
+}
+.risk-data-quality-content {
+  max-height: 320px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  padding: 8px 12px;
+  border: 1px solid var(--ux-stroke, #344051);
+  border-radius: 7px;
+  background: var(--ux-panel-soft, #141b25);
+}
+.risk-data-quality-content p { margin: 0 0 7px; }
+.risk-data-quality-content p:last-child { margin-bottom: 0; }

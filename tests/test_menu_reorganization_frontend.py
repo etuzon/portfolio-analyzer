@@ -33,8 +33,8 @@ const nav={innerHTML:'',querySelector:()=>null};
 const document={querySelector:()=>nav};
 const navMenuSummary=(_icon,label)=>`<summary>${esc(label)}</summary>`;
 ''' + functions("ensureHierarchicalNav") + r'''
-const groups=['Portfolio','Research','Calculations','Accounts & People','Retirement & Benefits','Settings','Help'];
-const destinations=[['positionsModal','securitiesModal','tradingJournalModal','eventsModal','pricesModal','reportsModal'],['marketModal','researchModal','researchModal','macroScenarioModal'],['tradeSimulatorModal','varModal','correlationModal','benchmarkModal','optimizationModal','xrayModal'],['accountsModal','brokersModal','familyModal','familyModal'],['fundsModal','fundsModal','securitiesModal'],['settingsModal','bannerModal'],['helpModal','aboutModal']];
+const groups=['Portfolio','Research','Analysis & Risk','Accounts & People','Retirement & Benefits','Settings','Help'];
+const destinations=[['positionsModal','securitiesModal','tradingJournalModal','eventsModal','pricesModal','reportsModal'],['marketModal','researchModal','researchModal','macroScenarioModal'],['riskHistoryModal','tradeSimulatorModal','varModal','correlationModal','benchmarkModal','optimizationModal','xrayModal'],['accountsModal','brokersModal','familyModal','familyModal'],['fundsModal','fundsModal','securitiesModal'],['settingsModal','bannerModal'],['helpModal','aboutModal']];
 for(language of ['en','he','en'])for(admin of [false,true]){
  ensureHierarchicalNav();
  const menus=[...nav.innerHTML.matchAll(/<details class="nav-menu"[^>]*>\s*<summary>(.*?)<\/summary>([\s\S]*?)<\/details>/g)];
