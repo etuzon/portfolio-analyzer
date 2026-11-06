@@ -5301,12 +5301,23 @@ textarea.muted-control {
 #accountEditModal .form-actions, .account-cash-actions { display:flex; flex-wrap:nowrap; align-items:stretch; gap:10px; width:100%; max-width:420px; }
 #accountEditModal .form-actions > button, .account-cash-actions > button { flex:1 1 0; min-width:0; padding-inline:10px; white-space:normal; }
 .account-edit-cash { margin-block:10px; }
-.account-current-cash { display:flex; flex-wrap:wrap; align-items:center; gap:10px; color:#d9dee7; font-size:13px; min-width:0; }
+.account-current-cash { display:flex; align-items:center; color:#d9dee7; font-size:13px; min-width:0; max-width:100%; }
 .account-current-cash > span { min-width:0; overflow-wrap:anywhere; }
 .account-management-item > .account-current-cash { grid-column:1 / -1; }
 .currency-strip .account-current-cash { grid-column:1 / -1; display:flex; padding:2px 0 0; min-height:0; gap:8px; background:transparent; border-radius:0; }
 .currency-strip .account-current-cash > span { padding:0; min-height:0; background:transparent; font-size:11px; overflow-wrap:anywhere; }
-.currency-strip .account-current-cash > button { min-height:28px; padding:3px 8px; font-size:11px; }
+.account-current-cash .account-cash-edit { display:inline-flex; flex:0 1 auto; flex-wrap:wrap; align-items:center; justify-content:flex-start; gap:4px; width:auto; max-width:100%; height:auto; min-height:32px; padding:3px 2px; border:1px solid transparent; border-radius:4px; background:transparent; color:#b9d7f8; font:inherit; text-align:start; line-height:1.4; }
+.account-cash-edit > .account-cash-value { display:inline-flex; align-items:center; gap:5px; }
+.account-cash-edit bdi { white-space:nowrap; }
+.account-cash-edit .account-cash-pencil { width:14px; height:14px; min-height:0; flex:0 0 14px; }
+.account-cash-edit:not(:disabled):hover { background:#203044; color:#e0efff; }
+.account-cash-edit::after { width:max-content; max-width:min(240px,calc(100vw - 40px)); }
+.account-cash-edit:disabled::after { display:none; }
+.currency-strip .account-current-cash > .account-cash-edit { font-size:11px; }
+.currency-strip .account-cash-edit > span { min-height:0; padding:0; border-radius:0; background:transparent; color:inherit; font:inherit; }
+@media (max-width:600px), (pointer:coarse) {
+  .account-current-cash .account-cash-edit { min-height:44px; }
+}
 #accountCashModal > .account-cash-card { width:min(100%,560px); }
 .account-cash-account { overflow-wrap:anywhere; color:#c6cede; }
 .account-cash-current { display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; padding:12px; background:#1b1b1d; border-radius:8px; }

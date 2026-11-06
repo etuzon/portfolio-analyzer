@@ -377,6 +377,101 @@ def enter(command):
 
 
 @pytest.mark.parametrize("width,language", [(390, "en"), (1440, "en"), (390, "he"), (1440, "he")])
+def test_inline_cash_balance_native_activation_permissions_and_focus(tmp_path, chromium, width, language):
+    """Exercise the actual shared cash renderer with the complete stylesheet."""
+    import base64
+    fixture = cash_browser_document(tmp_path, language)
+    command, evaluate = chromium
+    command("Emulation.setFocusEmulationEnabled", {"enabled": True})
+    command("Emulation.setDeviceMetricsOverride", {"width": width, "height": 900, "deviceScaleFactor": 1, "mobile": False})
+    command("Page.navigate", {"url": fixture.as_uri()})
+    browser_wait(evaluate, "window.qa?.ready===true")
+    evaluate("window.qaRenderDashboard=()=>withDashboardToolbar({id:'portfolio_value'},renderPortfolioValueDashboard([]));$('analyticsBoard').innerHTML=qaRenderDashboard();window.qaTrigger=()=>document.querySelector('.account-chip [data-update-account-cash]');qaTrigger().scrollIntoView({block:'center'});")
+    current_cash = "Current cash" if language == "en" else "מזומן נוכחי"
+    update_cash = "Update cash" if language == "en" else "עדכון מזומן"
+    assert evaluate("innerWidth") == width
+    trigger = evaluate("""(()=>{const e=qaTrigger(),r=e.getBoundingClientRect(),icon=e.querySelector('svg');
+      return {tag:e.tagName,text:e.textContent,label:e.getAttribute('aria-label'),buttons:e.querySelectorAll('button').length,
+        left:r.left,right:r.right,height:r.height,icon:!!icon,iconOpacity:icon?getComputedStyle(icon).opacity:null,
+        iconDisplay:icon?getComputedStyle(icon).display:null,iconHeight:icon?.getBoundingClientRect().height,
+        iconWidth:icon?.getBoundingClientRect().width,chipHeight:e.closest('.account-chip').getBoundingClientRect().height,
+        tooltip:e.dataset.tooltip||e.title};})()""")
+    assert trigger["tag"] == "BUTTON" and trigger["buttons"] == 0, trigger
+    assert current_cash in trigger["text"] and "800.00" in trigger["text"], trigger
+    assert update_cash not in trigger["text"], trigger
+    assert "Synthetic Dollar" in trigger["label"], trigger
+    assert trigger["tooltip"] == update_cash, trigger
+    assert trigger["icon"] and trigger["iconOpacity"] == "1" and trigger["iconDisplay"] != "none", trigger
+    assert abs(trigger["iconHeight"] - 14) <= 1 and abs(trigger["iconWidth"] - 14) <= 1, trigger
+    assert trigger["chipHeight"] <= 100, trigger
+    assert trigger["left"] >= 0 and trigger["right"] <= width and trigger["height"] >= 28, trigger
+    evaluate("qaTrigger().focus({preventScroll:true});")
+    assert evaluate("document.activeElement===qaTrigger()&&qaTrigger().matches(':focus')"), evaluate("({active:document.activeElement.outerHTML,focus:document.hasFocus(),disabled:qaTrigger().disabled})")
+    browser_wait(evaluate, "getComputedStyle(qaTrigger(),'::after').opacity", "1")
+    assert update_cash in evaluate("getComputedStyle(qaTrigger(),'::after').content")
+    evaluate("qaTrigger().blur();")
+    point = evaluate("(()=>{const r=qaTrigger().getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()")
+    command("Input.dispatchMouseEvent", {"type": "mouseMoved", **point})
+    browser_wait(evaluate, "getComputedStyle(qaTrigger(),'::after').opacity", "1")
+    (tmp_path / f"inline-cash-dashboard-{language}-{width}.png").write_bytes(base64.b64decode(command("Page.captureScreenshot", {"format": "png"})["data"]))
+    command("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": 0, "y": 0})
+    for balance in [38819.65, 0, -125.5]:
+        evaluate(f"state.localAccounts[0].initial_cash={balance}+200;$('analyticsBoard').innerHTML=qaRenderDashboard();qaTrigger().scrollIntoView({{block:'center'}});")
+        dimensions = evaluate("""(()=>{const e=qaTrigger(),label=e.querySelector('.account-cash-label').getBoundingClientRect(),
+          value=e.querySelector('.account-cash-value').getBoundingClientRect(),r=e.getBoundingClientRect();
+          return {top:Math.abs(label.top-value.top),width:r.width,height:r.height,overflow:e.scrollWidth-e.clientWidth,
+          left:r.left,right:r.right};})()""")
+        assert dimensions["top"] <= 2 and dimensions["width"] <= 250 and dimensions["height"] <= 50, dimensions
+        assert dimensions["overflow"] <= 1 and dimensions["left"] >= 0 and dimensions["right"] <= width, dimensions
+        if balance == 38819.65:
+            (tmp_path / f"inline-cash-large-rest-{language}-{width}.png").write_bytes(base64.b64decode(command("Page.captureScreenshot", {"format": "png"})["data"]))
+            evaluate("qaTrigger().focus({preventScroll:true});")
+            browser_wait(evaluate, "getComputedStyle(qaTrigger(),'::after').opacity", "1")
+            (tmp_path / f"inline-cash-large-focus-{language}-{width}.png").write_bytes(base64.b64decode(command("Page.captureScreenshot", {"format": "png"})["data"]))
+    evaluate("state.localAccounts[0].initial_cash=1000;$('analyticsBoard').innerHTML=qaRenderDashboard();qaTrigger().scrollIntoView({block:'center'});")
+    # Real key events use the browser's native button behavior, including Space.
+    for key, code, virtual, text in [("Enter", "Enter", 13, "\r"), (" ", "Space", 32, " ")]:
+        evaluate("qaTrigger().focus({preventScroll:true});")
+        command("Input.dispatchKeyEvent", {"type": "keyDown", "key": key, "code": code, "windowsVirtualKeyCode": virtual, "text": text})
+        command("Input.dispatchKeyEvent", {"type": "keyUp", "key": key, "code": code, "windowsVirtualKeyCode": virtual})
+        browser_wait(evaluate, "!$('accountCashModal').hidden&&!$('accountCashTarget').disabled")
+        assert evaluate("document.activeElement.id") == "accountCashTarget"
+        evaluate("$('accountCashModal').querySelector('button[data-close]').click();")
+        browser_wait(evaluate, "document.activeElement===qaTrigger()")
+    assert evaluate("qa.posts.length") == 0
+    # Tap the balance text, away from the pencil, on a touch-capable viewport.
+    command("Emulation.setTouchEmulationEnabled", {"enabled": True, "maxTouchPoints": 1})
+    point = evaluate("(()=>{qaTrigger().blur();const r=qaTrigger().querySelector('bdi').getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()")
+    command("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{**point, "radiusX": 1, "radiusY": 1}]})
+    command("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+    browser_wait(evaluate, "!$('accountCashModal').hidden&&!$('accountCashTarget').disabled")
+    # Simulate the real save's dashboard rerender; focus must find the new node.
+    evaluate("loadPortfolio=async()=>{$('analyticsBoard').innerHTML=qaRenderDashboard();};$('accountCashTarget').value='750';$('accountCashTarget').dispatchEvent(new Event('input',{bubbles:true}));$('accountCashSave').click();")
+    browser_wait(evaluate, "$('accountCashModal').hidden")
+    browser_wait(evaluate, "document.activeElement===qaTrigger()")
+    assert evaluate("qa.posts.length") == 1 and evaluate("qa.cash") == 750
+    # Shared Accounts and Edit account surfaces use the same full-line control.
+    evaluate("openModal('accountsModal');setAccountsTab('existing');renderLocalAccountsList();")
+    assert evaluate("$('accountsList').querySelector('[data-update-account-cash]').tagName") == "BUTTON"
+    assert current_cash in evaluate("$('accountsList').querySelector('[data-update-account-cash]').textContent")
+    evaluate("$('accountsList').querySelector('[data-update-account-cash]').focus();$('accountsList').querySelector('[data-update-account-cash]').click();")
+    browser_wait(evaluate, "!$('accountCashModal').hidden&&!$('accountCashTarget').disabled")
+    evaluate("$('accountCashModal').querySelector('button[data-close]').click();")
+    browser_wait(evaluate, "document.activeElement===$('accountsList').querySelector('[data-update-account-cash]')")
+    evaluate("closeModal($('accountsModal'));editLocalAccount('qa-dollar');")
+    browser_wait(evaluate, "!$('accountEditModal').hidden")
+    assert current_cash in evaluate("$('editAccountCash').querySelector('[data-update-account-cash]').textContent")
+    evaluate("$('editAccountCash').querySelector('[data-update-account-cash]').focus();")
+    (tmp_path / f"inline-cash-edit-{language}-{width}.png").write_bytes(base64.b64decode(command("Page.captureScreenshot", {"format": "png"})["data"]))
+    evaluate("closeModal($('accountEditModal'));state.auth.user.role='Viewer';$('analyticsBoard').innerHTML=qaRenderDashboard();renderLocalAccountsList();renderAccountEditCash(state.localAccounts[0]);")
+    for selector in [".account-chip .account-current-cash", "#accountsList .account-current-cash", "#editAccountCash .account-current-cash"]:
+        assert current_cash in evaluate(f"document.querySelector({selector!r}).textContent")
+        assert evaluate(f"document.querySelector({selector!r}).querySelectorAll('button,[data-update-account-cash],svg').length") == 0
+        assert evaluate(f"document.querySelector({selector!r}).matches('button,[data-update-account-cash],[tabindex]')") is False
+    assert evaluate("qa.errors") == []
+
+
+@pytest.mark.parametrize("width,language", [(390, "en"), (1440, "en"), (390, "he"), (1440, "he")])
 def test_real_cash_form_keyboard_retry_stale_cancel_and_field_layout(tmp_path, chromium, width, language):
     import base64
     fixture = cash_browser_document(tmp_path, language)
