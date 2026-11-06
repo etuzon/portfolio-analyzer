@@ -224,3 +224,25 @@ const thin=rectangle(100,21);heatmapFitLabel(thin);assert.equal(thin.dataset.hea
 const longSymbol=rectangle(93,159,16);heatmapFitLabel(longSymbol);assert.equal(longSymbol.dataset.heatmapLabelMode,'compact-wrap');assert.equal(longSymbol.size,16);
 const tiny=rectangle(12,8);heatmapFitLabel(tiny);assert.equal(tiny.dataset.heatmapLabelMode,'none');assert.equal(tiny.clientWidth,12);assert.equal(tiny.clientHeight,8);
 ''')
+
+
+def test_asset_type_icons_distinguish_bonds_and_funds_from_stocks():
+    run_ui(r'''
+seed();
+assert.equal(heatmapTypeIcon(a),'');
+for(const asset_class of ['ETF','MUTUALFUND','MUTUAL_FUND']){
+ const asset={...a,asset_class};
+ assert.ok(heatmapTypeIcon(asset).includes('data-heatmap-type="funds"'));
+ const tile=heatmapTileMap([asset]);
+ assert.ok(tile.includes('heatmap-type-icon'));
+ assert.ok(tile.includes(`<title>${heatmapClass(asset)}</title>`));
+ assert.ok(heatmapButtonLabel(asset,[asset]).includes(heatmapClass(asset)));
+}
+const bond={...a,asset_class:'BOND'};
+assert.ok(heatmapTypeIcon(bond).includes('data-heatmap-type="bonds"'));
+assert.ok(heatmapTileMap([bond]).includes('<title>Bond</title>'));
+assert.ok(target.innerHTML.includes('data-heatmap-type="funds"'));
+assert.ok(target.innerHTML.includes('data-heatmap-type="bonds"'));
+state.language='he';
+assert.ok(heatmapTypeIcon(bond).includes('<title>אג״ח</title>'));
+''')

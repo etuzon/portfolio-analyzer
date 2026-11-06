@@ -193,3 +193,26 @@ def test_reclassified_journal_account_cannot_reappear_through_captured_trade():
     run_ui(r'''
 (async()=>{seed();const privateTrade={...trade,id:'tx-outside',account_id:'esop',account_label:'Excluded employee account'};const privateEntry={...entry,id:'tx-outside',trade:privateTrade,reason:'PRIVATE employee reasoning'};tradingJournalView.selected=privateTrade.id;tradingJournalView.drafts[privateTrade.id]={reason:'PRIVATE excluded draft'};tradingJournalView.filters.account='esop';const load=loadTradingJournal();pending[0].resolve({...data,accounts:[...data.accounts,{id:'esop',type:'ESOP',account_id:'Excluded employee account'}],transactions:[...data.transactions,privateTrade],items:[...data.items,privateEntry]});await load;assert.equal(tradingJournalView.filters.account,'');assert.equal(tradingJournalView.selected,'');assert.ok(!tradingJournalView.drafts['tx-outside']);assert.ok(tradingJournalView.drafts['tx-a']);assert.ok(!target.innerHTML.includes('PRIVATE'));assert.ok(!target.innerHTML.includes('Excluded employee account'));})();
 ''')
+
+
+def test_recorded_trade_picker_is_visible_scrollable_and_retains_selection_and_scroll():
+    run_ui(r'''
+seed();
+assert.ok(target.innerHTML.includes('id="journalTransaction" size="6"'));
+assert.equal(nodes.journalTransaction.value,'tx-a');
+nodes.journalTransaction.scrollTop=84;
+nodes.journalTransaction.value='tx-b';
+for(const handler of listeners.change)handler({target:nodes.journalTransaction});
+assert.equal(tradingJournalView.selected,'tx-b');
+assert.equal(nodes.journalTransaction.value,'tx-b');
+assert.equal(nodes.journalTransaction.scrollTop,84);
+assert.ok(nodes.journalReason);
+tradingJournalView.selected='';renderTradingJournal();
+assert.equal(nodes.journalTransaction.value,'');
+assert.ok(target.innerHTML.includes('<option value="" selected>'));
+state.language='he';renderTradingJournal();
+assert.ok(target.innerHTML.includes('בחירת עסקה רשומה'));
+assert.ok(target.innerHTML.includes('id="journalTransaction" size="6"'));
+tradingJournalView.busy=true;renderTradingJournal();
+assert.equal(nodes.journalTransaction.disabled,true);
+''')

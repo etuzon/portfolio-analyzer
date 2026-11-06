@@ -34,13 +34,15 @@
           <span class="brand-mark"></span>
           <span>Portfolio</span>
         </div>
-        <form id="loginForm" class="auth-panel" novalidate>
+        <form id="loginForm" class="auth-panel" method="post" action="/api/auth/login" autocomplete="on" novalidate>
           <div class="auth-heading">
             <p class="eyebrow">Secure access</p>
             <h1 id="authTitle">Sign in</h1>
           </div>
           <label class="field"><span>Username</span><input id="loginUsername" name="username" autocomplete="username" maxlength="64" required autofocus /></label>
           <label class="field"><span>Password</span><input id="loginPassword" name="password" type="password" autocomplete="current-password" maxlength="256" required /></label>
+          <label class="auth-remember"><input id="loginRemember" name="remember_me" type="checkbox" aria-describedby="loginRememberHelp" /><span>Remember me</span></label>
+          <p id="loginRememberHelp" class="auth-password-rule">Keep me signed in for 30 days on this device. Save my password using the browser password manager.</p>
           <label class="field auth-language"><span>Language</span><select id="authLanguage"><option value="he">עברית</option><option value="en">English</option></select></label>
           <button id="loginButton" type="submit">Sign in</button>
           <p id="loginStatus" class="status-line" role="alert" aria-live="assertive"></p>
@@ -625,6 +627,93 @@
       </section>
     </div>
 
+    <div id="instrumentEditorModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="instrumentDefinitionTitle">
+        <div class="section-head"><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <div id="instrumentDefinitionSection" class="management-section">
+          <div class="workflow-section-heading">
+            <span id="instrumentDefinitionBadge" class="workflow-step-badge" hidden>Step 1</span>
+            <span>
+              <b id="instrumentDefinitionTitle">Instrument definition</b>
+              <small id="instrumentDefinitionHint">Describe the security once so it can be reused in transactions and price history.</small>
+            </span>
+          </div>
+          <div class="management-form instrument-form">
+            <label class="management-field" data-public-issuer-field><span>Primary Symbol *</span><input id="manualSecuritySymbol" placeholder="Ticker or security ID" /></label>
+            <label class="management-field" data-general-security-field>
+              <span class="field-label">Secondary Symbol <em tabindex="0" title="Optional alternate ticker used for market data, for example CEL for 1101534." aria-label="Optional alternate ticker used for market data, for example CEL for 1101534.">i</em></span>
+              <input id="manualSecondarySymbol" placeholder="Optional alternate ticker" />
+            </label>
+            <label class="management-field" data-general-security-field><span>Instrument Name</span><input id="manualSecurityName" placeholder="Security name" /></label>
+            <label class="management-field" data-public-issuer-field><span>Stock Market *</span><input id="manualSecurityMarket" list="marketOptions" placeholder="NASDAQ, NYSE, TASE…" /></label>
+            <label class="management-field"><span>Instrument Type *</span><select id="manualInstrumentType"></select></label>
+            <label class="management-field"><span>Currency *</span><select id="manualSecurityCurrency" required aria-required="true"></select></label>
+            <label class="management-field"><span>Company Location *</span><select id="manualSecurityLocation" autocomplete="country-name" required aria-required="true"></select></label>
+            <label class="management-field employee-option-field" data-employee-option-field hidden>
+              <span>Company Name *</span>
+              <input id="manualCompanyName" list="employeeCompanyOptions" autocomplete="organization" placeholder="Employer or issuer" aria-required="true" />
+              <datalist id="employeeCompanyOptions"></datalist>
+            </label>
+            <label class="management-field employee-option-field" data-employee-option-field hidden>
+              <span>Company Status</span>
+              <select id="manualIssuerStatus">
+                <option value="PRIVATE">Private Company</option>
+                <option value="PUBLIC">Public Company</option>
+              </select>
+            </label>
+            <label class="management-field employee-option-field" data-employee-option-field hidden>
+              <span>Grant ID</span>
+              <input id="manualGrantId" placeholder="Optional plan grant ID" />
+            </label>
+            <label class="management-field employee-option-field" data-employee-option-field hidden>
+              <span>Grant Date *</span>
+              <input id="manualGrantDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-required="true" />
+            </label>
+            <label class="management-field employee-option-field" data-employee-option-field hidden>
+              <span>Vesting Start Date *</span>
+              <input id="manualVestingStartDate" class="date-field" inputmode="numeric" placeholder="Defaults to Grant Date" aria-required="true" />
+            </label>
+            <label class="management-field" data-derivative-field data-non-employee-derivative-field><span>Underlying Symbol *</span><input id="manualUnderlyingSymbol" placeholder="Underlying ticker" /></label>
+            <label class="management-field" data-option-field data-non-employee-option-field><span>Option Type *</span><select id="manualOptionType"></select></label>
+            <label class="management-field" data-derivative-field>
+              <span>Expiration Date *</span>
+              <input id="manualExpirationDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-required="true" />
+            </label>
+            <label class="management-field" data-option-field>
+              <span>Strike Price *</span>
+              <input id="manualStrikePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Strike" aria-required="true" />
+            </label>
+            <label class="management-field" data-derivative-field data-non-employee-derivative-field><span>Contract Multiplier</span><input id="manualContractMultiplier" type="number" min="0.0001" step="0.0001" inputmode="decimal" placeholder="Shares per contract" /></label>
+            <label class="management-field employee-option-field" data-employee-option-field hidden>
+              <span>Tax/Plan Type</span>
+              <input id="manualTaxScheme" placeholder="Optional, e.g. ISO or NSO" />
+            </label>
+            <label class="management-field employee-option-field" data-private-issuer-field hidden>
+              <span>Latest Share Value</span>
+              <input id="manualShareValue" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Optional private valuation" />
+            </label>
+            <label class="management-field employee-option-field" data-private-issuer-field hidden>
+              <span>Valuation Date</span>
+              <input id="manualValuationDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
+            </label>
+            <label class="management-field employee-option-field" data-employee-option-field hidden>
+              <span>Restriction End Date</span>
+              <input id="manualRestrictionEndDate" class="date-field" inputmode="numeric" placeholder="Optional dd/mm/yyyy" />
+            </label>
+            <label class="check employee-option-check" data-employee-option-field hidden><input id="manualEarlyExercise" type="checkbox" /> Allow early exercise</label>
+            <label class="management-field field-wide"><span>Comments</span><input id="manualSecurityComments" placeholder="Optional notes" /></label>
+            <div class="form-actions manual-security-form-actions">
+              <button id="saveManualSecurity" type="button">Save instrument</button>
+              <button id="cancelManualSecurityEdit" class="secondary" type="button">Cancel</button>
+            </div>
+          </div>
+          <p class="info-strip" data-employee-option-field hidden>Grant Date is when the company issued the grant. Vesting Start Date controls the cliff and later vesting dates. The date you add it to this app is stored separately and never changes vesting calculations. A private share value is informational, not a formal tax valuation.</p>
+          <p id="manualSecurityStatus" class="status-line" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+    </div>
+
     <div id="securitiesModal" class="modal" hidden>
       <div class="modal-backdrop" data-close></div>
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="securitiesTitle">
@@ -779,86 +868,16 @@
           <p id="employeeOptionListStatus" class="status-line" role="status" aria-live="polite"></p>
           <div id="employeeOptionGrantsList" class="employee-grants-list"></div>
         </section>
-        <div id="instrumentDefinitionSection" class="management-section">
-          <div class="workflow-section-heading">
-            <span id="instrumentDefinitionBadge" class="workflow-step-badge" hidden>Step 1</span>
-            <span>
-              <b id="instrumentDefinitionTitle">Instrument definition</b>
-              <small id="instrumentDefinitionHint">Describe the security once so it can be reused in transactions and price history.</small>
-            </span>
+        <div id="definedInstrumentsSection" class="management-section">
+          <div class="instrument-list-heading"><p id="definedInstrumentsLabel" class="form-caption">Defined instruments</p><button id="newManualSecurity" type="button">New</button></div>
+          <div class="instrument-list-controls">
+            <label class="management-field"><span>Search instruments</span><input id="manualSecurityQuery" type="search" placeholder="Name, symbol or grant ID" /></label>
+            <label class="management-field"><span>Instrument type</span><select id="manualSecurityTypeFilter"><option value="">All types</option></select></label>
+            <label class="management-field"><span>Sort by</span><select id="manualSecuritySort"><option value="name">Name</option><option value="symbol">Symbol</option><option value="type">Instrument type</option></select></label>
+            <label class="management-field"><span>Sort direction</span><select id="manualSecurityDirection"><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
+            <button id="resetManualSecurityFilters" class="secondary" type="button">Reset filters</button>
           </div>
-          <div class="management-form instrument-form">
-            <label class="management-field" data-public-issuer-field><span>Primary Symbol *</span><input id="manualSecuritySymbol" placeholder="Ticker or security ID" /></label>
-            <label class="management-field" data-general-security-field>
-              <span class="field-label">Secondary Symbol <em tabindex="0" title="Optional alternate ticker used for market data, for example CEL for 1101534." aria-label="Optional alternate ticker used for market data, for example CEL for 1101534.">i</em></span>
-              <input id="manualSecondarySymbol" placeholder="Optional alternate ticker" />
-            </label>
-            <label class="management-field" data-general-security-field><span>Instrument Name</span><input id="manualSecurityName" placeholder="Security name" /></label>
-            <label class="management-field" data-public-issuer-field><span>Stock Market *</span><input id="manualSecurityMarket" list="marketOptions" placeholder="NASDAQ, NYSE, TASE…" /></label>
-            <label class="management-field"><span>Instrument Type *</span><select id="manualInstrumentType"></select></label>
-            <label class="management-field"><span>Currency *</span><select id="manualSecurityCurrency" required aria-required="true"></select></label>
-            <label class="management-field"><span>Company Location *</span><select id="manualSecurityLocation" autocomplete="country-name" required aria-required="true"></select></label>
-            <label class="management-field employee-option-field" data-employee-option-field hidden>
-              <span>Company Name *</span>
-              <input id="manualCompanyName" list="employeeCompanyOptions" autocomplete="organization" placeholder="Employer or issuer" aria-required="true" />
-              <datalist id="employeeCompanyOptions"></datalist>
-            </label>
-            <label class="management-field employee-option-field" data-employee-option-field hidden>
-              <span>Company Status</span>
-              <select id="manualIssuerStatus">
-                <option value="PRIVATE">Private Company</option>
-                <option value="PUBLIC">Public Company</option>
-              </select>
-            </label>
-            <label class="management-field employee-option-field" data-employee-option-field hidden>
-              <span>Grant ID</span>
-              <input id="manualGrantId" placeholder="Optional plan grant ID" />
-            </label>
-            <label class="management-field employee-option-field" data-employee-option-field hidden>
-              <span>Grant Date *</span>
-              <input id="manualGrantDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-required="true" />
-            </label>
-            <label class="management-field employee-option-field" data-employee-option-field hidden>
-              <span>Vesting Start Date *</span>
-              <input id="manualVestingStartDate" class="date-field" inputmode="numeric" placeholder="Defaults to Grant Date" aria-required="true" />
-            </label>
-            <label class="management-field" data-derivative-field data-non-employee-derivative-field><span>Underlying Symbol *</span><input id="manualUnderlyingSymbol" placeholder="Underlying ticker" /></label>
-            <label class="management-field" data-option-field data-non-employee-option-field><span>Option Type *</span><select id="manualOptionType"></select></label>
-            <label class="management-field" data-derivative-field>
-              <span>Expiration Date *</span>
-              <input id="manualExpirationDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-required="true" />
-            </label>
-            <label class="management-field" data-option-field>
-              <span>Strike Price *</span>
-              <input id="manualStrikePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Strike" aria-required="true" />
-            </label>
-            <label class="management-field" data-derivative-field data-non-employee-derivative-field><span>Contract Multiplier</span><input id="manualContractMultiplier" type="number" min="0.0001" step="0.0001" inputmode="decimal" placeholder="Shares per contract" /></label>
-            <label class="management-field employee-option-field" data-employee-option-field hidden>
-              <span>Tax/Plan Type</span>
-              <input id="manualTaxScheme" placeholder="Optional, e.g. ISO or NSO" />
-            </label>
-            <label class="management-field employee-option-field" data-private-issuer-field hidden>
-              <span>Latest Share Value</span>
-              <input id="manualShareValue" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Optional private valuation" />
-            </label>
-            <label class="management-field employee-option-field" data-private-issuer-field hidden>
-              <span>Valuation Date</span>
-              <input id="manualValuationDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
-            </label>
-            <label class="management-field employee-option-field" data-employee-option-field hidden>
-              <span>Restriction End Date</span>
-              <input id="manualRestrictionEndDate" class="date-field" inputmode="numeric" placeholder="Optional dd/mm/yyyy" />
-            </label>
-            <label class="check employee-option-check" data-employee-option-field hidden><input id="manualEarlyExercise" type="checkbox" /> Allow early exercise</label>
-            <label class="management-field field-wide"><span>Comments</span><input id="manualSecurityComments" placeholder="Optional notes" /></label>
-            <div class="form-actions manual-security-form-actions">
-              <button id="saveManualSecurity" type="button">Save instrument</button>
-              <button id="cancelManualSecurityEdit" class="secondary" type="button" hidden>Cancel edit</button>
-            </div>
-          </div>
-          <p class="info-strip" data-employee-option-field hidden>Grant Date is when the company issued the grant. Vesting Start Date controls the cliff and later vesting dates. The date you add it to this app is stored separately and never changes vesting calculations. A private share value is informational, not a formal tax valuation.</p>
-          <p id="manualSecurityStatus" class="status-line" role="status" aria-live="polite"></p>
-          <p id="definedInstrumentsLabel" class="form-caption list-head">Defined instruments</p>
+          <p id="manualSecurityListStatus" class="status-line" role="status" aria-live="polite"></p>
           <div id="manualSecuritiesList" class="stack management-list compact-list"></div>
         </div>
         <div id="accountTransactionSection" class="management-section">
@@ -870,6 +889,7 @@
             </span>
           </div>
           <div class="management-form transaction-form">
+            <div class="transaction-identity-fields">
             <label class="management-field transaction-field-wide"><span>Account *</span><select id="securityAccount"></select></label>
             <label class="management-field transaction-field-wide"><span>Defined Instrument *</span><select id="securityKnownInstrument"></select></label>
             <label class="management-field transaction-field-compact transaction-identity-choice"><span>Action *</span><select id="securityAction">
@@ -886,11 +906,14 @@
               <span class="field-label">Holding / grant type * <em tabindex="0" title="Choose RSU for shares granted by an employer; choose Equity for shares bought on the market." aria-label="Choose RSU for shares granted by an employer; choose Equity for shares bought on the market.">i</em></span>
               <select id="securityAssetClass"></select>
             </label>
+            </div>
+            <div class="transaction-value-fields">
             <label class="management-field transaction-field-wide transaction-symbol" data-general-transaction-field><span>Symbol *</span><input id="securitySymbol" placeholder="Ticker or security ID" /></label>
             <label class="management-field transaction-field-compact" data-general-transaction-field><span>Stock Market *</span><input id="securityMarket" list="marketOptions" placeholder="Market" /></label>
             <label class="management-field transaction-field-compact"><span id="securityQuantityLabel">Quantity *</span><input id="securityQuantity" type="number" min="0.0001" step="0.0001" inputmode="decimal" placeholder="Number of units" /></label>
             <label id="securityPriceField" class="management-field transaction-field-compact"><span>Entered Price *</span><input id="securityPrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Price" /></label>
             <label class="management-field transaction-field-compact"><span id="securityDateLabel">Transaction Date *</span><input id="securityDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+            </div>
             <label id="securityVestDateField" class="management-field transaction-field-wide" data-equity-comp-field hidden><span>Single Vest Date *</span><input id="securityVestDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
             <label class="management-field transaction-field-wide" data-option-grant-field data-employee-option-derived-field hidden><span>Strike Price *</span><input id="securityStrikePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Strike price" /></label>
             <label class="management-field transaction-field-wide" data-equity-comp-field data-employee-option-derived-field hidden><span>Exercise/Purchase Price</span><input id="securityPurchasePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Optional" /></label>
@@ -1017,16 +1040,16 @@
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
-        <div class="management-form">
-          <select id="priceKnownInstrument"></select>
-          <input id="priceSymbol" placeholder="Symbol" />
-          <input id="priceMarket" list="marketOptions" placeholder="Stock market" />
-          <select id="priceAssetClass"></select>
-          <input id="priceLocation" list="countryOptions" placeholder="Location" />
-          <select id="priceCurrency"></select>
-          <input id="priceInput" type="number" step="0.0001" placeholder="Historic price" />
-          <input id="priceDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
-          <input id="priceComments" placeholder="Comments" />
+        <div class="management-form price-entry-form">
+          <label class="management-field price-instrument-field"><span>Defined Instrument</span><select id="priceKnownInstrument"></select></label>
+          <label class="management-field price-compact-field"><span>Symbol</span><input id="priceSymbol" placeholder="Symbol" /></label>
+          <label class="management-field price-compact-field"><span>Stock market</span><input id="priceMarket" list="marketOptions" placeholder="Stock market" /></label>
+          <label class="management-field price-compact-field"><span>Asset class</span><select id="priceAssetClass"></select></label>
+          <label class="management-field price-compact-field"><span>Location</span><input id="priceLocation" list="countryOptions" placeholder="Location" /></label>
+          <label class="management-field price-currency-field"><span>Currency</span><select id="priceCurrency"></select></label>
+          <label class="management-field price-compact-field"><span>Historic price</span><input id="priceInput" type="number" step="0.0001" placeholder="Historic price" /></label>
+          <label class="management-field price-compact-field"><span>Date</span><input id="priceDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+          <label class="management-field price-comments-field"><span>Comments</span><input id="priceComments" placeholder="Comments" /></label>
           <button id="savePrice" type="button">Save</button>
         </div>
         <p id="priceStatus" class="status-line"></p>
@@ -1069,6 +1092,7 @@
             <div class="help-group-content">
               <article class="help-feature">
                 <h3>Home</h3>
+                <p>Hover over an account summary to see its account type, location, source currencies and cash balance.</p>
                 <p>Select the portfolio title or logo to return to the dashboard.</p>
                 <p>Use Area to choose investments, long-term savings, employee equity, or all areas. View switches between Glance and Full; Edit lets you arrange, resize, or hide cards.</p>
                 <p>Analytics refresh in the background. Hover or focus a data-gap count to see which input is unavailable; unavailable dividend history does not confirm zero dividends. Currency tooltips use symbols and retain the converted base-currency value.</p>
@@ -1077,6 +1101,7 @@
                 <h3>Portfolio stocks heatmap</h3>
                 <p>The Portfolio stocks heatmap card is on the main dashboard in All areas or Investment portfolio, in Glance and Full. Only accounts with type Investment are included. ESOP/RSU, Bank and Long-Term Savings accounts are excluded. Choose All investment accounts, one Investment account or By account for separate panels. Editors can use dashboard Edit to move or hide the card. Holdings filters do not control this card.</p>
                 <p>Use the Stocks, Bonds and Funds checkboxes to choose which recorded asset classes appear. All three start selected. ETFs and mutual funds belong to Funds; stock and RSU shares actually held in Investment accounts belong to Stocks. The same choices apply to combined holdings, account panels, totals, weights, details and the complete holdings list. Clear every checkbox for an explicit empty selection.</p>
+                <p>A ribbon icon beside a symbol marks a bond; a four-square icon marks a fund, including ETFs and mutual funds. The same icons appear beside the Bonds and Funds filters. Stocks have no icon. Hover, focus or select a security to read its asset type; on very small rectangles, use the complete holdings list.</p>
                 <p>Each rectangle represents a supported held security with a known ILS value. Area and weight use known gross exposure in the selected accounts and asset types, including estimates when qualified market prices are missing. Long and short positions across accounts are added by absolute value. Cash and unvalued holdings are excluded, so these weights are not shares of total account equity. Each account panel has its own denominator; compare ILS amounts to compare account sizes.</p>
                 <p>Color and Day change show the latest observed native-price change, (latest / previous − 1) × 100. The two saved observations can span multiple trading sessions; their dates are shown in the details. This is not your investment profit or an ILS return. Currency changes, dividends, bond coupons, fees and taxes are not added to this price change; splits and distributions may affect raw prices.</p>
                 <p>A valued security stays on the map even when its price change is unknown. Tiles show price change only when available; unknown changes leave the tile neutral with no change label. Hover or focus on any security to see its weight of known gross holdings, valuation basis and status, saved price and date when available, and account holdings. Select a tile or list row to keep details open on touch screens. Press Escape to dismiss the tooltip. Labels shrink to fit; very small rectangles retain full information in the tooltip and list.</p>
@@ -1123,6 +1148,7 @@
               </article>
               <article class="help-feature">
                 <h3>Transactions</h3>
+                <p>In Transactions, use New above Defined instruments to create an instrument in a separate window, or Edit beside an existing instrument to update it. Save closes the window after refreshing the list; Cancel closes without saving. Search by name, symbol or grant ID, filter by instrument type, and sort by name, symbol or type in either direction. Reset filters shows the full list again. Filtering and sorting use the loaded list without a server request; reload Transactions to retry a failed load. Viewers can browse and filter but cannot create or edit instruments.</p>
                 <p>Select the account, symbol, market, asset class, and action. Buy, sell, and short transactions affect account cash; adding or removing a security does not. Enter US equity prices in dollars, US bond prices in cents, and Israeli security prices in agorot.</p>
                 <p>Open a security for its price chart, moving averages, and support/resistance; use Retry after a chart-loading failure. Exposure edits maintain a local economic-currency profile, distinct from the trading currency. Correct recorded transactions through Positions.</p>
                 <p>Currency exposure source: choose Reported holdings for allocations from a published fund report, or Manual estimate for your own assessment. Both use the same calculation; reports are not downloaded or verified automatically. Unknown leaves the currency exposure unclassified, even when a named currency is selected. Hover over or focus the help icon beside the field for this explanation.</p>
@@ -1134,6 +1160,7 @@
               <article class="help-feature">
                 <h3>Trading Journal</h3>
                 <p>Only accounts with type Investment are included in this feature. All investment accounts combines those accounts only. ESOP/RSU, Bank and Long-Term Savings accounts are excluded from calculations, coverage and account choices. Shares held in an Investment account remain eligible according to the feature’s asset rules.</p>
+                <p>Choose a recorded trade from the scrollable list. Several trades remain visible at once; scroll or use the arrow keys to select one and open its reason and reviews.</p>
                 <p>Open Portfolio → Trading Journal, or choose Journal beside a buy, sell or short transaction in an Investment account in Buy / sell history or Position history details. Select a recorded trade, enter Why and optionally What would change my mind and a Review date, then save. Fully closed positions remain available. Each journal entry links to one whole recorded transaction, including when Position history allocates part of that transaction to a holding period.</p>
                 <p>The journal preserves the trade facts captured when the entry was created, your first saved reason, and every later reasoning revision with its author and recording time. Recording times show when notes were written; they do not establish that the reason was recorded on the trade date. Saving a revised reason appends history. If the trade is corrected or deleted, the entry remains available with its captured facts and a changed or deleted link status; price evidence is unavailable for that link.</p>
                 <p>Revisit an entry and add a review rated Good, Mixed or Bad with required review notes or lessons learned. Each review is retained with its author and time; the latest review determines the displayed assessment. Pending means no review has been recorded. Review dates mark pending entries due in the journal. Use account, action and assessment filters and search to find past decisions; dashboard filters do not apply.</p>
@@ -1148,6 +1175,7 @@
                 <p>Open Portfolio → Dividends & Events. Use Dividend Calendar to inspect saved distributions and Events to review notices. Switching tabs does not record payments or start a scan. Use Reload to retry the calendar, or select Events again if its list could not load. Scan dividends starts an explicit dividend scan.</p>
                 <h4>Dividend Calendar</h4>
                 <p>Only accounts with type Investment are included in this feature. All investment accounts combines those accounts only. ESOP/RSU, Bank and Long-Term Savings accounts are excluded from calculations, coverage and account choices. Shares held in an Investment account remain eligible according to the feature’s asset rules.</p>
+                <p>Use the annual dividend summary search and currency filter to narrow the table. Sort by security name, symbol, dividends per share, yield, saved price or recorded income in either direction. Monetary amounts are grouped by currency without conversion; missing values appear last. Export CSV or Export PDF downloads the filtered rows in their displayed order, with currencies and unavailable-data labels. Exports are available to Viewers as well. If PDF export fails, use Export PDF again to retry. Reset filters restores all rows; summary filters do not change the calendar.</p>
                 <p>Open Portfolio → Dividends & Events. The Dividend Calendar tab opens first; choose an account scope and year. The twelve month cards show dates from saved dividend evidence for currently held long stocks and funds. Short positions, ESOP grants and unsupported instruments are excluded. Dashboard filters do not apply.</p>
                 <p>Each marker shows a distribution amount per share and the stock's observed annual dividend yield. Larger dots indicate larger annual percentages. All ties for the highest comparable yield are highlighted. The comparison always uses the latest twelve months through today, even when viewing an earlier year; it never multiplies one payout by an assumed payment frequency.</p>
                 <p>The annual summary separates known calendar-year dividends per share, observed last-12-month dividends per share, annual yield, the saved price and its date, and recorded income for that year. Annual yield is last-12-month dividends per share divided by the saved raw closing price, multiplied by 100. Provider-adjusted dividend amounts are used where supplied; special distributions and share splits can affect comparisons. Highest-yield highlighting requires a history record at or before the start of the twelve-month window, a price no older than 7 days and dividend evidence no older than 30 days. Partial or stale values remain visible with warnings.</p>
@@ -1339,6 +1367,7 @@
               <article class="help-feature">
                 <h3>Users</h3>
                 <p>Admins can create users and assign Admin, Operator, or read-only Viewer access. New users replace their temporary password at first sign-in.</p>
+                <p>Select Remember me at sign-in to save your username on this device and stay signed in for up to 30 days, including after closing the browser. Leave it unchecked on shared devices. Without it, sessions expire after 30 minutes of inactivity or 8 hours. Use your browser password manager to save and autofill your password; the app does not save passwords in browser storage. Unchecking Remember me removes the saved username. Signing out revokes the session; password changes and account disabling also revoke existing sessions.</p>
                 <p>If an Admin forgets the password, run this recovery command from the Docker host:</p>
                 <code class="help-command" dir="ltr" data-i18n-skip>docker compose exec portfolio-analyzer python -m app.admin_cli reset-password --username admin</code>
               </article>

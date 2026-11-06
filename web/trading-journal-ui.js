@@ -130,6 +130,7 @@ function renderTradingJournal() {
   tradingJournalCapture();
   const activeId=typeof document!=="undefined" ? document.activeElement?.id : "";
   const activeStart=document.activeElement?.selectionStart,activeEnd=document.activeElement?.selectionEnd;
+  const transactionScrollTop=$("journalTransaction")?.scrollTop;
   const v=tradingJournalView,d=v.data,f=v.filters,disabled=v.busy ? " disabled" : "",read=tradingJournalCanWrite() ? "" : " readonly";
   let html=`<p class="section-note">${tradingJournalEsc("Record why you made a trade, then revisit the decision and what you learned.")}</p>`;
   const accounts=new Map((d?.accounts || []).filter(row=>row.type==="Investment").map(row=>[row.id,{id:row.id,label:accountLabel(row)}]));
@@ -138,7 +139,7 @@ function renderTradingJournal() {
     const transactions=[...(d.transactions || [])];
     const selected=tradingJournalSelected();
     if(selected && !transactions.some(tx=>tx.id===selected.id)) transactions.push({...selected.trade,id:selected.id});
-    if(transactions.length) html+=`<label class="field journal-transaction-picker"><span>${tradingJournalEsc("Choose a recorded trade")}</span><select id="journalTransaction"${disabled}><option value="">${tradingJournalEsc("Select a buy, sell or short transaction")}</option>${transactions.map(tx=>`<option value="${esc(tx.id)}"${v.selected===tx.id ? " selected" : ""}>${esc(tradingJournalTradeLabel(tx))}</option>`).join("")}</select></label>`;
+    if(transactions.length) html+=`<label class="field journal-transaction-picker"><span>${tradingJournalEsc("Choose a recorded trade")}</span><select id="journalTransaction" size="6"${disabled}><option value=""${!v.selected ? " selected" : ""}>${tradingJournalEsc("Select a buy, sell or short transaction")}</option>${transactions.map(tx=>`<option value="${esc(tx.id)}"${v.selected===tx.id ? " selected" : ""}>${esc(tradingJournalTradeLabel(tx))}</option>`).join("")}</select></label>`;
     else html+=`<p class="journal-empty">${tradingJournalEsc("No recorded buy, sell or short transactions are available. Record a transaction in Positions first.")}</p>`;
     const rows=tradingJournalFiltered();
     html+=`<p class="section-note journal-count">${rows.length} ${tradingJournalEsc("journal entries")}</p><div class="journal-layout"><div class="journal-list" aria-label="${tradingJournalEsc("Trading Journal")}">${rows.length ? rows.map(row=>`<article class="journal-list-entry${v.selected===row.id ? " selected" : ""}"><div class="journal-entry-heading"><bdi>${esc(row.trade.symbol)}</bdi><span class="journal-rating journal-rating-${esc(row.review_status)}">${esc(tradingJournalRating(row.review_status))}</span></div><p>${esc(tradingJournalAction(row.trade.action))} · <bdi>${esc(formatDate(row.trade.trade_date))}</bdi></p><p dir="auto">${esc(row.trade.account_label || "")}</p><p class="journal-entry-reason" dir="auto">${esc(row.reason || "")}</p>${row.review_date ? `<p class="section-note">${tradingJournalEsc(tradingJournalDue(row) ? "Due for review" : "Review date")}: <bdi>${esc(formatDate(row.review_date))}</bdi></p>` : ""}<div class="row-actions"><button type="button" class="secondary compact-button" data-journal-entry="${esc(row.id)}"${disabled}>${tradingJournalEsc("Open entry")}</button></div></article>`).join("") : `<p class="journal-empty">${tradingJournalEsc(d.items?.length ? "No entries match these filters." : "No journal entries yet. Choose a recorded trade to add its reason.")}</p>`}</div><div id="journalDetail" class="journal-detail">`;
@@ -161,6 +162,7 @@ function renderTradingJournal() {
   if(!tradingJournalCanWrite()) html+=`<p class="section-note">${tradingJournalEsc("Viewer access: you can read saved decisions and reviews. An operator or administrator can add or update them.")}</p>`;
   html+=`<p id="journalSaveStatus" class="status-line" role="status" aria-live="polite">${tradingJournalEsc(v.busy ? "Saving…" : v.message)}</p>`;
   target.innerHTML=html;v.rendered=v.selected;
+  if(Number.isFinite(transactionScrollTop) && $("journalTransaction")) $("journalTransaction").scrollTop=transactionScrollTop;
   if(activeId && $(activeId)) {
     $(activeId).focus?.({preventScroll:true});
     if(Number.isInteger(activeStart) && Number.isInteger(activeEnd)) $(activeId).setSelectionRange?.(activeStart,activeEnd);

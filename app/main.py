@@ -38,7 +38,7 @@ from . import __version__
 from .alerts import ALERT_JOB_ID, AlertStore, alert_rule_options, start_scheduler
 from .assistant_chats import AssistantChats, ChatError
 from .assistant_rest import AssistantRestGateway
-from .auth import API_ACCESS_MODES, AUTH_ROLES, PASSWORD_MIN_LENGTH, SESSION_COOKIE_NAME, AuthStore
+from .auth import API_ACCESS_MODES, AUTH_ROLES, PASSWORD_MIN_LENGTH, REMEMBER_SESSION_DAYS, SESSION_COOKIE_NAME, AuthStore
 from .config import data_dir, load_config
 from .diagnostics import Diagnostics, TRACE_ID
 from .company_logos import CompanyLogoService
@@ -64,6 +64,7 @@ from .outlook_scoring import OUTLOOK_MODEL_VERSION, OUTLOOK_EVALUATION_VERSION, 
 from .providers import MarketDataHub, ProviderError
 from .portfolio_refresh import attach_market_analysis, refresh_positions, security_key
 from .report_pdf import build_portfolio_report_pdf
+from .dividend_summary_pdf import build_dividend_summary_pdf
 from .trade_planner import planner_security
 
 
@@ -232,6 +233,7 @@ _login_failures: dict[str, list[float]] = {}
 AUTH_LOGIN_MAX_FAILURES = 5
 AUTH_LOGIN_WINDOW_SECONDS = 300
 VIEWER_READ_ONLY_POST_PATHS = {
+    "/api/portfolio/dividend-calendar.pdf",
     "/api/portfolio/optimization",
     "/api/assistant/questions",
     "/api/assistant/context/clear",
@@ -2851,10 +2853,11 @@ def _clear_login_failures(key: str) -> None:
         _login_failures.pop(key, None)
 
 
-def _set_session_cookie(response: Response, token: str) -> None:
+def _set_session_cookie(response: Response, token: str, remember_me: bool = False) -> None:
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
+        max_age=REMEMBER_SESSION_DAYS * 86400 if remember_me else None,
         secure=True,
         httponly=True,
         samesite="strict",
@@ -2877,6 +2880,9 @@ def _clear_session_cookie(response: Response) -> None:
 @app.post("/api/auth/login")
 def login(request: Request, response: Response, payload: dict[str, Any]):
     payload = payload or {}
+    if not isinstance(payload.get("remember_me", False), bool):
+        raise HTTPException(status_code=400, detail="Remember me must be true or false")
+    remember_me = payload.get("remember_me", False)
     key = _login_attempt_key(request, payload.get("username"))
     retry_after = _login_retry_after(key)
     if retry_after:
@@ -2886,7 +2892,7 @@ def login(request: Request, response: Response, payload: dict[str, Any]):
             headers={"Retry-After": str(retry_after)},
         )
     try:
-        user, token, csrf_token = auth_store.authenticate(payload.get("username"), payload.get("password"))
+        user, token, csrf_token = auth_store.authenticate(payload.get("username"), payload.get("password"), remember_me=remember_me)
     except ValueError as exc:
         _record_login_failure(key)
         raise HTTPException(
@@ -2894,7 +2900,7 @@ def login(request: Request, response: Response, payload: dict[str, Any]):
             detail={"code": "invalid_credentials", "message": "Invalid username or password"},
         ) from exc
     _clear_login_failures(key)
-    _set_session_cookie(response, token)
+    _set_session_cookie(response, token, remember_me=remember_me)
     return {"user": user, "csrf_token": csrf_token}
 
 
@@ -2979,17 +2985,19 @@ def change_password(request: Request, response: Response, payload: dict[str, Any
     new_password = payload.get("new_password")
     if new_password != payload.get("confirm_password"):
         raise HTTPException(status_code=400, detail="New password and confirmation do not match")
+    remember_me = bool(request.state.auth_session.get("remember_me"))
     try:
         user, token, csrf_token = auth_store.change_password(
             request.state.auth_user["id"],
             payload.get("current_password"),
             new_password,
+            remember_me=remember_me,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    _set_session_cookie(response, token)
+    _set_session_cookie(response, token, remember_me=remember_me)
     return {"user": user, "csrf_token": csrf_token}
 
 
@@ -3417,6 +3425,15 @@ def correlation_matrix(period: str = "1y", account_id: str = ""):
         if str(exc) == "unknown_account":
             raise HTTPException(status_code=400, detail="unknown_account") from exc
         raise
+
+
+@app.post("/api/portfolio/dividend-calendar.pdf")
+def dividend_calendar_pdf(payload: dict[str, Any]):
+    try:
+        content = build_dividend_summary_pdf(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(content=content, media_type="application/pdf", headers={"Content-Disposition": 'attachment; filename="dividend-summary.pdf"'})
 
 
 @app.get("/api/portfolio/dividend-calendar")

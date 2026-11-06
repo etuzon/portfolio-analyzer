@@ -287,7 +287,7 @@ const TRANSLATIONS = {
     brokers: "ברוקרים",
     employeeOptions: "אופציות עובדים",
     securities: "ניירות ערך",
-    positions: "פוזיציות",
+    positions: "החזקות",
     prices: "מחירים",
     events: "אירועים",
     people: "אנשים",
@@ -1159,7 +1159,7 @@ const WRITE_CONTROL_IDS = new Set([
   "saveEditFund", "saveEmployeeExercise", "saveEmployeeListing", "saveEmployeeOptionGrant", "saveFamilyMember",
   "saveFund", "saveFundHistory", "saveHistorySnapshot", "saveLocalAccount", "saveManualSecurity",
   "saveIndustryClassification", "removeIndustryClassification", "savePositionTransaction", "savePrice", "saveSecurity", "saveTableSettings", "saveUser", "showFundCreate",
-  "addSecurityExposureCurrency", "saveSecurityExposure", "removeSecurityExposure", "newFamilyMember", "newBroker",
+  "addSecurityExposureCurrency", "saveSecurityExposure", "removeSecurityExposure", "newFamilyMember", "newBroker", "newManualSecurity",
   "showPensionPeriodEntry", "showPensionRateEntry", "saveAlertDismissalSettings",
 ]);
 const WRITE_DATA_ACTIONS = new Set([
@@ -1362,17 +1362,41 @@ async function restoreAuthSession() {
   return true;
 }
 
+const REMEMBER_USERNAME_KEY = "portfolioAnalyzer.rememberedUsername";
+
+function restoreRememberedUsername() {
+  try {
+    const username = localStorage.getItem(REMEMBER_USERNAME_KEY);
+    $("loginRemember").checked = Boolean(username);
+    if (username && !$("loginUsername").value) $("loginUsername").value = username;
+  } catch {
+    // Browser storage may be disabled; signing in still works.
+  }
+}
+
+function saveRememberedUsername(username, remember) {
+  try {
+    if (remember) localStorage.setItem(REMEMBER_USERNAME_KEY, username);
+    else localStorage.removeItem(REMEMBER_USERNAME_KEY);
+  } catch {
+    // A persistent cookie can work even when local storage is unavailable.
+  }
+}
+
 async function signIn() {
   const button = $("loginButton");
   button.disabled = true;
   $("loginStatus").textContent = optionLabel("Signing in");
   try {
+    const username = $("loginUsername").value.trim();
+    const remember = $("loginRemember").checked;
     const response = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: $("loginUsername").value, password: $("loginPassword").value }),
+      body: JSON.stringify({ username, password: $("loginPassword").value, remember_me: remember }),
     });
     const payload = await authResponse(response);
+    saveRememberedUsername(payload.user.username, remember);
     setAuthenticatedSession(payload);
     $("loginPassword").value = "";
     if (payload.user?.must_change_password) {
@@ -2094,6 +2118,7 @@ function applyLanguage() {
   refreshReportFilterOptions();
   document.querySelectorAll(".modal:not([hidden])").forEach(mountModalHomeLink);
   applyAutoDirection();
+  if ($("manualSecuritiesList")) renderManualSecuritiesList();
   window.PortfolioI18n?.applyToDocument(state.language);
   window.PortfolioI18n?.observe();
 }
@@ -3533,15 +3558,13 @@ function renderPortfolioValueDashboard(items) {
   const accountsHtml = accountTotals
     .map((account) => {
       const accountRisk = state.riskSnapshot.accounts.find((entry) => entry.account === account.account)?.risk;
-      const symbolsText = account.symbols.slice(0, 12).join(", ");
-      const more = account.symbols.length > 12 ? `, +${account.symbols.length - 12} more` : "";
       const localAmounts = Object.entries(account.localValues || {})
         .filter(([currency]) => currency !== state.baseCurrency)
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([currency, value]) => money(value, currency, 0));
       const localLine = localAmounts.length ? `<small>${esc(localAmounts.join(" · "))}</small>` : "";
-      const cashText = account.cashCurrency ? `; Cash: ${money(account.cashLocal || 0, account.cashCurrency, 2)}` : "";
-      const title = `Account: ${account.account}; ${account.type || "Account"}${account.location ? ` · ${countryDisplayLabel(account.location)}` : ""}; Securities: ${symbolsText || "None"}${more}; Source currencies: ${account.currencies.map(currencyDisplayLabel).join(", ")}${cashText}`;
+      const cashText = account.cashCurrency ? `; ${optionLabel("Cash")}: ${money(account.cashLocal || 0, account.cashCurrency, 2)}` : "";
+      const title = `${optionLabel("Account")}: ${account.account}; ${optionLabel(account.type || "Account")}${account.location ? ` · ${countryDisplayLabel(account.location)}` : ""}; ${optionLabel("Source currencies")}: ${account.currencies.map(currencyDisplayLabel).join(", ")}${cashText}`;
       return `<span class="account-chip" title="${esc(title)}"><b>${esc(account.account)}</b><span class="account-chip-values"><strong>${money(account.value, state.baseCurrency, 0)}</strong>${localLine}</span>${riskBadge(accountRisk, true)}</span>`;
     })
     .join("");
@@ -7933,6 +7956,7 @@ function setSecuritiesWorkflow(workflow = "general") {
   if ($("tradePlannerSection")) $("tradePlannerSection").hidden = employeeOptions;
   $("employeeOptionSavedSection").hidden = !employeeOptions;
   $("instrumentDefinitionSection").hidden = employeeOptions;
+  if ($("definedInstrumentsSection")) $("definedInstrumentsSection").hidden = employeeOptions;
   $("accountTransactionSection").hidden = employeeOptions;
   $("savedTransactionsLabel").hidden = employeeOptions;
   $("securitiesList").hidden = employeeOptions;
@@ -8022,7 +8046,11 @@ function toggleManualInstrumentFields() {
 }
 
 async function loadManualSecurities() {
-  const data = await api("/api/local/manual-securities");
+  if ($("manualSecurityListStatus")) $("manualSecurityListStatus").textContent = optionLabel("Loading instruments…");
+  const data = await api("/api/local/manual-securities").catch(error => {
+    if ($("manualSecurityListStatus")) $("manualSecurityListStatus").textContent = optionLabel("Could not load instruments. Reopen Transactions to retry.");
+    throw error;
+  });
   state.manualSecurities = data.items || [];
   const companyOptions = $("employeeCompanyOptions");
   if (companyOptions) {
@@ -8032,11 +8060,32 @@ async function loadManualSecurities() {
     companyOptions.innerHTML = companies.map((company) => `<option value="${esc(company)}"></option>`).join("");
   }
   refreshManualSecuritySelects();
+  renderManualSecuritiesList();
+}
+
+function filteredManualSecurities(items, query, type, sort, direction) {
+  const search = String(query || "").trim().toLocaleLowerCase();
+  const compare = (a, b) => String(a || "").localeCompare(String(b || ""), state.language === "he" ? "he" : "en", { numeric: true, sensitivity: "base" });
+  const key = item => sort === "symbol" ? item.symbol : sort === "type" ? optionLabel(item.instrument_type) : (item.name || item.company_name || item.symbol);
+  return items.filter(item => (!type || item.instrument_type === type) && (!search || [item.name, item.symbol, item.secondary_symbol, item.company_name, item.grant_id].some(value => String(value || "").toLocaleLowerCase().includes(search))))
+    .sort((a, b) => (compare(key(a), key(b)) || compare(a.symbol, b.symbol) || compare(a.id, b.id)) * (direction === "desc" ? -1 : 1));
+}
+
+function renderManualSecuritiesList() {
   const list = $("manualSecuritiesList");
   if (!list) return;
-  const visibleSecurities = employeeOptionsWorkflowActive()
+  const scopedSecurities = employeeOptionsWorkflowActive()
     ? state.manualSecurities.filter((item) => item.instrument_type === "EMPLOYEE_STOCK_OPTION")
     : state.manualSecurities;
+  const typeSelect = $("manualSecurityTypeFilter");
+  if (typeSelect) {
+    const selected = typeSelect.value;
+    const types = [...new Set(scopedSecurities.map(item => item.instrument_type).filter(Boolean))];
+    typeSelect.innerHTML = `<option value="">${esc(optionLabel("All types"))}</option>` + types.sort((a,b) => optionLabel(a).localeCompare(optionLabel(b), state.language)).map(type => `<option value="${esc(type)}">${esc(optionLabel(type))}</option>`).join("");
+    typeSelect.value = types.includes(selected) ? selected : "";
+  }
+  const visibleSecurities = filteredManualSecurities(scopedSecurities, $("manualSecurityQuery")?.value, typeSelect?.value, $("manualSecuritySort")?.value, $("manualSecurityDirection")?.value);
+  if ($("manualSecurityListStatus")) $("manualSecurityListStatus").textContent = `${visibleSecurities.length} / ${scopedSecurities.length} ${optionLabel("instruments")}`;
   list.innerHTML = visibleSecurities.length ? visibleSecurities.map((item) => {
     const attachmentRows = manualSecurityAttachmentRows(item);
     const removalDisabled = item.can_delete === false || attachmentRows.length > 0;
@@ -8065,7 +8114,7 @@ async function loadManualSecurities() {
           ${removalHelp}
         </div>
       </div>`;
-  }).join("") : `<div class="empty">${employeeOptionsWorkflowActive() ? "No employee option grants yet. Enter your first grant above." : "No defined instruments yet"}</div>`;
+  }).join("") : `<div class="empty">${scopedSecurities.length ? optionLabel("No instruments match the current filters.") : optionLabel(employeeOptionsWorkflowActive() ? "No employee option grants yet. Enter your first grant above." : "No defined instruments yet")}</div>`;
 }
 
 function syncEmployeeIssuerFromCompany() {
@@ -8114,11 +8163,21 @@ function clearManualSecurityForm() {
   $("manualSecuritySymbol").disabled = false;
   $("manualSecurityMarket").disabled = false;
   $("saveManualSecurity").textContent = "Save instrument";
-  $("cancelManualSecurityEdit").hidden = true;
+  $("cancelManualSecurityEdit").hidden = false;
   toggleManualInstrumentFields();
 }
 
+function newManualSecurity() {
+  if (!canWrite()) return;
+  clearManualSecurityForm();
+  $("instrumentDefinitionSection").hidden = false;
+  $("instrumentDefinitionTitle").textContent = optionLabel("New instrument");
+  $("manualSecurityStatus").textContent = "";
+  openModal("instrumentEditorModal");
+}
+
 function editManualSecurity(securityId) {
+  if (!canWrite()) return;
   const item = instrumentById(securityId);
   if (!item) return;
   if (item.instrument_type === "EMPLOYEE_STOCK_OPTION") {
@@ -8149,13 +8208,24 @@ function editManualSecurity(securityId) {
   $("manualSecurityStatus").textContent = identityLocked
     ? "Editing instrument. Its symbol and stock market stay locked while attached data exists."
     : "Editing instrument.";
-  requestAnimationFrame(() => {
-    $("instrumentDefinitionSection")?.scrollIntoView({ block: "start", behavior: "smooth" });
-    $("manualSecurityName")?.focus({ preventScroll: true });
-  });
+  $("instrumentDefinitionSection").hidden = false;
+  $("instrumentDefinitionTitle").textContent = optionLabel("Edit instrument");
+  openModal("instrumentEditorModal");
 }
 
 async function saveManualSecurity() {
+  if (!canWrite() || state.manualSecuritySaving) return;
+  state.manualSecuritySaving = true;
+  $("saveManualSecurity").disabled = true;
+  try {
+    await persistManualSecurity();
+  } finally {
+    state.manualSecuritySaving = false;
+    $("saveManualSecurity").disabled = !canWrite();
+  }
+}
+
+async function persistManualSecurity() {
   const editing = Boolean(state.editingManualSecurityId);
   const isEmployeeOption = valueOf("manualInstrumentType") === "EMPLOYEE_STOCK_OPTION";
   const listingStatus = valueOf("manualIssuerStatus") || "PRIVATE";
@@ -8204,8 +8274,14 @@ async function saveManualSecurity() {
   $("manualSecurityStatus").textContent = isEmployeeOption
     ? `Grant details saved for ${saved.company_name || saved.symbol}. Complete the options and vesting step below.`
     : `${editing ? "Instrument updated" : "Instrument saved"}: ${saved.company_name || saved.symbol}${saved.grant_id ? ` · ${saved.grant_id}` : ""}`;
-  clearManualSecurityForm();
+  state.editingManualSecurityId = saved.id;
   await loadManualSecurities();
+  if (isEmployeeOption) clearManualSecurityForm();
+  if (!isEmployeeOption) {
+    state.manualSecuritySaved = true;
+    closeModal($("instrumentEditorModal"));
+    state.manualSecuritySaved = false;
+  }
   if (isEmployeeOption) {
     $("securityKnownInstrument").value = saved.id;
     applyInstrumentToForm(saved, "security");
@@ -13346,14 +13422,14 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
   if (id === "benchmarkModal") loadBenchmarkComparison();
   if (id === "optimizationModal") loadOptimization();
   if (id === "varModal") loadVar();
-  if (id === "brokerEditorModal") {
-    const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : $("brokersModal");
+  if (["brokerEditorModal", "instrumentEditorModal"].includes(id)) {
+    const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : $(id === "instrumentEditorModal" ? "securitiesModal" : "brokersModal");
     if (parentModal && parentModal !== modal && !parentModal.hidden) {
       modal.dataset.parentModalId = parentModal.id;
       parentModal.inert = true;
       parentModal.setAttribute("aria-hidden", "true");
     }
-    requestAnimationFrame(() => { if (!modal.hidden) $("brokerName").focus({ preventScroll: true }); });
+    requestAnimationFrame(() => { if (!modal.hidden) $(id === "instrumentEditorModal" ? (state.editingManualSecurityId ? "manualSecurityName" : "manualSecuritySymbol") : "brokerName").focus({ preventScroll: true }); });
   }
   if (id === "tradingJournalModal") {
     const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : null;
@@ -13469,14 +13545,22 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
 function closeModal(modal) {
   if (!modal) return;
   if (modal.id === "brokerEditorModal" && state.brokerSaving) return;
+  if (modal.id === "instrumentEditorModal" && state.manualSecuritySaving && !state.manualSecuritySaved) return;
   if (modal.id === "assistantModal") saveAssistantDraft();
-  if (["securityDetailModal", "tradingJournalModal", "brokerEditorModal"].includes(modal.id) && modal.dataset.parentModalId) {
+  if (["securityDetailModal", "tradingJournalModal", "brokerEditorModal", "instrumentEditorModal"].includes(modal.id) && modal.dataset.parentModalId) {
     const parentModal = $(modal.dataset.parentModalId);
     if (parentModal) {
       parentModal.inert = false;
       parentModal.removeAttribute("aria-hidden");
     }
     delete modal.dataset.parentModalId;
+  }
+  if (modal.id === "instrumentEditorModal") {
+    if (!modalReturnFocus.get(modal.id)?.isConnected) {
+      const editButton = [...document.querySelectorAll("[data-edit-manual-security]")].find(button => button.dataset.editManualSecurity === state.editingManualSecurityId);
+      modalReturnFocus.set(modal.id, editButton || $("newManualSecurity"));
+    }
+    clearManualSecurityForm();
   }
   if (modal.id === "brokerEditorModal") {
     if (!modalReturnFocus.get(modal.id)?.isConnected) {
@@ -13933,16 +14017,13 @@ document.addEventListener("click", (event) => {
   const editManualSecurityId = event.target.closest("[data-edit-manual-security]")?.dataset.editManualSecurity;
   if (editManualSecurityId) editManualSecurity(editManualSecurityId);
 
-  if (event.target.id === "cancelManualSecurityEdit") {
-    clearManualSecurityForm();
-    $("manualSecurityStatus").textContent = "Edit cancelled.";
-  }
+  if (event.target.id === "cancelManualSecurityEdit") closeModal($("instrumentEditorModal"));
 
   const manualSecurityId = event.target.closest("[data-delete-manual-security]")?.dataset.deleteManualSecurity;
   if (manualSecurityId) {
     api(`/api/local/manual-securities/${manualSecurityId}`, { method: "DELETE" })
       .then(() => Promise.all([loadManualSecurities(), loadPortfolio()]))
-      .catch((error) => { $("manualSecurityStatus").textContent = `Error: ${error.message}`; });
+      .catch((error) => { $("manualSecurityListStatus").textContent = `${optionLabel("Error")}: ${error.message}`; });
   }
 
   const useManualSecurityId = event.target.closest("[data-use-manual-security]")?.dataset.useManualSecurity;
@@ -14397,6 +14478,10 @@ document.addEventListener("drop", (event) => {
   moveDashboardWidgetToPosition(sourceId, section.dataset.dashboardSection, dashboardDropIndex(grid, event));
 });
 
+restoreRememberedUsername();
+$("loginRemember").addEventListener("change", () => {
+  if (!$("loginRemember").checked) saveRememberedUsername("", false);
+});
 $("loginForm").addEventListener("submit", (event) => {
   event.preventDefault();
   signIn().catch((error) => { $("loginStatus").textContent = error.message; });
@@ -14522,6 +14607,16 @@ $("saveAlertDismissalSettings").addEventListener("click", saveAlertDismissalSett
 $("reloadAlertDismissalSettings").addEventListener("click", loadAlertDismissalSettings);
 $("dashboardEdit").addEventListener("click", () => setDashboardEdit(!state.dashboard.edit));
 $("dashboardReset").addEventListener("click", resetDashboard);
+$("newManualSecurity").addEventListener("click", newManualSecurity);
+$("manualSecurityQuery").addEventListener("input", renderManualSecuritiesList);
+["manualSecurityTypeFilter", "manualSecuritySort", "manualSecurityDirection"].forEach(id => $(id).addEventListener("change", renderManualSecuritiesList));
+$("resetManualSecurityFilters").addEventListener("click", () => {
+  $("manualSecurityQuery").value = "";
+  $("manualSecurityTypeFilter").value = "";
+  $("manualSecuritySort").value = "name";
+  $("manualSecurityDirection").value = "asc";
+  renderManualSecuritiesList();
+});
 $("saveManualSecurity").addEventListener("click", () => saveManualSecurity().catch((error) => { $("manualSecurityStatus").textContent = `Error: ${error.message}`; }));
 $("saveIndustryClassification").addEventListener("click", () => saveIndustryClassification().catch((error) => { $("industryClassificationStatus").textContent = `Error: ${error.message}`; }));
 $("removeIndustryClassification").addEventListener("click", () => removeIndustryClassification().catch((error) => { $("industryClassificationStatus").textContent = `Error: ${error.message}`; }));

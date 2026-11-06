@@ -1167,7 +1167,7 @@ def test_role_aware_user_management_is_accessible_and_responsive():
     assert '.users-layout {' in styles
     mobile = styles.split('@media (max-width: 760px) {', 1)[1]
     assert '.auth-actions,\n  .users-layout,\n  .user-form,\n  .user-management-item {' in mobile
-    assert '.auth-panel input,\n  .auth-panel select,\n  .auth-panel button,' in mobile
+    assert '.auth-panel input:not([type="checkbox"]),\n  .auth-panel select,\n  .auth-panel button,' in mobile
     assert 'min-height: 44px;' in mobile
     assert '"Viewer access is read-only": "לצופה יש גישה לקריאה בלבד"' in i18n
 

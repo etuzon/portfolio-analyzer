@@ -19,6 +19,7 @@ PASSWORD_MIN_LENGTH = 8
 PASSWORD_MAX_LENGTH = 256
 SESSION_ABSOLUTE_HOURS = 8
 SESSION_IDLE_MINUTES = 30
+REMEMBER_SESSION_DAYS = 30
 API_TOKEN_HOURS = 8
 API_ACCESS_MODES = ("disabled", "read_only", "read_write")
 _USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{2,63}$")
@@ -176,6 +177,9 @@ class AuthStore:
                     )
                     """
                 )
+                session_columns = {str(row["name"]) for row in connection.execute("pragma table_info(auth_sessions)")}
+                if "remember_me" not in session_columns:
+                    connection.execute("alter table auth_sessions add column remember_me integer not null default 0")
                 connection.execute("create index if not exists idx_auth_sessions_user on auth_sessions(user_id)")
                 connection.execute("create index if not exists idx_auth_sessions_expiry on auth_sessions(expires_at)")
                 connection.execute(
@@ -333,15 +337,15 @@ class AuthStore:
     def _token_hash(token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
-    def _create_session(self, connection: sqlite3.Connection, user_id: str) -> tuple[str, str]:
+    def _create_session(self, connection: sqlite3.Connection, user_id: str, remember_me: bool = False) -> tuple[str, str]:
         token = secrets.token_urlsafe(32)
         csrf_token = secrets.token_urlsafe(24)
         now = _now()
         connection.execute(
             """
             insert into auth_sessions
-              (token_hash, user_id, csrf_token, created_at, last_seen_at, expires_at)
-            values (?, ?, ?, ?, ?, ?)
+              (token_hash, user_id, csrf_token, created_at, last_seen_at, expires_at, remember_me)
+            values (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 self._token_hash(token),
@@ -349,7 +353,8 @@ class AuthStore:
                 csrf_token,
                 _timestamp(now),
                 _timestamp(now),
-                _timestamp(now + timedelta(hours=SESSION_ABSOLUTE_HOURS)),
+                _timestamp(now + (timedelta(days=REMEMBER_SESSION_DAYS) if remember_me else timedelta(hours=SESSION_ABSOLUTE_HOURS))),
+                int(remember_me),
             ),
         )
         return token, csrf_token
@@ -522,7 +527,7 @@ class AuthStore:
         with self._lock, self._connect() as connection:
             connection.execute("delete from api_tokens where token_hash = ?", (self._token_hash(raw_token),))
 
-    def authenticate(self, username: Any, password: Any) -> tuple[dict[str, Any], str, str]:
+    def authenticate(self, username: Any, password: Any, remember_me: bool = False) -> tuple[dict[str, Any], str, str]:
         self._ensure_initialized()
         candidate = str(username or "").strip()[:64]
         with self._lock, self._connect() as connection:
@@ -531,7 +536,7 @@ class AuthStore:
             if not row or not valid_password or not row["enabled"]:
                 raise ValueError("Invalid username or password")
             connection.execute("delete from auth_sessions where expires_at <= ?", (_timestamp(),))
-            token, csrf_token = self._create_session(connection, row["id"])
+            token, csrf_token = self._create_session(connection, row["id"], remember_me=remember_me)
             connection.execute(
                 "update app_users set last_login_at = ?, updated_at = updated_at where id = ?",
                 (_timestamp(), row["id"]),
@@ -550,7 +555,7 @@ class AuthStore:
             row = connection.execute(
                 """
                 select s.token_hash, s.csrf_token, s.created_at as session_created_at,
-                       s.last_seen_at, s.expires_at, u.*
+                       s.last_seen_at, s.expires_at, s.remember_me, u.*
                 from auth_sessions s
                 join app_users u on u.id = s.user_id
                 where s.token_hash = ?
@@ -562,7 +567,7 @@ class AuthStore:
             expires_at = _parse_timestamp(row["expires_at"])
             last_seen_at = _parse_timestamp(row["last_seen_at"])
             idle_deadline = last_seen_at + timedelta(minutes=SESSION_IDLE_MINUTES) if last_seen_at else None
-            if not row["enabled"] or not expires_at or expires_at <= now or not idle_deadline or idle_deadline <= now:
+            if not row["enabled"] or not expires_at or expires_at <= now or not idle_deadline or (not row["remember_me"] and idle_deadline <= now):
                 connection.execute("delete from auth_sessions where token_hash = ?", (token_hash,))
                 return None
             if now - last_seen_at >= timedelta(minutes=1):
@@ -574,6 +579,7 @@ class AuthStore:
             "user": self._user_out(row),
             "csrf_token": str(row["csrf_token"]),
             "token_hash": token_hash,
+            "remember_me": bool(row["remember_me"]),
         }
 
     def logout(self, token: Any) -> None:
@@ -589,6 +595,7 @@ class AuthStore:
         user_id: str,
         current_password: Any,
         new_password: Any,
+        remember_me: bool = False,
     ) -> tuple[dict[str, Any], str, str]:
         self._ensure_initialized()
         password = validate_password(new_password)
@@ -610,7 +617,7 @@ class AuthStore:
             )
             connection.execute("delete from auth_sessions where user_id = ?", (user_id,))
             connection.execute("delete from api_tokens where user_id = ?", (user_id,))
-            token, csrf_token = self._create_session(connection, user_id)
+            token, csrf_token = self._create_session(connection, user_id, remember_me=remember_me)
             updated = connection.execute("select * from app_users where id = ?", (user_id,)).fetchone()
         return self._user_out(updated), token, csrf_token
 

@@ -85,3 +85,5 @@
 
 .heatmap-tile[data-heatmap-label-mode="compact-wrap"] .heatmap-tile-value,.heatmap-tile[data-heatmap-label-mode="compact-wrap"] .heatmap-tile-direction,.heatmap-tile[data-heatmap-label-mode="symbol-wrap"] .heatmap-tile-value,.heatmap-tile[data-heatmap-label-mode="symbol-wrap"] .heatmap-tile-direction,.heatmap-tile[data-heatmap-label-mode="symbol-wrap"] .heatmap-tile-change { display:none; }
 .heatmap-tile[data-heatmap-label-mode="compact-wrap"] .heatmap-tile-symbol,.heatmap-tile[data-heatmap-label-mode="symbol-wrap"] .heatmap-tile-symbol { white-space:normal; overflow-wrap:anywhere; }
+
+.portfolio-heatmap-card .heatmap-type-icon { display:inline-block; width:.95em; height:.95em; min-height:0; margin-inline-end:.3em; vertical-align:-.1em; flex-shrink:0; }

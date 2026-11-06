@@ -623,3 +623,64 @@ def test_health_check_is_public_and_does_not_expose_runtime_paths(tmp_path, monk
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "version": main.__version__}
     assert "config_path" not in response.text
+
+
+def test_remember_me_cookie_restart_password_change_and_logout(tmp_path, monkeypatch):
+    auth = _auth_environment(tmp_path, monkeypatch)
+    client = _client()
+    response = client.post('/api/auth/login', json={'username': 'admin', 'password': 'admin', 'remember_me': True})
+    assert response.status_code == 200
+    assert 'Max-Age=2592000' in response.headers['set-cookie']
+    assert all(flag in response.headers['set-cookie'] for flag in ('Secure', 'HttpOnly', 'SameSite=strict'))
+    old_token = client.cookies.get(SESSION_COOKIE_NAME)
+    assert auth.session(old_token)['remember_me'] is True
+    payload = response.json()
+    changed = client.post('/api/auth/change-password', headers={'X-CSRF-Token': payload['csrf_token']}, json={
+        'current_password': 'admin', 'new_password': 'remember-test-password', 'confirm_password': 'remember-test-password'})
+    assert changed.status_code == 200
+    assert 'Max-Age=2592000' in changed.headers['set-cookie']
+    assert auth.session(old_token) is None
+    token = client.cookies.get(SESSION_COOKIE_NAME)
+    # Reconstruct the client and store to simulate a browser/server restart.
+    restarted = _client()
+    restarted.cookies.update(client.cookies)
+    monkeypatch.setattr(main, 'auth_store', AuthStore(auth.path))
+    assert restarted.get('/api/auth/session').status_code == 200
+    logout = restarted.post('/api/auth/logout', headers={'X-CSRF-Token': changed.json()['csrf_token']})
+    assert logout.status_code == 200
+    assert 'Max-Age=0' in logout.headers['set-cookie']
+    assert auth.session(token) is None
+
+
+def test_remember_me_lifetime_and_ordinary_session_limits(tmp_path, monkeypatch):
+    from app import auth as auth_module
+    auth = _auth_environment(tmp_path, monkeypatch)
+    now = datetime(2026, 11, 6, tzinfo=timezone.utc)
+    monkeypatch.setattr(auth_module, '_now', lambda: now)
+    _, ordinary, _ = auth.authenticate('admin', 'admin')
+    _, remembered, _ = auth.authenticate('admin', 'admin', remember_me=True)
+    monkeypatch.setattr(auth_module, '_now', lambda: now + timedelta(minutes=31))
+    assert auth.session(ordinary) is None
+    assert auth.session(remembered) is not None
+    monkeypatch.setattr(auth_module, '_now', lambda: now + timedelta(days=29))
+    assert auth.session(remembered) is not None
+    monkeypatch.setattr(auth_module, '_now', lambda: now + timedelta(days=30))
+    assert auth.session(remembered) is None
+    # Active ordinary sessions still expire at the absolute eight-hour limit.
+    monkeypatch.setattr(auth_module, '_now', lambda: now)
+    _, active, _ = auth.authenticate('admin', 'admin')
+    for minutes in range(20, 481, 20):
+        monkeypatch.setattr(auth_module, '_now', lambda: now + timedelta(minutes=minutes))
+        assert bool(auth.session(active)) is (minutes < 480)
+
+
+def test_remember_me_requires_explicit_boolean_and_default_cookie_is_temporary(tmp_path, monkeypatch):
+    _auth_environment(tmp_path, monkeypatch)
+    client = _client()
+    for value in ('false', 'true', 1, None):
+        response = client.post('/api/auth/login', json={'username': 'admin', 'password': 'admin', 'remember_me': value})
+        assert response.status_code == 400
+        assert 'set-cookie' not in response.headers
+    response = client.post('/api/auth/login', json={'username': 'admin', 'password': 'admin'})
+    assert response.status_code == 200
+    assert 'Max-Age' not in response.headers['set-cookie']

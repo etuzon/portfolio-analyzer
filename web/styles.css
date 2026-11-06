@@ -225,6 +225,21 @@ html[dir="rtl"] .funds-overview-panel {
   gap: 14px;
 }
 
+.auth-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  cursor: pointer;
+}
+
+.auth-remember input {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  margin: 0;
+}
+
 .auth-panel[hidden] {
   display: none;
 }
@@ -9854,7 +9869,7 @@ html[dir="rtl"] .settings-menu-button.active {
     grid-template-columns: 1fr;
   }
 
-  .auth-panel input,
+  .auth-panel input:not([type="checkbox"]),
   .auth-panel select,
   .auth-panel button,
   .auth-actions button,
@@ -11021,3 +11036,70 @@ html[dir="rtl"] .settings-menu-button.active {
     border-top: 1px solid #303b4b;
   }
 }
+
+/* Instrument identity has room for descriptive labels; trade values stay compact. */
+#accountTransactionSection .transaction-identity-fields,
+#accountTransactionSection .transaction-value-fields {
+  grid-column: 1 / -1;
+  display: grid;
+  align-items: end;
+  gap: 10px;
+  min-width: 0;
+}
+#accountTransactionSection .transaction-identity-fields {
+  grid-template-columns: minmax(240px, 1.6fr) minmax(210px, 1.2fr) 132px 180px;
+}
+#accountTransactionSection .transaction-value-fields {
+  grid-template-columns: minmax(140px, 165px) minmax(140px, 160px) minmax(155px, 180px) minmax(155px, 180px) 150px;
+}
+#accountTransactionSection .transaction-identity-fields > .management-field,
+#accountTransactionSection .transaction-value-fields > .management-field {
+  grid-column: auto;
+  min-width: 0;
+}
+#accountTransactionSection .transaction-identity-fields input,
+#accountTransactionSection .transaction-identity-fields select,
+#accountTransactionSection .transaction-value-fields input {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.instrument-list-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
+.instrument-list-heading .form-caption { margin:0; }
+.instrument-list-controls { display:grid; grid-template-columns:minmax(220px,2fr) repeat(3,minmax(140px,1fr)) auto; gap:10px; align-items:end; }
+.instrument-list-controls .management-field { min-width:0; }
+.instrument-list-controls input,.instrument-list-controls select { width:100%; min-width:0; box-sizing:border-box; }
+@media (max-width: 1050px) {
+  #accountTransactionSection .transaction-identity-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  #accountTransactionSection .transaction-value-fields { grid-template-columns:repeat(3,minmax(150px,1fr)); }
+  .instrument-list-controls { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 700px) {
+  #accountTransactionSection .transaction-identity-fields,
+  #accountTransactionSection .transaction-value-fields,
+  .instrument-list-controls { grid-template-columns:minmax(0,1fr); }
+}
+
+#pricesModal .price-entry-form { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:10px; align-items:end; }
+#pricesModal .price-entry-form .management-field { min-width:0; }
+#pricesModal .price-entry-form input,#pricesModal .price-entry-form select { width:100%; min-width:0; box-sizing:border-box; }
+#pricesModal .price-instrument-field,#pricesModal .price-comments-field { grid-column:span 4; }
+#pricesModal .price-compact-field { grid-column:span 2; }
+#pricesModal .price-currency-field { grid-column:span 3; }
+#pricesModal #savePrice { min-width:80px; }
+@media(max-width:1050px) {
+  #pricesModal .price-entry-form { grid-template-columns:repeat(2,minmax(150px,1fr)); }
+  #pricesModal .price-entry-form .management-field { grid-column:auto; }
+  #pricesModal .price-entry-form .price-instrument-field,#pricesModal .price-entry-form .price-comments-field { grid-column:1/-1; }
+}
+@media(max-width:700px) {
+  #pricesModal .price-entry-form { grid-template-columns:minmax(0,1fr); }
+  #pricesModal .price-entry-form .management-field { grid-column:1/-1; }
+}
+
+.dividend-summary-controls { display:grid; grid-template-columns:minmax(180px,1.4fr) minmax(130px,.7fr) minmax(190px,1.4fr) minmax(130px,.7fr); gap:10px; align-items:end; margin-block:12px; }
+.dividend-summary-controls .field { min-width:0; }
+.dividend-summary-controls input,.dividend-summary-controls select { width:100%; min-width:0; box-sizing:border-box; }
+.dividend-summary-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-block:10px; }
+@media(max-width:900px){ .dividend-summary-controls { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:640px){ .dividend-summary-controls { grid-template-columns:minmax(0,1fr); } }

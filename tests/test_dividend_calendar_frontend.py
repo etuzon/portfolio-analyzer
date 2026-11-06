@@ -105,3 +105,50 @@ def test_removed_account_recovers_to_investment_scope():
     run_ui(r'''
 (async()=>{$('dividendCalendarAccount').value='removed';const old=loadDividendCalendar();pending[0].reject(new Error('unknown_dividend_account'));await new Promise(resolve=>setImmediate(resolve));assert.equal(nodes.dividendCalendarAccount.value,'');assert.equal(dividendCalendarView.data,null);pending[1].resolve(data);await old;assert.equal(dividendCalendarView.data.assets.length,3);})();
 ''')
+
+
+def test_summary_search_currency_numeric_sort_and_missing_values():
+    run_ui(r'''
+dividendCalendarView.data={...data,assets:[a,b,c,{...a,id:'ILS',symbol:'ILS',currency:'ILS',annual_yield_percent:10}]};
+let controls=dividendCalendarView.summary;
+controls.query='alpha';assert.equal(dividendSummaryRows().length,4);
+controls.query='nasdaq';assert.equal(dividendSummaryRows().length,4);
+controls.query='bbb';assert.deepEqual(dividendSummaryRows().map(row=>row.symbol),['BBB']);
+controls.query='';controls.currency='ILS';assert.deepEqual(dividendSummaryRows().map(row=>row.symbol),['ILS']);
+controls.currency='';controls.sort='yield';controls.direction='desc';assert.deepEqual(dividendSummaryRows().map(row=>row.symbol),['ILS','AAA','BBB','EMPTY']);
+controls.direction='asc';assert.deepEqual(dividendSummaryRows().map(row=>row.symbol),['BBB','AAA','ILS','EMPTY']);
+controls.sort='year';controls.direction='desc';assert.deepEqual(dividendSummaryRows().map(row=>row.symbol),['ILS','BBB','AAA','EMPTY']);
+controls.query='no-match';let html=dividendSummaryHtml();assert.ok(html.includes('No securities match'));assert.ok(html.includes('id="dividendSummaryCsv" disabled'));assert.ok(html.includes('id="dividendSummaryPdf" disabled'));
+assert.equal(data.assets[0],a); // Source order remains unchanged.
+resetDividendCalendar();assert.equal(dividendCalendarView.summary.query,'');
+''')
+
+
+def test_csv_and_pdf_export_exact_filtered_order_and_escape_spreadsheet_formulas():
+    run_ui(r'''
+(async()=>{
+dividendCalendarView.data={...data,assets:[{...a,symbol:'=FORMULA()',name:'@Unsafe'},b,c]};
+dividendCalendarView.summary={query:'',currency:'USD',sort:'yield',direction:'asc'};
+const rows=dividendSummaryCsvRows();assert.equal(rows[1][0],'BBB · NASDAQ');assert.equal(rows[2][0],'=FORMULA() · NASDAQ');assert.equal(rows[3][5],'Annual yield unavailable');
+let blob,link={click(){},remove(){}};
+globalThis.Blob=class{constructor(parts){blob=parts.join('');}};
+globalThis.URL={createObjectURL(){return 'blob:test'},revokeObjectURL(){}};
+globalThis.setTimeout=fn=>fn();document.createElement=()=>link;document.body={appendChild(){}};
+exportDividendSummaryCsv();assert.ok(blob.includes('"\'=FORMULA() · NASDAQ"'));assert.ok(blob.includes('"\'@Unsafe"'));assert.ok(blob.includes('03/11/2026'));
+let request,downloaded=false;
+globalThis.fetch=async(url,options)=>{request={url,...options};return {};};
+globalThis.downloadResponse=async()=>{downloaded=true;};
+state.auth={csrfToken:'test-csrf'};
+await exportDividendSummaryPdf();assert.equal(downloaded,true);assert.equal(request.method,'POST');assert.equal(request.headers['X-CSRF-Token'],'test-csrf');
+const payload=JSON.parse(request.body);assert.ok(payload.rows[0][0].startsWith('BBB'));assert.ok(payload.rows[1][0].startsWith('=FORMULA()'));assert.equal(payload.rows.length,3);assert.ok(payload.rows[2].includes('Annual yield unavailable'));
+})();
+''')
+
+
+def test_currency_conflicts_keep_displayed_missing_prices_last_and_export_unavailable():
+    run_ui(r'''
+dividendCalendarView.data={...data,assets:[{...a,id:'conflict',symbol:'CONFLICT',currency:null,price:1,currency_conflict:true},b]};
+dividendCalendarView.summary={query:'',currency:'',sort:'price',direction:'asc'};
+assert.deepEqual(dividendSummaryRows().map(row=>row.symbol),['BBB','CONFLICT']);
+const rows=dividendSummaryCsvRows();assert.equal(rows[2][6],'Unavailable');assert.equal(rows[2][3],'Unavailable');
+''')
