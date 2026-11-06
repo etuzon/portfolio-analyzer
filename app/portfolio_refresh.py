@@ -3,7 +3,9 @@ from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from copy import deepcopy
+from datetime import date
 import json
+import math
 import time
 from threading import RLock
 
@@ -13,12 +15,68 @@ from threading import RLock
 _POOL = ThreadPoolExecutor(max_workers=4, thread_name_prefix="security-refresh")
 _INFLIGHT = {}
 _INFLIGHT_LOCK = RLock()
+PRICE_ANALYSIS_FIELDS = ("price_ranges", "moving_averages", "support_resistance", "volume")
 
 
 def security_key(holding) -> str:
     return json.dumps([(holding.get(field, "") if isinstance(holding, dict) else getattr(holding, field, "")) for field in (
         "symbol", "secondary_symbol", "stock_market", "currency", "asset_class", "asset_sub_class", "data_source"
     )], separators=(",", ":"))
+
+
+def _finite_number(value):
+    try:
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def valuation_quote(price_ranges):
+    """A usable normalized quote and its actual observation date, if known."""
+    candidates = []
+    for period in ("5y", "3y", "1y", "6m", "1m"):
+        quote = (price_ranges or {}).get(period) or {}
+        current, observed = quote.get("current"), quote.get("current_date")
+        if not _finite_number(current) or current < 0 or quote.get("state") in {"missing", "pending", "error"}:
+            continue
+        if not isinstance(observed, str) or len(observed) != 10:
+            continue
+        try:
+            day = date.fromisoformat(observed)
+        except ValueError:
+            continue
+        if day <= date.today():
+            candidates.append((day, current))
+    return max(candidates, key=lambda quote: quote[0]) if candidates else None
+
+
+def prefer_recorded_prices(recorded_ranges, market_ranges):
+    recorded, market = valuation_quote(recorded_ranges), valuation_quote(market_ranges)
+    return recorded is not None and (market is None or recorded[0] > market[0])
+
+
+def revalue_holding(holding, price_ranges):
+    """Apply an already normalized quote to this account's recorded position.
+
+    Shared by completed analyses and serialized progress overlays. Market data
+    belongs to a listing; quantities, basis, realized P/L and income do not.
+    """
+    get = holding.get if isinstance(holding, dict) else lambda key: getattr(holding, key, None)
+    if get("data_source") == "MANUAL" and not get("secondary_symbol"):
+        return
+    quote = valuation_quote(price_ranges)
+    quantity, basis = get("quantity"), get("cost_basis")
+    if quote is None or not all(_finite_number(value) for value in (quantity, basis)):
+        return
+    current = quote[1]
+    value = quantity * current
+    unrealized = value - basis if quantity >= 0 else abs(basis) - abs(quantity) * current
+    if not _finite_number(value) or not _finite_number(unrealized):
+        return
+    if isinstance(holding, dict):
+        holding.update(market_value=value, unrealized_profit=unrealized)
+    else:
+        holding.market_value, holding.unrealized_profit = value, unrealized
 
 
 def attach_market_analysis(local, market):
@@ -30,18 +88,13 @@ def attach_market_analysis(local, market):
     holding.industry = market.industry or holding.industry
     result.holding = holding
     result.provider_status = {**local.provider_status, **result.provider_status}
-    if "price history" in result.missing and "price history" not in local.missing:
+    if prefer_recorded_prices(local.price_ranges, result.price_ranges) or (
+        "price history" in result.missing and "price history" not in local.missing
+    ):
         result.missing = [key for key in result.missing if key != "price history"]
-        for key in ("price_ranges", "moving_averages", "support_resistance", "volume"):
+        for key in PRICE_ANALYSIS_FIELDS:
             setattr(result, key, deepcopy(getattr(local, key)))
-    current = (result.price_ranges.get("5y") or {}).get("current")
-    if holding.secondary_symbol and current is not None and current > 0:
-        holding.market_value = holding.quantity * current
-        if holding.quantity >= 0:
-            holding.unrealized_profit = holding.market_value - holding.cost_basis
-        else:
-            average = abs(holding.cost_basis / holding.quantity) if holding.quantity else 0
-            holding.unrealized_profit = abs(holding.quantity) * (average - current)
+    revalue_holding(holding, result.price_ranges)
     return result
 
 

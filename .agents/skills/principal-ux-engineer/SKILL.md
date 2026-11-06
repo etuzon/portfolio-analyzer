@@ -12,6 +12,8 @@ Engineer the interaction as a working system. Reduce cognitive load, preserve th
 - Read repository instructions, product intent, user research, existing UI patterns, design tokens, frontend architecture, API contracts, tests, and current worktree before changing the experience.
 - Start from user goals, frequency, urgency, expertise, device, locale, accessibility needs, and error-recovery behavior—not from component preference.
 - Preserve established navigation and visual language unless research or the user explicitly supports a change.
+- Size form fields by expected content and task: keep currency codes and dates compact, give amounts enough room for realistic signed values and precision, and reserve wider space for names and free text. Choose the dialog width and column proportions deliberately; do not stretch every field equally or let a simple form inherit a large generic modal width.
+- Group related fields in a clear reading and keyboard order. Keep primary and cancel actions adjacent, use content-sized secondary actions, and adapt rows at narrow widths without clipping values or creating unnecessary empty space. Review the final proportions in both interface directions, rather than treating absence of overflow as sufficient UX evidence.
 - Always arrange dashboard cards for comfortable reading with as little unused space between cards as practical. Size cards to their content and available width, place compact summaries together or in gaps beside larger charts, and avoid unnecessary fixed heights. Preserve readable labels and numbers, useful chart scales, touch targets, and predictable keyboard order; do not compress content merely to remove whitespace.
 - Verify card layouts with screenshots at desktop and narrower widths, including repeated background redraws while scrolled down. Updates must preserve the reader's viewport, focused control, and expanded or scrollable content; check temporary layout collapse as well as the final arrangement.
 - Prototype with real or structurally representative data and working state transitions. Do not validate invented decorative data as product behavior.
@@ -130,6 +132,7 @@ Performance and accessibility:
 - Check keyboard-only completion, visible focus, semantic roles/names, label association, announcements, contrast, zoom/reflow, touch targets, and reduced motion.
 - Measure initial responsiveness, async loading behavior, cumulative layout shift, input response, re-render cost, and mobile behavior.
 - Verify the effective browser viewport and loaded fonts, not just the screenshot dimensions. Check long labels and numeric values after fonts load and after resizing; fixed overlays and return navigation must remain visible and keyboard reachable.
+- Inspect computed field and dialog widths with the complete application stylesheet loaded. Confirm that shared rules do not override the intended sizing, then inspect screenshots of realistic values at desktop and narrow widths.
 
 Behavior and micro-interactions:
 

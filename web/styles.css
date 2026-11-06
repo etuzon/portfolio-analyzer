@@ -5307,18 +5307,26 @@ textarea.muted-control {
 .currency-strip .account-current-cash { grid-column:1 / -1; display:flex; padding:2px 0 0; min-height:0; gap:8px; background:transparent; border-radius:0; }
 .currency-strip .account-current-cash > span { padding:0; min-height:0; background:transparent; font-size:11px; overflow-wrap:anywhere; }
 .currency-strip .account-current-cash > button { min-height:28px; padding:3px 8px; font-size:11px; }
-.account-cash-card { width:min(100%,540px); }
+#accountCashModal > .account-cash-card { width:min(100%,560px); }
 .account-cash-account { overflow-wrap:anywhere; color:#c6cede; }
 .account-cash-current { display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; padding:12px; background:#1b1b1d; border-radius:8px; }
 .account-cash-current strong { color:#f7f9ff; font-size:20px; overflow-wrap:anywhere; }
 .account-cash-form { display:grid; gap:12px; min-width:0; }
-.account-cash-form > .field, .account-cash-context > .field { min-width:0; }
-.account-cash-context { display:grid; grid-template-columns:minmax(100px,.8fr) minmax(150px,1.2fr); gap:10px; }
+.account-cash-fields { display:grid; grid-template-columns:minmax(220px,1fr) 88px 140px; align-items:end; gap:10px; }
+.account-cash-fields > .field { min-width:0; }
 .account-cash-form input { width:100%; min-width:0; box-sizing:border-box; }
 .account-cash-form input[readonly] { color:#aeb8c8; }
 #accountCashTarget { min-height:44px; font-size:18px; color:#f7f9ff; }
 .account-cash-difference { margin:0; color:#8bd1ff; font-weight:650; overflow-wrap:anywhere; }
-#accountCashReload { justify-self:start; }
+.account-cash-feedback { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; }
+#accountCashReload { width:auto; }
+#accountCashStatus:empty { display:none; }
+.account-cash-form .account-cash-actions { width:auto; max-width:100%; justify-self:end; }
+.account-cash-form .account-cash-actions > button { flex:0 1 auto; min-height:40px; }
+@media (max-width:600px) {
+  .account-cash-fields { grid-template-columns:88px 140px; }
+  .account-cash-target { grid-column:1 / -1; }
+}
 @media (max-width:900px) {
   #accountEditModal .account-edit-form { grid-template-columns:minmax(0,1fr) minmax(0,1.3fr); }
 }
@@ -5329,7 +5337,6 @@ textarea.muted-control {
   #accountEditModal .account-edit-currency { max-width:180px; }
   #accountEditModal .account-edit-opening { width:100%; max-width:240px; }
   #accountEditModal .account-edit-tools { padding-top:0; }
-  .account-cash-context { grid-template-columns:minmax(85px,.7fr) minmax(125px,1.3fr); }
 }
 
 .tab-bar {

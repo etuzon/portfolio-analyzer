@@ -392,6 +392,24 @@ def test_real_cash_form_keyboard_retry_stale_cancel_and_field_layout(tmp_path, c
     assert evaluate("document.activeElement.id") == "accountCashTarget"
     assert evaluate("$('accountCashCurrency').value") == "USD"
     assert evaluate("$('accountCashDate').value") == "06/11/2026"
+    layout = evaluate("""(()=>{
+      const rect=id=>{const r=$(id).getBoundingClientRect();return {width:r.width,top:r.top,bottom:r.bottom,left:r.left,right:r.right};};
+      const save=$('accountCashSave'),cancel=save.parentElement.querySelector('[data-close]');
+      const a=save.getBoundingClientRect(),b=cancel.getBoundingClientRect();
+      return {card:$('accountCashModal').querySelector('.modal-card').getBoundingClientRect().width,
+        amount:rect('accountCashTarget'),currency:rect('accountCashCurrency'),date:rect('accountCashDate'),
+        actionTop:Math.abs(a.top-b.top),actionGap:Math.min(Math.abs(a.right-b.left),Math.abs(b.right-a.left))};
+    })()""")
+    assert layout["card"] <= 560, layout  # Includes the complete shared CSS cascade.
+    assert 80 <= layout["currency"]["width"] <= 100, layout
+    assert 130 <= layout["date"]["width"] <= 150, layout
+    assert 220 <= layout["amount"]["width"] <= 300, layout
+    assert layout["actionTop"] <= 2 and layout["actionGap"] <= 12, layout
+    if width > 1000:
+        assert abs(layout["amount"]["bottom"] - layout["currency"]["bottom"]) <= 2, layout
+        assert abs(layout["date"]["bottom"] - layout["currency"]["bottom"]) <= 2, layout
+    else:
+        assert layout["amount"]["bottom"] < layout["currency"]["top"], layout
     evaluate("$('accountCashTarget').value='';$('accountCashTarget').dispatchEvent(new Event('input',{bubbles:true}));")
     assert evaluate("$('accountCashSave').disabled") is True
     evaluate("$('accountCashModal').querySelector('button[data-close]').click();")

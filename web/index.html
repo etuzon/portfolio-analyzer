@@ -428,15 +428,17 @@
         <p id="accountCashAccount" class="account-cash-account"></p>
         <p class="account-cash-current"><span>Current cash</span><strong id="accountCashCurrent" dir="ltr"></strong></p>
         <form id="accountCashForm" class="account-cash-form" novalidate>
-          <div class="account-cash-context">
-            <label class="field"><span>Currency</span><input id="accountCashCurrency" readonly dir="ltr" /></label>
-            <label class="field"><span>Effective date</span><input id="accountCashDate" readonly dir="ltr" /></label>
+          <div class="account-cash-fields">
+            <label class="field account-cash-target"><span>New current cash balance</span><input id="accountCashTarget" type="number" step="any" inputmode="decimal" dir="ltr" aria-describedby="accountCashHint accountCashStatus" /></label>
+            <label class="field account-cash-currency"><span>Currency</span><input id="accountCashCurrency" readonly dir="ltr" /></label>
+            <label class="field account-cash-date"><span>Effective date</span><input id="accountCashDate" readonly dir="ltr" /></label>
           </div>
-          <label class="field"><span>New current cash balance</span><input id="accountCashTarget" type="number" step="any" inputmode="decimal" dir="ltr" aria-describedby="accountCashHint accountCashStatus" /></label>
           <p id="accountCashHint" class="section-note">Enter the balance in this account's currency. Zero and negative cash are allowed; only the difference is recorded locally.</p>
-          <p id="accountCashDifference" class="account-cash-difference" aria-live="polite"></p>
+          <div class="account-cash-feedback">
+            <p id="accountCashDifference" class="account-cash-difference" aria-live="polite"></p>
+            <button id="accountCashReload" class="secondary compact-button" type="button">Reload current cash</button>
+          </div>
           <p id="accountCashStatus" class="status-line" role="status" aria-live="polite" tabindex="-1"></p>
-          <button id="accountCashReload" class="secondary compact-button" type="button">Reload current cash</button>
           <div class="account-cash-actions"><button id="accountCashSave" type="submit">Save current cash</button><button class="secondary" type="button" data-close>Cancel</button></div>
         </form>
       </section>
@@ -1128,6 +1130,7 @@
                 <p>Select the portfolio title or logo to return to the dashboard.</p>
                 <p>Use Area to choose investments, long-term savings, employee equity, or all areas. View switches between Glance and Full; Edit lets you arrange or hide cards. Compact summaries use narrower cards and fill available gaps beside taller charts. Card widths follow the dashboard’s available space. Edit keeps your saved arrangement; the display can place later cards in earlier gaps, while keyboard and single-column reading order follow the saved sequence.</p>
                 <p>Analytics refresh in the background while preserving your reading position, keyboard focus and expanded card details. Hover or focus a data-gap count to see which input is unavailable; unavailable dividend history does not confirm zero dividends. Currency tooltips use symbols and retain the converted base-currency value.</p>
+                <p>Market values and unrealized P/L are recalculated from each account's recorded quantity and cost basis using the latest available dated quote in the security's currency. Use Refresh to retry unavailable quotes; saved values remain visible when no valid quote is available. Quote dates can differ from live broker prices. Manual securities without a linked market symbol keep their saved prices. Refreshing current valuations does not change cash, transactions or recorded historical account values.</p>
                 <p>Economic currency exposure shows each currency's percentage and equivalent amount in that currency, using saved exchange rates. These amounts describe economic exposure, not cash balances or the security's trading currency. Unknown and Other currencies show a labeled base-currency equivalent. Missing source or conversion rates leave the amount unavailable; use Refresh to retry.</p>
                 <p>Portfolio edits and Refresh load the latest data. A lightweight notification connection reports background analysis progress without repeatedly downloading or redrawing the dashboard and holdings. Displayed results stay in place while the status count advances; one completed snapshot is applied when analysis finishes. Changes from another open session also notify this page. Unchanged notifications do no work. Your page position, active filters, keyboard focus and expanded details are preserved. If the connection is interrupted it reconnects while retaining displayed data; use Refresh to retry a failed load or unavailable notifications. Loading never blocks the page.</p>
                 <p>Unrealized P/L bars and totals use the chart currency shown beside Total P/L. Hover over a bar or focus it with the keyboard to read the holding's P/L in its local currency and converted to ILS at the current saved exchange rate; this does not measure historical FX gains or losses. Missing ILS conversion is shown as unavailable. Holdings without P/L or chart-currency conversion are omitted, and the total remains unavailable until those inputs are complete. Refresh the dashboard to retry missing inputs.</p>

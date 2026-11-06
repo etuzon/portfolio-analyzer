@@ -64,7 +64,7 @@ from .mcp_server import create_portfolio_mcp_server
 from .models import Ohlcv
 from .outlook_scoring import OUTLOOK_MODEL_VERSION, OUTLOOK_EVALUATION_VERSION, OUTLOOK_FISCAL_ALIGNMENT_DAYS, OUTLOOK_MINIMUM_PEERS, OUTLOOK_MINIMUM_RANK_WEIGHT, OUTLOOK_METRICS, OUTLOOK_TOTAL_WEIGHT, evaluation_contract
 from .providers import MarketDataHub, ProviderError
-from .portfolio_refresh import attach_market_analysis, refresh_positions, security_key
+from .portfolio_refresh import PRICE_ANALYSIS_FIELDS, attach_market_analysis, prefer_recorded_prices, refresh_positions, revalue_holding, security_key
 from .report_pdf import build_portfolio_report_pdf
 from . import risk_history
 from .dividend_summary_pdf import build_dividend_summary_pdf
@@ -2454,25 +2454,8 @@ def enriched_local_holdings(*, cached_only: bool = False, on_progress=None, time
         if local_analysis.holding.data_source == "MANUAL" and not local_analysis.holding.secondary_symbol:
             enriched.append(local_analysis)
             continue
-        provider_analysis = analyze_holding(local_analysis.holding, market_hub)
-        if "price history" in provider_analysis.missing and "price history" not in local_analysis.missing:
-            provider_analysis.missing = [item for item in provider_analysis.missing if item != "price history"]
-            provider_analysis.price_ranges = local_analysis.price_ranges
-            provider_analysis.moving_averages = local_analysis.moving_averages
-            provider_analysis.support_resistance = local_analysis.support_resistance
-            provider_analysis.volume = local_analysis.volume
-        if local_analysis.holding.secondary_symbol:
-            current = _number_or_none((provider_analysis.price_ranges.get("5y") or {}).get("current"))
-            holding = provider_analysis.holding
-            if current is not None and current > 0:
-                holding.market_value = holding.quantity * current
-                if holding.quantity >= 0:
-                    holding.unrealized_profit = holding.market_value - holding.cost_basis
-                else:
-                    average = abs(holding.cost_basis / holding.quantity) if holding.quantity else 0
-                    holding.unrealized_profit = abs(holding.quantity) * (average - current)
-        provider_analysis.provider_status = {**local_analysis.provider_status, **provider_analysis.provider_status}
-        enriched.append(provider_analysis)
+        provider_analysis = analyze_holding(deepcopy(local_analysis.holding), market_hub)
+        enriched.append(attach_market_analysis(local_analysis, provider_analysis))
     return enriched
 
 
@@ -2560,16 +2543,13 @@ def _portfolio_loading_state(payload: dict[str, Any], state: str) -> dict[str, A
         completed = progress_results.get(key) if state == "refreshing" else None
         if completed:
             completed = json.loads(json.dumps(completed))
+            keep_prices = prefer_recorded_prices(item.get("price_ranges"), completed.get("price_ranges"))
             for field in ("price_ranges", "moving_averages", "support_resistance", "volume", "technical_signals",
                           "income_trend", "profit_trend", "dividend_trend", "profit_market_cap_trend", "market_cap", "industry", "exchange", "missing", "provider_status"):
-                if field in completed:
+                if field in completed and not (keep_prices and field in PRICE_ANALYSIS_FIELDS):
                     item[field] = completed[field]
             row_state = "failed" if completed.get("analytics_state") == "failed" else "ready"
-            current = ((item.get("price_ranges") or {}).get("5y") or {}).get("current")
-            if holding.get("secondary_symbol") and current is not None and current > 0:
-                quantity, basis = float(holding.get("quantity") or 0), float(holding.get("cost_basis") or 0)
-                holding["market_value"] = quantity * current
-                holding["unrealized_profit"] = quantity * current - basis if quantity >= 0 else abs(quantity) * (abs(basis / quantity) - current)
+            revalue_holding(holding, item.get("price_ranges"))
         item["analytics_state"] = row_state
         metric_state = "refreshing" if row_state in {"queued", "updating"} else row_state
         for key in ("income_trend", "profit_trend", "dividend_trend", "profit_market_cap_trend"):
@@ -2788,9 +2768,9 @@ def portfolio_payload(force_refresh: bool = False, defer_enrichment: bool = Fals
 def portfolio_cache_signature() -> str | None:
     if not hasattr(local_store, "change_token"):
         return None
-    # Dated quote evidence is required by trade sizing. Rebuild legacy aggregate
-    # payloads from saved evidence instead of accepting undated cached prices.
-    return f"v9:{local_store.change_token()}"
+    # Rebuild aggregates that retained recorded holding values after quotes
+    # refreshed. Raw provider caches and saved portfolio history remain intact.
+    return f"v10:{local_store.change_token()}"
 
 
 def read_portfolio_cache() -> dict[str, Any] | None:

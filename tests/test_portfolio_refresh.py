@@ -1,6 +1,7 @@
 """Behavioral contracts for deduplication, bounded refresh, and account isolation."""
 from collections import Counter
 from copy import deepcopy
+from datetime import date
 from threading import Event, Thread
 import time
 
@@ -13,16 +14,17 @@ def analysis(symbol="FDUS", account="one", quantity=2, cost=40, market="NASDAQ",
         Holding(symbol=symbol, stock_market=market, secondary_symbol=secondary, quantity=quantity,
                 cost_basis=cost, market_value=quantity * 20, account_id=account, account=account,
                 asset_class="EQUITY", data_source="LOCAL"),
-        {"local": "ok"}, {"5y": {"current": 30, "state": "ok"}}, {}, {}, {},
+        {"local": "ok"}, {"5y": {"current": 30, "current_date": date.today().isoformat(), "state": "ok"}}, {}, {}, {},
         Trend(state="ok", current=200), Trend(state="ok", current=20),
         Trend(state="ok", current=2), Trend(state="ok", current=.02), "Banks", [],
     )
 
 
-def test_duplicate_accounts_refresh_once_per_listing_and_keep_own_values():
+def test_duplicate_accounts_refresh_once_per_listing_and_revalue_own_positions():
     calls, events = [], []
     positions = [analysis(), analysis(account="two", quantity=7, cost=140),
                  analysis(market="TASE", account="three"), analysis(symbol="UNB")]
+    originals = deepcopy(positions)
 
     def provider(holding, _hub):
         calls.append((holding.symbol, holding.stock_market))
@@ -31,7 +33,8 @@ def test_duplicate_accounts_refresh_once_per_listing_and_keep_own_values():
     rows = refresh_positions(positions, None, provider, lambda *args: events.append(args), 1, deepcopy)
     assert Counter(calls) == Counter({("FDUS", "NASDAQ"): 1, ("FDUS", "TASE"): 1, ("UNB", "NASDAQ"): 1})
     assert [(row.holding.account_id, row.holding.quantity, row.holding.cost_basis, row.holding.market_value) for row in rows] == [
-        (row.holding.account_id, row.holding.quantity, row.holding.cost_basis, row.holding.market_value) for row in positions]
+        (row.holding.account_id, row.holding.quantity, row.holding.cost_basis, row.holding.quantity * 30) for row in positions]
+    assert positions == originals
     assert len([event for event in events if event[1] == "ready"]) == 3
     rows[0].profit_trend.current = 999
     assert rows[1].profit_trend.current == 20
