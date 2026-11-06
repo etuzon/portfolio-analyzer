@@ -49,7 +49,7 @@ assert.equal(JSON.stringify(source),before);
     assert result.returncode==0,result.stderr
 
 
-def test_heatmap_new_type_caption_has_localized_values_and_drives_label_fit():
+def test_heatmap_type_icons_stay_unboxed_without_visible_type_labels():
     run_ui("globalThis.window={};\n"+(ROOT/'web/i18n.js').read_text()+r'''
 // Use the application dictionary where this isolated fixture normally has identity translation.
 heatmapText=text=>state.language==='he'?(HEATMAP_HE[text]||window.PortfolioI18n.translate(text,'he')):text;
@@ -60,8 +60,10 @@ for(const language of ['en','he']){
  for(const [asset_class,label] of [['BOND',language==='he'?'אג״ח':'Bond'],['ETF',language==='he'?'קרן סל':'ETF'],['MUTUALFUND',language==='he'?'קרן':'Fund']]){
   const asset={...a,asset_class};
   const html=heatmapTileMap([asset]);
-  assert.ok(html.includes('class="heatmap-tile-type"'));
-  assert.ok(html.includes(`<span>${label}</span>`));
+  assert.ok(!html.includes('class="heatmap-tile-type"'));
+  assert.ok(!html.includes(`<span>${label}</span>`));
+  assert.ok(html.includes(`<title>${label}</title>`));
+  assert.equal((html.match(/class="heatmap-type-icon"/g)||[]).length,1);
   assert.ok(html.includes('₪ 6000.00'));assert.ok(html.includes('+10.00%'));
   assert.ok(html.includes('aria-label='));assert.ok(html.includes('aria-hidden="true"'));
  }
@@ -73,6 +75,6 @@ const button={clientWidth:140,clientHeight:100,dataset:{},style:{setProperty(){}
  return {clientWidth:120,scrollWidth:selector==='.heatmap-tile-type'?200:100};
 }};
 heatmapFitLabel(button);
-// Discard the optional caption before any existing price/value information.
+// Existing price/value information fits without an extra type-label row.
 assert.equal(button.dataset.heatmapLabelMode,'full');
 ''')

@@ -59,7 +59,7 @@ const assert=require('node:assert/strict');
 const state={localAccounts:[{id:'invest',type:'Investment'},{id:'esop',type:'ESOP'}],allPortfolioItems:[{holding:{asset_class:'RSU',account_id:'invest',quantity:10}}],localFunds:[],dashboard:{area:'all',edit:false}};
 const board={innerHTML:''};const $=()=>board;
 const preserveRenderedInteraction=()=>()=>{},dashboardScrollPositions=()=>new Map(),restoreDashboardScrollPositions=()=>{};
-const renderDashboardControls=()=>{},assetMixGroups=()=>[],currencyAllocationGroups=()=>[],sum=()=>0;
+const renderDashboardControls=()=>{},observeDashboardLayout=()=>{},assetMixGroups=()=>[],currencyAllocationGroups=()=>[],sum=()=>0;
 const visibleDashboardWidgets=()=>[{id:'stock_heatmap'},{id:'portfolio_value'}];
 const withDashboardToolbar=(w,html)=>html,renderDashboardHeatmap=()=>'<div>portfolio stock heatmap</div>';
 let mounted=0;const renderHeatmap=()=>mounted++;

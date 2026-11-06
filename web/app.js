@@ -3636,7 +3636,6 @@ function renderPortfolioValueDashboard(items) {
           <div class="portfolio-risk-summary">
             <span>${esc(optionLabel("Total portfolio risk"))}</span>
             ${riskBadge(state.riskSnapshot.total)}
-            <small>${esc(optionLabel("0 is very low · 100 is extreme"))}</small>
             ${typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(state.riskSnapshot.total) : ""}
           </div>
         </div>
@@ -5218,6 +5217,55 @@ function restoreDashboardScrollPositions(board, positions) {
   });
 }
 
+let dashboardLayoutObserver = null;
+let dashboardLayoutFrame = 0;
+
+function layoutDashboardCards(board) {
+  const width = board.clientWidth;
+  const layout = width >= 1120 ? "wide" : width >= 780 ? "medium" : width >= 540 ? "narrow" : "single";
+  board.dataset.layout = layout;
+  board.classList.toggle("dashboard-packed", layout !== "single" && width > 0);
+  const cards = [...board.children].filter((card) => card.classList.contains("dashboard-widget"));
+  if (layout === "single" || !width) {
+    cards.forEach((card) => { card.style.gridRowEnd = ""; });
+    return;
+  }
+  const styles = getComputedStyle(board);
+  const gap = parseFloat(styles.rowGap) || 12;
+  const row = parseFloat(styles.gridAutoRows) || 1;
+  // Read every intrinsic height before writing spans. Cards keep their natural
+  // height, so a tall neighbour cannot create an empty band below shorter ones.
+  const spans = cards.map((card) => Math.max(1, Math.ceil((card.getBoundingClientRect().height + gap) / (row + gap))));
+  cards.forEach((card, index) => {
+    const span = `span ${spans[index]}`;
+    if (card.style.gridRowEnd !== span) card.style.gridRowEnd = span;
+  });
+}
+
+function observeDashboardLayout(board) {
+  dashboardLayoutObserver?.disconnect();
+  cancelAnimationFrame(dashboardLayoutFrame);
+  dashboardLayoutFrame = 0;
+  delete board.dataset.layout;
+  board.classList.remove("dashboard-packed");
+  const cards = [...board.children].filter((card) => card.classList.contains("dashboard-widget"));
+  if (state.dashboard?.edit || !cards.length) return;
+  layoutDashboardCards(board);
+  if (typeof ResizeObserver === "undefined") return;
+  let width = board.clientWidth;
+  dashboardLayoutObserver = new ResizeObserver((entries) => {
+    // Grid height changes are an output, not another reason to lay out again.
+    if (!entries.some((entry) => entry.target !== board) && board.clientWidth === width) return;
+    width = board.clientWidth;
+    if (!dashboardLayoutFrame) dashboardLayoutFrame = requestAnimationFrame(() => {
+      dashboardLayoutFrame = 0;
+      layoutDashboardCards(board);
+    });
+  });
+  dashboardLayoutObserver.observe(board);
+  cards.forEach((card) => dashboardLayoutObserver.observe(card));
+}
+
 function renderAnalytics(items) {
   const board = $("analyticsBoard");
   if (!board) return;
@@ -5233,6 +5281,7 @@ function renderAnalytics(items) {
     heatmapAccountIds.has(item.holding?.account_id) && ["EQUITY", "STOCK", "RSU", "ETF", "MUTUALFUND"].includes(String(item.holding?.asset_class || "").toUpperCase()));
   if (heatmapOnly && !hasHeatmapHoldings) {
     board.innerHTML = '<div class="empty">No portfolio data</div>';
+    observeDashboardLayout(board);
     restoreInteraction();
     return;
   }
@@ -5260,6 +5309,7 @@ function renderAnalytics(items) {
   };
   if (state.dashboard.edit) {
     board.innerHTML = renderDashboardEditor(renderers);
+    observeDashboardLayout(board);
     if (typeof renderHeatmap === "function") renderHeatmap();
     restoreDashboardScrollPositions(board, scrollPositions);
     restoreInteraction();
@@ -5270,6 +5320,7 @@ function renderAnalytics(items) {
     ? visible.map((widget) => withDashboardToolbar(widget, renderers[widget.id]())).join("")
     : '<div class="empty">No dashboard cards in this area</div>';
   if (typeof renderHeatmap === "function") renderHeatmap();
+  observeDashboardLayout(board);
   restoreDashboardScrollPositions(board, scrollPositions);
   restoreInteraction();
 }

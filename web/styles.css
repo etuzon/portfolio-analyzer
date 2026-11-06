@@ -2476,11 +2476,29 @@ textarea.muted-control {
   grid-column: span 3;
 }
 
-/* Preserve saved card order while content-sized cards use their declared width. */
+/* Keep DOM order while content-sized cards use their declared width. */
 .analytics-board > .dashboard-widget {
   align-self: start;
   height: auto;
 }
+
+/* Size from the board's available width, including when the sidebar is open.
+   Short cards can sit below each other beside a taller chart. Edit mode keeps
+   the regular section grid and its existing drag/drop order. */
+.analytics-board[data-layout] { grid-template-columns: repeat(12, minmax(0, 1fr)); }
+.analytics-board.dashboard-packed { grid-auto-rows: 1px; grid-auto-flow: row dense; }
+.analytics-board[data-layout="wide"] > .dashboard-widget-compact { grid-column: span 3; }
+.analytics-board[data-layout="wide"] > .dashboard-widget-medium { grid-column: span 6; }
+.analytics-board[data-layout="wide"] > .dashboard-widget[data-widget="top_holdings"] { grid-column: span 3; }
+.analytics-board[data-layout="wide"] > .dashboard-widget-wide { grid-column: span 6; }
+.analytics-board[data-layout="medium"] > .dashboard-widget-compact { grid-column: span 4; }
+.analytics-board[data-layout="medium"] > .dashboard-widget-medium,
+.analytics-board[data-layout="medium"] > .dashboard-widget-wide { grid-column: span 8; }
+.analytics-board[data-layout="narrow"] > .dashboard-widget-compact { grid-column: span 6; }
+.analytics-board[data-layout="narrow"] > .dashboard-widget-medium,
+.analytics-board[data-layout="narrow"] > .dashboard-widget-wide,
+.analytics-board[data-layout="single"] > .dashboard-widget,
+.analytics-board[data-layout] > .dashboard-widget[data-widget="portfolio_value"] { grid-column: 1 / -1; }
 
 .analytics-board > .empty,
 .analytics-board > .dashboard-section { grid-column: 1 / -1; min-width: 0; }

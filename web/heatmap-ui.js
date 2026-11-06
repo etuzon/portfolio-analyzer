@@ -113,7 +113,7 @@ function heatmapTileMap(assets, accountId="") {
   const all=heatmapView.data.assets;
   return `<div class="heatmap-canvas" role="group" aria-label="${heatmapEsc("Stock Heatmap")}">${heatmapRectangles(sized).map(rect=>{
     const asset=rect.asset,index=all.findIndex(row=>row.id===asset.id),label=heatmapButtonLabel(asset,assets),direction=heatmapDirection(asset);
-    return `<button type="button" class="heatmap-tile" style="left:${rect.x}%;top:${rect.y}%;width:${rect.width}%;height:${rect.height}%;background:${heatmapColor(asset.change_percent)}" data-heatmap-asset="${index}" data-heatmap-account="${esc(accountId)}" data-heatmap-label-mode="full" aria-label="${esc(label)}" aria-pressed="false"><span class="heatmap-tile-label" aria-hidden="true"><bdi class="heatmap-tile-symbol">${heatmapTypeIcon(asset)}${esc(asset.symbol)}</bdi>${heatmapTypeIcon(asset)?`<small class="heatmap-tile-type">${heatmapTypeIcon(asset)}<span>${heatmapEsc(heatmapClass(asset))}</span></small>`:""}${heatmapKnown(asset.change_percent)?`<strong class="heatmap-tile-change"><bdi>${esc(heatmapPercent(asset.change_percent))}</bdi></strong>`:""}<small class="heatmap-tile-value"><bdi>${esc(heatmapMoney(asset.gross_value_ils))}</bdi></small>${direction?`<small class="heatmap-tile-direction">${heatmapEsc(direction)}</small>`:""}</span></button>`;
+    return `<button type="button" class="heatmap-tile" style="left:${rect.x}%;top:${rect.y}%;width:${rect.width}%;height:${rect.height}%;background:${heatmapColor(asset.change_percent)}" data-heatmap-asset="${index}" data-heatmap-account="${esc(accountId)}" data-heatmap-label-mode="full" aria-label="${esc(label)}" aria-pressed="false"><span class="heatmap-tile-label" aria-hidden="true"><bdi class="heatmap-tile-symbol">${heatmapTypeIcon(asset)}${esc(asset.symbol)}</bdi>${heatmapKnown(asset.change_percent)?`<strong class="heatmap-tile-change"><bdi>${esc(heatmapPercent(asset.change_percent))}</bdi></strong>`:""}<small class="heatmap-tile-value"><bdi>${esc(heatmapMoney(asset.gross_value_ils))}</bdi></small>${direction?`<small class="heatmap-tile-direction">${heatmapEsc(direction)}</small>`:""}</span></button>`;
   }).join("")}</div>`;
 }
 function heatmapListing(asset, accountId="") {
@@ -140,7 +140,7 @@ function renderHeatmapSelection() {
   $("heatmapContent")?.querySelectorAll?.("[data-heatmap-asset]").forEach(button=>button.setAttribute("aria-pressed",String(Number(button.dataset.heatmapAsset)===index && (button.dataset.heatmapAccount || "")===(selected.account_id || ""))));
 }
 function renderDashboardHeatmap() {
-  return `<div class="chart-card portfolio-heatmap-card"><div class="chart-header"><h3 class="chart-title">${heatmapEsc("Portfolio stocks heatmap")}</h3><button type="button" id="heatmapReload" class="secondary heatmap-reload" aria-label="${heatmapEsc("Reload saved data")}" title="${heatmapEsc("Reload saved data")}"${heatmapView.loading?" disabled":""}>↻</button></div><div id="heatmapContent"></div></div>`;
+  return `<div class="chart-card portfolio-heatmap-card"><div class="chart-header"><h3 class="chart-title sr-only">${heatmapEsc("Portfolio stocks heatmap")}</h3><button type="button" id="heatmapReload" class="secondary heatmap-reload" aria-label="${heatmapEsc("Reload saved data")}" title="${heatmapEsc("Reload saved data")}"${heatmapView.loading?" disabled":""}>↻</button></div><div id="heatmapContent"></div></div>`;
 }
 function renderHeatmap() {
   const target=$("heatmapContent");if(!target){heatmapResizeObserver?.disconnect();hideHeatmapTooltip();return;}hideHeatmapTooltip();
@@ -185,7 +185,6 @@ function heatmapFitLabel(button) {
   const width=button.clientWidth,height=button.clientHeight;
   if(!(width>0&&height>0)){button.dataset.heatmapLabelMode='none';return;}
   const modes=[['full',['symbol','change','value','direction']],['compact',['symbol','change']],['symbol',['symbol']],['compact-wrap',['symbol','change']],['symbol-wrap',['symbol']]];
-  if(button.querySelector('.heatmap-tile-type'))modes.unshift(['typed',['symbol','type','change','value','direction']]);
   for(const [mode,parts] of modes){
     button.dataset.heatmapLabelMode=mode;
     for(let size=16;size>=9;size--){
