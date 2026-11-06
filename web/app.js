@@ -3146,7 +3146,7 @@ function analyticsStateCell(label, state, message) {
   return `<div class="metric-cell analytics-state-cell"><div class="metric-head"><span class="metric-name">${esc(t(label))}</span><span class="metric-pill ${failed ? "warn" : "neutral"}">${esc(t(failed ? "Update failed" : "Loading"))}</span></div><small>${esc(t(message))}</small></div>`;
 }
 
-function trendCell(trend, label, { kind = "number", currency = "USD", marketCap = null } = {}) {
+function trendCell(trend, label, { kind = "number", currency = "USD", marketCap = null, displayPercent = false } = {}) {
   if (["pending", "error"].includes(trend?.state)) return analyticsStateCell(label, trend.state, trend.state === "pending" ? "Loading financial data" : "Financial data could not be updated");
   if (!trend || trend.state === "missing") {
     const message = trend?.message || `Provider did not return enough ${label.toLowerCase()} history`;
@@ -3162,15 +3162,20 @@ function trendCell(trend, label, { kind = "number", currency = "USD", marketCap 
   }
   const currentDate = seriesDate(trend, 1);
   const previousDate = seriesDate(trend, 2);
-  const percentClass = changeClass(trend.percent_change);
+  const numericChange = typeof trend.percent_change === "number" && Number.isFinite(trend.percent_change);
+  const percentClass = displayPercent && !numericChange ? "warn" : changeClass(trend.percent_change);
+  const changeLabel = !numericChange ? t("Not available")
+    : trend.percent_change !== 0 && Math.abs(trend.percent_change) < 0.01
+      ? `${trend.percent_change > 0 ? "+" : "−"}<0.01%`
+      : `${trend.percent_change > 0 ? "+" : ""}${pct(trend.percent_change)}`;
   return `<div class="metric-cell">
     <div class="metric-head">
       <span class="metric-name">${esc(label)}</span>
-      <span class="metric-pill ${percentClass}">${esc(changeText(trend.percent_change))}</span>
+      <span class="metric-pill ${percentClass}">${displayPercent ? `<bdi dir="${numericChange ? "ltr" : "auto"}">${esc(changeLabel)}</bdi>` : esc(changeText(trend.percent_change))}</span>
     </div>
     <div class="metric-row"><span>Current</span><b>${esc(formatMetricValue(trend.current, kind, currency))}</b>${currentDate ? `<em>${esc(currentDate)}</em>` : ""}</div>
     <div class="metric-row"><span>Previous</span><b>${esc(formatMetricValue(trend.previous, kind, currency))}</b>${previousDate ? `<em>${esc(previousDate)}</em>` : ""}</div>
-    <div class="metric-row"><span>Change</span><b class="${percentClass}">${pct(trend.percent_change)}</b></div>
+    <div class="metric-row"><span>Change</span><b class="${percentClass}">${displayPercent ? `<bdi dir="${numericChange ? "ltr" : "auto"}">${esc(changeLabel)}</bdi>` : pct(trend.percent_change)}</b></div>
     ${marketCap ? `<div class="metric-row"><span>Market cap</span><b>${compactMoney(marketCap, currency)}</b></div>` : ""}
   </div>`;
 }
@@ -3190,7 +3195,7 @@ function rangeCell(range, currency) {
   return `<div class="metric-cell">
     <div class="metric-head">
       <span class="metric-name">High / Low</span>
-      ${range.state === "partial" ? '<span class="metric-pill warn">Partial</span>' : '<span class="metric-pill ok">Complete</span>'}
+      ${range.state === "partial" ? '<span class="metric-pill warn">Partial</span>' : '<span class="metric-pill ok">Data available</span>'}
     </div>
     <div class="metric-row"><span>High</span><b>${money(range.high, currency)}</b>${range.high_date ? `<em>${esc(formatDate(range.high_date))}</em>` : ""}</div>
     <div class="metric-row"><span>Low</span><b>${money(range.min, currency)}</b>${range.min_date ? `<em>${esc(formatDate(range.min_date))}</em>` : ""}</div>
@@ -3850,8 +3855,8 @@ function renderRows(items) {
         exposure.as_of && formatDate(exposure.as_of)].filter(Boolean).join(" · ")
       : ["ETF", "MUTUALFUND"].includes(String(h.asset_class || "").toUpperCase())
         ? optionLabel("Exposure unclassified")
-        : `${optionLabel("Currency proxy")}: ${currencyDisplayLabel(h.currency || state.baseCurrency)}`;
-    const exposureLine = `<div class="security-exposure"><button class="secondary compact-button" type="button" data-edit-security-exposure-symbol="${esc(h.symbol)}" data-edit-security-exposure-market="${esc(marketKey)}" title="${esc(optionLabel("Edit exposure profile"))}">${esc(optionLabel("Exposure"))} ✎</button><span>${esc(exposureText)}</span></div>`;
+        : "";
+    const exposureLine = `<div class="security-exposure"><button class="secondary compact-button" type="button" data-edit-security-exposure-symbol="${esc(h.symbol)}" data-edit-security-exposure-market="${esc(marketKey)}" title="${esc(optionLabel("Edit exposure profile"))}">${esc(optionLabel("Exposure"))} ✎</button>${exposureText ? `<span>${esc(exposureText)}</span>` : ""}</div>`;
     const marketLine = `${optionLabel(h.asset_class || "Asset")} · ${currencyDisplayLabel(h.currency || "")} · ${optionLabel("Market")}: ${market} · API: ${provider}`;
     const accountMeta = h.account_type
       ? optionLabel(h.account_type)
@@ -3865,7 +3870,7 @@ function renderRows(items) {
     return `<tr data-portfolio-position="${esc(JSON.stringify([h.account_id, h.symbol, marketKey, h.currency, h.asset_class]))}">
       <td data-label="Security"><div class="security-cell"><div class="security-symbols">${companyLogoHtml(h)}<button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}<span class="ux-tooltip security-meta-tooltip" tabindex="0" role="note" aria-label="Security details" title="${esc(marketLine)}" data-tooltip="${esc(marketLine)}">i</span></div><div class="security-name">${esc(companyLine)}</div>${industryLine}${exposureLine}</div></td>
       <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(accountMeta)}</div>${holdingTransactionActionsHtml(h)}</td>
-      <td class="holding-risk-cell" data-label="Risk">${riskBadge(rowRisk)}</td>
+      <td class="holding-risk-cell" data-label="Risk">${riskBadge(rowRisk, true)}</td>
       <td data-label="Value / P&L"><div class="value-cell">
         <strong>${money(h.market_value, h.currency)}</strong>
         <button class="units-history-link" type="button" data-position-history-symbol="${esc(h.symbol)}" data-position-history-market="${esc(marketKey)}" data-position-history-account-id="${esc(h.account_id || "")}" data-position-history-account="${esc(cleanSourceLabel(h.account) || "")}" data-position-history-currency="${esc(h.currency || state.baseCurrency)}" data-position-history-quantity="${esc(h.quantity || 0)}" data-position-history-average="${esc(averageBuyPrice)}" data-position-history-asset="${esc(h.asset_class || "EQUITY")}" data-position-history-location="${esc(h.country || h.location || "")}" title="Open buy and sell history">${fmt(h.quantity, 3)} ${esc(optionLabel("units"))}</button>
@@ -3873,7 +3878,7 @@ function renderRows(items) {
         <b class="${Number(h.unrealized_profit) >= 0 ? "positive" : "negative"}">${signedMoney(h.unrealized_profit, h.currency)}</b>
       </div></td>
       <td data-label="1Y High / Low">${rangeCell(range, h.currency)}</td>
-      <td data-label="Net income">${trendCell(item.profit_trend, "Net income", { currency: h.currency, marketCap: item.market_cap })}</td>
+      <td data-label="Net income">${trendCell(item.profit_trend, "Net income", { currency: h.currency, marketCap: item.market_cap, displayPercent: true })}</td>
       <td data-label="Dividend Trend">${trendCell(item.dividend_trend, "Annual dividend", { kind: "dividend", currency: h.currency })}</td>
       <td data-label="Support / Resistance">${technicalsCell(sr, movingAverage, h.currency, maPeriod)}</td>
       <td data-label="Data Status">${statusCell(item)}</td>

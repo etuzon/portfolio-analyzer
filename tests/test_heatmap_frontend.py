@@ -40,7 +40,8 @@ assert.ok(html.includes('₪ 10000.00'));
 assert.ok(html.includes('Long and short exposure'));
 assert.ok(html.includes('Holdings not shown on the map'));
 assert.ok(html.includes('Weights cover known gross holdings only'));
-assert.ok(html.includes('No change / unavailable'));
+assert.ok(html.includes('No change'));
+assert.ok(html.includes('Unavailable'));
 assert.ok(html.includes('data-heatmap-asset="0"'));
 assert.ok(html.includes('All listings and values'));
 assert.ok(!html.includes('NaN'));assert.ok(!html.includes('undefined'));
@@ -81,7 +82,7 @@ for(const language of ['en','he']){
  assert.ok(heatmapTooltipHtml(fund).includes(`25.0% ${weight}`));
  assert.ok(heatmapTooltipHtml(bond).includes(`75.0% ${weight}`));
  assert.ok(!heatmapListing(fund).includes(`25.0% ${weight}`));
- assert.equal((tiles.match(/background:#27354b/g)||[]).length,2);
+ assert.equal((tiles.match(/background:#353942/g)||[]).length,2);
  assert.ok(!target.innerHTML.includes('heatmap-unsized'));
  const tooltip=heatmapTooltipHtml(fund);assert.ok(tooltip.includes(language==='he'?'אומדן לפי עלות':'Cost-based estimate'));assert.ok(!tooltip.includes('9999'));
  heatmapView.selected={id:'bond',account_id:''};renderHeatmapSelection();assert.ok(nodes.heatmapSelection.innerHTML.includes('31/07/2026'));
@@ -245,4 +246,26 @@ assert.ok(target.innerHTML.includes('data-heatmap-type="funds"'));
 assert.ok(target.innerHTML.includes('data-heatmap-type="bonds"'));
 state.language='he';
 assert.ok(heatmapTypeIcon(bond).includes('<title>אג״ח</title>'));
+''')
+
+
+def test_no_change_is_blue_and_unavailable_is_gray_without_inventing_zero():
+    run_ui(r'''
+seed();
+assert.equal(heatmapColor(0),'#145ea8');
+assert.equal(heatmapColor(-0),'#145ea8');
+for(const value of [null,undefined,NaN,Infinity,'0'])assert.equal(heatmapColor(value),'#353942');
+assert.notEqual(heatmapColor(0.01),heatmapColor(0));
+assert.notEqual(heatmapColor(-0.01),heatmapColor(0));
+const unchanged={...a,change_percent:0};
+const missing={...b,change_percent:null};
+const unchangedTile=heatmapTileMap([unchanged]);
+const missingTile=heatmapTileMap([missing]);
+assert.ok(unchangedTile.includes('background:#145ea8'));
+assert.ok(unchangedTile.includes('>0.00%</bdi>'));
+assert.ok(missingTile.includes('background:#353942'));
+assert.ok(!missingTile.includes('>0.00%</bdi>'));
+state.language='he';renderHeatmap();
+assert.ok(target.innerHTML.includes('ללא שינוי'));
+assert.ok(target.innerHTML.includes('לא זמין'));
 ''')

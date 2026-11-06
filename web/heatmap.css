@@ -10,7 +10,8 @@
 .heatmap-legend { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; margin-block:8px; font-size:12px; }
 .heatmap-legend span::before { content:""; display:inline-block; width:12px; height:12px; margin-inline-end:6px; vertical-align:middle; border:1px solid #8795ab; border-radius:3px; }
 .heatmap-loss::before { background:#7f2232; }
-.heatmap-neutral::before { background:#27354b; }
+.heatmap-neutral::before { background:#145ea8; }
+.heatmap-unavailable::before { background:#353942; }
 .heatmap-gain::before { background:#1e715c; }
 .heatmap-legend small { color:var(--ux-muted); }
 .heatmap-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-block:12px; }
@@ -87,3 +88,13 @@
 .heatmap-tile[data-heatmap-label-mode="compact-wrap"] .heatmap-tile-symbol,.heatmap-tile[data-heatmap-label-mode="symbol-wrap"] .heatmap-tile-symbol { white-space:normal; overflow-wrap:anywhere; }
 
 .portfolio-heatmap-card .heatmap-type-icon { display:inline-block; width:.95em; height:.95em; min-height:0; margin-inline-end:.3em; vertical-align:-.1em; flex-shrink:0; }
+
+.portfolio-heatmap-card .heatmap-type-icon { width:1.15em; height:1.15em; min-height:14px; min-width:14px; margin-inline-end:.35em; vertical-align:-.18em; }
+.heatmap-type-icon .heatmap-type-fill { fill:currentColor; fill-opacity:.14; stroke:none; }
+.portfolio-heatmap-card .heatmap-type-icon[data-heatmap-type="bonds"] { color:#ffe2a6; }
+.portfolio-heatmap-card .heatmap-type-icon[data-heatmap-type="funds"] { color:#ded6ff; }
+.heatmap-tile .heatmap-tile-symbol { direction:ltr; unicode-bidi:isolate; }
+.heatmap-tile .heatmap-tile-type { display:none; }
+.heatmap-tile[data-heatmap-label-mode="typed"] .heatmap-tile-symbol > .heatmap-type-icon { display:none; }
+.heatmap-tile[data-heatmap-label-mode="typed"] .heatmap-tile-type { display:flex; align-items:center; justify-content:center; gap:3px; width:max-content; max-width:100%; margin-inline:auto; padding:2px 5px; border:1px solid #ffffff40; border-radius:4px; background:#0b12204d; font-size:max(10px,calc(var(--heatmap-font,12px)*.75)); line-height:1.1; }
+.heatmap-tile-type .heatmap-type-icon { margin:0; }

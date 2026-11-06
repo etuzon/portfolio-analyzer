@@ -24,7 +24,7 @@ const HEATMAP_HE = {
   "Loading saved securities data…": "טוען נתוני ניירות ערך שמורים…", "Could not load the heatmap. Use Reload saved data to retry.": "לא ניתן לטעון את מפת החום. יש לנסות שוב באמצעות טעינת נתונים שמורים מחדש.",
   "Previous saved result shown; the latest reload failed.": "מוצגת התוצאה השמורה הקודמת; הטעינה האחרונה נכשלה.",
   "Map area = gross value of the selected securities in ILS. Color = latest observed price change in the security's currency.": "שטח המלבן = שווי ברוטו של ניירות הערך שנבחרו בשקלים. הצבע = שינוי המחיר האחרון שנצפה במטבע הנייר.",
-  "Fall": "ירידה", "Rise": "עלייה", "No change / unavailable": "ללא שינוי / לא זמין", "Colors saturate at ±3%.": "עוצמת הצבע מגיעה לשיאה ב־±3%.",
+  "Fall": "ירידה", "Rise": "עלייה", "No change": "ללא שינוי", "Colors saturate at ±3%.": "עוצמת הצבע מגיעה לשיאה ב־±3%.",
   "Asset types": "סוגי נכסים", "Stocks": "מניות", "Bonds": "אג״ח", "Funds": "קרנות", "Bond": "אג״ח", "Company": "חברה", "Accounts": "חשבונות", "Gross quantity": "כמות ברוטו", "Unrealized profit / loss": "רווח / הפסד לא ממומש", "Converted to ILS": "המרה לשקלים", "Observed price change": "שינוי המחיר שנצפה", "Choose Stocks, Bonds or Funds to display holdings.": "בחרו מניות, אג״ח או קרנות כדי להציג החזקות.", "No holdings match the selected asset types in this account scope.": "אין החזקות מסוגי הנכסים שנבחרו בחשבונות אלה.", "The recorded cost basis is unavailable or invalid.": "בסיס העלות הרשום חסר או אינו תקין.", "ILS profit is the native-currency unrealized profit converted at the current saved FX rate; it does not measure historical FX profit.": "הרווח בשקלים הוא הרווח הלא ממומש במטבע הנייר, לפי שער המט״ח השמור הנוכחי; הוא אינו מודד רווח היסטורי משינויי מט״ח.", "Priced gross exposure": "חשיפה ברוטו עם שווי זמין", "Sized listings": "ניירות עם שטח מחושב", "Known price moves": "שינויי מחיר זמינים", "As of": "נכון ל־", "Unavailable": "לא זמין",
   "Each account panel is scaled independently. Compare the ILS amounts to compare account sizes.": "השטח בכל לוח חשבון מחושב בנפרד. להשוואת גודל החשבונות יש להשוות את הסכומים בשקלים.",
   "Select a security in the map or list for prices, dates and account holdings.": "בחרו נייר ערך במפה או ברשימה להצגת מחירים, תאריכים והחזקות לפי חשבון.",
@@ -51,9 +51,9 @@ function heatmapTypeIcon(asset) {
   const category=heatmapCategory(asset);
   if(!["bonds","funds"].includes(category))return "";
   const shape=category==="bonds"
-    ? '<path d="M5 2h10v16l-5-3-5 3z"/><path d="M8 6h4M8 9h4"/>'
-    : '<rect x="2" y="2" width="6" height="6" rx="1"/><rect x="12" y="2" width="6" height="6" rx="1"/><rect x="2" y="12" width="6" height="6" rx="1"/><rect x="12" y="12" width="6" height="6" rx="1"/>';
-  return `<svg class="heatmap-type-icon" data-heatmap-type="${category}" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><title>${heatmapEsc(heatmapClass(asset))}</title>${shape}</svg>`;
+    ? '<path class="heatmap-type-fill" d="M5 3h11l3 3v14H5z"/><path d="M5 3h11l3 3v14H5zM15 3v5h4M8 8h3M8 11h7"/><circle cx="13" cy="16" r="2.6"/><path d="m11.6 18-1 3 2.4-1 2.4 1-1-3"/>'
+    : '<circle class="heatmap-type-fill" cx="11" cy="13" r="8"/><path d="M11 5a8 8 0 1 0 8 8h-8z"/><path class="heatmap-type-fill" d="M15 2v7h7a7 7 0 0 0-7-7Z"/><path d="M15 2v7h7a7 7 0 0 0-7-7ZM11 13l5.5 5.5"/>';
+  return `<svg class="heatmap-type-icon" data-heatmap-type="${category}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><title>${heatmapEsc(heatmapClass(asset))}</title>${shape}</svg>`;
 }
 function heatmapLabel(asset) { return [asset.symbol, asset.resolved_stock_market || (/^YAHOO$/i.test(asset.stock_market || "") ? "" : asset.stock_market), currencyDisplayLabel(asset.currency)].filter(Boolean).join(" · "); }
 function heatmapAccount(id) { const row = heatmapView.data?.accounts?.find(account => account.id === id); return row ? accountLabel(row) : id; }
@@ -79,7 +79,8 @@ function heatmapDirection(asset) {
 }
 function heatmapExcluded() { return (heatmapView.data?.excluded || []).filter(row => !heatmapView.account_id || row.account_id === heatmapView.account_id); }
 function heatmapColor(value) {
-  if (!heatmapKnown(value) || value === 0) return "#27354b";
+  if (!heatmapKnown(value)) return "#353942";
+  if (value === 0) return "#145ea8";
   const intensity = Math.min(Math.abs(value) / 3, 1);
   return value > 0 ? `hsl(165 58% ${19 + intensity * 9}%)` : `hsl(350 56% ${22 + intensity * 10}%)`;
 }
@@ -112,7 +113,7 @@ function heatmapTileMap(assets, accountId="") {
   const all=heatmapView.data.assets;
   return `<div class="heatmap-canvas" role="group" aria-label="${heatmapEsc("Stock Heatmap")}">${heatmapRectangles(sized).map(rect=>{
     const asset=rect.asset,index=all.findIndex(row=>row.id===asset.id),label=heatmapButtonLabel(asset,assets),direction=heatmapDirection(asset);
-    return `<button type="button" class="heatmap-tile" style="left:${rect.x}%;top:${rect.y}%;width:${rect.width}%;height:${rect.height}%;background:${heatmapColor(asset.change_percent)}" data-heatmap-asset="${index}" data-heatmap-account="${esc(accountId)}" data-heatmap-label-mode="full" aria-label="${esc(label)}" aria-pressed="false"><span class="heatmap-tile-label" aria-hidden="true"><bdi class="heatmap-tile-symbol">${heatmapTypeIcon(asset)}${esc(asset.symbol)}</bdi>${heatmapKnown(asset.change_percent)?`<strong class="heatmap-tile-change"><bdi>${esc(heatmapPercent(asset.change_percent))}</bdi></strong>`:""}<small class="heatmap-tile-value"><bdi>${esc(heatmapMoney(asset.gross_value_ils))}</bdi></small>${direction?`<small class="heatmap-tile-direction">${heatmapEsc(direction)}</small>`:""}</span></button>`;
+    return `<button type="button" class="heatmap-tile" style="left:${rect.x}%;top:${rect.y}%;width:${rect.width}%;height:${rect.height}%;background:${heatmapColor(asset.change_percent)}" data-heatmap-asset="${index}" data-heatmap-account="${esc(accountId)}" data-heatmap-label-mode="full" aria-label="${esc(label)}" aria-pressed="false"><span class="heatmap-tile-label" aria-hidden="true"><bdi class="heatmap-tile-symbol">${heatmapTypeIcon(asset)}${esc(asset.symbol)}</bdi>${heatmapTypeIcon(asset)?`<small class="heatmap-tile-type">${heatmapTypeIcon(asset)}<span>${heatmapEsc(heatmapClass(asset))}</span></small>`:""}${heatmapKnown(asset.change_percent)?`<strong class="heatmap-tile-change"><bdi>${esc(heatmapPercent(asset.change_percent))}</bdi></strong>`:""}<small class="heatmap-tile-value"><bdi>${esc(heatmapMoney(asset.gross_value_ils))}</bdi></small>${direction?`<small class="heatmap-tile-direction">${heatmapEsc(direction)}</small>`:""}</span></button>`;
   }).join("")}</div>`;
 }
 function heatmapListing(asset, accountId="") {
@@ -148,7 +149,7 @@ function renderHeatmap() {
   if(d){
     if(v.error)html+=`<p class="heatmap-notice">${heatmapEsc("Previous saved result shown; the latest reload failed.")}</p>`;
     const assets=heatmapScope(),sized=assets.filter(asset=>heatmapKnown(asset.gross_value_ils)&&asset.gross_value_ils>0),unsized=assets.filter(asset=>!heatmapKnown(asset.gross_value_ils)||asset.gross_value_ils<=0),total=heatmapSum(sized.map(asset=>asset.gross_value_ils));
-    html+=`<p class="heatmap-explainer">${heatmapEsc("Area: gross ILS value · Color: latest observed price move")}</p><div class="heatmap-legend"><span class="heatmap-loss">${heatmapEsc("Fall")}</span><span class="heatmap-neutral">${heatmapEsc("No change / unavailable")}</span><span class="heatmap-gain">${heatmapEsc("Rise")}</span><small>${heatmapEsc("Colors saturate at ±3%.")}</small></div><div class="heatmap-summary"><span>${heatmapEsc("Known gross exposure")}<b><bdi>${sized.length?esc(heatmapMoney(total)):heatmapEsc("Unavailable")}</bdi></b></span><span>${heatmapEsc("Sized listings")}<b>${sized.length} ${heatmapEsc("of")} ${assets.length}</b></span><span>${heatmapEsc("Known price moves")}<b>${assets.filter(asset=>heatmapKnown(asset.change_percent)).length} ${heatmapEsc("of")} ${assets.length}</b></span>${d.as_of?`<span>${heatmapEsc("As of")}<b><bdi>${esc(formatDate(d.as_of))}</bdi></b></span>`:""}</div>`;
+    html+=`<p class="heatmap-explainer">${heatmapEsc("Area: gross ILS value · Color: latest observed price move")}</p><div class="heatmap-legend"><span class="heatmap-loss">${heatmapEsc("Fall")}</span><span class="heatmap-neutral">${heatmapEsc("No change")}</span><span class="heatmap-unavailable">${heatmapEsc("Unavailable")}</span><span class="heatmap-gain">${heatmapEsc("Rise")}</span><small>${heatmapEsc("Colors saturate at ±3%.")}</small></div><div class="heatmap-summary"><span>${heatmapEsc("Known gross exposure")}<b><bdi>${sized.length?esc(heatmapMoney(total)):heatmapEsc("Unavailable")}</bdi></b></span><span>${heatmapEsc("Sized listings")}<b>${sized.length} ${heatmapEsc("of")} ${assets.length}</b></span><span>${heatmapEsc("Known price moves")}<b>${assets.filter(asset=>heatmapKnown(asset.change_percent)).length} ${heatmapEsc("of")} ${assets.length}</b></span>${d.as_of?`<span>${heatmapEsc("As of")}<b><bdi>${esc(formatDate(d.as_of))}</bdi></b></span>`:""}</div>`;
     if(sized.some(asset=>["stale","estimated"].includes(asset.valuation_status)))html+=`<p class="heatmap-notice">${heatmapEsc("Includes older or estimated values. Select a security to inspect its basis and dates.")}</p>`;
     if(unsized.length)html+=`<p class="heatmap-notice">${heatmapEsc("Some selected holdings have no ILS value. Weights cover known gross holdings only, excluding cash.")}</p>`;
     if(!assets.length)html+=`<p class="heatmap-empty">${heatmapEsc(Object.values(heatmapCategories()).some(Boolean)?"No holdings match the selected asset types in this account scope.":"Choose Stocks, Bonds or Funds to display holdings.")}</p>`;
@@ -184,6 +185,7 @@ function heatmapFitLabel(button) {
   const width=button.clientWidth,height=button.clientHeight;
   if(!(width>0&&height>0)){button.dataset.heatmapLabelMode='none';return;}
   const modes=[['full',['symbol','change','value','direction']],['compact',['symbol','change']],['symbol',['symbol']],['compact-wrap',['symbol','change']],['symbol-wrap',['symbol']]];
+  if(button.querySelector('.heatmap-tile-type'))modes.unshift(['typed',['symbol','type','change','value','direction']]);
   for(const [mode,parts] of modes){
     button.dataset.heatmapLabelMode=mode;
     for(let size=16;size>=9;size--){
