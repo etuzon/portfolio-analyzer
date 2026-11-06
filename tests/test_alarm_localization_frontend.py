@@ -26,7 +26,7 @@ window.PortfolioI18n = {...translator, applyToDocument() {}, observe() {}};
 const TRANSLATIONS = {en: {}, he: {}};
 const nodes = Object.fromEntries(['alarmsCount','alarmsStatus','alarmsList',
   'alarmSettingsStatus','vestingAlertDays','clearAlarms','alarmsButton'].map(id =>
-  [id, {textContent: '', innerHTML: '', value: '30', classList: {toggle() {}}}]));
+  [id, {textContent: '', innerHTML: '', value: '30', dataset:{},setAttribute() {},classList: {toggle() {}}}]));
 const $ = id => nodes[id];
 const document = {documentElement: {}, querySelector: () => null, querySelectorAll: () => []};
 const state = {language: 'he', baseCurrency: 'USD', localEvents: [], items: [],
@@ -55,10 +55,10 @@ const refreshLocalizedFormOptions = noop, refreshBrokerSelects = noop,
   renderMacroScenario = noop, renderAssistantChat = noop, renderLoggingSettings = noop, renderAlertDismissalSettings = noop, refreshReportFilterOptions = noop,
   applyAutoDirection = noop, mountModalHomeLink = noop;
 const paid = {id:'paid', type:'DIVIDEND', symbol:'TRIN', status:'processed',
-  event_date:'2026-08-14', currency:'USD', gross_amount:2.72, tax_amount:0.68,
+  event_date:'2026-08-14', transaction_id:'local-payment', currency:'USD', gross_amount:2.72, tax_amount:0.68,
   net_amount:2.04, details:{gross_per_share:0.17, shares:16}};
 '''
-    script += '\n'.join(functions) + '\n' + body
+    script += (ROOT / 'web/alarm-priority-ui.js').read_text() + '\n' + '\n'.join(functions) + '\n' + body
     result = subprocess.run(['node'], input=script, text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
 
@@ -79,14 +79,14 @@ for (const language of ['he','en','he']) {
   applyLanguage(); // Actual entry point must rerender cards, status and notice.
   const text = plain(nodes.alarmsList.innerHTML.replace(/<[^>]*>/gu, '') + nodes.alarmsStatus.textContent + nodes.alarmSettingsStatus.textContent);
   if (language === 'he') {
-    assert.ok(text.includes('הדיבידנד של TRIN שולם'));
-    assert.ok(text.includes('נוספו USD 2.04 למזומן'));
+    assert.ok(text.includes('נרשם תשלום דיבידנד עבור TRIN'));
+    assert.ok(text.includes('נרשמו USD 2.04 במזומן המקומי'));
     assert.ok(text.includes('מס USD 0.68'));
     assert.ok(text.includes('בעוד יום אחד') && text.includes('בעוד 3 ימים') && text.includes('היום'));
     assert.ok(text.includes('מועד הבשלה') && text.includes('אופציות לעובדים'));
     assert.ok(!/dividend|paid|Added|cash|share|vest|scheduled|Gross|Tax|Payment|notice|undefined|NaN/u.test(text));
   } else {
-    assert.ok(text.includes('TRIN dividend was paid'));
+    assert.ok(text.includes('TRIN dividend payment recorded'));
     assert.ok(text.includes('in 1 day') && text.includes('in 3 days'));
     assert.ok(!/[א-ת]/u.test(text));
   }
@@ -141,7 +141,7 @@ for (const language of ['he','en','he']) {
   applyLanguage();
   assert.equal(nodes.alarmsCount.textContent,'1');
   assert.ok(nodes.alarmsList.innerHTML.includes('TRIN'));
-  assert.ok(nodes.alarmsStatus.textContent.includes(language === 'he' ? 'לא ניתן לעדכן' : 'Could not update alarms'));
+  assert.ok(nodes.alarmsStatus.textContent.includes(language === 'he' ? 'לא ניתן לעדכן' : 'Event notices could not be updated'));
   assert.ok(language === 'he' ? !/[A-Za-z]/u.test(nodes.alarmsStatus.textContent) : !/[א-ת]/u.test(nodes.alarmsStatus.textContent));
 }
 state.alarmsLoadFailed = false;

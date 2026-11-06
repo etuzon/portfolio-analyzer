@@ -57,7 +57,7 @@ def test_only_investment_account_shares_can_mount_the_heatmap_without_other_empt
     script = r'''
 const assert=require('node:assert/strict');
 const state={localAccounts:[{id:'invest',type:'Investment'},{id:'esop',type:'ESOP'}],allPortfolioItems:[{holding:{asset_class:'RSU',account_id:'invest',quantity:10}}],localFunds:[],dashboard:{area:'all',edit:false}};
-const board={innerHTML:''};const $=()=>board;
+const board={innerHTML:'',style:{minHeight:''},getBoundingClientRect:()=>({height:0})};const $=()=>board;
 const preserveRenderedInteraction=()=>()=>{},dashboardScrollPositions=()=>new Map(),restoreDashboardScrollPositions=()=>{};
 const renderDashboardControls=()=>{},observeDashboardLayout=()=>{},assetMixGroups=()=>[],currencyAllocationGroups=()=>[],sum=()=>0;
 const visibleDashboardWidgets=()=>[{id:'stock_heatmap'},{id:'portfolio_value'}];

@@ -12,6 +12,8 @@ Engineer the interaction as a working system. Reduce cognitive load, preserve th
 - Read repository instructions, product intent, user research, existing UI patterns, design tokens, frontend architecture, API contracts, tests, and current worktree before changing the experience.
 - Start from user goals, frequency, urgency, expertise, device, locale, accessibility needs, and error-recovery behavior—not from component preference.
 - Preserve established navigation and visual language unless research or the user explicitly supports a change.
+- Always arrange dashboard cards for comfortable reading with as little unused space between cards as practical. Size cards to their content and available width, place compact summaries together or in gaps beside larger charts, and avoid unnecessary fixed heights. Preserve readable labels and numbers, useful chart scales, touch targets, and predictable keyboard order; do not compress content merely to remove whitespace.
+- Verify card layouts with screenshots at desktop and narrower widths, including repeated background redraws while scrolled down. Updates must preserve the reader's viewport, focused control, and expanded or scrollable content; check temporary layout collapse as well as the final arrangement.
 - Prototype with real or structurally representative data and working state transitions. Do not validate invented decorative data as product behavior.
 - Design loading, empty, partial, stale, disabled, success, validation, error, retry, offline, permission, and destructive-action states with the happy path.
 - Meet WCAG-oriented keyboard, focus, semantics, label, contrast, target-size, reduced-motion, and screen-reader expectations appropriate to the product.

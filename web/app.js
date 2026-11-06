@@ -113,6 +113,8 @@ const state = {
   vestingNoticeSaved: false,
   clearedAlarmCount: 0,
   alarmsLoadFailed: false,
+  alarmsEventsLoaded: false,
+  alarmSignalsLoadFailed: false,
   dismissedAlarmIds: [],
   activePensionScenarioIndex: null,
   localOptions: {
@@ -125,6 +127,7 @@ const state = {
   },
   optionsReady: false,
   portfolioReady: false,
+  portfolioAlarmLoadFailed: false,
   tableMaPeriod: "30",
   backupSettings: null,
   apiAccess: null,
@@ -3546,6 +3549,7 @@ function missingStats(items) {
 
 function renderSummary(items) {
   state.riskSnapshot = portfolioRiskSnapshot(items);
+  if (typeof renderAlarms === "function") renderAlarms();
 }
 
 function renderPortfolioValueDashboard(items) {
@@ -3810,7 +3814,7 @@ function preserveRenderedInteraction(root) {
   if (!root) return () => {};
   const active = root.contains(document.activeElement) ? document.activeElement : null;
   const rowKey = active?.closest("[data-portfolio-position]")?.dataset.portfolioPosition;
-  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
+  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-profit-holding-key|data-open-(signal|risk|dividend|vesting)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
   const detailStates = [...root.querySelectorAll("details")].map((node) => ({ open: node.open, className: node.className, id: node.id }));
   const tagName = active?.tagName, className = active?.className;
   return () => {
@@ -4749,11 +4753,20 @@ function renderCompleteness(items) {
 }
 
 function renderProfitBars(items) {
-  const top = [...items]
-    .sort((a, b) => Math.abs(normalizedField(b, "unrealized_profit")) - Math.abs(normalizedField(a, "unrealized_profit")))
+  const quotes = Object.entries(state.fxRates || {}).map(([pair, rate]) => ({ pair, quote: { rate } }));
+  const convert = PortfolioTradePlanner.converter(quotes, state.baseCurrency);
+  const entries = items.map((item) => {
+    const currency = item.holding.currency;
+    const amount = item.holding.unrealized_profit;
+    return { item, currency, local: convert(amount, currency, currency),
+      value: convert(amount, currency), ils: convert(amount, currency, "ILS") };
+  });
+  const unavailable = entries.filter((entry) => entry.value === null).length;
+  const top = entries.filter((entry) => entry.value !== null)
+    .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
     .slice(0, 10);
-  const total = sum(items.map((item) => normalizedField(item, "unrealized_profit")));
-  const maxAbs = Math.max(...top.map((item) => Math.abs(normalizedField(item, "unrealized_profit"))), 1);
+  const total = unavailable ? t("Not available") : money(sum(entries.map((entry) => entry.value)), state.baseCurrency, 0);
+  const maxAbs = Math.max(...top.map((entry) => Math.abs(entry.value)), 1);
   const width = 430;
   const height = 165;
   const padLeft = 38;
@@ -4765,44 +4778,65 @@ function renderProfitBars(items) {
   const gainColor = "#726dff";
   const lossColor = "#ff5f6d";
   return `
-    <div class="chart-card line-card">
+    <div class="chart-card line-card profit-chart-card">
       <div class="chart-header">
         <div>
-          <div class="chart-title">Unrealized P/L by holding</div>
-          <span class="chart-subtitle profit-total-summary">${esc(optionLabel("Total P/L"))} ${money(total, state.baseCurrency, 0)}</span>
+          <div class="chart-title">${esc(t("Unrealized P/L by holding"))}</div>
+          <span class="chart-subtitle profit-total-summary">${esc(optionLabel("Total P/L"))} ${esc(total)} · ${esc(t("Chart currency"))}: ${esc(currencyDisplayLabel(state.baseCurrency))}</span>
         </div>
-        <div class="chart-legend"><span><i style="background:${gainColor}"></i>Gain</span><span><i style="background:${lossColor}"></i>Loss</span></div>
+        <div class="chart-legend"><span><i style="background:${gainColor}"></i>${esc(t("Gain"))}</span><span><i style="background:${lossColor}"></i>${esc(t("Loss"))}</span></div>
       </div>
-      <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Unrealized profit and loss by holding">
+      <svg viewBox="0 0 ${width} ${height}" role="group" aria-label="${esc(t("Unrealized profit and loss by holding"))}">
         <line x1="${padLeft}" y1="${topGuide}" x2="${width - padRight}" y2="${topGuide}"></line>
         <line x1="${padLeft}" y1="${baseline}" x2="${width - padRight}" y2="${baseline}" class="axis-line"></line>
-        ${top.map((item, index) => {
-          const value = normalizedField(item, "unrealized_profit");
-          const localValue = Number(item.holding.unrealized_profit || 0);
-          const currency = item.holding.currency || state.baseCurrency;
-          const localTooltip = currency !== state.baseCurrency ? `\nLocal P/L: ${money(localValue, currency, 0)}` : "";
-          const tooltip = `${item.holding.symbol}\nUnrealized P/L: ${money(value, state.baseCurrency, 0)}${localTooltip}`;
+        ${top.map(({ item, value, local, currency, ils }, index) => {
+          const tooltip = `${item.holding.symbol}\n${t("Local P/L")}: ${money(local, currency, 2)}\n${t("Converted to ILS")}: ${ils === null ? t("Not available") : money(ils, "ILS", 2)}\n${t("ILS P/L uses the current saved exchange rate, not historical FX gains or losses.")}`;
           const barHeight = Math.max(3, Math.abs(value) / maxAbs * 48);
           const x = padLeft + index * barSlot + (barSlot - barWidth) / 2;
           const y = value >= 0 ? baseline - barHeight : baseline;
           const color = value >= 0 ? gainColor : lossColor;
           const labelY = value >= 0 ? Math.max(topGuide - 6, y - 7) : Math.min(baseline + 34, y + barHeight + 13);
           return `
-          <g>
-            <title>${esc(tooltip)}</title>
+          <g tabindex="0" role="img" data-profit-holding-key="${esc(JSON.stringify([item.holding.account_id, item.holding.symbol, item.holding.stock_market, currency]))}" aria-label="${esc(tooltip)}" aria-describedby="profitChartTooltip">
             <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" rx="4" fill="${color}" opacity="${value >= 0 ? "1" : "0.94"}"></rect>
             <text x="${(x + barWidth / 2).toFixed(1)}" y="${labelY.toFixed(1)}">${fmt(value, 0)}</text>
           </g>
         `;
         }).join("")}
-        ${top.map((item, index) => {
+        ${top.map(({ item }, index) => {
           const x = padLeft + index * barSlot + barSlot / 2 + 10;
           const y = baseline + 52;
           return `<text class="tilted-axis-label" x="${x.toFixed(1)}" y="${y}" transform="rotate(-25 ${x.toFixed(1)} ${y})">${esc(item.holding.symbol)}</text>`;
         }).join("")}
       </svg>
+      <div id="profitChartTooltip" class="profit-chart-tooltip" role="tooltip" hidden></div>
+      ${unavailable ? `<p class="section-note">${esc(t("Holdings with unavailable P/L or chart-currency conversion are omitted; total P/L is unavailable."))}</p>` : ""}
     </div>`;
 }
+
+function showProfitChartTooltip(event) {
+  const bar = event.target.closest?.("[data-profit-holding-key]");
+  if (!bar) return;
+  const tooltip = bar.closest(".profit-chart-card")?.querySelector(".profit-chart-tooltip");
+  if (!tooltip) return;
+  tooltip.textContent = bar.getAttribute("aria-label");
+  tooltip.hidden = false;
+}
+
+function hideProfitChartTooltip(event) {
+  const bar = event.target.closest?.("[data-profit-holding-key]");
+  if (!bar || bar.contains(event.relatedTarget)) return;
+  const tooltip = bar.closest(".profit-chart-card")?.querySelector(".profit-chart-tooltip");
+  if (tooltip) tooltip.hidden = true;
+}
+
+document.addEventListener("pointerover", showProfitChartTooltip);
+document.addEventListener("focusin", showProfitChartTooltip);
+document.addEventListener("pointerout", hideProfitChartTooltip);
+document.addEventListener("focusout", hideProfitChartTooltip);
+document.addEventListener("keydown", function dismissProfitChartTooltip(event) {
+  if (event.key === "Escape") document.querySelectorAll(".profit-chart-tooltip").forEach((tooltip) => { tooltip.hidden = true; });
+});
 
 function renderRadialRings(groups, total) {
   return `
@@ -5224,9 +5258,9 @@ function layoutDashboardCards(board) {
   const width = board.clientWidth;
   const layout = width >= 1120 ? "wide" : width >= 780 ? "medium" : width >= 540 ? "narrow" : "single";
   board.dataset.layout = layout;
-  board.classList.toggle("dashboard-packed", layout !== "single" && width > 0);
   const cards = [...board.children].filter((card) => card.classList.contains("dashboard-widget"));
   if (layout === "single" || !width) {
+    board.classList.remove("dashboard-packed");
     cards.forEach((card) => { card.style.gridRowEnd = ""; });
     return;
   }
@@ -5236,6 +5270,9 @@ function layoutDashboardCards(board) {
   // Read every intrinsic height before writing spans. Cards keep their natural
   // height, so a tall neighbour cannot create an empty band below shorter ones.
   const spans = cards.map((card) => Math.max(1, Math.ceil((card.getBoundingClientRect().height + gap) / (row + gap))));
+  // Do not expose one-pixel grid tracks before new cards have measured spans:
+  // a forced layout in that state clamps the page's scroll position.
+  board.classList.add("dashboard-packed");
   cards.forEach((card, index) => {
     const span = `span ${spans[index]}`;
     if (card.style.gridRowEnd !== span) card.style.gridRowEnd = span;
@@ -5269,60 +5306,70 @@ function observeDashboardLayout(board) {
 function renderAnalytics(items) {
   const board = $("analyticsBoard");
   if (!board) return;
-  const restoreInteraction = preserveRenderedInteraction(board);
-  // Background enrichment replaces dashboard markup. Keep a reader's place in
-  // bounded lists so that the refresh is not perceived as a jump to the top.
-  const scrollPositions = dashboardScrollPositions(board);
-  if (!state.dashboard) loadDashboardSettings();
-  renderDashboardControls();
-  const heatmapOnly = !items.length && !(state.localFunds || []).length && state.dashboard.area !== "employee";
-  const heatmapAccountIds = new Set((state.localAccounts || []).filter((account) => account.type === "Investment").map((account) => account.id));
-  const hasHeatmapHoldings = (state.allPortfolioItems || []).some((item) =>
-    heatmapAccountIds.has(item.holding?.account_id) && ["EQUITY", "STOCK", "RSU", "ETF", "MUTUALFUND"].includes(String(item.holding?.asset_class || "").toUpperCase()));
-  if (heatmapOnly && !hasHeatmapHoldings) {
-    board.innerHTML = '<div class="empty">No portfolio data</div>';
-    observeDashboardLayout(board);
-    restoreInteraction();
-    return;
-  }
-  const assetGroups = assetMixGroups(items);
-  const assetTotal = sum(assetGroups.map((group) => group.value)) || 1;
-  const currencyGroups = currencyAllocationGroups(items);
-  const currencyTotal = sum(currencyGroups.map((group) => group.value)) || 1;
-  const renderers = {
-    portfolio_value: () => renderPortfolioValueDashboard(items),
-    stock_heatmap: () => renderDashboardHeatmap(),
-    long_term_savings: () => renderFundsOverviewDashboard(),
-    account_trend: () => renderAccountValueTrend(),
-    long_term: () => renderLongTermDashboard(),
-    market_cost: () => renderMarketCostBars(items),
-    asset_mix: () => renderDonut(assetGroups, "Asset mix", `${Math.round((assetGroups[0]?.value || 0) / assetTotal * 100)}%`, assetTotal, null, "asset-mix-card"),
-    cash_currency: () => renderCashByCurrencyBars(),
-    industry_split: () => renderIndustrySplit(items),
-    top_holdings: () => renderMiniBars(items),
-    bond_currency: () => renderBondsByCurrency(items),
-    coverage: () => renderCompleteness(items),
-    currency: () => renderCurrencyAllocation(currencyGroups, currencyTotal),
-    equity_comp: () => renderEquityCompDashboard(items),
-    profit: () => renderProfitBars(items),
-    snapshot: () => renderBubbles(items),
-  };
-  if (state.dashboard.edit) {
-    board.innerHTML = renderDashboardEditor(renderers);
-    observeDashboardLayout(board);
+  const previousMinHeight = board.style.minHeight;
+  // Heatmap rendering and packing measure the new DOM synchronously. Keep the
+  // old footprint until all spans are ready so those reads cannot shorten the
+  // document and push a scrolled reader back toward the top.
+  const previousHeight = board.getBoundingClientRect().height;
+  if (previousHeight > 0) board.style.minHeight = `${previousHeight}px`;
+  try {
+    const restoreInteraction = preserveRenderedInteraction(board);
+    // Background enrichment replaces dashboard markup. Keep a reader's place in
+    // bounded lists so that the refresh is not perceived as a jump to the top.
+    const scrollPositions = dashboardScrollPositions(board);
+    if (!state.dashboard) loadDashboardSettings();
+    renderDashboardControls();
+    const heatmapOnly = !items.length && !(state.localFunds || []).length && state.dashboard.area !== "employee";
+    const heatmapAccountIds = new Set((state.localAccounts || []).filter((account) => account.type === "Investment").map((account) => account.id));
+    const hasHeatmapHoldings = (state.allPortfolioItems || []).some((item) =>
+      heatmapAccountIds.has(item.holding?.account_id) && ["EQUITY", "STOCK", "RSU", "ETF", "MUTUALFUND"].includes(String(item.holding?.asset_class || "").toUpperCase()));
+    if (heatmapOnly && !hasHeatmapHoldings) {
+      board.innerHTML = '<div class="empty">No portfolio data</div>';
+      observeDashboardLayout(board);
+      restoreInteraction();
+      return;
+    }
+    const assetGroups = assetMixGroups(items);
+    const assetTotal = sum(assetGroups.map((group) => group.value)) || 1;
+    const currencyGroups = currencyAllocationGroups(items);
+    const currencyTotal = sum(currencyGroups.map((group) => group.value)) || 1;
+    const renderers = {
+      portfolio_value: () => renderPortfolioValueDashboard(items),
+      stock_heatmap: () => renderDashboardHeatmap(),
+      long_term_savings: () => renderFundsOverviewDashboard(),
+      account_trend: () => renderAccountValueTrend(),
+      long_term: () => renderLongTermDashboard(),
+      market_cost: () => renderMarketCostBars(items),
+      asset_mix: () => renderDonut(assetGroups, "Asset mix", `${Math.round((assetGroups[0]?.value || 0) / assetTotal * 100)}%`, assetTotal, null, "asset-mix-card"),
+      cash_currency: () => renderCashByCurrencyBars(),
+      industry_split: () => renderIndustrySplit(items),
+      top_holdings: () => renderMiniBars(items),
+      bond_currency: () => renderBondsByCurrency(items),
+      coverage: () => renderCompleteness(items),
+      currency: () => renderCurrencyAllocation(currencyGroups, currencyTotal),
+      equity_comp: () => renderEquityCompDashboard(items),
+      profit: () => renderProfitBars(items),
+      snapshot: () => renderBubbles(items),
+    };
+    if (state.dashboard.edit) {
+      board.innerHTML = renderDashboardEditor(renderers);
+      observeDashboardLayout(board);
+      if (typeof renderHeatmap === "function") renderHeatmap();
+      restoreDashboardScrollPositions(board, scrollPositions);
+      restoreInteraction();
+      return;
+    }
+    const visible = visibleDashboardWidgets().filter((widget) => !heatmapOnly || widget.id === "stock_heatmap");
+    board.innerHTML = visible.length
+      ? visible.map((widget) => withDashboardToolbar(widget, renderers[widget.id]())).join("")
+      : '<div class="empty">No dashboard cards in this area</div>';
     if (typeof renderHeatmap === "function") renderHeatmap();
+    observeDashboardLayout(board);
     restoreDashboardScrollPositions(board, scrollPositions);
     restoreInteraction();
-    return;
+  } finally {
+    board.style.minHeight = previousMinHeight;
   }
-  const visible = visibleDashboardWidgets().filter((widget) => !heatmapOnly || widget.id === "stock_heatmap");
-  board.innerHTML = visible.length
-    ? visible.map((widget) => withDashboardToolbar(widget, renderers[widget.id]())).join("")
-    : '<div class="empty">No dashboard cards in this area</div>';
-  if (typeof renderHeatmap === "function") renderHeatmap();
-  observeDashboardLayout(board);
-  restoreDashboardScrollPositions(board, scrollPositions);
-  restoreInteraction();
 }
 
 function renderPortfolio(items) {
@@ -8538,10 +8585,17 @@ async function saveSecurity() {
 }
 
 async function loadEvents() {
-  const data = await api("/api/local/events");
+  let data;
+  try { data = await api("/api/local/events"); }
+  catch (error) {
+    state.alarmsLoadFailed = true;
+    renderAlarms();
+    throw error;
+  }
   state.localEvents = data.items || [];
   state.eventDividendSettings = data.dividends || {};
   state.alarmsLoadFailed = false;
+  state.alarmsEventsLoaded = true;
   renderEvents();
   renderAlarms();
   focusEventRow();
@@ -8626,10 +8680,19 @@ function dividendAlarmMessage(event) {
     date: alarmValue(formatDate(event.event_date)),
   };
   const days = eventDaysFromToday(event.event_date);
+  const validDate = /^\d{4}-\d{2}-\d{2}$/.test(String(event.event_date || "")) && Number.isFinite(Date.parse(`${event.event_date}T00:00:00Z`)) && new Date(`${event.event_date}T00:00:00Z`).toISOString().slice(0, 10) === event.event_date;
+  if (!validDate) return { tone: "unconfirmed", title: `${event.symbol} · ${t("Dividend schedule unavailable")}`,
+    body: t("Review the event date and payment status in the saved event and broker statement."), meta: t("Date unavailable") };
+  if (!["pending", "processed"].includes(event.status)) {
+    const title = event.status === "failed" ? "Dividend recording failed" : event.status === "skipped" ? "Dividend not recorded" : "Dividend status unavailable";
+    return { tone: "unconfirmed", title: `${event.symbol} · ${t(title)}`,
+      body: t("The saved event does not confirm a recorded payment. Review the event and broker statement."),
+      meta: alarmText("Payment date {date} · Gross {gross}", values) };
+  }
   if (event.status === "pending") {
     values.due = alarmDueText(days, event.event_date);
     return {
-      tone: "future",
+      tone: !validDate || days < 0 ? "unconfirmed" : "future",
       title: alarmText("{symbol} dividend is expected {due}", values),
       body: alarmText("Expected {perShare}. Estimated net total {net} after {tax} tax for {shares}.", values),
       meta: alarmText("Payment date {date} · Gross {gross}", values),
@@ -8637,9 +8700,11 @@ function dividendAlarmMessage(event) {
   }
   return {
     tone: "paid",
-    title: alarmText("{symbol} dividend was paid", values),
-    body: alarmText("Added {net} to cash from {perShare} for {shares}.", values),
-    meta: alarmText("Paid {date} · Gross {gross} · Tax {tax}", values),
+    title: alarmText("{symbol} dividend payment recorded", values),
+    body: event.transaction_id && Number(event.net_amount) > 0
+      ? alarmText("Recorded {net} in local cash from {perShare} for {shares}.", values)
+      : t("A dividend payment is recorded locally. Check the event for its cash entry."),
+    meta: alarmText("Payment date {date} · Gross {gross} · Tax {tax}", values),
   };
 }
 
@@ -8704,6 +8769,7 @@ function currentAlarms({ includeDismissed = false } = {}) {
 }
 
 function clearAlarms() {
+  if (typeof canWrite === "function" && !canWrite()) return;
   const { dividends, vesting } = currentAlarms();
   const alarms = [...vesting, ...dividends];
   if (!alarms.length) return;
@@ -8715,24 +8781,22 @@ function clearAlarms() {
 
 function renderAlarms() {
   const { dividends, vesting } = currentAlarms();
-  const alarms = [...vesting, ...dividends];
+  const extras = typeof portfolioSignalAlarms === "function" ? [...portfolioSignalAlarms(), ...portfolioRiskAlarms()] : [];
+  const alarms = [...vesting, ...dividends, ...extras];
+  if (typeof alarmAppearance === "function") alarms.sort((a, b) => ALARM_PRIORITY[alarmAppearance(a).tone] - ALARM_PRIORITY[alarmAppearance(b).tone]);
   const count = $("alarmsCount");
   if (count) count.textContent = String(alarms.length);
   const button = $("alarmsButton");
   if (button) button.classList.toggle("has-alarms", alarms.length > 0);
+  const notes = typeof renderAlarmPriority === "function" ? renderAlarmPriority(alarms) : [];
   const clearButton = $("clearAlarms");
-  if (clearButton) clearButton.disabled = alarms.length === 0;
+  if (clearButton) clearButton.disabled = dividends.length + vesting.length === 0 || (typeof canWrite === "function" && !canWrite());
   const status = $("alarmsStatus");
   if (status) {
-    const future = dividends.filter((alarm) => alarm.event.status === "pending").length;
-    const paid = dividends.filter((alarm) => alarm.event.status === "processed").length;
-    status.textContent = state.alarmsLoadFailed ? t("Could not update alarms. Reopen Alerts to retry.") : alarms.length ? [
-      alarmText(vesting.length === 1 ? "{count} upcoming vesting alarm" : "{count} upcoming vesting alarms", { count: vesting.length }),
-      alarmText(future === 1 ? "{count} future dividend" : "{count} future dividends", { count: future }),
-      alarmText(paid === 1 ? "{count} paid dividend" : "{count} paid dividends", { count: paid }),
-    ].join(" · ") : state.clearedAlarmCount
+    const summary = alarms.length ? alarmText("Alarms: {count}", { count: alarms.length }) : state.clearedAlarmCount
       ? alarmText(state.clearedAlarmCount === 1 ? "{count} alarm cleared. New alarms will still appear." : "{count} alarms cleared. New alarms will still appear.", { count: state.clearedAlarmCount })
-      : t("No vesting or dividend alarms in the current notice window.");
+      : t("No current alarms.");
+    status.textContent = [...notes, ...(notes.length && !alarms.length ? [] : [summary])].join(" · ");
   }
   if ($("vestingAlertDays")) $("vestingAlertDays").value = String(state.vestingAlertDays);
   if ($("alarmSettingsStatus")) {
@@ -8743,18 +8807,20 @@ function renderAlarms() {
   }
   const list = $("alarmsList");
   if (!list) return;
-  list.innerHTML = alarms.length ? alarms.map((alarm) => `
-    <button class="alarm-item ${esc(alarm.tone)}" type="button" ${alarm.kind === "vesting" ? `data-open-vesting-alarm="${esc(alarm.transactionId)}"` : `data-open-dividend-alarm="${esc(alarm.event.id)}"`}>
-      <span class="alarm-heading">
-        <b>${esc(alarm.title)}</b>
-        <span class="alarm-kind">${esc(t(alarm.kind === "vesting" ? "Upcoming vesting" : alarm.tone === "future" ? "Future dividend" : "Dividend paid"))}</span>
-      </span>
-      <span class="alarm-details">
-        <span class="alarm-body">${esc(alarm.body)}</span>
-        <small class="alarm-meta">${esc(alarm.meta)}</small>
-      </span>
-    </button>
-  `).join("") : `<div class="empty">${esc(t("No vesting or dividend alarms"))}</div>`;
+  const restoreInteraction = typeof preserveRenderedInteraction === "function" ? preserveRenderedInteraction(list) : () => {};
+  const scroller = list.closest?.(".modal-card");
+  const scrollTop = scroller?.scrollTop;
+  list.innerHTML = alarms.length ? alarms.map((alarm) => {
+    const appearance = alarmAppearance(alarm);
+    const incomplete = alarm.incomplete ? ` · ${t("Some rule data is unavailable")}` : "";
+    return `<button class="alarm-item" data-alarm-tone="${appearance.tone}" type="button" ${alarmActionAttributes(alarm)}>
+      <span class="alarm-heading"><b>${esc(alarm.title)}</b><span class="alarm-kind"><span aria-hidden="true">${esc(appearance.icon)}</span> ${esc(t(appearance.label))}</span></span>
+      <span class="alarm-details"><span class="alarm-body">${esc(alarm.body)}${esc(incomplete)}</span><small class="alarm-meta">${esc(alarm.meta)}</small></span>
+    </button>`;
+  }).join("") : `<div class="empty">${esc(notes.length ? notes.join(" ") : t("No current alarms."))}</div>`;
+  restoreInteraction();
+  if (scroller && Number.isFinite(scrollTop)) scroller.scrollTop = scrollTop;
+  if ($("alarmRiskModal")?.hidden === false) renderAlarmRiskDetails(extras.find(alarm => alarm.key === $("alarmRiskModal").dataset.alarmKey));
 }
 
 function focusEventRow() {
@@ -11708,6 +11774,8 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
     ]);
     if (version !== state.portfolioLoadVersion) return;
     state.portfolioRefreshPending = Boolean(data.refresh_pending);
+    state.portfolioSourceState = data.refresh_state || "unknown";
+    state.portfolioAlarmLoadFailed = false;
     setCoreFxRates(fxData);
     state.localAccounts = accountData.items || [];
     state.localTransactions = transactionData.items || [];
@@ -11758,6 +11826,8 @@ async function loadPortfolio({ refresh = false, enrichmentRetry = 0 } = {}) {
     }
   } catch (error) {
     if (version !== state.portfolioLoadVersion) return;
+    state.portfolioAlarmLoadFailed = true;
+    if (typeof renderAlarms === "function") renderAlarms();
     if (version === state.portfolioLoadVersion && state.portfolioRefreshPending) {
       $("status").textContent = t("Connection interrupted. Retrying the analytics update.");
       retry();
@@ -12059,6 +12129,8 @@ function alertRunProgressText(progress) {
 function renderAlerts(data, { signalsOnly = false } = {}) {
   const wasRunning = alertRunIsActive(state.alertData);
   state.alertData = data;
+  state.alarmSignalsLoadFailed = false;
+  if (typeof renderAlarms === "function") renderAlarms();
   state.alertOptions = data.options || state.alertOptions;
   if (!signalsOnly) {
     if (!state.alertConditions.length) resetAlertForm();
@@ -12103,6 +12175,7 @@ function renderAlerts(data, { signalsOnly = false } = {}) {
     ? `${runs[0].status === "failed" ? `${t("Failed")} · ` : ""}${formatDateTime(runs[0].run_at)}`
     : t("Not run");
 
+  const restoreSignalInteraction = typeof preserveRenderedInteraction === "function" ? preserveRenderedInteraction($("alertsSignals")) : () => {};
   $("alertsSignals").innerHTML = signals.length ? signals.map((signal, index) => {
     const signalType = ["buy", "sell", "watch"].includes(signal.signal) ? signal.signal : "watch";
     const reasons = (signal.reasons || []).map((reason) => `<li>${esc(alertReasonText(reason))}</li>`).join("");
@@ -12119,7 +12192,7 @@ function renderAlerts(data, { signalsOnly = false } = {}) {
       ${missingRuleMetrics.length ? `<p class="signal-missing">Rule data unavailable: ${esc(missingRuleMetrics.join(", "))}</p>` : ""}
       ${missing.length ? `<p class="signal-missing">Some provider data is unavailable: ${esc(missing.join(", "))}</p>` : ""}
       <div class="signal-card-actions">
-        <button class="secondary compact-button" type="button" data-alert-chart="${esc(signal.symbol)}">${t("Chart")}</button>
+        <button id="signal-chart-${esc(encodeURIComponent(JSON.stringify([signal.symbol, signalType, ruleKey(signal)])))}" class="secondary compact-button" type="button" data-alert-chart="${esc(signal.symbol)}">${t("Chart")}</button>
         <button class="secondary compact-button" type="button" data-investigate-signal="${esc(signal.symbol)}">${esc(t("Investigate & score"))}</button>
         ${typeof tradePlannerSignalAction === "function" ? tradePlannerSignalAction(signal, index) : ""}
         <button class="secondary compact-button" type="button" data-dismiss-alert-signal="${esc(signal.symbol)}" data-dismiss-alert-type="${esc(signalType)}" aria-label="${esc(`${t("Dismiss signal")}: ${signal.symbol}`)}" title="${esc(t("Dismiss this stock and signal type across all rules for {days} days.").replace("{days}", fmt(dismissalDays, 0)))}"${dismissing ? " disabled" : ""}>${esc(t(dismissing ? "Dismissing…" : "Dismiss"))}</button>
@@ -12127,6 +12200,7 @@ function renderAlerts(data, { signalsOnly = false } = {}) {
       ${typeof tradePlannerSignalPanel === "function" ? tradePlannerSignalPanel(signal, index) : ""}
     </article>`;
   }).join("") : `<div class="empty signal-empty">${esc(t(selectedRule ? "No signals match the selected rule." : "No current matches. Run the rules now or wait for the next daily check."))}</div>`;
+  restoreSignalInteraction();
 
   if (signalsOnly) return;
 
@@ -12192,7 +12266,13 @@ function scheduleAlertRefresh() {
 
 async function loadAlerts() {
   const revision = state.alertDismissRevision || 0;
-  const data = await api("/api/alerts");
+  let data;
+  try { data = await api("/api/alerts"); }
+  catch (error) {
+    state.alarmSignalsLoadFailed = true;
+    if (typeof renderAlarms === "function") renderAlarms();
+    throw error;
+  }
   if (revision !== (state.alertDismissRevision || 0)) return;
   renderAlerts(data);
 }
@@ -13605,6 +13685,7 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
     state.alarmsLoadFailed = false;
     renderAlarms();
     loadEvents().catch(() => { state.alarmsLoadFailed = true; renderAlarms(); });
+    loadAlerts().catch(() => {});
   }
   if (id === "reportsModal") {
     Promise.all([loadLocalAccounts(), loadFamilyMembers()])
@@ -13651,13 +13732,17 @@ function closeModal(modal) {
   if (modal.id === "brokerEditorModal" && state.brokerSaving) return;
   if (modal.id === "instrumentEditorModal" && state.manualSecuritySaving && !state.manualSecuritySaved) return;
   if (modal.id === "assistantModal") saveAssistantDraft();
-  if (["securityDetailModal", "tradingJournalModal", "brokerEditorModal", "instrumentEditorModal"].includes(modal.id) && modal.dataset.parentModalId) {
+  if (["securityDetailModal", "tradingJournalModal", "brokerEditorModal", "instrumentEditorModal", "alarmRiskModal"].includes(modal.id) && modal.dataset.parentModalId) {
     const parentModal = $(modal.dataset.parentModalId);
     if (parentModal) {
       parentModal.inert = false;
       parentModal.removeAttribute("aria-hidden");
     }
     delete modal.dataset.parentModalId;
+  }
+  if (modal.id === "alarmRiskModal" && !modalReturnFocus.get(modal.id)?.isConnected) {
+    const current = [...$("alarmsList").querySelectorAll("[data-open-risk-alarm]")].find(button => button.dataset.openRiskAlarm === modal.dataset.alarmKey);
+    modalReturnFocus.set(modal.id, current || $("alarmsModal").querySelector("button[data-close]"));
   }
   if (modal.id === "instrumentEditorModal") {
     if (!modalReturnFocus.get(modal.id)?.isConnected) {
@@ -13704,7 +13789,7 @@ function closeModal(modal) {
     if (focusTarget instanceof HTMLElement) {
       const parentMenu = focusTarget.closest("details");
       if (parentMenu && !parentMenu.open) parentMenu.open = true;
-      focusTarget.focus({ preventScroll: ["tradeHistoryDetailModal", "securityDetailModal"].includes(modal.id) });
+      focusTarget.focus({ preventScroll: ["tradeHistoryDetailModal", "securityDetailModal", "alarmRiskModal"].includes(modal.id) });
     }
   });
 }
@@ -13956,6 +14041,11 @@ document.addEventListener("click", (event) => {
 
   const vestingAlarmId = event.target.closest("[data-open-vesting-alarm]")?.dataset.openVestingAlarm;
   if (vestingAlarmId) openVestingAlarm(vestingAlarmId);
+
+  const signalAlarm = event.target.closest("[data-open-signal-alarm]");
+  if (signalAlarm) openSignalAlarm(signalAlarm.dataset.openSignalAlarm, signalAlarm.dataset.alarmSignalType);
+  const riskAlarmKey = event.target.closest("[data-open-risk-alarm]")?.dataset.openRiskAlarm;
+  if (riskAlarmKey) openRiskAlarm(riskAlarmKey);
 
   const accountTab = event.target.closest("[data-account-tab]")?.dataset.accountTab;
   if (accountTab) setAccountsTab(accountTab);

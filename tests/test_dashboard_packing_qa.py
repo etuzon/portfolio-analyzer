@@ -25,7 +25,7 @@ class ResizeObserver {
   disconnect(){this.disconnected=true;this.targets=[];}
   notify(targets){this.callback(targets.map(target=>({target})));}
 }
-function classes(...values){const set=new Set(values);return {contains:v=>set.has(v),remove:v=>set.delete(v),toggle(v,yes){yes?set.add(v):set.delete(v);}};}
+function classes(...values){const set=new Set(values);return {contains:v=>set.has(v),add:v=>set.add(v),remove:v=>set.delete(v),toggle(v,yes){yes?set.add(v):set.delete(v);}};}
 function card(height){return {height,style:{gridRowEnd:''},classList:classes('dashboard-widget'),getBoundingClientRect(){return {height:this.height};}};}
 function board(width,cards){return {clientWidth:width,children:cards,dataset:{},classList:classes()};}
 let dashboardLayoutObserver=null,dashboardLayoutFrame=0;

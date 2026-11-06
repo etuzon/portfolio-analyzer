@@ -148,7 +148,7 @@
           </div>
         </nav>
           <div class="header-actions">
-            <button id="alarmsButton" class="nav-menu-link alarm-button" type="button" data-modal="alarmsModal" title="Open portfolio alarms"><span class="nav-menu-label">Alarms</span><span id="alarmsCount">0</span></button>
+            <button id="alarmsButton" class="nav-menu-link alarm-button" type="button" data-modal="alarmsModal" title="Open portfolio alarms"><span id="alarmsPrioritySymbol" aria-hidden="true"></span><span class="nav-menu-label">Alarms</span><span id="alarmsCount">0</span></button>
             <div class="user-session" aria-label="Current user">
               <span id="currentUserName" class="current-user-name" dir="auto"></span>
               <span id="currentUserRole" class="role-badge"></span>
@@ -179,10 +179,6 @@
 
         <section class="analytics-panel">
           <div class="section-head">
-            <div>
-              <p class="eyebrow">Analytics</p>
-              <h2>Portfolio visual overview</h2>
-            </div>
             <div class="dashboard-controls">
               <div class="dashboard-control-group">
                 <span class="dashboard-control-label">Area</span>
@@ -1105,7 +1101,8 @@
                 <p>Hover over an account summary to see its account type, location, source currencies and cash balance on separate lines.</p>
                 <p>Select the portfolio title or logo to return to the dashboard.</p>
                 <p>Use Area to choose investments, long-term savings, employee equity, or all areas. View switches between Glance and Full; Edit lets you arrange or hide cards. Compact summaries use narrower cards and fill available gaps beside taller charts. Card widths follow the dashboard’s available space. Edit keeps your saved arrangement; the display can place later cards in earlier gaps, while keyboard and single-column reading order follow the saved sequence.</p>
-                <p>Analytics refresh in the background. Hover or focus a data-gap count to see which input is unavailable; unavailable dividend history does not confirm zero dividends. Currency tooltips use symbols and retain the converted base-currency value.</p>
+                <p>Analytics refresh in the background while preserving your reading position, keyboard focus and expanded card details. Hover or focus a data-gap count to see which input is unavailable; unavailable dividend history does not confirm zero dividends. Currency tooltips use symbols and retain the converted base-currency value.</p>
+                <p>Unrealized P/L bars and totals use the chart currency shown beside Total P/L. Hover over a bar or focus it with the keyboard to read the holding's P/L in its local currency and converted to ILS at the current saved exchange rate; this does not measure historical FX gains or losses. Missing ILS conversion is shown as unavailable. Holdings without P/L or chart-currency conversion are omitted, and the total remains unavailable until those inputs are complete. Refresh the dashboard to retry missing inputs.</p>
                 <p>Net income shows the percentage change between the two latest available annual reports: (current − previous) / abs(previous) × 100. Green means an increase, red a decrease, and blue exactly no change. The two report dates remain visible; they may not be consecutive years. A zero or missing previous value leaves the percentage unavailable. A smaller loss can produce a positive change. Risk uses a compact score and symbol; its tooltip explains the risk band. In High / Low, Data available means the range was calculated from sufficient dated price history; Partial indicates limited history.</p>
               </article>
               <article class="help-feature">
@@ -1122,7 +1119,12 @@
               </article>
               <article class="help-feature">
                 <h3>Portfolio alarms</h3>
-                <p>Open the bell to review vesting and dividend notices. Use Portfolio → Dividends & Events → Events to scan held securities for dividends. Clearing notices hides the alerts; it does not delete grants or transactions.</p>
+                <p>Open Alarms to review existing Buy, Sell and Watch signals, current portfolio and account risk warnings, and vesting and dividend notices. The header count combines displayed items; repeated matches for the same symbol and signal type count once. Its color reflects the highest attention level present; open the popup for labeled counts and details.</p>
+                <p>Red marks Sell signals and existing High or Extreme risk scores (61–100); amber marks Watch, Elevated risk (41–60), modeled borrowing, incomplete risk inputs and unconfirmed dividend payments. Green marks complete Buy signals and locally recorded dividend payments; it does not mean an investment is safe. Buy or Watch signals with missing rule or provider inputs are amber; Sell remains red. Blue marks scheduled dividends and purple marks vesting. Text and symbols explain each color.</p>
+                <p>Risk alarms use the existing dashboard model and full non-employee-equity scope, independent of holdings filters. Missing valuations, quantities, opening cash balances or conversion FX, unfinished or failed analytics updates prevent a complete risk assessment. Limited model inputs retain their existing data-quality penalty. Select a risk row for its current score, contributing factors and missing data; a score is not a probability of loss or a trading instruction.</p>
+                <p>Select a signal to review its matching Buy, Sell or Watch evidence in Portfolio Signals. Clear event notices only hides dividend and vesting notices; it never dismisses risk warnings or signals and never deletes source transactions. Dismiss signals in Portfolio Signals using the existing expiry setting. Viewers may inspect these notices; signal dismissal follows editing permissions.</p>
+                <p>Dividend payment recorded means a local event was processed, not that external broker settlement was verified. Cash posting is shown only with a positive net amount and a recorded transaction. Past pending dates, failed or skipped records and invalid dates remain amber for review; they do not prove nonpayment. Use Portfolio → Dividends &amp; Events → Events to inspect or scan dividend records.</p>
+                <p>Opening Alarms rereads events and saved rule results without placing trades or fetching market quotes. Loading is nonblocking. Source failures retain available results and identify what could not be updated. Reopen Alarms to retry events or signals; use dashboard Refresh to retry portfolio inputs. New portfolio assessments and signal updates refresh the colors and counts while preserving the popup reading position. Expand Vesting notice settings to adjust the existing lead-time window, then Save notice.</p>
               </article>
               <article class="help-feature help-feature-wide help-risk-formula">
                 <h3>Investment risk formula</h3>
@@ -1647,6 +1649,8 @@
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
+        <details class="alarm-settings-disclosure">
+          <summary>Vesting notice settings</summary>
         <div class="alarm-settings">
           <label class="field" for="vestingAlertDays">
             <span>Vesting notice</span>
@@ -1656,11 +1660,24 @@
           <button id="saveAlarmSettings" class="secondary" type="button">Save notice</button>
         </div>
         <p id="alarmSettingsStatus" class="status-line" role="status" aria-live="polite"></p>
+        </details>
         <div class="alarms-list-head">
           <p id="alarmsStatus" class="status-line" role="status" aria-live="polite">Vesting and dividend alarms</p>
-          <button id="clearAlarms" class="secondary compact-button" type="button">Clear alarms</button>
+          <button id="clearAlarms" class="secondary compact-button" type="button">Clear event notices</button>
         </div>
+        <div id="alarmPrioritySummary" class="alarm-priority-summary" aria-label="Alarm types"></div>
+        <p class="section-note">Risk warnings update with your portfolio. Dismiss signals in Portfolio Signals.</p>
         <div id="alarmsList" class="stack"></div>
+      </section>
+    </div>
+
+    <div id="alarmRiskModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="alarmRiskTitle">
+        <div class="section-head"><h2 id="alarmRiskTitle">Risk details</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <p class="section-note">The existing risk score is a heuristic, not a probability of loss or a trading instruction.</p>
+        <p id="alarmRiskDetails" class="alarm-risk-details"></p>
+        <div id="alarmRiskData"></div>
       </section>
     </div>
 
@@ -2784,6 +2801,7 @@
   <script src="/heatmap-ui.js?v=1"></script>
   <script src="/risk-data-gaps-ui.js?v=1"></script>
   <script src="/risk-history-ui.js?v=1"></script>
+  <script src="/alarm-priority-ui.js?v=1"></script>
   <script src="/app.js?v=0.9.15-cash-risk"></script>
   </body>
 </html>
