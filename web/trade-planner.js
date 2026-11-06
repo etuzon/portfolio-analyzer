@@ -71,9 +71,18 @@
       price_date: dates.at(-1) || null,
       manual: upper(holding.data_source) === "MANUAL" && !holding.secondary_symbol };
   }
+  // Ledger dates use the application's Jerusalem business day. This numeric
+  // day is only a comparison key; quote ages still use the captured instant.
+  function ledgerCutoff(now) {
+    if (!Number.isFinite(now)) return NaN;
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit" })
+      .formatToParts(new Date(now)).map((part) => [part.type, part.value]));
+    return Date.parse(`${parts.year}-${parts.month}-${parts.day}T00:00:00Z`);
+  }
   function cashBalance(account, transactions, now) {
     let cash = number(account.initial_cash);
     if (cash === null) return null;
+    const cutoff = ledgerCutoff(now);
     for (const tx of transactions.filter((tx) => String(tx.account_db_id) === String(account.id))) {
       const sign = { BUY: -1, SELL: 1, SHORT: 1, DIVIDEND: 1, INTEREST: 1, FEE: -1, CASH_IN: 1, CASH_OUT: -1 }[tx.action];
       if (!sign) continue;
@@ -82,7 +91,7 @@
       if (upper(tx.currency) !== upper(account.currency)) return null;
       const quantity = number(tx.quantity), price = number(tx.price);
       if (quantity === null || price === null || quantity < 0 || price < 0) return null;
-      const future = Date.parse(tx.trade_date) > now;
+      const future = Date.parse(tx.trade_date) > cutoff;
       if (future && sign > 0) continue;
       cash += sign * quantity * price;
     }
@@ -227,5 +236,5 @@
       action, requested, policy: POLICY, symbol, quote: current, warnings, calculatedAt: context.calculated_at,
       refreshPending: context.refresh_pending };
   }
-  return { plan, converter, quote, cashBalance, listingCountry, POLICY };
+  return { plan, converter, quote, cashBalance, ledgerCutoff, listingCountry, POLICY };
 });

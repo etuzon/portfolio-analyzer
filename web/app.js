@@ -3268,7 +3268,6 @@ function technicalsCell(sr, movingAverage, currency, maPeriod) {
   return `<div class="metric-cell">
     <div class="metric-head">
       <span class="metric-name">Support / resistance</span>
-      <span class="metric-pill ok">Ready</span>
     </div>
     <div class="metric-row"><span>Support</span><b>${money(sr.support.price, currency)}</b></div>
     <div class="metric-row"><span>Resistance</span><b>${money(sr.resistance.price, currency)}</b></div>
@@ -3526,6 +3525,17 @@ function refreshCountryDatalist() {
 }
 
 function refreshLocalizedFormOptions() {
+  setOptions("localAccountType", state.localOptions.account_types);
+  setOptions("editAccountType", state.localOptions.account_types);
+  setOptions("reportAccountType", state.localOptions.account_types, optionLabel("All account categories"));
+  setOptions("fundKind", state.localOptions.fund_kinds);
+  setOptions("editFundKind", state.localOptions.fund_kinds);
+  const assetClasses = state.localOptions.asset_classes || ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"];
+  setOptions("securityAssetClass", assetClasses);
+  setOptions("priceAssetClass", assetClasses);
+  setOptions("manualInstrumentType", (state.localOptions.instrument_types || ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"])
+    .filter((type) => type !== "STOCK_OPTION"));
+  setOptions("manualOptionType", state.localOptions.option_types || ["CALL", "PUT"]);
   refreshCountryDatalist();
   ["localAccountLocation", "editAccountLocation", "brokerCountry"]
     .forEach((id) => setAccountCountryOptions(id, valueOf(id) || "USA"));
@@ -3549,17 +3559,6 @@ function syncCurrencyFromLocation(locationId, currencyId) {
 function populateStaticOptions() {
   refreshMarketOptions();
   refreshLocalizedFormOptions();
-  const assetClasses = state.localOptions.asset_classes || ["EQUITY", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "RSU", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"];
-  setOptions("localAccountType", state.localOptions.account_types);
-  setOptions("editAccountType", state.localOptions.account_types);
-  setOptions("reportAccountType", state.localOptions.account_types, optionLabel("All account categories"));
-  setOptions("fundKind", state.localOptions.fund_kinds);
-  setOptions("editFundKind", state.localOptions.fund_kinds);
-  setOptions("securityAssetClass", assetClasses);
-  setOptions("priceAssetClass", assetClasses);
-  setOptions("manualInstrumentType", (state.localOptions.instrument_types || ["STOCK", "ETF", "MUTUALFUND", "BOND", "OPTION", "FUTURE", "EMPLOYEE_STOCK_OPTION", "PRIVATE_STOCK", "STOCK_OPTION"])
-    .filter((type) => type !== "STOCK_OPTION"));
-  setOptions("manualOptionType", state.localOptions.option_types || ["CALL", "PUT"]);
   $("localAccountLocation").value = "USA";
   $("editAccountLocation").value = "USA";
   $("brokerCountry").value = "USA";
@@ -11181,16 +11180,20 @@ function renderPensionPeriods() {
         <button class="secondary compact-button" type="button" data-delete-pension-period="${index}" title="Remove this salary period from the selected scenario.">Remove</button>
       </div>
       <div class="retirement-period-fields salary-period-fields">
+        <div class="retirement-period-group">
         <label class="management-field"><span>From age</span><input data-pension-period-index="${index}" data-pension-period-field="from_age" type="number" min="0" step="0.1" value="${esc(period.from_age ?? "")}" /></label>
         <label class="management-field"><span>To age</span><input data-pension-period-index="${index}" data-pension-period-field="to_age" type="number" min="0" step="0.1" value="${esc(period.to_age ?? "")}" /></label>
         <label class="management-field"><span>Monthly salary</span><input data-pension-period-index="${index}" data-pension-period-field="monthly_income" type="number" min="0" step="0.01" value="${esc(period.monthly_income ?? 0)}" /></label>
         <label class="management-field"><span>Pension deposit %</span><input data-pension-period-index="${index}" data-pension-period-field="contribution_percent" type="number" min="0" step="0.01" value="${esc(period.contribution_percent ?? 0)}" /></label>
         <label class="management-field"><span>Extra monthly deposit</span><input data-pension-period-index="${index}" data-pension-period-field="monthly_deposit" type="number" min="0" step="0.01" value="${esc(period.monthly_deposit ?? 0)}" /></label>
+        </div>
+        <div class="retirement-period-group">
         <label class="management-field"><span>Insurance track</span>${pensionPeriodTrackSelect(index, period)}</label>
         <label class="management-field"><span>Disability coverage</span>${pensionPeriodCoverageSelect(index, "disability_coverage_percent", DISABILITY_COVERAGE_OPTIONS, period.disability_coverage_percent)}</label>
         <label class="management-field"><span>Spouse survivors coverage</span>${pensionPeriodCoverageSelect(index, "spouse_survivors_coverage_percent", SPOUSE_SURVIVORS_OPTIONS, period.spouse_survivors_coverage_percent)}</label>
         <label class="management-field"><span>Children survivors coverage</span>${pensionPeriodCoverageSelect(index, "children_survivors_coverage_percent", CHILDREN_SURVIVORS_OPTIONS, period.children_survivors_coverage_percent)}</label>
         <label class="management-field"><span>Survivors factor</span><input data-pension-period-index="${index}" data-pension-period-field="survivors_capitalization_factor" type="number" min="1" step="0.01" value="${esc(period.survivors_capitalization_factor ?? 200)}" /></label>
+        </div>
       </div>
     </article>
   `).join("") : '<div class="empty compact-empty">No salary periods yet. Add the first period directly below.</div>';
@@ -11591,7 +11594,7 @@ function editFund(fundId) {
   $("editFundAccount").value = fund.account_id || "";
   $("editFundComments").value = fund.comments || "";
   renderFundAccountOwners();
-  $("editFundStatus").textContent = [fund.kind, fund.fund_name, fund.pension_id].filter(Boolean).join(" · ");
+  $("editFundStatus").textContent = "";
   openModal("fundEditModal");
 }
 
@@ -12289,6 +12292,7 @@ function alertRunProgressText(progress) {
 }
 
 function renderAlerts(data, { signalsOnly = false } = {}) {
+  $("saveAlert").textContent = t(state.editingAlertId ? "Update rule" : "Save rule");
   const wasRunning = alertRunIsActive(state.alertData);
   state.alertData = data;
   state.alarmSignalsLoadFailed = false;
@@ -12520,7 +12524,7 @@ function editAlertRule(ruleId) {
   $("alertSignal").value = rule.signal || "watch";
   $("alertMatchMode").value = rule.match_mode || "all";
   $("alertEnabled").checked = Boolean(rule.enabled);
-  $("saveAlert").textContent = "Update rule";
+  $("saveAlert").textContent = t("Update rule");
   $("cancelAlertEdit").hidden = false;
   $("alertStatus").textContent = `Editing “${rule.name}”`;
   renderAlertConditions();
@@ -13737,7 +13741,7 @@ function positionModalHomeLinks() {
   const rect = brand.getBoundingClientRect();
   document.querySelectorAll(".modal-home-link").forEach((link) => {
     link.style.left = `${Math.min(Math.max(rect.left, 8), Math.max(8, window.innerWidth - rect.width - 8))}px`;
-    link.style.top = `${rect.top}px`;
+    link.style.top = "8px";
     link.style.width = `${rect.width}px`;
     link.style.height = `${rect.height}px`;
   });

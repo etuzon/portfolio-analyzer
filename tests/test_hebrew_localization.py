@@ -8,6 +8,39 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_management_option_labels_follow_language_without_changing_selected_values():
+    source = (ROOT / "web/app.js").read_text()
+    functions = []
+    for name in ("setOptions", "refreshLocalizedFormOptions"):
+        start = source.index(f"function {name}(")
+        end = source.index("\n}", start) + 2
+        functions.append(source[start:end])
+    script = "const window = {};\n" + (ROOT / "web/i18n.js").read_text() + r'''
+const assert = require('node:assert/strict');
+const state = {language:'he',localOptions:{account_types:['Investment','ESOP'],fund_kinds:['Pension','Savings Fund'],asset_classes:['EQUITY','BOND'],instrument_types:['STOCK','BOND'],option_types:['CALL','PUT']}};
+const selected = {localAccountType:'ESOP',editAccountType:'Investment',reportAccountType:'',fundKind:'Savings Fund',editFundKind:'Pension',securityAssetClass:'BOND',priceAssetClass:'EQUITY',manualInstrumentType:'BOND',manualOptionType:'PUT'};
+const nodes = Object.fromEntries(Object.entries(selected).map(([id,value])=>[id,{value,innerHTML:''}]));
+const $ = id => nodes[id];
+const esc = text => String(text);
+const optionLabel = text => window.PortfolioI18n.translate(text,state.language);
+const valueOf = id => nodes[id]?.value || '';
+const refreshCountryDatalist=()=>{},setAccountCountryOptions=()=>{},setCompanyLocationOptions=()=>{},setCurrencyOptions=()=>{};
+const SUPPORTED_MANAGEMENT_CURRENCIES=['ILS','USD','EUR'];
+''' + "\n".join(functions) + r'''
+for (const language of ['he','en','he']) {
+  state.language=language;
+  refreshLocalizedFormOptions();
+  for (const [id,value] of Object.entries(selected)) assert.equal(nodes[id].value,value,id);
+  for (const [id,source] of [['localAccountType','Investment'],['editAccountType','Investment'],['fundKind','Pension'],['editFundKind','Pension'],['manualInstrumentType','STOCK']]) {
+    assert.ok(nodes[id].innerHTML.includes('>'+optionLabel(source)+'</option>'),id);
+    if (language==='en') assert.ok(!/[א-ת]/u.test(nodes[id].innerHTML),id);
+  }
+}
+'''
+    result = subprocess.run(["node"], input=script, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_alert_progress_and_run_history_follow_active_language():
     source = (ROOT / "web/app.js").read_text()
     functions = []

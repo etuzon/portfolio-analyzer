@@ -27,10 +27,13 @@
 .benchmark-inputs { border-top:1px solid var(--ux-stroke); margin-block:18px; padding-block-start:14px; }
 .benchmark-inputs summary { cursor:pointer; font-weight:650; }
 .benchmark-inputs >p { color:var(--ux-muted); }
-.benchmark-editor { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-block:14px; }
-.benchmark-editor .field { min-width:0; }
-.benchmark-editor .field>input,.benchmark-editor select { width:100%; min-width:140px; box-sizing:border-box; }
-.benchmark-editor .benchmark-wide { grid-column:1/-1; }
+.benchmark-editor { display:flex; flex-wrap:wrap; gap:14px; align-items:end; margin-block:14px; }
+.benchmark-editor .field { flex:0 1 360px; min-width:0; max-width:100%; }
+.benchmark-editor .field:has(#benchmarkCurrency),.benchmark-editor .field:has(#benchmarkIndexCurrency) { flex-basis:130px; }
+.benchmark-editor .field:has(#benchmarkIndexBasis) { flex-basis:240px; }
+.benchmark-editor .field:has(textarea) { flex-basis:100%; }
+.benchmark-editor .field>input,.benchmark-editor select { width:100%; min-width:0; box-sizing:border-box; }
+.benchmark-editor .benchmark-wide { flex:0 1 100%; min-width:0; }
 .benchmark-editor textarea { width:100%; min-height:150px; resize:vertical; padding:10px; box-sizing:border-box; font:13px/1.7 ui-monospace,monospace; border:1px solid #34363c; border-radius:7px; color:var(--ux-text); background:#111315; }
 .benchmark-editor .checkbox-field { display:flex; gap:10px; align-items:flex-start; line-height:1.5; }
 .benchmark-editor .checkbox-field input { flex-shrink:0; width:19px; min-height:19px; height:19px; margin-top:3px; }

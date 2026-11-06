@@ -19,6 +19,41 @@ const trade=(overrides={})=>({id:'r1',accountId:'us1',symbol:'NEW',market:'NASDA
 ''' + body)
 
 
+@pytest.mark.parametrize("captured_at,ledger_day", [
+    ("2026-11-06T21:59:59Z", "2026-11-06"),
+    ("2026-11-06T22:00:00Z", "2026-11-07"),
+    ("2026-07-01T20:59:59Z", "2026-07-01"),
+    ("2026-07-01T21:00:00Z", "2026-07-02"),
+    ("2026-03-26T22:00:00Z", "2026-03-27"),
+    ("2026-03-26T23:59:59Z", "2026-03-27"),
+    ("2026-03-27T00:00:00Z", "2026-03-27"),
+])
+def test_captured_jerusalem_ledger_day_keeps_today_cash_and_rejects_tomorrow(captured_at, ledger_day):
+    run_simulation("const capturedAt=" + json.dumps(captured_at) + ";const ledgerDay=" + json.dumps(ledger_day) + r''';
+const ctx=simulationContext();ctx.calculated_at=capturedAt;ctx.accounts[0].initial_cash=1000;
+const tomorrow=new Date(Date.parse(ledgerDay+'T00:00:00Z')+86400000).toISOString().slice(0,10);
+const quoteDay=new Date(Date.parse(ledgerDay+'T00:00:00Z')-86400000).toISOString().slice(0,10);
+for(const range of Object.values(ctx.securities[0].security.price_ranges)) range.current_date=quoteDay;
+const tx=(action,quantity,day)=>({account_db_id:'us1',action,quantity,price:1,currency:'USD',trade_date:day});
+ctx.transactions=[tx('CASH_OUT',1125.5,ledgerDay),tx('CASH_IN',50,tomorrow),tx('CASH_OUT',20,tomorrow),tx('ADD',1,ledgerDay)];
+const original=JSON.stringify(ctx);
+const result=simulator.simulate(ctx,[trade({quantity:1})],adapters);
+assert.equal(result.status,'ok',JSON.stringify(result));
+assert.equal(result.accounts[0].before.cash,-125.5);
+assert.equal(result.total.before.cash,-125.5);
+assert.equal(planner.cashBalance(ctx.accounts[0],ctx.transactions,Date.parse(capturedAt)),-145.5);
+assert.equal(JSON.stringify(ctx),original);
+// A later live clock cannot change the captured ledger day or its result.
+const RealDate=Date;globalThis.Date=class extends RealDate {constructor(...args){super(...(args.length?args:['2030-01-01T12:00:00Z']));} static now(){return RealDate.parse('2030-01-01T12:00:00Z');}};
+assert.deepEqual(simulator.simulate(ctx,[trade({quantity:1})],adapters),result);
+globalThis.Date=RealDate;
+ctx.transactions.push(tx('ADD',1,tomorrow));
+const rejected=simulator.simulate(ctx,[trade({quantity:1})],adapters);
+assert.equal(rejected.status,'invalid');
+assert.equal(rejected.errors[0].reason,'future_transactions');
+''')
+
+
 def test_basket_reuses_cash_and_quantities_across_rows_and_keeps_accounts_separate():
     run_simulation('''
 const ctx=simulationContext();ctx.accounts.push(account('second','USA',5000));

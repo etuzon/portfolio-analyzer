@@ -28,6 +28,7 @@
     context = JSON.parse(JSON.stringify(context));
     const planner = typeof module === "object" && module.exports ? require("./trade-planner.js") : globalThis.PortfolioTradePlanner;
     const now = Date.parse(context.calculated_at), base = upper(context.base_currency);
+    const ledgerCutoff = planner.ledgerCutoff(now);
     const convert = planner.converter(context.fx_quotes, base);
     const errors = [], warnings = [], executed = [];
     const fail = (rowId, reason) => errors.push({ rowId, reason });
@@ -55,7 +56,7 @@
         if (!sign) continue;
         const day = Date.parse(tx.trade_date);
         if (!Number.isFinite(day)) return null;
-        if (day > now) continue;
+        if (day > ledgerCutoff) continue;
         const quantity = num(tx.quantity), price = num(tx.price);
         if (upper(tx.currency) !== upper(account.currency) || quantity === null || price === null || quantity < 0 || price < 0) return null;
         cash += sign * quantity * price;
@@ -70,7 +71,7 @@
     // establish today's quantity when a future security trade exists (even a
     // future full sale can remove the row). Do not invent an as-of position.
     for (const tx of context.transactions || []) {
-      if (["ADD", "REMOVE", "BUY", "SELL", "SHORT"].includes(upper(tx.action)) && Date.parse(tx.trade_date) > now) {
+      if (["ADD", "REMOVE", "BUY", "SELL", "SHORT"].includes(upper(tx.action)) && Date.parse(tx.trade_date) > ledgerCutoff) {
         const book = books.get(String(tx.account_db_id));
         if (book) book.issue = "future_transactions";
       }

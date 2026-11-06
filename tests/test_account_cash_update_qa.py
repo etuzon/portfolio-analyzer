@@ -274,6 +274,47 @@ assert.equal(dashboard.total.cash_debt,125.5);
 ''')
 
 
+@pytest.mark.parametrize("as_of,trade_day,is_current_day", [
+    ("2026-11-06T21:59:59Z", "2026-11-07", False),
+    ("2026-11-06T22:00:00Z", "2026-11-07", True),
+    ("2026-11-06T22:00:01Z", "2026-11-07", True),
+    ("2026-06-30T20:59:59Z", "2026-07-01", False),
+    ("2026-06-30T21:00:00Z", "2026-07-01", True),
+    ("2026-06-30T21:00:01Z", "2026-07-01", True),
+])
+@pytest.mark.parametrize("action,quantity,delta", [
+    ("CASH_OUT", 1125.5, -1125.5), ("CASH_IN", 250, 250),
+])
+def test_cash_consumers_include_same_ledger_day_at_jerusalem_midnight(
+    as_of, trade_day, is_current_day, action, quantity, delta,
+):
+    import json
+    from test_trade_simulator import run_simulation
+
+    # The same date-only row becomes current at local midnight: 22:00 UTC in
+    # winter and 21:00 UTC in summer, while the UTC calendar is still yesterday.
+    expected_cash = 1000 + (delta if is_current_day else 0)
+    # The planner intentionally reserves future debits, but not future income.
+    expected_planner_cash = 1000 + (delta if is_current_day or delta < 0 else 0)
+    raw_transaction = {"account_db_id": "us1", "action": action, "quantity": quantity,
+                       "price": 1, "currency": "USD", "trade_date": trade_day}
+    run_simulation("const asOf=" + json.dumps(as_of)
+                   + ";\nconst rawTransaction=" + json.dumps(raw_transaction)
+                   + f";\nconst expectedCash={expected_cash}, expectedPlannerCash={expected_planner_cash};\n" + r'''
+const ctx=simulationContext();ctx.calculated_at=asOf;
+ctx.accounts=[account('us1','USA',1000)];ctx.transactions=[rawTransaction];
+// Keep quote freshness independent of the ledger-day boundary under review.
+for(const range of Object.values(ctx.securities[0].security.price_ranges))range.current_date=asOf.slice(0,10);
+const source=JSON.stringify(ctx);
+const result=simulator.simulate(ctx,[trade({quantity:1})],adapters);
+assert.equal(result.status,'ok',JSON.stringify(result));
+assert.equal(result.accounts[0].before.cash,expectedCash);
+assert.equal(result.total.before.cash,expectedCash);
+assert.equal(planner.cashBalance(ctx.accounts[0],ctx.transactions,Date.parse(asOf)),expectedPlannerCash);
+assert.equal(JSON.stringify(ctx),source);
+''')
+
+
 def test_two_concurrent_reconciliations_commit_only_one_and_survive_store_restart(cash_env):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier

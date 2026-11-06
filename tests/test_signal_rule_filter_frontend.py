@@ -50,6 +50,22 @@ assert.ok(nodes.alertsSignals.innerHTML.includes('Income (2)'));
 ''')
 
 
+def test_language_change_refreshes_save_label_without_resetting_rule_draft():
+    run_filter(r'''
+const draft=JSON.stringify(state.alertConditions);
+renderAlerts(initial);
+assert.equal(nodes.saveAlert.textContent,'שמירת כלל');
+state.language='en';renderAlerts(initial,{signalsOnly:true});
+assert.equal(nodes.saveAlert.textContent,'Save rule');
+state.editingAlertId='a';renderAlerts(initial,{signalsOnly:true});
+assert.equal(nodes.saveAlert.textContent,'Update rule');
+state.language='he';renderAlerts(initial,{signalsOnly:true});
+assert.equal(nodes.saveAlert.textContent,'עדכון כלל');
+assert.equal(state.editingAlertId,'a');
+assert.equal(JSON.stringify(state.alertConditions),draft);
+''')
+
+
 def test_selection_survives_updates_and_language_changes_with_clear_empty_and_deleted_rule_states():
     run_filter(r'''
 state.alertRuleFilter='rule:empty';renderAlerts(initial);

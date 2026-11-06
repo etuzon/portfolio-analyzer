@@ -972,7 +972,7 @@ def test_retirement_scenario_flow_uses_one_saved_list_and_create_edit_modal():
     assert "newPensionScenarioInline" not in script
     assert "pensionProjectionSummary" not in html
     assert ".retirement-scenario-modal {" in styles
-    assert ".retirement-scenario-list {\n  grid-template-columns: repeat(2, minmax(0, 1fr));" in styles
+    assert ".retirement-scenario-list {\n  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));" in styles
     mobile = styles.split('@media (max-width: 760px) {', 1)[1]
     assert ".retirement-scenario-list,\n  .retirement-period-fields," in mobile
 

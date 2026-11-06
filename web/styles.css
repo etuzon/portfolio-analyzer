@@ -1520,14 +1520,19 @@ textarea.muted-control {
   font-weight: 850;
 }
 
-.retirement-scenario-form {
-  grid-template-columns: repeat(2, minmax(180px, 1fr));
+.management-form.retirement-scenario-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
   align-items: end;
   margin-top: 12px;
 }
 
-.retirement-scenario-modal {
-  width: min(760px, 100%);
+.management-form.retirement-scenario-form > .management-field { flex: 1 1 calc((100% - 12px) / 2); min-width: min(100%, 240px); }
+.retirement-scenario-form > .management-field:has(#simRetireAge, #simFactor) { flex: 0 1 140px; min-width: 0; }
+
+.modal-card.retirement-scenario-modal {
+  width: min(680px, 100%);
   overflow-x: hidden;
 }
 
@@ -1539,13 +1544,15 @@ textarea.muted-control {
 
 .retirement-scenario-modal-actions {
   display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: flex-start;
   margin-top: 12px;
 }
 
 .retirement-scenario-modal-actions button {
   width: auto;
-  min-width: 130px;
+  min-width: 0;
 }
 
 .retirement-scenario-form > .management-field,
@@ -1661,7 +1668,7 @@ textarea.muted-control {
 }
 
 .retirement-scenario-list {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
   margin-top: 12px;
 }
 
@@ -1690,14 +1697,14 @@ textarea.muted-control {
 }
 
 .retirement-scenario-facts {
-  display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   margin: 0;
 }
 
 .retirement-scenario-facts > div {
-  grid-column: span 5;
+  flex: 1 1 145px;
   min-width: 0;
   padding: 8px;
   border-radius: 7px;
@@ -1705,11 +1712,13 @@ textarea.muted-control {
 }
 
 .retirement-scenario-facts > div:nth-child(2) {
-  grid-column: span 2;
+  flex: 0 0 105px;
 }
 
+.retirement-scenario-facts > div:nth-child(2) dd { white-space: nowrap; }
+
 .retirement-scenario-facts > div:nth-child(n + 4) {
-  grid-column: span 6;
+  flex: 1 1 130px;
 }
 
 .retirement-scenario-facts dt,
@@ -1816,6 +1825,8 @@ textarea.muted-control {
   gap: 8px;
 }
 
+.retirement-period-list > .empty { min-height: 0; padding: 10px 0; margin: 0; }
+
 .retirement-period-card,
 .retirement-entry-card {
   min-width: 0;
@@ -1849,23 +1860,59 @@ textarea.muted-control {
   margin-top: 10px;
 }
 
-.return-period-fields {
-  grid-template-columns: repeat(3, minmax(140px, 1fr));
+.retirement-period-fields.salary-period-fields,
+.popup-period-form.salary-period-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
 }
+
+.retirement-period-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+  min-width: 0;
+}
+
+.retirement-period-group > .management-field { flex: 0 1 150px; min-width: 0; }
+.retirement-period-group > .management-field:has(#simPeriodFromMode, #simInsuranceTrack, [data-pension-period-field="insurance_track"]) { flex-basis: 200px; }
+.retirement-period-group > .management-field:has(#simPeriodFrom, #simPeriodTo, [data-pension-period-field="from_age"], [data-pension-period-field="to_age"]) { flex-basis: 110px; }
+.retirement-period-group > .management-field:has(#simPeriodIncome, #simPeriodDeposit, [data-pension-period-field="monthly_income"], [data-pension-period-field="monthly_deposit"]) { flex-basis: 185px; }
+.retirement-period-group + .retirement-period-group { padding-top: 12px; border-top: 1px solid #303743; }
+
+.return-period-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 10px;
+}
+
+.return-period-fields > .management-field { flex: 0 1 140px; }
+.return-period-fields > .management-field:has([data-pension-rate-field="from_age"], [data-pension-rate-field="to_age"]) { flex-basis: 110px; }
 
 .popup-period-form {
   grid-template-columns: repeat(5, minmax(120px, 1fr));
   align-items: end;
 }
 
-.return-period-form {
-  grid-template-columns: repeat(4, minmax(140px, 1fr));
+.popup-period-form.return-period-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
+
+.return-period-form > .management-field { flex: 0 1 140px; }
+.return-period-form > .management-field:has(#simRateFromMode) { flex-basis: 200px; }
+.return-period-form > .management-field:has(#simRateFrom, #simRateTo) { flex-basis: 110px; }
 
 .retirement-section-actions {
   justify-content: flex-start;
   margin-top: 10px;
 }
+
+.retirement-entry-card .retirement-section-actions { flex-wrap: nowrap; align-items: stretch; }
+.retirement-entry-card .retirement-section-actions > button { flex: 0 1 auto; min-width: 0; padding-inline: 10px; white-space: normal; }
 
 .retirement-schedule-status {
   min-height: 20px;
@@ -1893,11 +1940,34 @@ textarea.muted-control {
 
 .fund-create-section {
   margin-top: 14px;
+  max-width: 780px;
 }
 
-.fund-form {
-  grid-template-columns: repeat(4, minmax(150px, 1fr));
+.management-form.fund-form {
+  grid-template-columns: 160px minmax(180px, 1fr) 160px;
   align-items: end;
+  gap: 12px;
+}
+
+#fundEditModal > .modal-card {
+  width: min(760px, 100%);
+}
+
+.fund-form > .field {
+  min-width: 0;
+}
+
+.fund-form > .fund-account-field {
+  grid-column: span 2;
+}
+
+.fund-form > .fund-comments-field {
+  grid-column: 1 / -1;
+}
+
+.fund-form input, .fund-form select {
+  width: 100%;
+  min-width: 0;
 }
 
 .fund-form #saveFund {
@@ -1935,6 +2005,8 @@ textarea.muted-control {
 
 .fund-form .fund-actions button {
   min-width: 0;
+  width: auto;
+  flex: 0 1 auto;
   white-space: normal;
 }
 
@@ -1992,10 +2064,19 @@ textarea.muted-control {
   margin-top: 14px;
 }
 
-.fund-history-form {
-  grid-template-columns: minmax(160px, 0.7fr) minmax(180px, 0.8fr) minmax(260px, 1.4fr) auto;
+.management-form.fund-history-form {
+  grid-template-columns: 160px 180px minmax(200px, 1fr);
   align-items: end;
+  gap: 12px;
 }
+
+.fund-history-form > .fund-history-actions {
+  grid-column: 1 / -1;
+  flex-wrap: nowrap;
+  align-items: stretch;
+}
+
+.fund-history-form > .fund-history-actions > button { min-width: 0; white-space: normal; }
 
 .fund-history-actions,
 .row-actions {
@@ -2012,6 +2093,25 @@ textarea.muted-control {
 
 .fund-history-table {
   min-width: 780px;
+}
+
+@media (max-width: 700px) {
+  .management-form.fund-form,
+  .management-form.fund-history-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .fund-form > .fund-account-field,
+  .fund-history-form > label:nth-child(3) { grid-column: 1 / -1; }
+}
+
+@media (max-width: 540px) {
+  .management-form.fund-form,
+  .management-form.fund-history-form { grid-template-columns: minmax(0, 1fr); }
+  .fund-form > .fund-type-field,
+  .fund-form > .fund-id-field,
+  .fund-form > .fund-amount-field,
+  .fund-history-form > label:nth-child(1) { width: 160px; max-width: 100%; }
+  .fund-history-form > label:nth-child(2) { width: 180px; max-width: 100%; }
 }
 
 .fund-history-table td:nth-child(2),
@@ -4409,55 +4509,6 @@ textarea.muted-control {
   max-width: 100%;
 }
 
-.employee-wizard-grid.employee-grant-terms-grid {
-  grid-template-columns: minmax(180px, 1.4fr) minmax(175px, 1.25fr) repeat(3, minmax(145px, 1fr));
-  align-items: end;
-}
-
-.employee-wizard-grid.vesting-basics-grid {
-  grid-template-columns: minmax(240px, 1.7fr) minmax(150px, 1fr) 160px minmax(220px, 1.4fr);
-  align-items: end;
-}
-
-.employee-grant-terms-grid > .employee-grant-company,
-.employee-grant-terms-grid > .employee-grant-id {
-  grid-column: span 2;
-}
-
-@media (max-width: 1100px) {
-  .employee-wizard-grid.vesting-basics-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .employee-wizard-grid.employee-grant-terms-grid {
-    grid-template-columns: repeat(3, minmax(150px, 1fr));
-  }
-
-  .employee-grant-terms-grid > .employee-grant-id {
-    grid-column: span 1;
-  }
-}
-
-@media (max-width: 760px) {
-  .employee-wizard-grid.employee-grant-terms-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 540px) {
-  .employee-wizard-grid.vesting-basics-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .employee-wizard-grid.employee-grant-terms-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .employee-grant-terms-grid > .employee-grant-company {
-    grid-column: span 1;
-  }
-}
-
 .employee-wizard-advanced {
   margin-top: 12px;
   padding: 10px 12px;
@@ -4478,21 +4529,45 @@ textarea.muted-control {
   margin-bottom: 12px;
 }
 
-.employee-wizard-actions {
+.employee-option-wizard .employee-wizard-actions {
   display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 10px;
   margin-top: 12px;
 }
 
-.employee-wizard-actions.end {
-  justify-content: flex-end;
+.employee-option-wizard .employee-wizard-actions button {
+  width: auto;
+  min-width: 0;
 }
 
-.employee-wizard-actions button {
-  min-width: 150px;
+/* Grant values keep their natural reading widths in create and edit modes. */
+.employee-option-wizard .employee-wizard-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
 }
+.employee-option-wizard .employee-wizard-grid > .management-field {
+  flex: 0 1 170px;
+  max-width: 100%;
+}
+.employee-option-wizard .employee-wizard-grid > .employee-grant-company,
+.employee-option-wizard .employee-wizard-grid > :has(#employeeWizardAccount) {
+  flex-basis: 300px;
+}
+.employee-option-wizard .employee-wizard-grid > .employee-grant-id,
+.employee-option-wizard .employee-wizard-grid > :has(#employeeWizardCompanyStatus),
+.employee-option-wizard .employee-wizard-grid > :has(#employeeWizardPublicMarket),
+.employee-option-wizard .employee-wizard-grid > :has(#employeeWizardTaxScheme) {
+  flex-basis: 210px;
+}
+.employee-option-wizard .employee-wizard-grid > :has(#employeeWizardCurrency) { flex-basis: 110px; }
+.employee-option-wizard .employee-wizard-grid > :has(.date-field) { flex-basis: 160px; }
+.employee-option-wizard .employee-wizard-grid > :has(#employeeWizardVestingStyle) { flex-basis: 230px; }
+.employee-option-wizard .employee-wizard-grid > .field-wide { flex: 0 1 600px; }
 
 .employee-vesting-sentence {
   display: grid;
@@ -5427,12 +5502,42 @@ textarea.muted-control {
   grid-template-columns: repeat(4, minmax(150px, 1fr)) minmax(180px, auto);
 }
 
+#accountsModal:has(#accountNewPanel:not([hidden])) > .modal-card { width:min(900px,100%); }
+.management-form.account-create-form { grid-template-columns:minmax(0,1fr); gap:14px; }
+.account-create-basics { display:flex; flex-wrap:wrap; align-items:end; gap:12px; }
+.account-create-basics > .field { flex:0 1 200px; max-width:100%; }
+.account-create-basics > .field:nth-child(2) { flex-basis:220px; }
+.account-create-basics > .field:nth-child(3) { flex-basis:164px; }
+.account-create-basics > .field:nth-child(4) { flex-basis:180px; }
+.account-create-details { display:grid; grid-template-columns:minmax(180px,1fr) 220px minmax(240px,1.4fr); gap:12px; }
+.account-create-comments { grid-column:1 / -1; }
+.account-create-form .field { min-width:0; }
+.account-create-form input,.account-create-form select { width:100%; min-width:0; }
+.account-create-ownership { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+.account-create-ownership > .field { flex:1 1 240px; max-width:420px; }
+.account-create-tools { display:flex; flex-wrap:wrap; gap:8px; }
+.account-create-tools > button { width:auto; white-space:normal; }
+.account-create-form > .form-actions { display:flex; justify-content:flex-start; }
+.account-create-form > .form-actions > button { width:auto; }
+.account-create-form .empty.compact-empty { min-height:0; padding-block:6px; margin:0; }
+@media (max-width:1000px) {
+ .account-create-details { grid-template-columns:repeat(2,minmax(0,1fr)); }
+ .account-create-details > .field:nth-child(3) { grid-column:1 / -1; }
+}
+@media (max-width:540px) {
+ .account-create-details { grid-template-columns:minmax(0,1fr); }
+ .account-create-basics > .field:nth-child(1),.account-create-basics > .field:nth-child(2) { width:240px; max-width:100%; }
+ .account-create-basics > .field:nth-child(3) { width:164px; max-width:100%; }
+ .account-create-basics > .field:nth-child(4) { width:180px; max-width:100%; }
+}
+
 #accountEditModal > .modal-card { width:min(100%,960px); min-width:0; overflow-x:hidden; }
 #accountEditModal .account-edit-form { grid-template-columns:repeat(4,minmax(0,1fr)); align-items:start; gap:12px; }
 #accountEditModal .account-edit-form > .field { min-width:0; }
 #accountEditModal .account-edit-country { max-width:280px; }
 #accountEditModal .account-edit-currency { width:164px; max-width:100%; }
 #accountEditModal .account-edit-opening { width:200px; max-width:100%; }
+#accountEditModal .field:has(#editAccountId) { max-width:220px; }
 #accountEditModal .account-edit-form input, #accountEditModal .account-edit-form select { min-width:0; box-sizing:border-box; }
 #accountEditModal .account-edit-wide, #accountEditModal .account-edit-tools { grid-column:span 2; }
 #accountEditModal .account-edit-tools { display:flex; flex-wrap:wrap; align-items:center; align-self:end; gap:8px; }
@@ -5650,9 +5755,18 @@ textarea.muted-control {
 }
 
 .form-actions {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-self: end;
+  max-width: 100%;
+}
+
+.form-actions > button {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .toolbar input,
@@ -7897,7 +8011,7 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 
 .outlook-primary-form {
   display: grid;
-  grid-template-columns: minmax(210px, 1fr) 160px max-content;
+  grid-template-columns: 260px 180px max-content;
   align-items: end;
   gap: 14px;
 }
@@ -8029,7 +8143,10 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 
 .outlook-advanced-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  grid-template-columns: repeat(2, minmax(220px, 300px));
+  width: fit-content;
+  max-width: 100%;
+  box-sizing: border-box;
   gap: 14px;
   margin-top: 14px;
   padding: 14px;
@@ -8497,6 +8614,7 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
 
 .signal-condition-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -8566,8 +8684,12 @@ html[dir="rtl"] .signal-condition-help::after {
 
 .signal-condition-head > div {
   display: grid;
+  flex: 1 1 260px;
+  min-width: 0;
   gap: 3px;
 }
+
+.signal-condition-head > button { flex: 0 1 auto; width: max-content; max-width: 100%; }
 
 .signal-condition-head small {
   color: #8f9aab;
@@ -8792,15 +8914,20 @@ html[dir="rtl"] .signal-condition-help::after {
 }
 
 .trade-simulator-form { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
-.trade-simulator-form > .management-field { flex:0 1 180px; }
-.trade-simulator-form > .management-field:first-child { flex:1.4 1 240px; }
-.trade-simulator-form > .management-field:nth-child(2) { flex:1 1 180px; }
+.trade-simulator-form > .management-field { flex:0 1 170px; }
+.trade-simulator-form > .management-field:first-child { flex:0 1 300px; }
+.trade-simulator-form > .management-field:nth-child(2) { flex:0 1 170px; }
 .trade-simulator-form > .management-field:nth-child(4) { flex-basis:110px; }
 .trade-simulator-form > .management-field:nth-child(5) { flex-basis:160px; }
 .trade-simulator-entry-actions { display:flex; flex:0 1 auto; flex-wrap:wrap; align-items:end; gap:12px; max-width:100%; }
 .trade-simulator-entry-actions > .management-field { flex:0 1 160px; }
 .trade-simulator-entry-actions > button { flex:0 0 auto; width:max-content; min-height:38px; white-space:nowrap; }
-.trade-simulator-row-fields { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(170px,100%),1fr)); gap:12px; align-items:end; }
+.trade-simulator-row-fields { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+.trade-simulator-row-fields > .management-field { flex:0 1 170px; max-width:100%; }
+.trade-simulator-row-fields > .management-field:first-child { flex-basis:300px; }
+.trade-simulator-row-fields > .management-field:nth-child(2) { flex-basis:110px; }
+.trade-simulator-row-fields > .management-field:nth-child(3) { flex-basis:160px; }
+.trade-simulator-row-fields > .management-field:last-child { flex-basis:160px; }
 .trade-simulator-form .management-field, .trade-simulator-row-fields .management-field { min-width: 0; }
 .trade-simulator-form input, .trade-simulator-form select, .trade-simulator-row-fields input, .trade-simulator-row-fields select { width: 100%; min-width: 0; box-sizing: border-box; }
 .trade-simulator-form input[type="number"], .trade-simulator-row-fields input[type="number"] { min-width: 140px; font-variant-numeric: tabular-nums; }
@@ -8810,6 +8937,7 @@ html[dir="rtl"] .signal-condition-help::after {
 .trade-simulator-basket-heading, .trade-simulator-row-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .trade-simulator-basket-heading { margin: 20px 0 12px; }
 .trade-simulator-rows, .trade-simulator-results { display: grid; gap: 14px; min-width: 0; }
+#tradeSimulatorRows > .compact-empty { min-height:0; margin:0; padding:14px; }
 #tradeSimulatorRows + .modal-toolbar { margin-block-start: 18px; }
 .trade-simulator-row, .trade-simulator-comparison { padding: 14px; border: 1px solid #374653; border-radius: 8px; background: #141c24; min-width: 0; }
 .trade-simulator-row-heading { margin-bottom: 12px; }
@@ -10129,27 +10257,32 @@ html[dir="rtl"] .settings-menu-button.active {
 
   .retirement-scenario-facts > div:first-child {
     grid-column: 1 / -1;
+    flex-basis: 100%;
   }
+
+  .retirement-scenario-facts > div:nth-child(2) { flex-basis: 96px; }
+  .retirement-scenario-facts > div:nth-child(3) { flex-basis: 110px; }
+  .retirement-scenario-facts > div:nth-child(n + 4) { flex-basis: 96px; }
+  .retirement-action-hint { flex: 0 1 auto; }
 
   .retirement-list-header-actions {
     align-items: stretch;
     flex-direction: column-reverse;
   }
 
-  .retirement-list-header-actions button,
-  .retirement-scenario-modal-actions button {
+  .retirement-list-header-actions button {
     width: 100%;
     min-height: 44px;
   }
 
   .retirement-scenario-modal-actions {
-    align-items: stretch;
-    flex-direction: column;
+    flex-direction: row;
   }
+
+  .retirement-scenario-modal-actions button { width: auto; min-height: 44px; }
 
   .retirement-primary-action button,
   .retirement-scenario-list-actions button,
-  .retirement-section-actions button,
   .retirement-modal-footer button {
     width: 100%;
     min-width: 0;
@@ -10162,6 +10295,9 @@ html[dir="rtl"] .settings-menu-button.active {
     flex-direction: column;
   }
 
+  .retirement-section-actions button { width: auto; min-height: 44px; min-width: 0; }
+  .retirement-period-group > .management-field { max-width: 100%; }
+
   .retirement-modal-footer {
     bottom: -16px;
   }
@@ -10169,6 +10305,9 @@ html[dir="rtl"] .settings-menu-button.active {
   .retirement-schedule-modal .section-head {
     padding-inline-end: 48px;
   }
+
+  .retirement-scenario-modal .section-head { display: block; padding-inline-end: 48px; }
+  .retirement-scenario-modal .section-head .icon-button { position: absolute; inset-block-start: 14px; inset-inline-end: 14px; }
 
   .retirement-schedule-modal .section-head .icon-button {
     position: absolute;

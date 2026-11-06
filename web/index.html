@@ -20,10 +20,10 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/assets/portfolio-vault/icon-48.png?v=1" />
     <link rel="shortcut icon" href="/assets/portfolio-vault/favicon.ico?v=1" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.23-xray-layout" />
-  <link rel="stylesheet" href="/benchmark.css?v=2" />
+  <link rel="stylesheet" href="/styles.css?v=0.9.24-form-widths" />
+  <link rel="stylesheet" href="/benchmark.css?v=3" />
   <link rel="stylesheet" href="/trading-journal.css?v=1" />
-  <link rel="stylesheet" href="/optimization.css?v=2" />
+  <link rel="stylesheet" href="/optimization.css?v=3" />
   <link rel="stylesheet" href="/var.css?v=1" />
   <link rel="stylesheet" href="/heatmap.css?v=1" />
   <link rel="stylesheet" href="/risk-data-gaps.css?v=1" />
@@ -349,19 +349,27 @@
             <b>New account</b>
             <span>Create a manual account and attach existing family members.</span>
           </div>
-          <div class="management-form account-form">
+          <div class="management-form account-form account-create-form">
+            <div class="account-create-basics">
             <label class="field"><span>Type</span><select id="localAccountType" title="Investment, long-term savings, or bank account"></select></label>
             <label class="field"><span>Country</span><select id="localAccountLocation" title="Account country. Israel uses agorot for security prices; USA bonds use cents."></select></label>
             <label class="field"><span>Currency</span><select id="localAccountCurrency" title="Account base currency"></select></label>
             <label class="field"><span>Initial cash</span><input id="localInitialCash" type="number" step="0.01" placeholder="0" title="Opening cash balance. Buy/sell/short transactions affect cash; add/remove security does not." /></label>
+            </div>
+            <div class="account-create-details">
             <label class="field"><span>Username</span><input id="localUsername" placeholder="Owner / login" title="Owner or username shown in account reports" /></label>
             <label class="field"><span>Account ID (optional)</span><input id="localAccountId" placeholder="Account ID (optional)" title="Optional identifier supplied by the broker, bank, pension company, or import source" /></label>
             <label class="field"><span>Broker</span><select id="localAccountBroker" title="Broker, bank, pension company, or platform"></select></label>
-            <label class="field"><span>Comments</span><input id="localAccountComments" placeholder="Comments" title="Optional operational notes for finance managers" /></label>
+            <label class="field account-create-comments"><span>Comments</span><input id="localAccountComments" placeholder="Comments" title="Optional operational notes for finance managers" /></label>
+            </div>
+            <div class="account-create-ownership">
             <label class="field"><span>Existing person</span><select id="localAccountFamilyMember"></select></label>
+            <div class="account-create-tools">
             <button id="attachLocalAccountPerson" class="secondary" type="button">Add existing person</button>
             <button class="secondary" type="button" data-modal="brokersModal">Manage brokers</button>
             <button class="secondary" type="button" data-modal="familyModal">Manage people</button>
+            </div>
+            </div>
             <div id="localAccountPersons" class="person-list"></div>
             <div class="info-strip account-owner-rule" role="note">Every account needs at least one person. Long-Term Savings and ESOP accounts must have exactly one person.</div>
             <div class="form-actions">
@@ -1316,6 +1324,7 @@
                 <p>Results compare cash, net value, gross security exposure, short exposure and the existing 0–100 risk estimate before and after, per Investment account and across all Investment accounts. Account amounts use account currency; totals use dashboard currency and saved exchange rates. Net value is cash plus signed security value; gross exposure uses absolute security values. Saved quotes value holdings; an execution-price override changes the trade cash flow. Pension, savings, bank and ESOP accounts and their holdings are excluded from these totals.</p>
                 <p>Cash includes short-sale proceeds and is not broker buying power. Available cash is unknown when shorts or derivatives may require collateral; no broker margin rule is assumed. Taxes, borrowing costs and interest are excluded. Missing prices, exchange rates or unverifiable ledger cash leave affected results unavailable. Update Prices or account transactions and retry. Stale saved quotes are flagged. Analytics loading is non-blocking. Drafts remain during the session; Clear scenario or signing out removes them. Simulation never records transactions or places orders.</p>
                 <p>Press Simulate trades to capture a portfolio snapshot. The account balances, holdings, prices and risk used for that result stay frozen while live accounts and analytics continue updating. Snapshot captured shows the capture date and time. Press Simulate trades again to capture current data. Editing the scenario requires a new calculation; signing out clears the snapshot.</p>
+                <p>Transaction dates use the Jerusalem calendar day at snapshot capture. Today's dated cash entries are included even before midnight UTC; future entries are excluded. The trade planner also reserves future cash outflows when estimating a purchase budget. Saved quote dates and quote freshness are evaluated separately.</p>
                 <p>Accounts with future-dated security trades cannot be simulated because the recorded position snapshot does not establish current quantities. Review transaction dates in Positions, then retry. Other accounts remain available; combined valuation and risk remain unavailable while an account is uncertain.</p>
               </article>
               <article class="help-feature">
@@ -2113,12 +2122,12 @@
             </div>
           </div>
           <div class="management-form fund-form">
-            <label class="field"><span class="field-label">Fund type <em title="Choose whether this is a Pension, Provident Fund, or Savings Fund.">?</em></span><select id="fundKind"></select></label>
-            <label class="field"><span class="field-label">Fund name <em title="The pension company or fund display name, for example Mashlima.">?</em></span><input id="fundName" placeholder="Pension fund name" /></label>
-            <label class="field"><span class="field-label">Fund ID <em title="The official pension, provident, or savings fund identifier. Required.">?</em></span><input id="fundPensionId" placeholder="Pension / fund id" /></label>
-            <label class="field"><span class="field-label">Saved amount <em title="Current saved balance in the selected fund. Required.">?</em></span><input id="fundAmount" type="number" step="0.01" placeholder="Amount saved" /></label>
-            <label class="field"><span class="field-label">Long-term account <em title="Required. The pension or fund automatically uses the single person assigned to this account.">?</em></span><select id="fundAccount" required></select></label>
-            <label class="field"><span class="field-label">Comments <em title="Optional note shown only inside this dashboard.">?</em></span><input id="fundComments" placeholder="Comments" /></label>
+            <label class="field fund-type-field"><span class="field-label">Fund type <em title="Choose whether this is a Pension, Provident Fund, or Savings Fund.">?</em></span><select id="fundKind"></select></label>
+            <label class="field fund-name-field"><span class="field-label">Fund name <em title="The pension company or fund display name, for example Mashlima.">?</em></span><input id="fundName" placeholder="Pension fund name" /></label>
+            <label class="field fund-id-field"><span class="field-label">Fund ID <em title="The official pension, provident, or savings fund identifier. Required.">?</em></span><input id="fundPensionId" placeholder="Pension / fund id" /></label>
+            <label class="field fund-amount-field"><span class="field-label">Saved amount <em title="Current saved balance in the selected fund. Required.">?</em></span><input id="fundAmount" type="number" step="0.01" placeholder="Amount saved" /></label>
+            <label class="field fund-account-field"><span class="field-label">Long-term account <em title="Required. The pension or fund automatically uses the single person assigned to this account.">?</em></span><select id="fundAccount" required></select></label>
+            <label class="field fund-comments-field"><span class="field-label">Comments <em title="Optional note shown only inside this dashboard.">?</em></span><input id="fundComments" placeholder="Comments" /></label>
             <div id="fundAccountOwner" class="info-strip fund-account-owner" role="status" aria-live="polite">Choose a long-term account to use its assigned person.</div>
             <div class="form-actions fund-actions">
               <button id="saveFund" type="button" disabled>Add fund</button>
@@ -2251,17 +2260,21 @@
             <h4>Add a salary period</h4>
             <p class="schedule-guidance">Enter 0 for salary and deposits to model a period with no work or pension contributions.</p>
             <div class="history-form simulator-period-form popup-period-form salary-period-form">
+              <div class="retirement-period-group">
               <label class="management-field"><span>Starts</span><select id="simPeriodFromMode"><option value="now">From current age</option><option value="custom">Custom age</option></select></label>
               <label class="management-field" id="simPeriodFromField" hidden><span>From age</span><input id="simPeriodFrom" type="number" min="0" step="0.1" placeholder="From age" /></label>
               <label class="management-field"><span>To age</span><input id="simPeriodTo" type="number" min="0" step="0.1" placeholder="To age" /></label>
               <label class="management-field"><span>Monthly salary</span><input id="simPeriodIncome" type="number" min="0" step="0.01" placeholder="Monthly salary" /></label>
               <label class="management-field"><span>Pension deposit %</span><input id="simPeriodContribution" type="number" min="0" step="0.01" placeholder="Pension deposit %" /></label>
               <label class="management-field"><span>Extra monthly deposit</span><input id="simPeriodDeposit" type="number" min="0" step="0.01" placeholder="Extra monthly deposit" /></label>
+              </div>
+              <div class="retirement-period-group">
               <label class="management-field"><span>Insurance track</span><select id="simInsuranceTrack" title="Pension insurance track"><option value="comprehensive">Comprehensive</option><option value="savings_30">Savings 30/20</option><option value="savings_40">Savings 40/30</option><option value="survivors_oriented">Survivors-oriented</option><option value="single">Single status</option><option value="custom">Custom</option></select></label>
               <label class="management-field"><span>Disability coverage</span><select id="simDisabilityCoverage" title="Disability coverage"></select></label>
               <label class="management-field"><span>Spouse survivors coverage</span><select id="simSpouseSurvivorsCoverage" title="Spouse survivors coverage"></select></label>
               <label class="management-field"><span>Children survivors coverage</span><select id="simChildrenSurvivorsCoverage" title="Children survivors coverage"></select></label>
               <label class="management-field"><span class="field-label">Survivors factor <span class="ux-tooltip" tabindex="0" role="note" aria-label="About the survivors factor" data-tooltip="Used to estimate the survivors pension when spouse or children coverage is selected.">?</span></span><input id="simSurvivorsFactor" type="number" min="1" step="0.01" value="200" placeholder="Survivors factor" /></label>
+              </div>
             </div>
             <div class="retirement-section-actions">
               <button id="addPensionPeriod" type="button" title="Save these salary and deposit values to the selected scenario." disabled>Save salary period</button>
@@ -2312,20 +2325,19 @@
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="fundEditTitle">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Saved fund</p>
             <h2 id="fundEditTitle">Edit pension fund</h2>
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
-        <div class="management-form">
-          <label class="field"><span class="field-label">Fund type <em title="Choose whether this is a Pension, Provident Fund, or Savings Fund.">?</em></span><select id="editFundKind"></select></label>
-          <label class="field"><span class="field-label">Fund name <em title="The pension company or fund display name, for example Mashlima.">?</em></span><input id="editFundName" placeholder="Pension fund name" /></label>
-          <label class="field"><span class="field-label">Fund ID <em title="The official pension, provident, or savings fund identifier. Required.">?</em></span><input id="editFundPensionId" placeholder="Pension / fund id" /></label>
-          <label class="field"><span class="field-label">Saved amount <em title="Current saved balance in the selected fund. Required.">?</em></span><input id="editFundAmount" type="number" step="0.01" placeholder="Amount saved" /></label>
-          <label class="field"><span class="field-label">Long-term account <em title="Required. The pension or fund automatically uses the single person assigned to this account.">?</em></span><select id="editFundAccount" required></select></label>
-          <label class="field"><span class="field-label">Comments <em title="Optional note shown only inside this dashboard.">?</em></span><input id="editFundComments" placeholder="Comments" /></label>
+        <div class="management-form fund-form">
+          <label class="field fund-type-field"><span class="field-label">Fund type <em title="Choose whether this is a Pension, Provident Fund, or Savings Fund.">?</em></span><select id="editFundKind"></select></label>
+          <label class="field fund-name-field"><span class="field-label">Fund name <em title="The pension company or fund display name, for example Mashlima.">?</em></span><input id="editFundName" placeholder="Pension fund name" /></label>
+          <label class="field fund-id-field"><span class="field-label">Fund ID <em title="The official pension, provident, or savings fund identifier. Required.">?</em></span><input id="editFundPensionId" placeholder="Pension / fund id" /></label>
+          <label class="field fund-amount-field"><span class="field-label">Saved amount <em title="Current saved balance in the selected fund. Required.">?</em></span><input id="editFundAmount" type="number" step="0.01" placeholder="Amount saved" /></label>
+          <label class="field fund-account-field"><span class="field-label">Long-term account <em title="Required. The pension or fund automatically uses the single person assigned to this account.">?</em></span><select id="editFundAccount" required></select></label>
+          <label class="field fund-comments-field"><span class="field-label">Comments <em title="Optional note shown only inside this dashboard.">?</em></span><input id="editFundComments" placeholder="Comments" /></label>
           <div id="editFundAccountOwner" class="info-strip fund-account-owner" role="status" aria-live="polite">Choose a long-term account to use its assigned person.</div>
-          <div class="form-actions">
+          <div class="form-actions fund-actions">
             <button id="saveEditFund" type="button">Save changes</button>
             <button class="secondary" type="button" data-close>Cancel</button>
           </div>
@@ -2842,12 +2854,12 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-  <script src="/i18n.js?v=1.2.18-value-history"></script>
+  <script src="/i18n.js?v=1.2.19-form-review"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
-  <script src="/trade-planner.js?v=2"></script>
+  <script src="/trade-planner.js?v=3"></script>
   <script src="/trade-planner-ui.js?v=3"></script>
-  <script src="/trade-simulator.js?v=4"></script>
+  <script src="/trade-simulator.js?v=5"></script>
   <script src="/trade-simulator-ui.js?v=5"></script>
   <script src="/correlation-ui.js?v=1"></script>
   <script src="/xray-ui.js?v=1"></script>
@@ -2861,6 +2873,6 @@
   <script src="/risk-history-ui.js?v=1"></script>
   <script src="/alarm-priority-ui.js?v=2"></script>
   <script src="/account-cash-ui.js?v=2"></script>
-  <script src="/app.js?v=0.9.17-value-history"></script>
+  <script src="/app.js?v=0.9.18-form-review"></script>
   </body>
 </html>
