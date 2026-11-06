@@ -2112,6 +2112,7 @@ function applyLanguage() {
   renderCurrentUser();
   renderAlarms();
   renderMacroScenario();
+  if ($("dataGapsModal") && !$("dataGapsModal").hidden) renderDataGapsModal($("dataGapsModal").dataset.gapScope);
   if (state.alertData) renderAlerts(state.alertData);
   if (typeof renderTradePlannerViews === "function") renderTradePlannerViews();
   if (typeof renderTradeSimulator === "function") renderTradeSimulator();
@@ -3298,14 +3299,25 @@ function providerStatusHint(providerStatus) {
   return "";
 }
 
-function dataGapTooltip(item) {
-  const reasons = (item.missing || []).map((label) => {
+function dataGapStatus(item, label = "") {
+  if (["queued", "updating", "refreshing"].includes(item.analytics_state)) return "updating";
+  if (item.analytics_state === "failed") return "failed";
+  const metric = item[{ income: "income_trend", profit: "profit_trend", dividend: "dividend_trend", "profit/market cap": "profit_market_cap_trend" }[label]];
+  const states = label === "price history" ? Object.values(item.price_ranges || {}).map((row) => row.state) : [metric?.state];
+  if (states.includes("pending")) return "updating";
+  if (states.includes("error")) return "failed";
+  return "missing";
+}
+
+function dataGapDetails(item) {
+  return [...new Set(item.missing || [])].map((label) => {
     let reason = "";
+    const status = dataGapStatus(item, label);
     const metric = item[{
       income: "income_trend", profit: "profit_trend", dividend: "dividend_trend", "profit/market cap": "profit_market_cap_trend",
     }[label]];
-    if (metric?.state === "error") reason = "Financial data could not be updated";
-    else if (metric?.state === "pending") reason = "Loading financial data";
+    if (status === "failed") reason = label === "price history" ? "Price history could not be updated" : label === "industry" ? "The latest analytics update is incomplete. Refresh the portfolio to retry." : "Financial data could not be updated";
+    else if (status === "updating") reason = label === "price history" ? "Loading price history" : label === "industry" ? "Updating analytics" : "Loading financial data";
     else if (label === "dividend") reason = metric?.series?.length
       ? "At least two years of dividend history are needed."
       : "No dividend history was returned. This does not confirm a zero dividend.";
@@ -3316,8 +3328,12 @@ function dataGapTooltip(item) {
     else if (label === "profit") reason = "At least two annual profit reports are needed.";
     else if (label === "price history") reason = "No price history is available.";
     else if (label === "industry") reason = "No industry classification is available.";
-    return `• ${optionLabel(label)}${reason ? `: ${t(reason)}` : ""}`;
+    return { label, reason, status };
   });
+}
+
+function dataGapTooltip(item) {
+  const reasons = dataGapDetails(item).map(({ label, reason }) => `• ${optionLabel(label)}${reason ? `: ${t(reason)}` : ""}`);
   return [t("Missing data"), ...reasons].join("\n");
 }
 
@@ -3335,8 +3351,12 @@ function statusCell(item) {
       <span class="badge ok" title="${esc(t("All displayed metrics are available"))}">${esc(t("All displayed data available"))}</span>
     </div>`;
   }
+  const details = dataGapDetails(item);
+  const confirmed = details.filter((entry) => entry.status === "missing").length;
   return `<div class="status-cell status-cell-compact">
-    <strong tabindex="0" title="${esc(dataGapTooltip(item))}">${esc(t(`${item.missing.length} data gaps`))}</strong>
+    ${confirmed ? `<strong tabindex="0" title="${esc(dataGapTooltip(item))}">${esc(t(`${confirmed} data gaps`))}</strong>` : ""}
+    ${details.some((entry) => entry.status === "updating") ? `<span class="badge neutral" tabindex="0" title="${esc(dataGapTooltip(item))}">${esc(t("Updating analytics"))}</span>` : ""}
+    ${details.some((entry) => entry.status === "failed") ? `<span class="badge partial" tabindex="0" title="${esc(dataGapTooltip(item))}">${esc(t("Update failed"))}</span>` : ""}
   </div>`;
 }
 
@@ -3578,22 +3598,71 @@ function populateOptions(items) {
 }
 
 function missingStats(items) {
-  const counts = items.reduce((totals, item) => {
-    item.missing.forEach((label) => {
-      totals[label] = (totals[label] || 0) + 1;
-    });
-    return totals;
-  }, {});
-  const topLabels = Object.entries(counts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([label, count]) => `${optionLabel(label)}: ${count}`)
-    .join("; ");
+  const counts = new Map();
+  let total = 0, positions = 0, updating = 0, failed = 0;
+  for (const item of items) {
+    const details = dataGapDetails(item);
+    const confirmed = details.filter((entry) => entry.status === "missing");
+    total += confirmed.length;
+    if (confirmed.length) positions += 1;
+    if (dataGapStatus(item) === "updating" || details.some((entry) => entry.status === "updating")) updating += 1;
+    if (dataGapStatus(item) === "failed" || details.some((entry) => entry.status === "failed")) failed += 1;
+    for (const { label } of confirmed) counts.set(label, (counts.get(label) || 0) + 1);
+  }
+  const topLabels = [...counts.entries()].sort((a, b) => b[1] - a[1]).map(([label, count]) => `${optionLabel(label)}: ${count}`).join("\n");
   return {
-    total: items.reduce((sum, item) => sum + item.missing.length, 0),
-    positions: items.filter((item) => item.missing.length).length,
-    topLabels,
+    total, positions, updating, failed, topLabels,
   };
+}
+
+function dataGapsOverview(items) {
+  const gaps = missingStats(items);
+  const lines = [ `${t("Data gaps")}: ${gaps.total}`, t("{affected} of {total} positions have confirmed gaps").replace("{affected}", gaps.positions).replace("{total}", items.length) ];
+  if (gaps.updating) lines.push(t("Positions updating: {count}").replace("{count}", gaps.updating));
+  if (gaps.failed) lines.push(t("Positions with failed updates: {count}").replace("{count}", gaps.failed));
+  if (gaps.topLabels) lines.push("", t("Missing fields"), gaps.topLabels);
+  for (const item of items) {
+    const details = dataGapDetails(item), status = dataGapStatus(item);
+    if (!details.length && status === "missing") continue;
+    lines.push("", `${item.holding?.symbol || t("Unknown")} — ${item.holding?.account || t("Account")}`);
+    if (status !== "missing") lines.push(t(status === "updating" ? "Updating analytics" : "Update failed"));
+    lines.push(...details.map(({ label, reason }) => `• ${optionLabel(label)}${reason ? `: ${t(reason)}` : ""}`));
+  }
+  if (!gaps.total) lines.push("", t(gaps.updating || gaps.failed ? "No confirmed gaps yet; some data is still updating or could not be checked." : "No missing analytics fields"));
+  return lines.join("\n");
+}
+
+function renderDataGapsStat(items, scope, bubble = false) {
+  state.dataGapSnapshots ||= {};
+  state.dataGapSnapshots[scope] = { owner: currentUser()?.id, items };
+  const gaps = missingStats(items), overview = dataGapsOverview(items);
+  const detail = t(`${gaps.positions}/${items.length} positions`);
+  const content = bubble
+    ? `<span>${esc(t("Data gaps"))}</span><i aria-hidden="true"><strong>${gaps.total}</strong></i><small>${esc(detail)}</small>`
+    : `<b>${gaps.total}</b><span>${esc(t("Data gaps"))}</span><small>${esc(detail)}</small>`;
+  if ($("dataGapsModal") && !$("dataGapsModal").hidden && $("dataGapsModal").dataset.gapScope === scope) renderDataGapsModal(scope);
+  return `<button class="${bubble ? "bubble-stat" : "stat summary-stat"} data-gaps-trigger" type="button" data-data-gaps-scope="${scope}" aria-haspopup="dialog" aria-controls="dataGapsModal" aria-label="${esc(`${t("Data gaps")}: ${gaps.total}. ${t("Open data gap details")}`)}" title="${esc(overview)}"${bubble ? ' style="--bubble-color:#9b4dff"' : ""}>${content}</button>`;
+}
+
+function renderDataGapsModal(scope) {
+  const snapshot = state.dataGapSnapshots?.[scope], root = $("dataGapsContent");
+  if (!root || !snapshot || snapshot.owner !== currentUser()?.id) return;
+  const items = snapshot.items, gaps = missingStats(items), scrollTop = root.scrollTop;
+  const rows = items.map((item) => ({ item, details: dataGapDetails(item), status: dataGapStatus(item) })).filter(({ details, status }) => details.length || status !== "missing");
+  root.innerHTML = `<p class="section-note">${esc(t("{affected} of {total} positions have confirmed gaps").replace("{affected}", gaps.positions).replace("{total}", items.length))} · ${esc(t("Data gaps"))}: ${gaps.total}</p>
+    ${gaps.updating ? `<p class="section-note">${esc(t("Positions updating: {count}").replace("{count}", gaps.updating))}</p>` : ""}
+    ${gaps.failed ? `<p class="section-note">${esc(t("Positions with failed updates: {count}").replace("{count}", gaps.failed))}</p>` : ""}
+    ${gaps.topLabels ? `<p class="data-gaps-field-counts">${esc(gaps.topLabels)}</p>` : ""}
+    ${!gaps.total ? `<p class="section-note">${esc(t(gaps.updating || gaps.failed ? "No confirmed gaps yet; some data is still updating or could not be checked." : "No missing analytics fields"))}</p>` : ""}
+    ${rows.map(({ item, details, status }) => `<article class="data-gap-position"><h3><bdi dir="auto">${esc(item.holding?.symbol || t("Unknown"))}</bdi></h3><p class="section-note">${esc(item.holding?.account || t("Account"))}</p>${status !== "missing" ? `<p class="section-note">${esc(t(status === "updating" ? "Updating analytics" : "Update failed"))}</p>` : ""}<ul>${details.map(({ label, reason, status: fieldStatus }) => `<li><strong>${esc(optionLabel(label))}</strong><span>${esc(t(reason))}</span>${fieldStatus !== "missing" ? `<small>${esc(t(fieldStatus === "updating" ? "Updating analytics" : "Update failed"))}</small>` : ""}</li>`).join("")}</ul></article>`).join("")}`;
+  root.scrollTop = scrollTop;
+}
+
+function openDataGaps(scope, trigger) {
+  if (state.dataGapSnapshots?.[scope]?.owner !== currentUser()?.id) return;
+  $("dataGapsModal").dataset.gapScope = scope;
+  renderDataGapsModal(scope);
+  openModal("dataGapsModal", trigger, { focusId: "dataGapsTitle" });
 }
 
 function renderSummary(items) {
@@ -3631,8 +3700,6 @@ function renderPortfolioValueDashboard(items) {
   const symbols = new Set(items.map((item) => item.holding.symbol)).size;
   const bonds = items.filter((item) => item.holding.asset_class === "BOND").length;
   const equities = items.filter((item) => item.holding.asset_class === "EQUITY").length;
-  const gaps = missingStats(items);
-
   const accountsHtml = accountTotals
     .map((account) => {
       const accountRisk = state.riskSnapshot.accounts.find((entry) => entry.account === account.account)?.risk;
@@ -3678,12 +3745,12 @@ function renderPortfolioValueDashboard(items) {
     { label: "Securities", value: symbols, tooltip: "Unique security symbols" },
     { label: "Equities", value: equities, tooltip: "Open equity positions" },
     { label: "Bonds", value: bonds, tooltip: "Open bond positions" },
-    { label: "Data gaps", value: gaps.total, tooltip: gaps.topLabels || "No missing analytics fields", detail: `${gaps.positions}/${items.length} positions` },
-  ].map((item) => `
-    <div class="stat summary-stat ${esc(item.className || "")}" title="${esc(item.tooltip || "")}">
+    { label: "Data gaps" },
+  ].map((item) => item.label === "Data gaps" ? renderDataGapsStat(items, "portfolio") : `
+    <div class="stat summary-stat ${esc(item.className || "")}" title="${esc(t(item.tooltip || ""))}">
       <b>${esc(item.value)}</b>
-      <span>${esc(item.label)}</span>
-      ${item.detail ? `<small>${esc(item.detail)}</small>` : ""}
+      <span>${esc(t(item.label))}</span>
+      ${item.detail ? `<small>${esc(t(item.detail))}</small>` : ""}
     </div>
   `).join("");
   const profitClass = primaryProfit > 0 ? "up" : primaryProfit < 0 ? "down" : "neutral";
@@ -4879,11 +4946,11 @@ function renderBubbles(items) {
         ["Securities", symbols, "#21a7ff", "unique symbols"],
         ["Winners", positive, "#ffae18", "positive P/L"],
         ["Data gaps", gaps.total, "#9b4dff", `${gaps.positions}/${items.length} positions`],
-      ].map(([label, value, color, detail]) => `
-        <div class="bubble-stat" style="--bubble-color:${color}" title="${esc(label === "Data gaps" ? (gaps.topLabels || "No missing analytics fields") : detail)}">
-          <span>${esc(label)}</span>
+      ].map(([label, value, color, detail]) => label === "Data gaps" ? renderDataGapsStat(items, "snapshot", true) : `
+        <div class="bubble-stat" style="--bubble-color:${color}" title="${esc(t(detail))}">
+          <span>${esc(t(label))}</span>
           <i aria-hidden="true"><strong>${esc(value)}</strong></i>
-          <small>${esc(detail)}</small>
+          <small>${esc(t(detail))}</small>
         </div>
       `).join("")}
     </div>`;
@@ -13835,6 +13902,9 @@ function closeModal(modal) {
   if (!modal) return;
   if (modal.id === "accountCashModal" && accountCashSaving()) return;
   if (modal.id === "accountCashModal") modalReturnFocus.set(modal.id, accountCashReturnFocus());
+  if (modal.id === "dataGapsModal" && !modalReturnFocus.get(modal.id)?.isConnected) {
+    modalReturnFocus.set(modal.id, document.querySelector(`[data-data-gaps-scope="${modal.dataset.gapScope}"]`));
+  }
   if (modal.id === "brokerEditorModal" && state.brokerSaving) return;
   if (modal.id === "instrumentEditorModal" && state.manualSecuritySaving && !state.manualSecuritySaved) return;
   if (modal.id === "assistantModal") saveAssistantDraft();
@@ -13895,7 +13965,7 @@ function closeModal(modal) {
     if (focusTarget instanceof HTMLElement) {
       const parentMenu = focusTarget.closest("details");
       if (parentMenu && !parentMenu.open) parentMenu.open = true;
-      focusTarget.focus({ preventScroll: ["tradeHistoryDetailModal", "securityDetailModal", "alarmRiskModal", "accountCashModal"].includes(modal.id) });
+      focusTarget.focus({ preventScroll: ["tradeHistoryDetailModal", "securityDetailModal", "alarmRiskModal", "accountCashModal", "dataGapsModal"].includes(modal.id) });
     }
   });
 }
@@ -14023,6 +14093,11 @@ document.addEventListener("click", (event) => {
     });
   }
 
+  const gapTrigger = event.target.closest("[data-data-gaps-scope]");
+  if (gapTrigger) {
+    openDataGaps(gapTrigger.dataset.dataGapsScope, gapTrigger);
+    return;
+  }
   const modalTrigger = event.target.closest("[data-modal]");
   const modalId = modalTrigger?.dataset.modal;
   if (modalId) {

@@ -299,7 +299,7 @@ def test_data_gap_badges_and_provider_names_use_localized_display_labels():
     assert '"Import DB": "מסד הייבוא"' in i18n
 
     functions = []
-    for name in ("esc", "dataGapTooltip", "statusCell"):
+    for name in ("esc", "dataGapStatus", "dataGapDetails", "dataGapTooltip", "statusCell"):
         start = re.search(rf"^function {name}\(", script, re.M).start()
         end = re.search(r"^}", script[start:], re.M).end()
         functions.append(script[start:start + end])

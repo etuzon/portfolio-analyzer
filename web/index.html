@@ -1103,6 +1103,16 @@
       </section>
     </div>
 
+    <div id="dataGapsModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card data-gaps-card" role="dialog" aria-modal="true" aria-labelledby="dataGapsTitle">
+        <div class="section-head"><h2 id="dataGapsTitle" tabindex="-1">Data gaps</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <p class="section-note">Each gap is one unavailable field for one position. Updating or failed checks are listed separately from confirmed gaps.</p>
+        <div id="dataGapsContent" class="data-gaps-content" tabindex="0" aria-label="Data gap details"></div>
+        <p class="section-note">These details use the loaded portfolio. Use Refresh to retry unavailable data.</p>
+      </section>
+    </div>
+
     <div id="helpModal" class="modal help-modal" hidden>
       <div class="modal-backdrop" data-close></div>
       <section class="modal-card help-card" role="dialog" aria-modal="true" aria-labelledby="helpTitle" aria-describedby="helpIntro">
@@ -1129,7 +1139,7 @@
                 <p>Hover over the total portfolio value to see the securities and cash totals, plus each account's cash balance in its own currency. Zero and negative cash balances remain visible; unavailable opening balances are not treated as zero.</p>
                 <p>Select the portfolio title or logo to return to the dashboard.</p>
                 <p>Use Area to choose investments, long-term savings, employee equity, or all areas. View switches between Glance and Full; Edit lets you arrange or hide cards. Compact summaries use narrower cards and fill available gaps beside taller charts. Card widths follow the dashboard’s available space. Edit keeps your saved arrangement; the display can place later cards in earlier gaps, while keyboard and single-column reading order follow the saved sequence.</p>
-                <p>Analytics refresh in the background while preserving your reading position, keyboard focus and expanded card details. Hover or focus a data-gap count to see which input is unavailable; unavailable dividend history does not confirm zero dividends. Currency tooltips use symbols and retain the converted base-currency value.</p>
+                <p>Analytics refresh in the background while preserving your reading position, keyboard focus and expanded card details. In Portfolio stats or Portfolio snapshot, hover over Data gaps for a multiline breakdown by field, security and account. Select the count, or use Enter or Space, to open the complete scrollable details on desktop or touch screens. Each confirmed gap is one missing field in one position; the same field in two accounts counts twice. Updating and failed checks are shown separately and do not count as confirmed missing data. Details follow the displayed portfolio scope and update from loaded results without extra provider requests. All users can inspect them; close the dialog or press Escape to return to the count. Use Refresh to retry unavailable data. Unavailable dividend history does not confirm zero dividends. Currency tooltips use symbols and retain the converted base-currency value.</p>
                 <p>Market values and unrealized P/L are recalculated from each account's recorded quantity and cost basis using the latest available dated quote in the security's currency. Use Refresh to retry unavailable quotes; saved values remain visible when no valid quote is available. Quote dates can differ from live broker prices. Manual securities without a linked market symbol keep their saved prices. Refreshing current valuations does not change cash, transactions or recorded historical account values.</p>
                 <p>Economic currency exposure shows each currency's percentage and equivalent amount in that currency, using saved exchange rates. These amounts describe economic exposure, not cash balances or the security's trading currency. Unknown and Other currencies show a labeled base-currency equivalent. Missing source or conversion rates leave the amount unavailable; use Refresh to retry.</p>
                 <p>Portfolio edits and Refresh load the latest data. A lightweight notification connection reports background analysis progress without repeatedly downloading or redrawing the dashboard and holdings. Displayed results stay in place while the status count advances; one completed snapshot is applied when analysis finishes. Changes from another open session also notify this page. Unchanged notifications do no work. Your page position, active filters, keyboard focus and expanded details are preserved. If the connection is interrupted it reconnects while retaining displayed data; use Refresh to retry a failed load or unavailable notifications. Loading never blocks the page.</p>

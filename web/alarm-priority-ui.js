@@ -124,7 +124,10 @@ function renderAlarmPriority(alarms) {
     button.setAttribute("aria-label", description);
   }
   const symbol = $("alarmsPrioritySymbol");
-  if (symbol) symbol.textContent = tone === "red" ? "!" : tone === "amber" ? "?" : groups[0]?.icon || "";
+  if (symbol) {
+    symbol.textContent = tone === "red" ? "!" : tone === "amber" ? "" : groups[0]?.icon || "";
+    symbol.hidden = !symbol.textContent;
+  }
   const summary = $("alarmPrioritySummary");
   if (summary) summary.innerHTML = groups.map((group) => `<span class="alarm-summary-chip" data-alarm-tone="${group.tone}"><span aria-hidden="true">${esc(group.icon)}</span>${esc(t(group.label))}${group.limited ? ` · ${esc(t("Limited data"))}` : ""}<b>${group.count}</b></span>`).join("");
   return notes;

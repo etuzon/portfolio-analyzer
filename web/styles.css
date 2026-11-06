@@ -3868,6 +3868,18 @@ textarea.muted-control {
   line-height: 1.1;
 }
 
+.data-gaps-trigger { color:inherit; text-align:start; cursor:pointer; }
+.data-gaps-trigger:hover, .data-gaps-trigger:focus-visible { border-color:#72c4ff; }
+.data-gaps-trigger:focus-visible { outline:2px solid #72c4ff; outline-offset:2px; }
+#dataGapsModal > .data-gaps-card { width:min(700px,100%); display:grid; gap:12px; }
+.data-gaps-content { display:grid; gap:12px; max-height:60vh; overflow:auto; min-width:0; padding:3px; }
+.data-gaps-content:focus-visible { outline:2px solid #72c4ff; outline-offset:1px; }
+.data-gaps-field-counts { white-space:pre-line; color:#c4d1e6; font-size:12px; line-height:1.6; }
+.data-gap-position { min-width:0; padding:12px; border:1px solid #343e4e; border-radius:7px; overflow-wrap:anywhere; }
+.data-gap-position h3 { margin:0 0 5px; font-size:14px; color:#eef4ff; }
+.data-gap-position ul { display:grid; gap:9px; padding-inline-start:20px; margin:10px 0 0; }
+.data-gap-position li > span, .data-gap-position li > small { display:block; margin-top:3px; line-height:1.5; color:#b9c5d8; font-size:12px; }
+
 .risk-badge {
   display: inline-flex;
   align-items: center;
