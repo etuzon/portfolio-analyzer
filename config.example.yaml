@@ -91,15 +91,16 @@ price_agent:
   # Empty resolves to gpt-6.1-sol for Codex, sonnet for Claude Code.
   model: ""
   reasoning_effort: "medium"
-  max_model_calls: 5
-  max_rest_calls: 5
+  max_model_calls: 8
+  max_rest_calls: 8
+  max_web_calls: 8
   timeout_seconds: 110
   base_url: "https://localhost:6443"
   # auto/jina reads rendered public pages without a key; only public source URLs
   # are sent to Jina Reader. direct uses the application's HTTPS text reader.
   reader: "auto"
   search:
-    provider: "auto"  # Brave with a key; otherwise public DuckDuckGo HTML search.
+    provider: "auto"  # Brave with a key; otherwise Yahoo. duckduckgo is also selectable.
     api_key: "${BRAVE_SEARCH_API_KEY}"
 
 dividends:

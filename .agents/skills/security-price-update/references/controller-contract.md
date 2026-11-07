@@ -14,7 +14,7 @@ The host planner's prompt lives in `app/price_agent.py`.
 
 The runner currently exposes `search_web`, `read_source` and `submit_prices` to
 an isolated Codex or Claude Code planner. Search defaults to `auto`, selecting
-Brave when a key exists and public DuckDuckGo HTML otherwise; explicit `brave`
+Brave when a key exists and public Yahoo HTML otherwise; explicit `brave`
 requires its key. A block/challenge differs from an empty search result;
 source reads accept public HTTPS URLs returned by that request's search. Other
 research channels described by the skill are available only when the calling
@@ -56,7 +56,7 @@ an independent latest-current observation. PUT to that route saves a supported
 batch, then GET verifies the submitted date interval. Current-price requests
 reject source days older than the saved current day; explicit history requests
 can fill older dates. Count failed calls against the shared per-request ceilings
-of five model calls, five application REST attempts and five internet reads.
+of eight model calls, eight application REST attempts and eight internet reads.
 Never reset or split the request to evade the ceilings or automatically retry a
 write whose outcome is uncertain.
 
@@ -88,8 +88,13 @@ credentials in URLs and nonstandard ports are rejected. Source hints register
 known official provider namespaces without fetching them. For example, eligible
 numeric TASE ordinary-share IDs can receive an official security-page hint;
 this is generic identifier routing, not verified data or a fixed security list.
-Read a supplied official hint first, then adapt discovery to the instrument and
-evidence. Search in useful languages, refine a query, inspect a different source
+Source hints and query hints are optional leads for Israeli and U.S. instruments,
+not proof of availability, identity or correctness, and not a source constraint.
+Choose useful leads for the actual instrument and missing fields, then adapt
+discovery to the evidence. An industry-only gap does not require researching an
+already-known price or name. `MANUAL` is not an exchange: a U.S. instrument keeps
+its own identifier, type and source conventions even in a mixed-country batch.
+Search in useful languages, refine a query, inspect a different source
 or follow a relevant history/unit-definition link when budget remains. A blocked
 search service is not an empty result; prefer an existing hint/discovered source
 to repeating a blocked search. No automatic alternative-host search is hidden
@@ -118,16 +123,25 @@ application counter.
 ### Context selection and financial validation
 
 A read can return `context_records` for supported price or profile fields.
-Prefer JSON `records:[{security_key,source_id,record_id}]`, selecting only IDs
-actually returned. Finalization recomputes each selection from server-held
+The Codex and Claude Code bridges use the same research-specific output schema:
+each decision has a nested `answer` object with required `records`,
+`observations` and `profiles` arrays. Every record selection has exactly
+`security_key`, `source_id` and `record_id`. Prefer those selections, using only
+IDs actually returned. Unused arrays are empty, including on read decisions.
+The final allowed turn retains this schema; it must not return chat prose or a
+string containing JSON as `answer`. The bridge validates and serializes the
+object into the controller's existing message-content JSON. The host script
+continues to use its separate decision contract.
+
+Finalization recomputes each selection from server-held
 source evidence instead of trusting model-supplied prices, context claims or
 IDs. It then revalidates listing, observed date, raw number, currency, unit and
 basis, applies only supported missing values and preserves existing profile
 values. Current prices must be within seven calendar days. An independently
 qualified name or industry can be saved while an unsupported price stays unknown.
 
-Context claims may belong to a main instrument header, quote card, labelled
-table or structured record; they need not repeat in one sentence. Contexts retain
+Context claims may belong to a main instrument header, quote card or supported
+structured record; they need not repeat in one sentence. Contexts retain
 literal field spans or explicitly labelled structured-data paths/raw values.
 Known source-context failures cannot fall back to a looser excerpt check. For
 unrecognized source formats, explicit `observations` and `profiles` JSON remains
@@ -136,7 +150,8 @@ make either path pass.
 
 The implemented official Hebrew TASE ordinary-share context requires the exact
 numeric listing/header, ordinary-share type, a Last label explicitly in agorot
-and the main quote card's date. That verified namespace uses `dd/mm/yyyy`;
+and the main quote card's date. Both the security-root URL and its `major_data`
+tab use this context; unrelated tabs cannot borrow its contract. That verified namespace uses `dd/mm/yyyy`;
 date-only evidence has `observed_at: null`. Related/news widgets, market-cap
 units and change amounts cannot supply price claims. Generic raw JSON contexts
 require exact identity, venue, currency, raw unit, Last/Close and ISO date in the
@@ -147,12 +162,36 @@ TheMarker's stock context can qualify a name from exact namespace/asset metadata
 and visible name evidence; it does not qualify a price whose unit is unknown.
 These are implemented context contracts, not a source allowlist for research.
 
+### Malformed-response recovery and diagnostics
+
+A malformed final proposal remains a request error. Controlled planner budget or timeout interruption can likewise retain a missing final proposal and its original error. Application-owned
+finalization may nevertheless recover a field whose server-recomputed fetched
+contexts yield one unique, nonconflicting value. Recovery does not trust the
+malformed text or cached model context claims. It passes the recovered
+selections through the same source validator and repeats current missing-field,
+open-holding and API-ownership checks before saving. Conflicting or unsupported
+fields stay missing. Recovery adds no model, REST or public-source call and
+does not hide the parser failure or mark untouched securities as researched.
+
+For a missing proposal, deterministic recovery is enabled only by the server-owned request_limit or planner_timeout reason. Authorization expiry, cancellation and a valid empty proposal never enable it. Existing eligibility and API ownership checks still apply.
+
+The authenticated finalization route records a bounded trace of model
+requests/responses and tool choices/results in redacted application diagnostics,
+correlated by request ID. Existing diagnostic redaction protects credentials;
+the runtime planner receives no filesystem or log-store access. A trace enables
+comparison of the actual query, page, context and final decision with the
+reviewing agent's path; endpoint HTTP success alone does not prove an accepted
+fact or completed save.
+
 ### Shared budgets and response reuse
 
-The whole click shares at most five model calls, five application REST attempts
-(candidate read, up to three search/read/follow actions, finalization), and five
-application-owned public search/page requests across all candidates. Failed
-attempts count. The planners have no native tools, shell, filesystem, database,
+The whole click shares at most eight model calls, eight application REST attempts
+(candidate read, up to six search/read/follow actions, finalization), and eight
+application-owned public search/page requests across all candidates. Defaults
+and hard ceilings are eight; lower configured limits remain effective. Failed
+attempts count. Up to three selected candidates is an inventory limit, not a
+promise that each will be researched: one source may use multiple actions.
+The planners have no native tools, shell, filesystem, database,
 generic HTTP or other-agent access. Source evidence belongs to the request and
 security. No AI-eligible open candidates avoids model invocation. An unfinished
 batch requires a new user action; polling job status never restarts research or
@@ -206,6 +245,6 @@ currency per share retain their raw amount, without a divide-by-100 conversion
 or NAV relabelling. Finnhub requires configured provider access, `quote_unit`
 and source or explicit `quote_currency`; actual units/currency keep their origin.
 Saving API observations spends no model calls. Source/provider
-reads are bounded separately; the agent's total remains five model requests and
-five authenticated application REST attempts, including failures. The runtime
+reads are bounded separately; the agent's total remains eight model requests and
+eight authenticated application REST attempts, including failures. The runtime
 agent still has **no database, filesystem, shell or generic HTTP access**.

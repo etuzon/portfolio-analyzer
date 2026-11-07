@@ -170,11 +170,19 @@ coverage with no alternative, enter AI research.
 The dashboard exposes `search_security_sources`, `read_security_source` and
 `follow_security_source` through authenticated, request-bound REST tools to both
 CLI planners. Choose precise queries, inspect returned evidence, and follow
-useful returned links within the remaining budget. Read an official
-`source_hints` entry first when supplied: the server registers these discovery
-leads without a network read; a hint still proves no price or identity. Read
+useful returned links within the remaining budget. `source_hints` and
+`search_hints` are optional starting points for Israeli and U.S. securities,
+not availability guarantees or a restriction to particular sources. The server
+registers source leads without a network read. Choose a lead that fits the
+instrument and missing field, inspect it, and adapt when it is unhelpful. Read
 only returned `source_id` values and follow only returned `link_id` values for
 that security and request. Never invent IDs, URLs or additional tools.
+
+Research the supplied gaps: a known name with missing industry calls for
+classification evidence, not another price lookup. A `MANUAL` listing label is
+not a trading venue; identify a U.S. bond or fund by its actual identifier,
+instrument type, location and source evidence. Do not send U.S. identifiers to
+TASE merely because Israeli holdings appear in the same batch.
 
 Prefer selecting returned `context_records` with
 `records:[{security_key,source_id,record_id}]`. The server recomputes the selected
@@ -194,6 +202,26 @@ fundamentals, distributions or ambiguous conventions remain missing with a
 friendly per-security outcome.
 Do not report a fetched reference page as a completed portfolio update.
 
+The dashboard bridge requires a typed nested proposal object in each research
+decision's `answer`, containing `records`, `observations` and `profiles` arrays;
+unused arrays are empty. The bridge serializes the validated object for the
+controller. The final allowed turn keeps this machine-readable research
+contract; it must not switch to ordinary chat prose or a JSON string inside
+`answer`. This contract does not change the separate host script's envelope.
+
+If the final proposal is malformed, or a controlled planner budget/timeout
+interruption prevents a final proposal, application-owned finalization may recover
+only unique, nonconflicting facts recomputed from pages already fetched for this
+request. Recovery uses the same evidence validator and current missing-field,
+open-holding and API-ownership checks; it makes no extra research calls and
+cannot use prose, snippets or hints as facts. The proposal error remains visible
+even when some verified fields are saved. Redacted application diagnostics retain
+a bounded trace of model responses and tool choices/results, correlated with the
+request through the authenticated finalization route. The agent must not read
+log files or storage directly to inspect that trace.
+
+Recovery never bypasses expired authorization, cancellation or changed eligibility. A valid empty proposal is an intentional no-save result. Keep the original interruption reason and actual recovered fields separate.
+
 The dashboard uses `price_agent.reader: auto` (or `jina`) for key-free rendered
 Jina Reader pages. Only public source URLs are sent to that external reader;
 application credentials, portfolio records and browser sessions are not sent.
@@ -201,10 +229,12 @@ Choose `direct` for the application's HTTPS text reader instead. There is no
 hidden reader fallback or retry. This adds rendered text and followable links,
 not the interactive agent's proprietary search index or signed-in browser access.
 
-One dashboard request shares at most **five model calls, five application REST
-attempts and five public search/page requests** across all candidates. The REST
-budget covers candidate reading, up to three research tool actions and
-finalization. Failures count. Identical tool choices with identical arguments
+One dashboard request shares at most **eight model calls, eight application REST
+attempts and eight public search/page requests** across all candidates. These are
+the defaults and hard ceilings; lower configured limits remain effective. The REST
+budget covers candidate reading, up to six research tool actions and
+finalization. Six research actions do not guarantee that every selected security
+is researched or updated; a source may need more than one action. Failures count. Identical tool choices with identical arguments
 can reuse a request-local response; a changed query, source or link is a new
 choice. Repeated model decisions still count. Polling does not restart the run;
 never split or rerun a limited request to reset its budget.
@@ -231,13 +261,13 @@ dates to the user as `dd/mm/yyyy`.
 Configuration lives in the existing `config.yaml` (or `CONFIG_PATH`; explicit
 `--config PATH` overrides it). Read only the needed nonsecret fields. Use the
 `price_agent` section with `provider: codex` (default) or `provider: claude`,
-`model`, `reasoning_effort`, `max_model_calls`, `max_rest_calls`, `base_url`,
+`model`, `reasoning_effort`, `max_model_calls`, `max_rest_calls`, `max_web_calls`, `base_url`,
 `timeout_seconds`, and `search: {provider: auto, api_key: "${BRAVE_SEARCH_API_KEY}"}`.
 An empty model selects `gpt-6.1-sol` for Codex or the `sonnet` alias for Claude.
 Medium effort is the default; low, medium and high are supported. The selected
 CLI must be installed and signed in on the host. Search defaults to `auto`: use
-Brave when its key is configured, otherwise public DuckDuckGo HTML results.
-Explicit `brave` requires its key; `duckduckgo` is also selectable. A source block
+Brave when its key is configured, otherwise public Yahoo search results.
+Explicit `brave` requires its key; `yahoo` and `duckduckgo` are also selectable. A source block
 or challenge is a temporary provider problem, not proof the price is unavailable.
 There are no hidden provider retries or budget resets. Preserve existing YAML
 sections and credentials.
@@ -253,8 +283,8 @@ date; an explicitly requested history update can add older observations. Current
 research reads a bounded daily item range while retaining the API's independent
 latest-current result, then verifies only the submitted date range.
 
-The controller enforces at most **five model calls and five application REST
-calls per user request**, with a separate five-call internet-read ceiling.
+The controller enforces at most **eight model calls and eight application REST
+calls per user request**, with a separate eight-call internet-read ceiling.
 Failures consume the same budgets. It disables native model tools and asks for
 one decision per invocation, preventing nested autonomous loops. Do not rerun,
 resume or split a failed/limited request to evade these ceilings. Review its

@@ -571,7 +571,7 @@ def test_dashboard_price_research_defaults_to_codex_independently_of_chat(monkey
     monkeypatch.setattr(main, "config", SimpleNamespace(raw=raw))
     settings = main._enrichment_assistant_settings()
     assert settings["provider"] == "local_codex" and settings["model"] == "gpt-6.1-sol"
-    assert settings["reasoning_effort"] == "medium" and settings["max_tool_loops"] == 5
+    assert settings["reasoning_effort"] == "medium" and settings["max_tool_loops"] == 8
     assert settings["codex_socket"] == "/synthetic-shared-bridge.sock" and settings["enabled"] is False
     assert assistant_settings(raw)["provider"] == "local_claude" and assistant_settings(raw)["model"] == "chat-model"
 
@@ -594,7 +594,7 @@ def test_dashboard_forwards_explicit_research_model_effort_and_bounded_settings(
     monkeypatch.setattr(main, "config", SimpleNamespace(raw=raw))
     settings = main._enrichment_assistant_settings()
     assert (settings["provider"], settings["model"], settings["reasoning_effort"]) == ("local_claude", "explicit-price-model", "high")
-    assert settings["max_tool_loops"] == 5 and settings["timeout_seconds"] == 110
+    assert settings["max_tool_loops"] == 8 and settings["timeout_seconds"] == 110
     assert assistant_settings(raw)["max_tool_loops"] == 1 and assistant_settings(raw)["model"] == "chat-model"
 
 

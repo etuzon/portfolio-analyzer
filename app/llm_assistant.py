@@ -139,7 +139,14 @@ class PortfolioAssistant:
         for index in range(self.settings["max_tool_loops"]):
             final_turn = index == self.settings["max_tool_loops"] - 1 or rest_attempts >= self.settings["max_rest_calls"]
             if final_turn:
-                messages.append({"role": "system", "content": "This is the final allowed response. Answer from evidence already received. State any remaining unknowns; do not request more tools or guess."})
+                final_policy = (
+                    "This is the final allowed response. Return the research proposal JSON only, with records, observations and profiles arrays. "
+                    "Select supported source record IDs already received. Leave unsupported fields out and use empty arrays when nothing qualifies. "
+                    "Do not return prose, status explanations or additional tools. Follow the output schema: use a nested proposal object in answer when supported, or serialize it only for a string-only transport. Set support_status=answered."
+                    if self.settings.get("research_mode") else
+                    "This is the final allowed response. Answer from evidence already received. State any remaining unknowns; do not request more tools or guess."
+                )
+                messages.append({"role": "system", "content": final_policy})
             if audit:
                 audit("model_request", exchange=index + 1, tools_enabled=not final_turn, message_count=len(messages))
             message = self._completion(messages, final_turn=final_turn)
@@ -151,7 +158,7 @@ class PortfolioAssistant:
                 content = str(message.get("content") or "").strip()
                 if not content:
                     raise AssistantError("The LLM returned an empty answer.")
-                answer = clean_answer(content)
+                answer = content if self.settings.get("research_mode") else clean_answer(content)
                 if not answer:
                     raise AssistantError("The LLM returned an empty answer.")
                 return {"answer": answer, "support_status": message.get("support_status", "answered"), "tool_calls": calls, "max_tool_loops": self.settings["max_tool_loops"], "model_requests": index + 1, "rest_requests": rest_attempts}
@@ -205,6 +212,8 @@ class PortfolioAssistant:
             raise AssistantError("The LLM returned an unsupported response.") from exc
         if not isinstance(message, dict):
             return {}
+        if self.settings.get("research_mode") and isinstance(message.get("content"), dict):
+            message = {**message, "content": json.dumps(message["content"], ensure_ascii=False)}
         if not message.get("tool_calls") and isinstance(message.get("content"), str):
             try:
                 structured = json.loads(message["content"])
@@ -212,6 +221,9 @@ class PortfolioAssistant:
                 structured = None
             if isinstance(structured, dict) and isinstance(structured.get("answer"), str) and structured.get("support_status") in {"answered", "unsupported"}:
                 message = {**message, "content": structured["answer"], "support_status": structured["support_status"]}
+            elif (self.settings.get("research_mode") and isinstance(structured, dict)
+                  and isinstance(structured.get("answer"), dict) and structured.get("support_status") in {"answered", "unsupported"}):
+                message = {**message, "content": json.dumps(structured["answer"], ensure_ascii=False), "support_status": structured["support_status"]}
         return message
 
     def _call_provider(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:

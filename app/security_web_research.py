@@ -269,6 +269,30 @@ def parse_research_proposal(proposal: Any) -> dict[str, Any] | None:
     return proposal if isinstance(proposal, dict) and not set(proposal) - {"observations", "profiles", "records"} else None
 
 
+def recover_context_proposal(candidates: dict[str, dict[str, Any]], evidence_by_key: dict[str, Any]) -> dict[str, Any]:
+    """Recover unambiguous fetched facts, never repair or interpret model prose."""
+    from .security_source_context import context_records
+    groups = {}
+    for key, candidate in candidates.items():
+        for source in evidence_by_key.get(key, []):
+            if not isinstance(source, dict) or not isinstance(source.get("source_id"), str):
+                continue
+            for record in context_records(source, candidate):
+                if record["kind"] == "price" and "prices" in candidate.get("missing_fields", []):
+                    group = (key, "prices")
+                    value = tuple(record.get(field) for field in ("price_input", "price_date", "currency", "quote_unit", "price_basis", "observed_at"))
+                elif (record["kind"] == "profile" and "profile" in candidate.get("missing_fields", [])
+                      and candidate.get("needs_" + record["field"], True)):
+                    group = (key, record["field"])
+                    value = record["value"]
+                else:
+                    continue
+                groups.setdefault(group, []).append((value, {"security_key": key, "source_id": source["source_id"], "record_id": record["record_id"]}))
+    return {"records": [entries[0][1] for entries in groups.values()
+                        if all(value == entries[0][0] for value, _selection in entries)],
+            "observations": [], "profiles": []}
+
+
 def validate_proposals(proposal: Any, candidates: dict[str, dict[str, Any]], evidence_by_key: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Validate facts, not instructions. The application alone applies results."""
     proposal = parse_research_proposal(proposal)

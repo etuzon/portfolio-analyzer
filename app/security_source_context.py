@@ -18,6 +18,11 @@ from .price_agent import _unsupported_price_basis
 from .price_evidence import _observation_currency_matches
 
 
+# The exchange's main security page is published at both the listing root and
+# its explicit major_data route. Other tabs carry different source contracts.
+_TASE_MAIN_PATH = re.compile(r"/he/market_data/security/(\d+)(?:/major_data)?/?")
+
+
 def _normal(value):
     return " ".join(str(value or "").split())
 
@@ -64,7 +69,7 @@ def _record(source, candidate, kind, excerpt, claims, **fields):
 
 def _tase_records(source, candidate):
     parsed = urlsplit(source["url"])
-    route = re.fullmatch(r"/he/market_data/security/(\d+)/major_data/?", parsed.path)
+    route = _TASE_MAIN_PATH.fullmatch(parsed.path)
     if parsed.hostname != "market.tase.co.il" or not route or _market(candidate.get("stock_market")) != "TASE":
         return []
     if str(candidate.get("asset_class") or "STOCK").upper() not in {"STOCK", "EQUITY", "SHARE"}:
@@ -261,7 +266,7 @@ def context_supported(source: dict[str, Any]) -> bool:
     except ValueError:
         return False
     return bool(parsed.scheme == "https" and not parsed.username and not parsed.password and (
-        parsed.hostname == "market.tase.co.il" and re.fullmatch(r"/he/market_data/security/\d+/major_data/?", parsed.path)
+        parsed.hostname == "market.tase.co.il" and _TASE_MAIN_PATH.fullmatch(parsed.path)
         or parsed.hostname == "finance.themarker.com" and re.fullmatch(r"/stock/\d+/?", parsed.path)))
 
 

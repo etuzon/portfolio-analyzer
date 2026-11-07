@@ -4653,11 +4653,15 @@ def _ai_enrichment_candidates():
         if fields:
             items.append({**candidate, "missing_fields": fields, "api_data_route": route})
     try:
-        research_available = search_is_configured(price_agent_settings(config.raw))
+        research_settings = price_agent_settings(config.raw)
+        research_available = search_is_configured(research_settings)
+        search_providers = ["yahoo", "duckduckgo"] + (["brave"] if research_settings.get("search_api_key") else [])
     except PriceAgentError:
         research_available = False
+        search_providers = []
     return {"items": items[:200], "total_count": len(items), "truncated": len(items) > 200,
-            "research_available": research_available, "api_managed_count": excluded}
+            "research_available": research_available, "api_managed_count": excluded,
+            "configured_search_providers": search_providers}
 
 
 def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) -> dict[str, Any]:
@@ -4861,9 +4865,9 @@ _enrichment_source_lock = RLock()
 def _enrichment_research_tool(candidate: dict[str, Any], action: str, arguments: dict[str, Any]) -> dict[str, Any]:
     """The server executes public reads; the agent uses authenticated REST only."""
     from .price_agent import price_agent_settings
-    from .security_research_tools import ResearchSession, ResearchFailure
+    from .security_research_tools import ResearchSession, ResearchFailure, WebRequestBudget
     from .security_search import SearchFailure
-    from .us_market_providers import RequestBudget, ProviderFailure
+    from .us_market_providers import ProviderFailure
     current = next((item for item in _enrichment_candidates(limit=None)["items"] if item["security_key"] == candidate["security_key"]), None)
     if not current:
         return {"evidence": [], "source_status": "not_open"}
@@ -4873,8 +4877,9 @@ def _enrichment_research_tool(candidate: dict[str, Any], action: str, arguments:
     if not request_id:
         return {"evidence": [], "source_status": "job_failed"}
     with _enrichment_source_lock:
-        budget = _enrichment_source_budgets.setdefault(request_id, RequestBudget())
-        session = _enrichment_tool_sessions.setdefault(request_id, ResearchSession(price_agent_settings(config.raw), budget))
+        research_settings = price_agent_settings(config.raw)
+        budget = _enrichment_source_budgets.setdefault(request_id, WebRequestBudget(research_settings["max_web_calls"]))
+        session = _enrichment_tool_sessions.setdefault(request_id, ResearchSession(research_settings, budget))
         for key in list(_enrichment_tool_sessions)[:-100]:
             _enrichment_tool_sessions.pop(key, None)
             _enrichment_source_budgets.pop(key, None)
@@ -4883,7 +4888,7 @@ def _enrichment_research_tool(candidate: dict[str, Any], action: str, arguments:
         if action == "discover":
             return {"sources": session.discover(current), "evidence": [], "source_status": "search_results", "web_requests": budget.used}
         if action == "search":
-            result = session.search(current, arguments["query"])
+            result = session.search(current, arguments["query"], provider=arguments.get("provider", "auto"))
             return {**result, "evidence": [], "source_status": "search_results", "web_requests": budget.used}
         if action == "read":
             source = session.read(current, arguments["source_id"])
@@ -4904,13 +4909,14 @@ def _enrichment_research_tool(candidate: dict[str, Any], action: str, arguments:
         # Diagnostics contain counters/codes only, never raw provider errors.
         code = getattr(failure, "code", None) or "source_read_failed"
         diagnostics = {key: session.diagnostics.get(key, 0) - before.get(key, 0) for key in session.diagnostics}
-        return {"evidence": [], "source_status": code, "code": code, "diagnostics": diagnostics, "web_requests": budget.used}
+        return {"evidence": [], "source_status": code, "code": code, "diagnostics": diagnostics, "web_requests": budget.used,
+                "search_provider": getattr(session, "last_search_provider", None)}
 
 
 def _enrichment_research_security(candidate: dict[str, Any], field: str) -> dict[str, Any]:
     """Application source route: the AI sees only this authenticated REST result."""
     from .price_agent import price_agent_settings
-    from .us_market_providers import RequestBudget
+    from .security_research_tools import WebRequestBudget
     current = next((item for item in _enrichment_candidates(limit=None)["items"] if item["security_key"] == candidate["security_key"]), None)
     if not current:
         return {"evidence": [], "status": "not_attempted", "source_status": "not_open", "code": "not_open"}
@@ -4918,14 +4924,14 @@ def _enrichment_research_security(candidate: dict[str, Any], field: str) -> dict
         return {"evidence": [], "status": "not_attempted", "source_status": "api_managed", "code": "api_managed"}
     request_id = str(candidate.get("_request_id") or "")
     with _enrichment_source_lock:
-        budget = _enrichment_source_budgets.setdefault(request_id, RequestBudget())
+        budget = _enrichment_source_budgets.setdefault(request_id, WebRequestBudget(price_agent_settings(config.raw)["max_web_calls"]))
         # The job manager bounds active jobs; also cap abandoned source state.
         for key in list(_enrichment_source_budgets)[:-100]:
             _enrichment_source_budgets.pop(key, None)
     return research_sources(current, price_agent_settings(config.raw), budget)
 
 
-def _apply_enrichment_proposals(proposal, evidence_by_key, candidates) -> dict[str, dict[str, Any]]:
+def _apply_enrichment_proposals(proposal, evidence_by_key, candidates, *, recovery_reason=None) -> dict[str, dict[str, Any]]:
     """Application-owned finalization; no model may access this storage directly."""
     from .security_prices import PriceObservation, quote_unit
     current = {item["security_key"]: item for item in _enrichment_candidates(limit=None)["items"]}
@@ -4940,6 +4946,11 @@ def _apply_enrichment_proposals(proposal, evidence_by_key, candidates) -> dict[s
             continue
         prepared[key] = {**candidate, **metadata, "security_key": key,
                          "missing_fields": current[key]["missing_fields"], "quote_unit": quote_unit(metadata)}
+    from .security_web_research import parse_research_proposal, recover_context_proposal
+    supplied_proposal = proposal is not None
+    recovered = parse_research_proposal(proposal) is None
+    if recovered:
+        proposal = recover_context_proposal(prepared, evidence_by_key or {})
     verified = validate_proposals(proposal, prepared, evidence_by_key or {})
     results = {}
     def still_missing(key, field):
@@ -5006,7 +5017,8 @@ def _apply_enrichment_proposals(proposal, evidence_by_key, candidates) -> dict[s
         status = "updated" if found and not remaining else "partial" if found else "unavailable"
         results[key] = {**(after or current[key]), "status": status, "code": "data_found" if status == "updated" else "partial_data" if found else "evidence_rejected",
                         "available_fields": sorted(set(found)), "missing_fields": remaining,
-                        "evidence_rejected": rejected}
+                        "evidence_rejected": rejected, "recovered_from_invalid_proposal": recovered and supplied_proposal and bool(found),
+                        **({"recovery_reason": recovery_reason or "proposal_invalid"} if recovered and found else {})}
     return results
 
 
@@ -5015,15 +5027,17 @@ def _enrichment_outcomes() -> list[dict[str, Any]]:
     return list(saved.values()) if isinstance(saved, dict) else []
 
 
-def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, request_id: str, *, proposal=None, evidence_by_key=None, candidates=None):
+def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, request_id: str, *, proposal=None, evidence_by_key=None, candidates=None, context_recovery_reason=None):
     saved = {item["security_key"]: item for item in _enrichment_outcomes() if isinstance(item, dict) and item.get("security_key")}
     open_keys = {enrichment_security_key(to_dict(item).get("holding") or {}) for item in enriched_local_holdings(cached_only=True)
                  if (quantity := _number_or_none((to_dict(item).get("holding") or {}).get("quantity"))) is not None and quantity != 0}
     # The agent submits only proposals and request-bound fetched evidence through
     # REST. Validation and any supported local save belong to this application.
+    recover_interrupted = context_recovery_reason in {"request_limit", "planner_timeout"} and bool(evidence_by_key)
     applied = _apply_enrichment_proposals(proposal, evidence_by_key or {},
-                                          {key: item for key, item in (candidates or {}).items() if key in open_keys}) if proposal else {}
-    if proposal:
+                                          {key: item for key, item in (candidates or {}).items() if key in open_keys},
+                                          **({"recovery_reason": context_recovery_reason} if context_recovery_reason else {})) if proposal or recover_interrupted else {}
+    if proposal or recover_interrupted:
         open_keys = {enrichment_security_key(to_dict(item).get("holding") or {}) for item in enriched_local_holdings(cached_only=True)
                      if (quantity := _number_or_none((to_dict(item).get("holding") or {}).get("quantity"))) is not None and quantity != 0}
     # API-only results also reach this authenticated, authorized POST. Recheck
@@ -5130,7 +5144,8 @@ def _enrichment_assistant_settings():
     return {**assistant_settings(config.raw),
             "provider": "local_claude" if configured["provider"] == "claude" else "local_codex",
             "model": configured["model"], "reasoning_effort": configured["reasoning_effort"],
-            "max_tool_loops": configured["max_model_calls"], "timeout_seconds": configured["timeout_seconds"]}
+            "max_tool_loops": configured["max_model_calls"], "max_rest_calls": configured["max_rest_calls"],
+            "max_web_calls": configured["max_web_calls"], "timeout_seconds": configured["timeout_seconds"]}
 
 
 security_enrichment = EnrichmentJobs(app, lambda: _enrichment_assistant_settings(),
@@ -5138,6 +5153,7 @@ security_enrichment = EnrichmentJobs(app, lambda: _enrichment_assistant_settings
                                     security_fetcher=lambda candidate, field: _enrichment_research_security(candidate, field),
                                     research_tool_fetcher=lambda candidate, action, arguments: _enrichment_research_tool(candidate, action, arguments),
                                     source_hint_reader=lambda candidate: _enrichment_research_tool(candidate, "discover", {}).get("sources", []),
+                                    event_writer=lambda event, **fields: _record_log("market-data", event, **fields),
                                     outcome_reader=lambda: _enrichment_outcomes(),
                                     outcome_writer=lambda outcomes, user_id, request_id, **kwargs: _save_enrichment_outcomes(outcomes, user_id, request_id, **kwargs))
 app.include_router(security_enrichment.router())

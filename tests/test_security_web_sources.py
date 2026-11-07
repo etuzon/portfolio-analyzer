@@ -45,7 +45,7 @@ def test_key_free_research_fetches_actual_source_and_never_returns_search_snippe
         calls.append(("fetch", url))
         return "Actual public source: fund5139324 price100.00 dated06/11/2026"
     result = research_sources({"symbol": "5139324", "stock_market": "TASE"}, {}, budget, search=search, fetch=fetch)
-    assert result["code"] == "evidence_found" and result["search_provider"] == "duckduckgo"
+    assert result["code"] == "evidence_found" and result["search_provider"] == "yahoo"
     assert result["evidence"][0]["text"].startswith("Actual public source")
     assert "999" not in str(result["evidence"])
     assert "מחיר" in calls[0][1] and calls[0][2] == ""

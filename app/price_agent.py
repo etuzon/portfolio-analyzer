@@ -40,12 +40,12 @@ def _finite_number(value: Any) -> bool:
         return False
 
 
-def _limit(value: Any, default: int = 5) -> int:
+def _limit(value: Any, default: int = 8) -> int:
     if value is None:
-        return default
+        value = default
     if type(value) is not int or value < 1:
         raise PriceAgentError("Price-agent call limits must be positive integers.")
-    return min(value, 5)
+    return min(value, 8)
 
 
 def price_agent_settings(raw: dict[str, Any]) -> dict[str, Any]:
@@ -59,8 +59,8 @@ def price_agent_settings(raw: dict[str, Any]) -> dict[str, Any]:
     if effort not in {"low", "medium", "high"}:
         raise PriceAgentError("Price-agent reasoning_effort must be low, medium or high.")
     search = section.get("search") or {}
-    if not isinstance(search, dict) or search.get("provider", "auto") not in {"auto", "brave", "duckduckgo"}:
-        raise PriceAgentError("Price-agent search.provider must be auto, brave or duckduckgo.")
+    if not isinstance(search, dict) or search.get("provider", "auto") not in {"auto", "brave", "duckduckgo", "yahoo"}:
+        raise PriceAgentError("Price-agent search.provider must be auto, brave, duckduckgo or yahoo.")
     reader = str(section.get("reader") or "auto").lower()
     if reader not in {"auto", "jina", "direct"}:
         raise PriceAgentError("Price-agent reader must be auto, jina or direct.")
@@ -73,6 +73,7 @@ def price_agent_settings(raw: dict[str, Any]) -> dict[str, Any]:
         "reasoning_effort": effort,
         "max_model_calls": _limit(section.get("max_model_calls")),
         "max_rest_calls": _limit(section.get("max_rest_calls")),
+        "max_web_calls": _limit(section.get("max_web_calls")),
         "timeout_seconds": min(timeout, 110),
         "base_url": str(section.get("base_url") or "https://localhost:6443").rstrip("/"),
         "search_provider": str(search.get("provider") or "auto"),
@@ -83,21 +84,28 @@ def price_agent_settings(raw: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass
 class RequestBudget:
-    model_limit: int = 5
-    rest_limit: int = 5
+    model_limit: int = 8
+    rest_limit: int = 8
     model_calls: int = 0
     rest_calls: int = 0
     web_calls: int = 0
+    web_limit: int = 8
+
+    def __post_init__(self):
+        self.model_limit = _limit(self.model_limit)
+        self.rest_limit = _limit(self.rest_limit)
+        self.web_limit = _limit(self.web_limit)
 
     def consume(self, kind: str) -> None:
-        limit = {"model": min(self.model_limit, 5), "rest": min(self.rest_limit, 5), "web": 5}[kind]
+        limit = {"model": self.model_limit, "rest": self.rest_limit, "web": self.web_limit}[kind]
         attr = kind + "_calls"
         if getattr(self, attr) >= limit:
             raise PriceAgentError(f"The {kind} call limit was reached; start a new request only after reviewing the result.")
         setattr(self, attr, getattr(self, attr) + 1)
 
     def counts(self) -> dict[str, int]:
-        return {"model_calls": self.model_calls, "rest_calls": self.rest_calls, "web_calls": self.web_calls}
+        return {"model_calls": self.model_calls, "rest_calls": self.rest_calls, "web_calls": self.web_calls,
+                "max_model_calls": self.model_limit, "max_rest_calls": self.rest_limit, "max_web_calls": self.web_limit}
 
 
 class _PageText(HTMLParser):
@@ -230,7 +238,7 @@ POLICY = (
     "Never guess missing values, infer a quote date from retrieval time, mix adjusted and raw closes, confuse a bond percent-of-par with cents, or update a different listing. "
     "Do not convert units yourself; price_input is the source's raw quoted number in the configured quote_unit. If the source uses a different unit, find compatible evidence or stop. "
     "For current-price requests propose one latest known last/close observation, never older than the initial saved current date; for history propose only actual observed days in the requested inclusive interval, never interpolate. "
-    "At most five model decisions and five application REST calls are allowed in one user request; retries and failures count. Do not restart this request when a limit is reached. "
+    "At most eight model decisions, eight application REST calls and eight public search/page requests are allowed in one user request; lower configured limits, retries and failures count. Do not restart this request when a limit is reached. "
     "Use search_web then read_source before submit_prices. The fetched source must explicitly identify the listing symbol, exchange, currency and any scaled agorot/cents unit. "
     "Provide an exact contiguous evidence_quote for one source record, establishing the exact listing symbol, exchange, currency and raw unit beside its actual dated Last or Close raw-price label (or supported Hebrew last/close label). "
     "For an explicitly requested historical table, an unambiguous fetched single-instrument header may identify each quoted dated row; never borrow a header from a different or related-security record. "
@@ -354,7 +362,8 @@ class PriceAgent:
         from .security_search import search_web
         self.search = search or (lambda query: search_web(query, settings))
         self.fetch = fetch or fetch_public_source
-        self.budget = RequestBudget(_limit(settings.get("max_model_calls")), _limit(settings.get("max_rest_calls")))
+        self.budget = RequestBudget(_limit(settings.get("max_model_calls")), _limit(settings.get("max_rest_calls")),
+                                    web_limit=_limit(settings.get("max_web_calls")))
         self._started = False
         self._current_date: date | None = None
         self._returned_urls: set[str] = set()
@@ -389,7 +398,8 @@ class PriceAgent:
         if not date_from and isinstance(current, dict) and current.get("price_date"):
             self._current_date = _day(current["price_date"])
         params.update(symbol=security.get("symbol") or params["symbol"], stock_market=security.get("stock_market") or params["stock_market"])
-        context = {"security": security, "current": initial.get("current"), "requested_dates": {"date_from": date_from, "date_to": date_to} if date_from else "latest known price", "today": date.today().isoformat(), "dry_run": dry_run}
+        context = {"security": security, "current": initial.get("current"), "requested_dates": {"date_from": date_from, "date_to": date_to} if date_from else "latest known price", "today": date.today().isoformat(), "dry_run": dry_run,
+                   "call_limits": {key: value for key, value in self.budget.counts().items() if key.startswith("max_")}}
         messages = [{"role": "system", "content": POLICY}, {"role": "user", "content": json.dumps(context, ensure_ascii=False)}]
         while self.budget.model_calls < self.budget.model_limit:
             self.budget.consume("model")

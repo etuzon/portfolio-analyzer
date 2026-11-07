@@ -1,12 +1,13 @@
 """Request-scoped public research tools, with no model or storage access.
 
-The caller owns the REST/model budgets. This controller owns the shared five
+The caller owns the REST/model budgets. This controller owns the shared eight
 web-operation budget; a rendered-reader request is one application HTTP request,
 not a claim about the reader provider's internal asset requests.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from dataclasses import dataclass, field
 from html.parser import HTMLParser
 import http.client
 import ipaddress
@@ -14,6 +15,7 @@ import json
 import re
 import socket
 import ssl
+import time
 from typing import Any, Callable
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from uuid import uuid4
@@ -21,7 +23,7 @@ from uuid import uuid4
 import httpx
 
 from .price_agent import _PageText
-from .security_search import search_web
+from .security_search import search_web, selected_search_provider
 from .us_market_providers import RequestBudget
 
 
@@ -29,6 +31,34 @@ class ResearchFailure(ValueError):
     def __init__(self, code: str, message: str):
         self.code = code
         super().__init__(message)
+
+
+@dataclass
+class WebRequestBudget:
+    """AI request budget; independent from ordinary provider refresh limits."""
+    limit: int = 8
+    timeout_seconds: float = 240
+    used: int = 0
+    _started: float = field(default_factory=time.monotonic, repr=False)
+
+    def __post_init__(self):
+        self.limit = min(8, max(1, int(self.limit)))
+        self.timeout_seconds = min(240, max(1, float(self.timeout_seconds)))
+
+    @property
+    def remaining(self):
+        return max(0, self.limit - self.used)
+
+    @property
+    def remaining_seconds(self):
+        return max(0, self.timeout_seconds - (time.monotonic() - self._started))
+
+    def consume(self):
+        if not self.remaining:
+            raise ResearchFailure("request_limit", "The research web request limit was reached.")
+        if not self.remaining_seconds:
+            raise ResearchFailure("timeout", "The research request time limit was reached.")
+        self.used += 1
 
 
 def public_source_url(value: Any, *, resolve: bool = True, resolver: Callable | None = None) -> str:
@@ -215,7 +245,7 @@ class ResearchSession:
         source_id = self._add(key, url, "Official TASE security page")
         return [{"source_id": source_id, "url": url, "title": "Official TASE security page", "discovery_only": True}]
 
-    def search(self, candidate: dict[str, Any], query: str = "") -> dict[str, Any]:
+    def search(self, candidate: dict[str, Any], query: str = "", *, provider: str = "auto") -> dict[str, Any]:
         key = self._key(candidate)
         identity = [str(candidate.get(field) or "").strip() for field in ("symbol", "secondary_symbol", "name", "stock_market")]
         query = query or " ".join(value for value in identity if value) + " price date currency company industry"
@@ -224,9 +254,13 @@ class ResearchSession:
         identifiers = identity[:3]
         if not any(value and value.casefold() in query.casefold() for value in identifiers):
             raise ResearchFailure("invalid_request", "Keep the security identifier or name in the search query.")
+        if provider not in {"auto", "brave", "duckduckgo", "yahoo"}:
+            raise ResearchFailure("invalid_request", "Choose an allowed search provider.")
+        settings = self.settings if provider == "auto" else {**self.settings, "search_provider": provider}
+        self.last_search_provider = selected_search_provider(settings)
         self.budget.consume()
         self.diagnostics["search_requests"] += 1
-        rows = self._search(query, self.settings)
+        rows = self._search(query, settings)
         if not isinstance(rows, list):
             raise ResearchFailure("search_failed", "The search provider returned invalid results.")
         sources = []
@@ -239,7 +273,7 @@ class ResearchSession:
                 continue
             source = self._sources[source_id]
             sources.append({"source_id": source_id, "url": source["url"], "title": source["title"]})
-        return {"sources": sources, "discovery_only": True, "diagnostics": dict(self.diagnostics)}
+        return {"sources": sources, "discovery_only": True, "search_provider": self.last_search_provider, "diagnostics": dict(self.diagnostics)}
 
     def read(self, candidate: dict[str, Any], source_id: str) -> dict[str, Any]:
         key, source = self._source(candidate, source_id)

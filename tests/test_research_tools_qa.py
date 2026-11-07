@@ -473,7 +473,11 @@ def test_candidate_rest_supplies_only_three_opaque_hints_without_extra_operation
     assert result["counts"]["model_requests"] == len(env.state.model) == 1
     user = next(message for message in env.state.model[0]["messages"] if message["role"] == "user")
     assert user["content"].count('"source_hints"') == 3
-    assert user["content"].count('"discovery_only": true') == 3
+    supplied = json.loads(user["content"].split("Candidates: ", 1)[1])
+    assert all(len(item["source_hints"]) == 1 and item["source_hints"][0]["discovery_only"] is True
+               for item in supplied)
+    assert all(item["search_hints"] and all(hint["discovery_only"] is True for hint in item["search_hints"])
+               for item in supplied)
     assert env.state.saved[0]["evidence_by_key"] == {}
     assert env.session.budget.used == 0 and env.state.reads == env.state.queries == []
     assert result["summary"]["updated"] == 0
@@ -635,7 +639,8 @@ def test_bridge_uses_dedicated_research_planner_policy_for_both_backends_without
     handler.do_POST()
     assert statuses == [200] and len(seen) == 1
     assert seen[0][2]["policy"] == codex_bridge.SECURITY_RESEARCH_PLANNER_POLICY
-    assert "serialized JSON research proposal" in seen[0][2]["policy"]
+    assert "nested research proposal object" in seen[0][2]["policy"]
+    assert "never a JSON string" in seen[0][2]["policy"]
     assert "no native tools" in seen[0][2]["policy"]
     assert json.loads(handler.wfile.getvalue()) == final()
 

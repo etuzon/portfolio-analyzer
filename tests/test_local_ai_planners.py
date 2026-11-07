@@ -10,9 +10,13 @@ from app.llm_assistant import AssistantError, PortfolioAssistant, assistant_sett
 
 
 DECISION = {"action": "answer", "tool": "", "arguments": "", "answer": "Unknown", "support_status": "answered"}
+RESEARCH_PROPOSAL = {"records": [{"security_key": "1101534|TASE|ILS", "source_id": "source-public", "record_id": "context-public"}],
+                     "observations": [], "profiles": []}
+RESEARCH_DECISION = {**DECISION, "answer": RESEARCH_PROPOSAL}
 
 
-def test_claude_one_turn_planner_forwards_model_effort_and_disables_tools(monkeypatch):
+@pytest.mark.parametrize("research", [False, True])
+def test_claude_one_turn_planner_forwards_model_effort_and_disables_tools(monkeypatch, research):
     seen = {}
     monkeypatch.setenv("CLAUDECODE", "1")
     monkeypatch.setenv("CLAUDE_CODE_CHILD_SESSION", "parent-session")
@@ -26,20 +30,23 @@ def test_claude_one_turn_planner_forwards_model_effort_and_disables_tools(monkey
             self.output = kwargs["stdout"]
         def communicate(self, body, timeout):
             seen.update(body=json.loads(body), timeout=timeout)
-            self.output.write(json.dumps({"structured_output": DECISION}).encode())
+            self.output.write(json.dumps({"structured_output": RESEARCH_DECISION if research else DECISION}).encode())
         def wait(self, timeout):
             return 0
     monkeypatch.setattr(claude_bridge.shutil, "which", lambda name: "/fixture/claude")
     monkeypatch.setattr(claude_bridge.subprocess, "Popen", Process)
     monkeypatch.setattr(claude_bridge.os, "killpg", lambda *_: None)
-    response = claude_bridge.claude_completion([{"role": "user", "content": "Price?"}], [], model="sonnet", reasoning_effort="medium", timeout=10)
-    assert response["choices"][0]["message"]["content"] == "Unknown"
+    response = claude_bridge.claude_completion([{"role": "user", "content": "Price?"}], [], model="sonnet", reasoning_effort="medium", timeout=10,
+        policy=codex_bridge.SECURITY_RESEARCH_PLANNER_POLICY if research else None)
+    content = response["choices"][0]["message"]["content"]
+    assert (json.loads(content) if research else content) == (RESEARCH_PROPOSAL if research else "Unknown")
     command = seen["command"]
     for flag, value in {"--max-turns": "1", "--tools": "", "--model": "sonnet", "--effort": "medium", "--setting-sources": "", "--permission-mode": "dontAsk"}.items():
         assert command[command.index(flag) + 1] == value
     assert "--strict-mcp-config" in command and "--no-session-persistence" in command
     assert json.loads(command[command.index("--mcp-config") + 1]) == {"mcpServers": {}}
     assert json.loads(command[command.index("--settings") + 1])["disableAllHooks"] is True
+    assert json.loads(command[command.index("--json-schema") + 1]) == codex_bridge.decision_schema([], research=research)
     assert seen["body"] == {"conversation": [{"role": "user", "content": "Price?"}], "allowed_read_tools": []}
     assert seen["timeout"] == 10
     assert seen["options"]["start_new_session"] is True
@@ -49,7 +56,8 @@ def test_claude_one_turn_planner_forwards_model_effort_and_disables_tools(monkey
     assert environment["CLAUDE_CODE_DISABLE_CLAUDE_MDS"] == "1"
 
 
-def test_codex_one_turn_planner_passes_model_effort_and_has_no_native_tools(monkeypatch):
+@pytest.mark.parametrize("research", [False, True])
+def test_codex_one_turn_planner_passes_model_effort_and_has_no_native_tools(monkeypatch, research):
     sent, commands = [], []
     class Process:
         pid = 123456789
@@ -60,7 +68,7 @@ def test_codex_one_turn_planner_passes_model_effort_and_has_no_native_tools(monk
     class Rpc:
         def __init__(self, *_):
             self.events = iter([
-                {"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": json.dumps(DECISION)}}},
+                {"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": json.dumps(RESEARCH_DECISION if research else DECISION)}}},
                 {"method": "turn/completed", "params": {"turn": {"status": "completed"}}},
             ])
         def send(self, message):
@@ -73,17 +81,91 @@ def test_codex_one_turn_planner_passes_model_effort_and_has_no_native_tools(monk
     monkeypatch.setattr(codex_bridge.subprocess, "Popen", Process)
     monkeypatch.setattr(codex_bridge.os, "killpg", lambda *_: None)
     monkeypatch.setattr(codex_bridge, "_Rpc", Rpc)
-    response = codex_bridge.codex_completion([], [], model="gpt-6.1-sol", reasoning_effort="medium")
-    assert response["choices"][0]["message"]["content"] == "Unknown"
+    response = codex_bridge.codex_completion([], [], model="gpt-6.1-sol", reasoning_effort="medium",
+        policy=codex_bridge.SECURITY_RESEARCH_PLANNER_POLICY if research else None)
+    content = response["choices"][0]["message"]["content"]
+    assert (json.loads(content) if research else content) == (RESEARCH_PROPOSAL if research else "Unknown")
     starts = [message for message in sent if message.get("method") == "turn/start"]
     assert len(starts) == 1
     assert starts[0]["params"]["effort"] == "medium"
+    assert starts[0]["params"]["outputSchema"] == codex_bridge.decision_schema([], research=research)
     thread = next(message for message in sent if message.get("method") == "thread/start")["params"]
     assert thread["config"]["model"] == "gpt-6.1-sol"
     assert thread["config"]["web_search"] == "disabled"
     assert thread["config"]["features.shell_tool"] is False
     assert thread["dynamicTools"] == []
     assert 'model="gpt-6.1-sol"' in commands[0]
+
+
+def test_research_schema_requires_typed_arrays_and_no_unknown_fields_at_every_object():
+    from app.price_agent import ITEM_PROPERTIES
+    schema = codex_bridge.decision_schema([], research=True)
+    proposal = schema["properties"]["answer"]
+    assert proposal["type"] == "object"
+    assert set(proposal["required"]) == {"records", "observations", "profiles"}
+    observation = schema["$defs"]["_ResearchObservation"]
+    assert set(observation["properties"]) == {"security_key", *ITEM_PROPERTIES}
+    def check(value):
+        if isinstance(value, dict):
+            if value.get("type") == "object":
+                assert value["additionalProperties"] is False
+                assert set(value["required"]) == set(value["properties"])
+            for item in value.values():
+                check(item)
+        elif isinstance(value, list):
+            for item in value:
+                check(item)
+    check(schema)
+    assert codex_bridge.decision_schema([])["properties"]["answer"] == {"type": "string"}
+
+
+@pytest.mark.parametrize("answer", [
+    "I could not find enough information.", json.dumps(RESEARCH_PROPOSAL),
+    {"records": []}, {**RESEARCH_PROPOSAL, "execute_sql": "untrusted"},
+    {**RESEARCH_PROPOSAL, "records": [{"security_key": "one", "source_id": "source", "record_id": "record", "price": 1}]},
+    {**RESEARCH_PROPOSAL, "records": [{"security_key": "one", "source_id": "source", "record_id": None}]},
+    {**RESEARCH_PROPOSAL, "observations": ["untrusted"]},
+    {**RESEARCH_PROPOSAL, "profiles": [{"security_key": "one", "field": "forecast", "value": "guess", "source_url": "https://example.com", "evidence_quote": "guess"}]},
+])
+def test_research_decision_refuses_prose_strings_and_malformed_nested_proposals(answer):
+    with pytest.raises(codex_bridge.CodexBridgeError, match="invalid structured research decision"):
+        codex_bridge.decision_response({**DECISION, "answer": answer}, [], research=True)
+
+
+def test_research_read_decision_remains_one_named_tool_with_no_direct_write():
+    tools = [{"function": {"name": "read_security_source"}}]
+    decision = {**RESEARCH_DECISION, "action": "read", "tool": "read_security_source", "arguments": '{"source_id":"source-public"}',
+                "answer": {"records": [], "observations": [], "profiles": []}}
+    message = codex_bridge.decision_response(decision, tools, research=True)["choices"][0]["message"]
+    call, = message["tool_calls"]
+    assert "content" not in message
+    assert call["function"] == {"name": "read_security_source", "arguments": '{"source_id":"source-public"}'}
+    with pytest.raises(codex_bridge.CodexBridgeError, match="invalid decision"):
+        codex_bridge.decision_response({**decision, "tool": "save_prices"}, tools, research=True)
+
+
+def test_research_observation_keeps_raw_number_and_source_fields_for_application_validation():
+    observation = {"security_key": "1101534|TASE|ILS", "price_input": 2901, "price_date": "2026-11-06",
+                   "currency": "ILS", "quote_unit": "agorot", "price_basis": "last", "observed_at": None,
+                   "source_url": "https://market.tase.co.il/he/market_data/security/1101534", "evidence_quote": "שער אחרון 2901"}
+    proposal = {"records": [], "observations": [observation], "profiles": []}
+    message = codex_bridge.decision_response({**DECISION, "answer": proposal}, [], research=True)["choices"][0]["message"]
+    assert json.loads(message["content"]) == proposal
+    for invalid in ({"price_input": True}, {"price_input": "2901"}, {"price_input": float("nan")}, {"quote_unit": "percent_of_par"}, {"price_basis": "nav"}):
+        with pytest.raises(codex_bridge.CodexBridgeError, match="invalid structured research decision"):
+            codex_bridge.decision_response({**DECISION, "answer": {**proposal, "observations": [{**observation, **invalid}]}}, [], research=True)
+
+
+def test_research_transport_refuses_oversize_proposal_instead_of_truncating_json():
+    profile = {"security_key": "one", "field": "industry", "value": "Industry", "source_url": "https://example.com/quote", "evidence_quote": "x" * 2000}
+    proposal = {"records": [], "observations": [], "profiles": [profile] * 20}
+    with pytest.raises(codex_bridge.CodexBridgeError, match="exceeds the response limit"):
+        codex_bridge.decision_response({**DECISION, "answer": proposal}, [], research=True)
+
+
+def test_custom_host_price_runner_answer_contract_remains_a_plain_string():
+    content = json.dumps({"items": [{"price": "host-specific-envelope"}]})
+    assert codex_bridge.decision_response({**DECISION, "answer": content}, [])["choices"][0]["message"]["content"] == content
 
 
 def test_rest_budget_counts_failures_and_blocks_sixth_attempt():

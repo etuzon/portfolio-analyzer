@@ -44,7 +44,7 @@ def main() -> int:
         settings = price_agent_settings(load_config().raw)
         # Prerequisites are checked before spending any application or model calls.
         if not search_is_configured(settings):
-            raise PriceAgentError("Brave search requires a configured API key; choose search.provider: auto or duckduckgo for key-free research.", code="search_not_configured")
+            raise PriceAgentError("Brave search requires a configured API key; choose search.provider: auto, yahoo or duckduckgo for key-free research.", code="search_not_configured")
         rest = make_rest_client(settings["base_url"], os.getenv("PORTFOLIO_API_TOKEN", ""), ca_file=args.ca_file)
         agent = PriceAgent(settings, rest)
         result = agent.run(args.symbol, args.stock_market, date_from=args.date_from, date_to=args.date_to, dry_run=args.dry_run)

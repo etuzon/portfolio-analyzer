@@ -93,6 +93,57 @@ def test_tase_numeric_namespace_matches_leading_zero_without_symbol_special_case
     assert record["price_input"] == 2901
 
 
+@pytest.mark.parametrize("path", ["1101534", "1101534/", "1101534/major_data", "1101534/major_data/"])
+def test_tase_main_page_route_aliases_retain_exact_source_and_same_context(path):
+    url = "https://market.tase.co.il/he/market_data/security/" + path
+    src = source(url=url)
+    records = context_records(src, CANDIDATE)
+    assert context_supported(src)
+    assert {record.get("field") for record in records if record["kind"] == "profile"} == {"name", "industry"}
+    record, = prices(src)
+    assert record["source_url"] == url  # Keep the fetched URL, never fabricate a canonical fetch.
+    assert record["price_input"] == 2901 and record["price_date"] == "2026-11-06"
+    assert validate_contextual_observation(src, CANDIDATE, proposal(record)) == record
+
+
+@pytest.mark.parametrize("path", ["9999999", "1101534/historical_data", "1101534/graph", "1101534/major_data/extra"])
+def test_tase_other_security_and_non_main_tabs_cannot_reuse_main_page_contract(path):
+    src = source(url="https://market.tase.co.il/he/market_data/security/" + path)
+    assert context_records(src, CANDIDATE) == []
+
+
+@pytest.mark.parametrize("text", [TASE.replace("*   1101534", "*   9999999"), TASE.replace("מניה רגילה", "אגרת חוב")])
+def test_tase_base_route_does_not_replace_literal_instrument_identity(text):
+    src = source(text=text, url=URL.removesuffix("/major_data"))
+    assert context_supported(src)  # A recognized failed contract must not fall through to a looser parser.
+    assert context_records(src, CANDIDATE) == []
+
+
+def test_profile_only_research_can_save_context_selected_from_discovered_base_route():
+    from app.security_research_tools import ResearchSession
+    from app.security_web_research import validate_proposals
+    from app.us_market_providers import RequestBudget
+
+    candidate = {**CANDIDATE, "security_key": "1101534|TASE|ILS", "name": "סלקום", "missing_fields": ["profile"]}
+    url = URL.removesuffix("/major_data")
+    budget = RequestBudget()
+    session = ResearchSession({}, budget,
+        search=lambda *_args: [{"url": url, "title": "סלקום"}],
+        resolver=lambda *_args, **_kwargs: [(2, 1, 6, "", ("93.184.216.34", 443))],
+        fetch=lambda *_args: {"url": url, "text": TASE, "reader": "jina"})
+    lead, = session.search(candidate, "1101534 ענף")['sources']
+    fetched = session.read(candidate, lead["source_id"])
+    industry, = [record for record in context_records(fetched, candidate) if record.get("field") == "industry"]
+    proposal = {"records": [{"security_key": candidate["security_key"], "source_id": lead["source_id"], "record_id": industry["record_id"]}]}
+    result = validate_proposals(proposal, {candidate["security_key"]: candidate}, {candidate["security_key"]: session.evidence(candidate)})
+    assert result[candidate["security_key"]]["observations"] == []
+    profile, = result[candidate["security_key"]]["profiles"]
+    assert profile["field"] == "industry" and profile["value"] == "ריאלי - מסחר ושרותים - תקשורת ומדיה"
+    assert profile["source_url"] == url
+    assert result[candidate["security_key"]]["rejected"] is False
+    assert budget.used == 2
+
+
 @pytest.mark.parametrize("replacement", [
     {"stock_market": "NYSE"}, {"currency": "USD"}, {"quote_unit": "currency"}, {"asset_class": "BOND"},
     {"symbol": "5555555", "secondary_symbol": ""},

@@ -88,19 +88,19 @@ def test_model_hard_ceiling_counts_failed_tool_decisions_and_cannot_be_raised():
                        model=lambda *_: requests.append(True) or decision("arbitrary_url", {}))
     with pytest.raises(PriceAgentError, match="model call limit"):
         agent.run("AAPL", "NASDAQ")
-    assert len(requests) == agent.budget.model_calls == 5
+    assert len(requests) == agent.budget.model_calls == 8
     assert agent.budget.rest_calls == len(rest.calls) == 1
     assert not rest.rows
 
 
 def test_failed_internet_calls_consume_budget_and_do_not_enable_a_write():
-    agent = agent_for([decision("search_web", {"query": "AAPL"})] * 5)
+    agent = agent_for([decision("search_web", {"query": "AAPL"})] * 8)
     def failed(_query):
         raise PriceAgentError("Search unavailable")
     agent.search = failed
     with pytest.raises(PriceAgentError, match="model call limit"):
         agent.run("AAPL", "NASDAQ")
-    assert agent.budget.model_calls == agent.budget.web_calls == 5
+    assert agent.budget.model_calls == agent.budget.web_calls == 8
     assert agent.budget.rest_calls == 1
 
 
@@ -423,10 +423,10 @@ def test_older_evidence_cannot_replace_a_newer_current_price_but_can_fill_histor
 def test_settings_select_codex_or_claude_and_do_not_raise_hard_budgets():
     assert price_agent_settings({})["provider"] == "codex"
     assert price_agent_settings({})["model"] == "gpt-6.1-sol"
-    settings = price_agent_settings({"price_agent": {"provider": "claude", "max_model_calls": 99, "max_rest_calls": 99}})
+    settings = price_agent_settings({"price_agent": {"provider": "claude", "max_model_calls": 99, "max_rest_calls": 99, "max_web_calls": 99}})
     assert settings["model"] == "sonnet"
     assert settings["reasoning_effort"] == "medium"
-    assert settings["max_model_calls"] == settings["max_rest_calls"] == 5
+    assert settings["max_model_calls"] == settings["max_rest_calls"] == settings["max_web_calls"] == 8
     with pytest.raises(PriceAgentError):
         price_agent_settings({"price_agent": {"provider": "other"}})
 
@@ -458,13 +458,17 @@ def test_rest_client_requires_explicit_auth_and_https():
         make_rest_client("http://localhost:6443", "test-token")
 
 
-def test_raw_budget_still_cannot_allow_sixth_attempt():
-    budget = RequestBudget(model_limit=99, rest_limit=99)
-    for _ in range(5):
+def test_raw_budget_still_cannot_allow_ninth_attempt():
+    budget = RequestBudget(model_limit=99, rest_limit=99, web_limit=99)
+    for _ in range(8):
         budget.consume("model")
         budget.consume("rest")
+        budget.consume("web")
     with pytest.raises(PriceAgentError):
         budget.consume("model")
     with pytest.raises(PriceAgentError):
         budget.consume("rest")
-    assert budget.model_calls == budget.rest_calls == 5
+    with pytest.raises(PriceAgentError):
+        budget.consume("web")
+    assert budget.model_calls == budget.rest_calls == budget.web_calls == 8
+    assert budget.counts()["max_web_calls"] == 8
