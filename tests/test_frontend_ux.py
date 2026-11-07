@@ -323,8 +323,8 @@ def test_dashboard_header_does_not_repeat_overview_label():
     sidebar = html.split('<aside class="sidebar"', 1)[1].split('</aside>', 1)[0]
     workspace = html.split('<main class="workspace">', 1)[1]
     assert 'class="topbar"' not in workspace
-    assert 'id="dashboardTitle" tabindex="-1">Portfolio analyzer' in sidebar
-    assert 'id="status" role="status" aria-live="polite"' in sidebar
+    assert 'id="dashboardTitle" class="sr-only" tabindex="-1">Portfolio analyzer' in sidebar
+    assert 'id="status" class="sr-only" role="status" aria-live="polite"' in sidebar
     assert 'id="currentUserName"' in sidebar
     assert 'id="logoutButton"' in sidebar
     assert 'id="refresh"' in sidebar
@@ -915,17 +915,17 @@ def test_retirement_salary_schedule_allows_a_zero_income_period():
     assert "Enter 0 for salary and deposits to model a period with no work or pension contributions." in (ROOT / "web/index.html").read_text()
 
 
-def test_sidebar_brand_shows_the_runtime_application_version():
+def test_sidebar_brand_is_an_accessible_icon_only_home_link():
     html = (ROOT / "web/index.html").read_text()
     script = (ROOT / "web/app.js").read_text()
     styles = (ROOT / "web/styles.css").read_text()
 
-    assert 'class="brand-name">Portfolio</span>' in html
-    assert 'id="brandVersion" class="brand-version"' in html
-    assert "async function loadBrandVersion()" in script
-    assert 'const about = await api("/api/about")' in script
-    assert 'loadBrandVersion().catch(() => {})' in script
-    assert ".brand-version" in styles
+    brand = html.split('id="dashboardHome"', 1)[1].split('</a>', 1)[0]
+    assert 'aria-label="Return to dashboard"' in brand
+    assert 'class="brand-mark" aria-hidden="true"' in brand
+    assert 'brand-name' not in brand and 'brandVersion' not in brand
+    assert 'loadBrandVersion' not in script
+    assert 'width: 44px;' in styles
 
 
 def test_pension_owner_is_inherited_from_required_long_term_account():

@@ -52,7 +52,13 @@ def valuation_quote(price_ranges):
 
 def prefer_recorded_prices(recorded_ranges, market_ranges):
     recorded, market = valuation_quote(recorded_ranges), valuation_quote(market_ranges)
-    return recorded is not None and (market is None or recorded[0] > market[0])
+    explicit_override = recorded is not None and any(
+        isinstance(values, dict) and values.get("local_override") is True
+        and values.get("current_date") == recorded[0].isoformat()
+        for values in (recorded_ranges or {}).values()
+    )
+    return recorded is not None and (market is None or recorded[0] > market[0]
+                                    or (explicit_override and recorded[0] == market[0]))
 
 
 def revalue_holding(holding, price_ranges):

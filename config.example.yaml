@@ -21,6 +21,19 @@ market_data:
     enabled: true
   google_finance:
     enabled: false
+  # Automatic US bond/fund research; GET /api/security/market-data.
+  # These feeds populate the provider cache, never recorded portfolio prices.
+  security_lookup:
+    cache_ttl_hours: 24
+    max_provider_requests: 5
+    treasury_direct:
+      enabled: true  # Public Treasury reference data and bounded daily prices.
+    finnhub:
+      enabled: true
+      api_key: "${FINNHUB_API_KEY}"  # Bond data requires suitable provider access.
+    eodhd:
+      enabled: true
+      api_key: "${EODHD_API_KEY}"  # US mutual fund/ETF fundamentals and EOD history.
 
 dashboard:
   https_port: 6443
@@ -47,7 +60,7 @@ alerts:
 
 # Chat can use the locally signed-in Codex CLI without an API key.
 # Run ./scripts/start-codex-bridge.sh on the host before starting Docker.
-# Alternatively set provider: openai and configure an API-compatible service.
+# Alternatively use local_claude (signed-in Claude Code) or an OpenAI-compatible service.
 # The model may request only allowlisted GET routes; it never accesses the DB.
 llm:
   enabled: true
@@ -56,14 +69,31 @@ llm:
   # Used only by provider: openai. Never sent to browsers or model prompts.
   base_url: "https://api.openai.com/v1"
   api_key: "${LLM_API_KEY}"
+  # Empty uses the selected CLI's default; set an explicit model to pin it.
   model: ""
   # none, minimal, low, medium, high, xhigh, or max. Provider/model support varies.
   reasoning_effort: "medium"
-  # Hard ceiling: 6 model exchanges per message, including the final answer.
-  max_tool_loops: 6
+  # Hard ceilings per message; values above 5 are capped, including failed calls.
+  max_tool_loops: 5
+  max_rest_calls: 5
   # Saved user/assistant messages included with the next question; 0 disables context.
   max_context_messages: 12
   timeout_seconds: 30
+
+# Host-side skill runner; independent of the read-only dashboard chat.
+# Requires a signed-in CLI, an authorized REST bearer token, and Brave Search.
+price_agent:
+  provider: "codex"  # codex (default) or claude
+  # Empty resolves to gpt-6.1-sol for Codex, sonnet for Claude Code.
+  model: ""
+  reasoning_effort: "medium"
+  max_model_calls: 5
+  max_rest_calls: 5
+  timeout_seconds: 110
+  base_url: "https://localhost:6443"
+  search:
+    provider: "brave"
+    api_key: "${BRAVE_SEARCH_API_KEY}"
 
 dividends:
   enabled: true

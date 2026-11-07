@@ -6,9 +6,15 @@ bridge_dir=${PORTFOLIO_CODEX_DIR:-/tmp/portfolio-codex}
 bridge_socket=$bridge_dir/bridge.sock
 bridge_pid=$bridge_dir/bridge.pid
 
-command -v codex >/dev/null || { echo "Install Codex CLI and sign in with codex login first." >&2; exit 1; }
+local_provider=$(cd "$repo_dir" && "$repo_dir/.venv/bin/python" -c 'from app.config import load_config; from app.llm_assistant import assistant_settings; print(assistant_settings(load_config().raw)["provider"])')
+if [[ "$local_provider" == "local_claude" ]]; then
+  command -v claude >/dev/null || { echo "Install Claude Code and sign in first." >&2; exit 1; }
+  claude auth status >/dev/null 2>&1 || { echo "Sign in to Claude Code first." >&2; exit 1; }
+else
+  command -v codex >/dev/null || { echo "Install Codex CLI and sign in with codex login first." >&2; exit 1; }
+  codex login status >/dev/null 2>&1 || { echo "Sign in with codex login first." >&2; exit 1; }
+fi
 command -v setsid >/dev/null || { echo "The local bridge requires the Linux setsid utility." >&2; exit 1; }
-codex login status >/dev/null 2>&1 || { echo "Sign in with codex login first." >&2; exit 1; }
 mkdir -p -- "$bridge_dir"
 chmod 700 "$bridge_dir"
 if [[ "${1:-}" == "--restart" ]]; then
@@ -69,7 +75,7 @@ nohup setsid "$repo_dir/.venv/bin/python" -m app.codex_bridge --socket "$bridge_
 echo "$!" >"$bridge_pid"
 for attempt in {1..30}; do
   if [[ -S "$bridge_socket" ]]; then
-    echo "Local Codex bridge started. Chat uses the existing Codex sign-in; no API key is needed."
+    echo "Local AI bridge started. Chat uses the configured CLI sign-in; no API key is needed."
     exit 0
   fi
   sleep 0.1

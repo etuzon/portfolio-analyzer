@@ -161,7 +161,7 @@ assert.ok(!$('assistantMessages').innerHTML.includes('private'));
 """)
 
 
-def test_disconnected_assistant_keeps_history_and_guides_local_codex_setup_in_each_language():
+def test_disconnected_assistant_keeps_history_and_guides_local_ai_setup_in_each_language():
     _run("""
 const ui=assistantUi(); ui.enabled=false; ui.chat=chat('saved'); ui.chats=[summary(ui.chat)];
 api=async()=>{throw new Error('disconnected assistant must not submit');};
@@ -169,7 +169,7 @@ for(const language of ['he','en']) {
   state.language=language; renderAssistantChat();
   assert.ok($('assistantMessages').innerHTML.includes('Saved answer'));
   assert.ok($('askAssistant').disabled);
-  assert.ok($('assistantStatus').textContent.includes('Codex'));
+  assert.ok(language==='he' ? $('assistantStatus').textContent.includes('גשר הבינה המלאכותית') : $('assistantStatus').textContent.includes('local AI bridge'));
   assert.ok(language==='he' ? $('assistantStatus').textContent.includes('השיחות השמורות') : $('assistantStatus').textContent.includes('Saved chats'));
 }
 $('assistantPrompt').value='Keep my draft'; await askPortfolioAssistant();

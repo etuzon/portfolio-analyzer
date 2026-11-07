@@ -34,7 +34,7 @@ for file in "${files[@]}"; do
     echo "Use a repository-relative file path without '..': $file" >&2
     exit 2
   fi
-  if [[ -d "$file" ]]; then
+  if [[ -d "$file" && ! -L "$file" ]]; then
     echo "List files explicitly; directory paths are not accepted: $file" >&2
     exit 2
   fi

@@ -332,13 +332,13 @@ def test_data_gap_badges_and_provider_names_use_localized_display_labels():
     assert '"Import DB": "מסד הייבוא"' in i18n
 
     functions = []
-    for name in ("esc", "dataGapStatus", "dataGapDetails", "dataGapTooltip", "statusCell"):
+    for name in ("esc", "aiSecurityKey", "aiOutcomeFor", "aiOutcomeMessage", "dataGapStatus", "dataGapDetails", "dataGapTooltip", "statusCell"):
         start = re.search(rf"^function {name}\(", script, re.M).start()
         end = re.search(r"^}", script[start:], re.M).end()
         functions.append(script[start:start + end])
     behavioral = "const window = {};\n" + i18n + "\n".join(functions) + """
 const assert = require('node:assert/strict');
-const state = {language:'he'};
+const state = {language:'he',aiEnrichment:{outcomes:[]}};
 const t = text => window.PortfolioI18n.translate(text, state.language);
 const optionLabel = t;
 const item = {missing:['dividend','profit/market cap'],market_cap:null,
@@ -346,6 +346,7 @@ const item = {missing:['dividend','profit/market cap'],market_cap:null,
  provider_status:{'prices.stooq':'error: ConnectTimeout','fundamentals.sec_company_facts':'ok'}};
 for(const language of ['he','en']) {
  state.language=language;
+ state.aiEnrichment.outcomes=[];
  const detail=dataGapTooltip(item);
  assert.equal(detail.split('\\n').length,3);
  assert.ok(!detail.includes('ConnectTimeout')&&!detail.includes('stooq')&&!detail.includes('SEC'));
@@ -376,6 +377,10 @@ for(const language of ['he','en']) {
  const recovered=statusCell({...item,missing:[]});
  assert.ok(recovered.includes(t('All displayed data available')));
  assert.ok(!recovered.includes('ConnectTimeout'));
+ state.aiEnrichment.outcomes=[{code:'evidence_rejected',status:'unavailable'}];
+ const researched=dataGapTooltip(item);
+ assert.ok(researched.includes(t('Last AI research')));
+ assert.ok(researched.includes(t('The source did not provide enough verified information.')));
 }
 """
     subprocess.run(["node"], input=behavioral, text=True, capture_output=True, check=True)

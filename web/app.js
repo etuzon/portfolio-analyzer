@@ -138,6 +138,7 @@ const state = {
   auth: { user: null, csrfToken: "", forcedPasswordChange: false },
   users: [],
   authenticatedAppStarted: false,
+  aiEnrichment: { job: null, outcomes: [], pending: false, resume: false, message: "", timer: null, polls: 0 },
   language: "he",
 };
 
@@ -746,7 +747,7 @@ function assistantStatusText(ui) {
     const reference = assistantReferenceId(ui.requestId);
     return [t(ui.status), reference ? assistantText("Reference: {id}", { id: `\u2066${reference}\u2069` }) : ""].filter(Boolean).join(" ");
   }
-  if (ui.enabled === false) return t("Connect the local Codex bridge or configure an AI provider. Saved chats are still available.");
+  if (ui.enabled === false) return t("Connect the local AI bridge or configure an AI provider. Saved chats are still available.");
   return "";
 }
 
@@ -859,7 +860,7 @@ async function deleteAssistantChat() {
 
 function assistantFailure(error, fallback) {
   const messages = {
-    assistant_unavailable: "The assistant is unavailable. Reconnect the local Codex bridge and try again.",
+    assistant_unavailable: "The assistant is unavailable. Reconnect the local AI bridge and try again.",
     assistant_limit: "The request reached its read limit. Try a narrower question.",
     assistant_invalid_response: "The assistant returned an invalid answer. Your draft is kept. Try again.",
     assistant_invalid_request: "The question could not be accepted. Check your draft and try again.",
@@ -870,7 +871,7 @@ function assistantFailure(error, fallback) {
   };
   if (messages[error?.code]) return messages[error.code];
   return /not configured/i.test(String(error?.message || ""))
-    ? "Connect the local Codex bridge or configure an AI provider. Saved chats are still available."
+    ? "Connect the local AI bridge or configure an AI provider. Saved chats are still available."
     : /limit|read limit/i.test(String(error?.message || ""))
       ? "The request reached its read limit. Try a narrower question."
       : fallback;
@@ -1163,6 +1164,7 @@ async function saveLoggingSettings() {
 }
 
 const WRITE_CONTROL_IDS = new Set([
+  "enrichMissingData",
   "saveXrayReport", "fetchXrayIssuer", "chooseXrayReportFile",
   "addAlertCondition", "newAlertRule", "addBannerItem", "addPensionPeriod", "addPensionRate", "addPensionScenario",
   "applyBackupSchedule", "attachAccountToMember", "attachEditAccountPerson", "attachLocalAccountPerson",
@@ -1201,6 +1203,188 @@ function canAdmin() {
 
 function canWrite() {
   return ["Admin", "Operator"].includes(currentUser()?.role);
+}
+
+function aiSecurityKey(holding = {}) {
+  return [holding.symbol, holding.stock_market, holding.currency].map((value) => String(value || "").trim().toUpperCase()).join("|");
+}
+
+function aiOutcomeMessage(outcome) {
+  const messages = {
+    data_found: "Verified data was saved.",
+    partial_data: "Some data was found; other fields remain unavailable.",
+    data_unavailable: "Reliable data could not be found. You can enter it in Prices or security settings.",
+    ai_unavailable: "AI research is unavailable. Check the AI configuration or try again later.",
+    request_limit: "The request limit was reached. This security may need a new request.",
+    provider_unavailable: "The data source is unavailable. Try again later or enter verified data manually.",
+    research_unavailable: "Internet research is unavailable. Configure the search service and try again.",
+    evidence_rejected: "The source did not provide enough verified information.",
+    not_processed: "This security was not checked in this request.",
+    not_open: "This security no longer has an open holding.",
+    authentication_expired: "Sign in again before continuing AI research.",
+    job_failed: "AI research could not finish. Saved data is retained.",
+    nothing_missing: "No supported missing data was found to research.",
+  };
+  return t(messages[outcome?.code] || (outcome?.status === "updated" ? messages.data_found : outcome?.status === "partial" ? messages.partial_data : messages.data_unavailable));
+}
+
+function aiOutcomeFor(item) {
+  const key = aiSecurityKey(item.holding);
+  return state.aiEnrichment.outcomes.find((outcome) => aiSecurityKey(outcome) === key);
+}
+
+function resetAIEnrichment() {
+  const ui = state.aiEnrichment;
+  clearTimeout(ui.timer);
+  state.aiEnrichment = { job: null, outcomes: [], pending: false, resume: false, message: "", timer: null, polls: 0 };
+  renderAIEnrichment();
+}
+
+function renderAIEnrichment() {
+  const button = $("enrichMissingData");
+  if (!button) return;
+  const ui = state.aiEnrichment;
+  button.disabled = !canWrite() || ui.pending;
+  button.textContent = t(ui.pending ? "Finding missing data…" : ui.resume ? "Check AI progress" : "Find missing data with AI");
+  const permission = t("AI data updates require Admin or Operator permission.");
+  button.title = canWrite() ? t("Research missing data for open holdings and save verified results.") : permission;
+  $("aiEnrichmentAction").title = button.title;
+  $("aiEnrichmentAction").tabIndex = canWrite() ? -1 : 0;
+  $("aiEnrichmentAction").setAttribute("aria-label", button.title);
+  const status = $("aiEnrichmentStatus");
+  let message = ui.message ? t(ui.message) : (!canWrite() && currentUser() ? permission : "");
+  if (ui.pending) message = t("AI is researching open holdings. You can keep using the dashboard.");
+  else if (!message && ui.job) {
+    const summary = ui.job.summary || {};
+    message = ui.job.code === "nothing_missing" ? aiOutcomeMessage(ui.job)
+      : `${t("AI research finished")}: ${summary.updated || 0} ${t("securities updated")}, ${summary.partial || 0} ${t("partly updated")}, ${(summary.unavailable || 0) + (summary.not_attempted || 0)} ${t("still unavailable")}.`;
+    if (ui.job.status === "failed") message = aiOutcomeMessage(ui.job);
+  }
+  status.textContent = message;
+  status.hidden = !message;
+  $("aiEnrichmentDetails").hidden = !ui.outcomes.length;
+  const results = $("aiEnrichmentResults");
+  const resultHtml = ui.outcomes.map((outcome) => `<li><bdi dir="auto">${esc([outcome.symbol, outcome.stock_market, outcome.currency].filter(Boolean).join(" · "))}</bdi>: ${esc(aiOutcomeMessage(outcome))}</li>`).join("");
+  if (results.innerHTML !== resultHtml) {
+    const scrollTop = results.scrollTop;
+    results.innerHTML = resultHtml;
+    results.scrollTop = scrollTop;
+  }
+  document.querySelectorAll("[data-ai-gap-key]").forEach((node) => {
+    const item = state.allPortfolioItems.find((entry) => aiSecurityKey(entry.holding) === node.dataset.aiGapKey);
+    if (item) node.title = dataGapTooltip(item);
+  });
+}
+
+function acceptAIEnrichmentJob(job) {
+  const ui = state.aiEnrichment;
+  ui.job = job;
+  if (Array.isArray(job.outcomes)) {
+    const outcomes = new Map(ui.outcomes.map((outcome) => [aiSecurityKey(outcome), outcome]));
+    job.outcomes.forEach((outcome) => outcomes.set(aiSecurityKey(outcome), outcome));
+    ui.outcomes = [...outcomes.values()];
+  }
+  ui.pending = ["queued", "running"].includes(job.status);
+  ui.resume = false;
+  ui.message = "";
+  renderAIEnrichment();
+  if (!ui.pending) {
+    (job.outcomes || []).forEach((outcome) => {
+      const log = outcome.status === "updated" ? appLog : appWarn;
+      log("security.ai_enrichment.result", { symbol: outcome.symbol, stock_market: outcome.stock_market, currency: outcome.currency, status: outcome.status, code: outcome.code });
+    });
+    if (job.portfolio_refresh_required && ui.refreshedJob !== job.request_id) {
+      ui.refreshedJob = job.request_id;
+      loadPortfolio().catch(() => {
+        if (state.aiEnrichment !== ui) return;
+        ui.message = "Verified data was saved. Use Refresh to reload the displayed portfolio.";
+        renderAIEnrichment();
+      });
+    }
+  }
+}
+
+function scheduleAIEnrichmentPoll() {
+  const ui = state.aiEnrichment;
+  clearTimeout(ui.timer);
+  if (!ui.pending) return;
+  if (ui.polls >= 120) {
+    ui.pending = false;
+    ui.resume = true;
+    ui.message = "AI research is taking longer. Check AI progress to read the same request.";
+    renderAIEnrichment();
+    return;
+  }
+  ui.timer = setTimeout(async () => {
+    if (state.aiEnrichment !== ui || !currentUser()) return;
+    ui.polls += 1;
+    try {
+      const job = await api(`/api/securities/enrichment/ai/${encodeURIComponent(ui.job.request_id)}`);
+      if (state.aiEnrichment !== ui) return;
+      acceptAIEnrichmentJob(job);
+      scheduleAIEnrichmentPoll();
+    } catch {
+      if (state.aiEnrichment !== ui) return;
+      ui.pending = false;
+      ui.resume = true;
+      ui.message = "AI progress could not be loaded. Check AI progress to retry the same request.";
+      renderAIEnrichment();
+    }
+  }, 3000);
+}
+
+async function loadAIEnrichmentStatus() {
+  const ui = state.aiEnrichment;
+  const version = ui.version;
+  const data = await api("/api/securities/enrichment/status");
+  if (state.aiEnrichment !== ui || ui.version !== version) return;
+  ui.outcomes = data.items || [];
+  if (data.active_job) {
+    acceptAIEnrichmentJob(data.active_job);
+    scheduleAIEnrichmentPoll();
+  } else renderAIEnrichment();
+}
+
+async function requestAIEnrichment() {
+  const ui = state.aiEnrichment;
+  if (!canWrite() || ui.pending) return;
+  ui.version = (ui.version || 0) + 1;
+  clearTimeout(ui.timer);
+  ui.pending = true;
+  ui.message = "";
+  ui.polls = 0;
+  renderAIEnrichment();
+  try {
+    if (ui.resume) {
+      if (ui.job?.request_id) {
+        const job = await api(`/api/securities/enrichment/ai/${encodeURIComponent(ui.job.request_id)}`);
+        if (state.aiEnrichment !== ui) return;
+        acceptAIEnrichmentJob(job);
+      } else {
+        await loadAIEnrichmentStatus();
+        if (state.aiEnrichment !== ui) return;
+        if (!ui.job) {
+          ui.pending = false;
+          ui.resume = false;
+          ui.message = "No active AI request was found. Start a new request when ready.";
+          renderAIEnrichment();
+        }
+      }
+    } else {
+      ui.job = null;
+      const job = await api("/api/securities/enrichment/ai", { method: "POST", body: "{}" });
+      if (state.aiEnrichment !== ui) return;
+      acceptAIEnrichmentJob(job);
+    }
+    scheduleAIEnrichmentPoll();
+  } catch (error) {
+    if (state.aiEnrichment !== ui) return;
+    ui.pending = false;
+    ui.resume = true;
+    ui.message = "AI progress could not be loaded. Check AI progress to retry the same request.";
+    appWarn("security.ai_enrichment.interrupted", { code: error.code || "request_interrupted" });
+    renderAIEnrichment();
+  }
 }
 
 function authRequestHeaders(headers = {}) {
@@ -1262,11 +1446,13 @@ function renderCurrentUser() {
   }
   if ($("currentUserRole")) $("currentUserRole").textContent = user ? optionLabel(user.role) : "";
   applyRolePermissions();
+  renderAIEnrichment();
   renderAssistantChat();
 }
 
 function setAuthenticatedSession(payload) {
   if (state.auth.user?.id !== payload?.user?.id) {
+    resetAIEnrichment();
     state.alarmClearPending = false;
     state.alarmClearMessage = null;
     clearBrokerForm();
@@ -1291,6 +1477,7 @@ function setAuthenticatedSession(payload) {
 }
 
 function showLogin(message = "") {
+  resetAIEnrichment();
   clearBrokerForm();
   if (typeof resetVar === "function") resetVar();
   if (typeof resetHeatmap === "function") resetHeatmap();
@@ -2071,8 +2258,6 @@ function applyLanguage() {
   document.documentElement.lang = state.language === "he" ? "he" : "en";
   document.documentElement.dir = state.language === "he" ? "rtl" : "ltr";
   document.title = t("appName");
-  const brand = document.querySelector(".brand-name");
-  if (brand) brand.textContent = t("brand");
   const topTitle = $("dashboardTitle");
   if (topTitle) topTitle.textContent = t("appName");
   const marketEyebrow = document.querySelector(".ticker-panel .eyebrow");
@@ -2150,6 +2335,22 @@ function applyLanguage() {
 function revealInitializedApp() {
   document.documentElement.classList.remove("i18n-pending");
 }
+
+function updateDashboardStatusVisibility() {
+  const node = $("status");
+  const text = node.textContent.trim();
+  const countPrefix = text.match(/^\d+\s+/)?.[0] || "";
+  const summary = countPrefix && ["portfolio positions", "portfolio positions matched"].some((label) => text.slice(countPrefix.length).startsWith(t(label)));
+  const routine = ["Preparing dashboard", "Refreshing analytics", "Updating analytics in the background", "Analytics updated"].some((label) => text === t(label));
+  node.classList.toggle("sr-only", !text || Boolean(summary) || routine);
+  const failedSummary = summary && ["Financial data could not be updated. Use Refresh to retry.", "updates failed. Use Refresh to retry."].some((label) => text.includes(t(label)));
+  const notice = $("dashboardNotice");
+  notice.hidden = !failedSummary;
+  notice.textContent = failedSummary ? t("Financial data could not be updated. Use Refresh to retry.") : "";
+}
+
+const dashboardStatusObserver = new MutationObserver(updateDashboardStatusVisibility);
+dashboardStatusObserver.observe($("status"), { childList: true, characterData: true, subtree: true });
 
 function normalizeDashboardOrders() {
   if (!state.dashboard) return;
@@ -3325,7 +3526,8 @@ function dataGapDetails(item) {
 
 function dataGapTooltip(item) {
   const reasons = dataGapDetails(item).map(({ label, reason }) => `• ${optionLabel(label)}${reason ? `: ${t(reason)}` : ""}`);
-  return [t("Missing data"), ...reasons].join("\n");
+  const outcome = aiOutcomeFor(item);
+  return [t("Missing data"), ...reasons, ...(outcome ? [`${t("Last AI research")}: ${aiOutcomeMessage(outcome)}`] : [])].join("\n");
 }
 
 function statusCell(item) {
@@ -3345,9 +3547,9 @@ function statusCell(item) {
   const details = dataGapDetails(item);
   const confirmed = details.filter((entry) => entry.status === "missing").length;
   return `<div class="status-cell status-cell-compact">
-    ${confirmed ? `<strong tabindex="0" title="${esc(dataGapTooltip(item))}">${esc(t(`${confirmed} data gaps`))}</strong>` : ""}
-    ${details.some((entry) => entry.status === "updating") ? `<span class="badge neutral" tabindex="0" title="${esc(dataGapTooltip(item))}">${esc(t("Updating analytics"))}</span>` : ""}
-    ${details.some((entry) => entry.status === "failed") ? `<span class="badge partial" tabindex="0" title="${esc(dataGapTooltip(item))}">${esc(t("Update failed"))}</span>` : ""}
+    ${confirmed ? `<strong data-ai-gap-key="${esc(aiSecurityKey(item.holding))}" tabindex="0" title="${esc(dataGapTooltip(item))}">${esc(t(`${confirmed} data gaps`))}</strong>` : ""}
+    ${details.some((entry) => entry.status === "updating") ? `<span class="badge neutral" data-ai-gap-key="${esc(aiSecurityKey(item.holding))}" tabindex="0" title="${esc(dataGapTooltip(item))}">${esc(t("Updating analytics"))}</span>` : ""}
+    ${details.some((entry) => entry.status === "failed") ? `<span class="badge partial" data-ai-gap-key="${esc(aiSecurityKey(item.holding))}" tabindex="0" title="${esc(dataGapTooltip(item))}">${esc(t("Update failed"))}</span>` : ""}
   </div>`;
 }
 
@@ -3675,7 +3877,7 @@ function renderPortfolioValueDashboard(items) {
   const securitiesValue = sum(items.map((item) => normalizedField(item, "market_value")));
   const cashValue = sum(portfolioAccounts().map((account) => normalizedAmount(accountCashBalance(account), account.currency || state.baseCurrency)));
   const primaryValue = securitiesValue + cashValue;
-  const cashByAccount = portfolioAccounts().map((account) => {
+  const cashByAccount = portfolioAccounts().filter((account) => account.type === "Investment").map((account) => {
     const currency = String(account.currency || "").trim();
     const balance = accountNativeCashBalance(account);
     return `${accountLabel(account)} · ${optionLabel("Cash")}: ${balance !== null ? money(balance, currency, 2) : optionLabel("Not available")}`;
@@ -3724,7 +3926,7 @@ function renderPortfolioValueDashboard(items) {
         .filter(([currency]) => currency !== state.baseCurrency)
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([currency, value]) => money(value, currency, 0));
-      const localLine = localAmounts.length ? `<small class="account-summary-local" title="${esc(optionLabel("Source currencies"))}"><bdi dir="auto">${esc(localAmounts.join(" · "))}</bdi></small>` : "";
+      const localLine = `<small class="account-summary-local"${localAmounts.length ? ` title="${esc(optionLabel("Source currencies"))}"` : ' aria-hidden="true"'}><bdi dir="auto">${esc(localAmounts.join(" · "))}</bdi></small>`;
       const title = [
         `${optionLabel("Account")}: ${account.account}`,
         `${optionLabel("Account type")}: ${optionLabel("Investment")}`,
@@ -3746,11 +3948,11 @@ function renderPortfolioValueDashboard(items) {
           ${accountRisk ? `<div><span class="account-summary-metric-label">${esc(optionLabel("Risk"))}</span>${riskBadge(accountRisk)}</div>` : ""}
           <div><span class="account-summary-metric-label">${esc(optionLabel("Portfolio share"))}</span>${accountShareBadge(share)}</div>
         </div>
-        ${accountRisk && typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(accountRisk) : ""}
-        ${segments ? `<div class="account-summary-allocation" title="${esc(optionLabel("Allocation is based on each holding's asset-risk category. Cash and money-market holdings are No risk only in the base currency; foreign-currency exposure is Low risk."))}">
+        <div class="account-summary-allocation"${segments ? ` title="${esc(optionLabel("Allocation is based on each holding's asset-risk category. Cash and money-market holdings are No risk only in the base currency; foreign-currency exposure is Low risk."))}"` : ' aria-hidden="true"'}>${segments ? `
           <div class="account-risk-allocation-bar" role="img" aria-label="${esc(`${optionLabel("Account risk allocation")}: ${allocation.bands.map((band) => `${optionLabel(band.label)} ${fmt(band.percent, 1)}%`).join(", ")}`)}">${segments}</div>
           <div class="account-risk-allocation-labels">${labels}</div>
-        </div>` : ""}
+        ` : ""}</div>
+        <div class="account-summary-footer">${accountRisk && typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(accountRisk) : ""}</div>
       </article>`;
     })
     .join("");
@@ -4437,11 +4639,12 @@ function renderLongTermDashboard() {
 function renderMarketCostBars(items) {
   const top = [...items].sort((a, b) => normalizedField(b, "market_value") - normalizedField(a, "market_value")).slice(0, 7);
   const width = 360;
-  const height = 242;
+  const longestLabel = Math.max(9, ...top.map((item) => String(item.holding.symbol || "").length));
+  const padBottom = 44 + Math.max(0, longestLabel - 9) * 3;
+  const height = 168 + padBottom;
   const padLeft = 28;
   const padRight = 22;
   const padTop = 22;
-  const padBottom = 74;
   const plotHeight = height - padTop - padBottom;
   const rows = top.map((item) => ({
     symbol: item.holding.symbol,
@@ -13668,15 +13871,6 @@ async function removeUser(userId) {
   await loadUsers();
 }
 
-async function loadBrandVersion() {
-  const badge = $("brandVersion");
-  if (!badge) return;
-  const about = await api("/api/about");
-  const version = String(about.version || "").trim();
-  badge.textContent = version ? `v${version.replace(/^v/i, "")}` : "";
-  badge.hidden = !version;
-}
-
 function setResearchSection(section = "finance") {
   const selected = ["finance", "outlook", "signals"].includes(section) ? section : "finance";
   state.researchSection = selected;
@@ -13758,7 +13952,6 @@ function mountModalHomeLink(modal) {
   link.classList.add("modal-home-link");
   link.setAttribute("aria-label", t("Return to dashboard"));
   link.setAttribute("title", t("Return to dashboard"));
-  link.querySelector(".brand-version")?.setAttribute("aria-label", t("Application version"));
   modal.append(link);
   positionModalHomeLinks();
 }
@@ -14923,6 +15116,7 @@ $("refresh").addEventListener("click", () => {
   loadPortfolio({ refresh: true }).catch((error) => { $("status").textContent = `Error: ${error.message}`; });
   loadBanner().catch(() => {});
 });
+$("enrichMissingData").addEventListener("click", requestAIEnrichment);
 $("assistantComposer").addEventListener("submit", (event) => {
   event.preventDefault();
   askPortfolioAssistant();
@@ -15144,7 +15338,7 @@ async function startAuthenticatedApp() {
   await loadClientStateFromServer().catch((error) => appWarn("client_state.load_failed", { message: error.message }));
   loadClientStateFromStorage();
   renderCurrentUser();
-  loadBrandVersion().catch(() => {});
+  loadAIEnrichmentStatus().catch(() => {});
   loadPortfolio().catch(reportBackgroundError);
   loadBanner().catch(() => {});
   loadAlerts().catch(() => {});

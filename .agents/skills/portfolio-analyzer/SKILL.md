@@ -5,6 +5,20 @@ description: Build or modify portfolio-analysis tools with local portfolio data 
 
 # Portfolio Analyzer
 
+## Mandatory AI Data Boundary
+
+When an AI agent reads, researches, enriches or updates application data, it must
+**NEVER read or write a database, directly or indirectly**. All application
+information and changes go through explicitly allowlisted REST endpoints with
+authentication and authorization using the initiating user's permissions.
+SQL, ORM access, database clients/files, backups, exports and shell helpers are
+not alternatives when an approved endpoint is missing. Do not expose arbitrary
+URLs, verbs or SQL as an agent tool. Respect role/token read-only restrictions
+and browser CSRF; never send credentials to a model or log them. The application
+may implement its own storage behind these endpoints; the agent receives no
+database access. Runtime AI orchestration must preserve this boundary in code
+and tools, rather than relying on prompts alone.
+
 Build portfolio dashboards, screeners, import workflows, and alerts around a local source-of-truth database with optional read-only external portfolio imports.
 
 ## Core Workflow

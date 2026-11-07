@@ -98,9 +98,9 @@ The bridge exposes only a local Unix socket. It receives conversation evidence a
 
 The application validates that selection against the code-owned catalog at `GET /api/assistant/read-tools`, then makes an authenticated **GET** through the actual FastAPI REST routes using the requesting user's identity. Unknown tools/arguments, arbitrary URLs, path traversal, redirects and all write verbs are rejected. The agent has no database interface. Approved routes cover accounts, current holdings, transactions and trade history, reports, historical prices, fundamentals, dividends, quote/provider status, market screening, pensions, FX, events and alerts. The catalog is enforced internally rather than displayed in the chat popup. Chat/settings persistence and user-initiated conversation deletion are application-owned and are never exposed as agent capabilities.
 
-Each question permits at most **six model exchanges including its final answer**, with at most one approved read per exchange. The last exchange has no tools. The next user message gets a new budget. Only the last `llm.max_context_messages` user/assistant messages (default `12`; `0` disables context) are passed as conversation context, while the complete saved conversation remains visible. Prompts require evidence, unknown-data disclosure, per-currency amounts, `dd/mm/yyyy` dates, and answers in the active language. These instructions reduce guessing; independent simulations are still needed to evaluate real answers.
+Each question permits at most **five model exchanges including its final answer**, and at most five REST attempts including failures, with at most one approved read per exchange. The last exchange has no tools. The next user message gets a new budget. Only the last `llm.max_context_messages` user/assistant messages (default `12`; `0` disables context) are passed as conversation context, while the complete saved conversation remains visible. Prompts require evidence, unknown-data disclosure, per-currency amounts, `dd/mm/yyyy` dates, and answers in the active language. These instructions reduce guessing; independent simulations are still needed to evaluate real answers.
 
-An API-key provider remains optional: set `llm.provider: openai`, `enabled: true`, `base_url`, `api_key` and `model` in private `config.yaml`. It uses `POST /chat/completions`; credentials remain server-side. `llm.reasoning_effort` is forwarded to that provider. Model/provider compatibility must be configured explicitly.
+An API-key provider remains optional: set `llm.provider: openai`, `enabled: true`, `base_url`, `api_key` and `model` in private `config.yaml`. It uses `POST /chat/completions`; credentials remain server-side. `llm.reasoning_effort` is forwarded to the selected provider, including local CLIs. Set `llm.provider: local_claude` (or `claude`) for Claude Code; the existing socket bridge supports both CLIs. Start it with `./scripts/start-codex-bridge.sh --restart` after installing/signing in to the chosen CLI. The price updater uses its own `price_agent` settings and never gives dashboard chat write tools. Model/provider compatibility must be configured explicitly.
 
 The controlled 30-conversation, three-question regression corpus is in `tests/test_assistant_qa_simulations.py`. To replay it against the real local Codex model using only synthetic portfolio/provider data, start the bridge and run:
 
@@ -109,6 +109,266 @@ PORTFOLIO_CODEX_SOCKET=/tmp/portfolio-codex/bridge.sock ./.venv/bin/python tests
 ```
 
 Transcripts and review flags are saved under `/tmp/portfolio-chat-qa`. The real replay is opt-in and is not run by pytest. Synthetic provider facts and real model behavior are reported separately; automated flags do not establish answer correctness.
+
+### Security price API and AI updater
+
+#### Automatic U.S. bond and fund retrieval
+
+`GET /api/security/market-data` retrieves provider data automatically. Supply an
+identifier and instrument kind, not manually entered prices. It works for
+supported U.S. bonds, mutual funds and ETFs generally; no sample CUSIP is
+hardcoded and the security need not already be registered or held.
+
+```text
+/api/security/market-data?identifier=91282CKD2&kind=bond
+/api/security/market-data?identifier=037833DV9&kind=bond&identifier_type=cusip
+/api/security/market-data?identifier=SWPPX&kind=fund&date_from=01/01/2025&date_to=31/12/2025
+/api/security/market-data?identifier=VTI&kind=etf
+```
+
+Parameters:
+
+| Parameter | Meaning |
+| --- | --- |
+| `identifier`, `kind` | Exact identifier and `bond`, `fund` or `etf` |
+| `identifier_type` | `auto`, `cusip`, `isin` or `ticker`; bonds require CUSIP/ISIN |
+| `provider` | `auto`, `finnhub`, `eodhd` or `treasury_direct` |
+| `date_from`, `date_to` | Inclusive `dd/mm/yyyy` or ISO dates; defaults to the last 31 days through today |
+| `refresh` | Retry the provider even when a fresh cache entry exists |
+| `cache_only` | Read retained evidence without provider access; incompatible with `refresh` |
+
+The response contains confirmed `security` identity, dated `items`,
+`latest_in_range`, `quote`, reference `details`, coverage, source URLs, retrieval
+time and provider/cache statuses. A historical query has `quote: null` so its
+last historical observation is not labelled current. A current-range quote is
+the last available observation, not a guaranteed live executable price.
+`details_scope` explicitly marks the profile as the latest provider data rather
+than historical holdings, ratings or other point-in-time reference data.
+
+Configure `market_data.security_lookup` in the existing private `config.yaml`:
+
+```yaml
+market_data:
+  security_lookup:
+    cache_ttl_hours: 24
+    max_provider_requests: 5
+    treasury_direct:
+      enabled: true
+    finnhub:
+      enabled: true
+      api_key: "${FINNHUB_API_KEY}"
+    eodhd:
+      enabled: true
+      api_key: "${EODHD_API_KEY}"
+```
+
+Merge this subsection with the existing market-data configuration. Provider keys
+stay server-side. Docker Compose forwards `FINNHUB_API_KEY`, `EODHD_API_KEY`
+and `BRAVE_SEARCH_API_KEY` from the host environment or private `.env` file;
+recreate the container after changing them. Finnhub bond profiles/history require suitable entitlements;
+EODHD fund/ETF reference data and history depend on account access and coverage.
+The public TreasuryDirect fallback is for Treasury securities, not corporate
+bonds. Its daily files require separate bounded requests, so returned history
+can be partial; inspect `coverage.next_date` and `truncated`. Do not loop over a
+long history without considering the remaining request budget. Each fetch has a
+hard maximum of five upstream attempts, including failures and redirects; it
+does not invoke an LLM. Existing AI requests retain their independent five-model
+and five-application-REST ceilings. No subscription is purchased by this code.
+
+Saved snapshots reuse `SqliteCache`. Fresh entries avoid provider calls; failed
+refreshes preserve useful snapshots marked stale. `not_configured`, `not_found`,
+`provider_error`, `partial` and `missing` distinguish configuration, coverage and
+availability problems. Missing prices are not fabricated or filled. Source raw
+units and bases are retained: percent-of-par is distinct from cents, and a fund
+NAV is not automatically an ETF market close. Provider-adjusted close remains
+separate from raw close. Treasury programme purchase/redemption columns retain
+their provider definitions. Coupon and auction data are not current market yield
+or a secondary-market quote.
+
+This endpoint is authenticated and available to Viewer users and authorized
+read-only REST clients. It updates only the provider research cache, not local
+price overrides, securities, transactions, quantities or cash. Existing bond
+holdings do not declare face value per quantity unit; fetched percent-of-par
+prices therefore do not automatically revalue positions. The dedicated
+`us-bond-fund-data` skill is shared by Codex and Claude Code, and dashboard chat
+can call `get_security_market_data` directly. Its research guidance remains open
+to other suitable financial sources when the configured providers lack data.
+
+AI agents must never read or write application databases directly or through
+SQL, ORMs, local database files or shell helpers. Their entire application-data
+boundary is an explicit REST allowlist, authenticated and authorized using the
+initiating user's identity. A successful sign-in does not grant write access:
+roles, token service/access modes and browser CSRF remain enforced at the actual
+routes. Application endpoints own internal persistence; no database connection
+or arbitrary URL/SQL tool is exposed to the model.
+
+Provider contracts:
+[Finnhub owner SDK](https://github.com/Finnhub-Stock-API/finnhub-python),
+[TreasuryDirect daily pricing](https://www.treasurydirect.gov/GA-FI/FedInvest/selectSecurityPriceDate),
+[EODHD fund fundamentals](https://eodhd.com/financial-apis/stock-etfs-fundamental-data-feeds),
+[EODHD history](https://eodhd.com/financial-apis/api-for-historical-data-and-volumes).
+
+#### Dated local price overrides
+
+`config.yaml` is the existing private configuration file; `config.example.yaml`
+contains the documented defaults. The host-side price updater uses a separate
+`price_agent` section. Dashboard chat remains read-only.
+
+| Method | Route | Behavior |
+| --- | --- | --- |
+| GET | `/api/security/price?symbol=AAPL&stock_market=NASDAQ` | Latest saved observation and its date/status; no live download |
+| GET | `/api/security/prices?symbol=AAPL&stock_market=NASDAQ&date_from=01/10/2026&date_to=31/10/2026` | Saved local/cached raw history, listing metadata and current observation |
+| PUT | `/api/security/prices` | Atomically upsert dated local observations; one row can update current, a batch can correct history |
+
+The security must already be registered in Securities, including currency,
+location, asset class and market. Secondary symbols resolve to its canonical
+identity. Dates accept `dd/mm/yyyy` or ISO; API records use ISO. Reads are
+non-downloading and history may be incomplete. A historical filter never changes
+which saved observation is current. `missing`, `dated` and `stale` are machine
+statuses; `dated` does not establish live freshness. Prices older than seven
+days are stale. Future and out-of-retention dates are rejected.
+
+PUT body example (replace the synthetic source with the actual evidence URL):
+
+```json
+{
+  "symbol": "AAPL",
+  "stock_market": "NASDAQ",
+  "items": [{
+    "price_input": 123.45,
+    "price_date": "2026-11-06",
+    "currency": "USD",
+    "quote_unit": "currency",
+    "price_basis": "close",
+    "source_url": "https://exchange.example/AAPL/history",
+    "evidence_quote": "AAPL NASDAQ USD 06 November 2026 Close 123.45",
+    "observed_at": null,
+    "retrieved_at": "2026-11-07T08:00:00Z"
+  }]
+}
+```
+
+`price_input` is the raw source quote. Match the returned `security.quote_unit`:
+Israeli inputs use `agorot` and US bonds use `cents` (both divided by 100);
+other supported inputs use `currency`. Bond percent-of-par and adjusted closes
+are unsupported. Only positive finite numbers and `last`/`close` bases are
+accepted. Retain an actual timezone-aware `observed_at` only when known; date-only
+evidence uses null. `retrieved_at` records evidence retrieval, not quote time.
+Do not replace a known same-day timestamp with older or undated evidence. Up to
+500 unique dates per REST batch commit together. The AI controller caps proposals
+at 100. The route validates evidence fields but does not independently fetch or
+authenticate a caller's source claims.
+
+All routes use existing authentication. Admins enable REST access in Settings;
+reads require an authorized token, and writes require REST **Read and write**
+mode with an Admin/Operator token. Browser writes also require CSRF. Writes stay
+local and invalidate aggregate portfolio caches while retaining market evidence.
+These explicit corrections win same-day provider ties in valuation; later
+provider dates supersede them. Current, dashboard and account-history values
+therefore retain the saved correction without changing holdings or cash.
+
+Invoke `$security-price-update` in Codex or `/security-price-update` in Claude
+Code, or run the controller directly:
+
+```bash
+./.venv/bin/python scripts/update-security-prices.py --symbol AAPL --stock-market NASDAQ --dry-run --ca-file certs/server.crt
+./.venv/bin/python scripts/update-security-prices.py --symbol AAPL --stock-market NASDAQ --date-from 01/10/2026 --date-to 31/10/2026 --ca-file certs/server.crt
+```
+
+Use the certificate that actually signs your application endpoint. Supply an
+authorized REST token in `PORTFOLIO_API_TOKEN` and a Brave Search API key in
+`BRAVE_SEARCH_API_KEY`; never pass either credential to a model. The selected
+host CLI must be installed and signed in. No CLI process runs inside Docker.
+Search uses the configured service rather than an unbounded CLI browsing loop.
+`--config PATH` overrides `CONFIG_PATH`/`config.yaml`; `--dry-run` researches and
+validates without writing.
+
+```yaml
+price_agent:
+  provider: codex          # or claude
+  model: ""               # Codex: gpt-6.1-sol; Claude Code: sonnet
+  reasoning_effort: medium
+  max_model_calls: 5
+  max_rest_calls: 5
+  timeout_seconds: 110
+  base_url: https://localhost:6443
+  search:
+    provider: brave
+    api_key: "${BRAVE_SEARCH_API_KEY}"
+```
+
+Recommendation: start with `gpt-6.1-sol` at medium effort for Codex, or `sonnet`
+at medium for Claude Code. Use low after testing straightforward, unambiguous
+listings; high is available for difficult evidence, without increasing call
+ceilings. OpenAI's [GPT-6.1 Sol model documentation](https://developers.openai.com/api/docs/models/gpt-6.1-sol)
+describes it as a lower-cost choice for complex work and supports medium effort.
+Model access depends on the signed-in account.
+
+One user update request gets at most five model decisions and five application
+REST attempts, including failed calls; YAML values above five are capped.
+Each CLI invocation is a single tool-free planning turn. The controller owns
+allowlisted internet search, source reads, writes and verification; a separate
+five-call internet budget also bounds research. It normally uses three REST
+calls: metadata GET, one batch PUT, verification GET. It reserves the last two
+before writing. Reusing the request object, nested tools, automatic write
+retries and model-selected URLs to the application are prohibited. Search
+snippets alone cannot support a write. Missing or ambiguous evidence stops it.
+Numeric source dates with ambiguous day/month order and comma-decimal price
+formats are rejected; API and UI date inputs still accept `dd/mm/yyyy`.
+Current-price proposals older than the latest saved day are rejected. Initial
+current reads limit returned history, and verification reads only the submitted
+date interval; adding older observations remains available in historical mode.
+Source pages still require model interpretation; these checks do not guarantee
+market-data accuracy. Review `--dry-run` output when appropriate.
+
+`updated` means saved rows were verified. `written_unverified` means the write
+returned success but verification failed or disagreed. A failed write can have
+an unknown outcome; inspect saved records before a separate user-requested retry.
+Call counts are returned even on failure. No real-model invocation or live price
+write is performed by the test suite.
+
+#### Missing holding information with AI
+
+The dashboard's **Find missing data with AI** button first tries configured data
+APIs for a bounded selection of **open holdings only**, including shorts and
+reopened positions. Fully closed positions are excluded before model calls.
+Remaining gaps can use internet evidence; API-only success and an unavailable
+search service do not invoke the model. Both this button and the host skill use
+the `price_agent` provider/model/effort settings (Codex by default, or Claude
+Code), and internet search uses `price_agent.search` above. The existing `llm`
+section supplies the shared host bridge socket and whether AI is enabled;
+read-only dashboard chat keeps its separate `llm` model selection.
+
+The model sees only allowlisted REST tools under the initiating user's identity.
+It never reads or writes databases, files, or shell state. The application alone
+validates proposed source-backed values and owns storage behind REST. Supported
+missing values are compatible raw Last/Close prices no older than seven calendar
+days, company names, and industries. It preserves existing profile values and
+retains source evidence. Unsupported fund/bond price conventions, fundamentals,
+and distributions remain missing rather than becoming guessed values.
+
+Each click shares at most **five model calls and five agent REST attempts**,
+including failures, plus five upstream search/page reads. It processes up to
+three candidates; remaining candidates keep a truthful unprocessed status and
+are prioritized on a later user request. Polling resumes the same job without
+resetting budgets. Per-security friendly outcomes appear in tooltips and the
+result details and are recorded in market-data logs. Prices and missing fields
+are refreshed after completion; positions closed during research are skipped.
+
+| Method | Route | Authorization and purpose |
+| --- | --- | --- |
+| POST | `/api/securities/enrichment/ai` | Admin/Operator starts or obtains their existing active job; browser CSRF required |
+| GET | `/api/securities/enrichment/ai/{request_id}` | Initiating user's job status |
+| GET | `/api/securities/enrichment/status` | Authorized persisted outcomes and current user's active job |
+| GET | `/api/securities/enrichment/candidates?request_id=...` | Own running Admin/Operator job; application inventories and tries ordinary APIs once |
+| GET | `/api/securities/enrichment/security?request_id=...&security_key=...&field=auto` | Own running job and approved candidate; bounded source research |
+| POST | `/api/securities/enrichment/ai/{request_id}/finalize` | Own ready job only; server validates/applies bound evidence; browser CSRF required |
+
+All business REST routes retain authentication, role authorization, REST token
+access mode, and browser CSRF enforcement. Read-only identities cannot start or
+finalize updates. Repeated clicks deduplicate active jobs instead of spawning
+unbounded agents. A missing source or configuration produces an actionable
+per-security result, without exposing credentials or raw provider exceptions.
 
 ### Application diagnostics
 

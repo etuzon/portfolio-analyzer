@@ -173,7 +173,7 @@ def test_chat_ownership_viewer_settings_and_csrf(authenticated_chats):
     assert viewer.put("/api/settings/assistant", json={"max_chats": 5}).status_code == 403
 
 
-def test_six_exchange_cap_and_recovery_are_enforced_by_main_endpoint(authenticated_chats):
+def test_five_exchange_cap_and_recovery_are_enforced_by_main_endpoint(authenticated_chats):
     env = authenticated_chats
     client = env.login()
     requests = []
@@ -185,9 +185,9 @@ def test_six_exchange_cap_and_recovery_are_enforced_by_main_endpoint(authenticat
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "assistant_limit"
     assert response.json()["detail"]["request_id"]
-    assert len(requests) == 6
+    assert len(requests) == 5
     assert requests[-1] == []
-    assert all(requests[index] for index in range(5))
+    assert all(requests[index] for index in range(4))
     assert client.post("/api/assistant/chats").status_code == 200, "Failed model turn must release per-user busy lock"
     env.patch.setattr(PortfolioAssistant, "_call_provider", lambda *args, **kwargs: {"choices": [{"message": {"role": "assistant", "content": "No verified data was requested."}}]})
     recovered = client.post("/api/assistant/questions", json={"prompt": "Can this chat recover?"})
@@ -286,7 +286,7 @@ def test_catalog_and_loop_bound_never_expose_model_writes():
     assert all(entry.get("method", "GET") == "GET" for entry in main.ASSISTANT_READ_TOOLS.values())
     assert all(entry["path"].startswith("/api/") for entry in main.ASSISTANT_READ_TOOLS.values())
     assert not {"read_file", "execute_sql", "http_get", "delete_account", "create_transaction"} & main.ASSISTANT_READ_TOOLS.keys()
-    assert assistant_settings({"llm": {"max_tool_loops": 999}})["max_tool_loops"] == 6
+    assert assistant_settings({"llm": {"max_tool_loops": 999}})["max_tool_loops"] == 5
 
 
 @pytest.mark.parametrize("function", ["not-an-object", ["not-an-object"], 42])

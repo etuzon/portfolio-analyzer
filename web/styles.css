@@ -427,11 +427,12 @@ h2 {
 }
 
 .brand {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  min-height: 36px;
-  padding: 0 10px;
+  justify-content: center;
+  width: 44px;
+  min-height: 44px;
+  padding: 8px;
   color: #fff;
   font-size: 14px;
   font-weight: 800;
@@ -461,27 +462,6 @@ h2 {
   background: url("/assets/portfolio-vault/icon-64.png?v=1") center / contain no-repeat;
   background-image: image-set(url("/assets/portfolio-vault/icon-32.png?v=1") 1x, url("/assets/portfolio-vault/icon-64.png?v=1") 2x, url("/assets/portfolio-vault/icon-96.png?v=1") 3x);
   box-shadow: 0 0 18px rgba(155, 77, 255, 0.26);
-}
-
-.brand-label {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-  white-space: nowrap;
-}
-
-.brand-version {
-  padding: 2px 5px;
-  border: 1px solid #343b4b;
-  border-radius: 999px;
-  background: #151822;
-  color: #aeb8ca;
-  font-size: 9px;
-  font-weight: 750;
-  line-height: 1;
-  direction: ltr;
-  unicode-bidi: isolate;
 }
 
 .nav {
@@ -871,6 +851,16 @@ html[dir="rtl"] .assistant-table-wrap table { direction: rtl; }
 
 .header-status h1 { font-size: 12px; line-height: 1.4; }
 .header-status #status { font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.dashboard-notice { color: #ffb7a3; font-size: 12px; }
+
+.ai-enrichment-tools { display: flex; flex: 1 0 100%; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-width: 0; }
+.ai-enrichment-tools p { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.ai-enrichment-action { display: inline-flex; max-width: 100%; }
+.ai-enrichment-action button { white-space: normal; text-align: start; }
+.ai-enrichment-details { flex: 1 0 100%; min-width: 0; font-size: 12px; }
+.ai-enrichment-details summary { cursor: pointer; width: fit-content; }
+.ai-enrichment-details ul { max-height: 220px; overflow-y: auto; margin: 8px 0; padding-inline-start: 24px; }
+.ai-enrichment-details li { padding: 4px 0; overflow-wrap: anywhere; }
 
 @media (max-width: 1240px) {
   .sidebar > .brand { grid-column: 1; grid-row: 1; }
@@ -3041,10 +3031,12 @@ textarea.muted-control {
   stroke: #2a2c31;
 }
 
-.comparison-card,
 .line-card {
   min-height: 250px;
 }
+
+.comparison-card { min-height: 0; }
+.comparison-card svg { height: auto; max-height: 240px; min-height: 0; }
 
 .line-card {
   display: grid;
@@ -3834,7 +3826,7 @@ textarea.muted-control {
 .account-summary-grid {
   grid-column: 1 / -1;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
-  align-items: start;
+  align-items: stretch;
   gap: 12px;
   margin-top: 8px;
 }
@@ -3854,16 +3846,25 @@ textarea.muted-control {
 .account-summary-finances { display: flex; flex-wrap: wrap; align-items: end; gap: 6px 12px; min-width: 0; }
 .account-summary-balance { display: grid; flex: 1 1 140px; gap: 3px; min-width: 0; }
 .account-summary-balance > span, .account-summary-metric-label { color: #94a4ba; font-size: 11px; line-height: 1.4; }
+.account-summary-balance > span { color: #d5dfed; font-size: 12px; font-weight: 800; }
 .account-summary-balance > strong { color: #f5f8ff; font-size: 23px; font-weight: 800; line-height: 1.2; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.account-summary-local { color: #d2e0f2; font-size: 14px; font-weight: 750; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.account-summary-local { min-height: 1.4em; color: #d2e0f2; font-size: 14px; font-weight: 750; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .account-summary-card .account-current-cash { flex: 0 1 auto; min-height: 32px; font-size: 12px; }
 .account-summary-metrics { display: flex; flex-wrap: wrap; gap: 8px 16px; padding-top: 9px; border-top: 1px solid #303b49; }
 .account-summary-metrics > div { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .account-summary-metrics .risk-badge, .account-summary-metrics .account-risk-portfolio-share { box-sizing: border-box; min-height: 34px; }
 .account-summary-card .risk-data-quality { margin: 0; }
+.account-summary-footer { display: flex; flex-direction: column; justify-content: flex-end; min-width: 0; }
 .account-summary-allocation { min-width: 0; }
 .account-summary-allocation .account-risk-allocation-bar { margin-top: 0; }
 .account-summary-allocation .account-risk-allocation-labels { gap: 5px 10px; font-size: 11px; }
+
+@supports (grid-template-rows: subgrid) {
+  .account-summary-card { grid-row: span 7; grid-template-rows: subgrid; }
+  .account-summary-finances { display: grid; grid-row: span 3; grid-template-rows: subgrid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 12px; }
+  .account-summary-balance { grid-column: 1; grid-row: 1 / span 3; grid-template-rows: subgrid; }
+  .account-summary-card .account-current-cash { grid-column: 2; grid-row: 1 / span 3; align-self: end; }
+}
 
 .account-risk-allocation-heading {
   justify-content: space-between;
@@ -7557,13 +7558,32 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
   margin: 0;
 }
 
+.positions-card { container: position-controls / inline-size; }
+
 .trade-history-controls {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  align-items: end;
   gap: 12px;
   margin: 14px 0;
 }
+
+.position-filter-scope,
+.position-filter-results {
+  display: grid;
+  align-items: end;
+  gap: 12px;
+  min-width: 0;
+}
+
+.position-filter-scope {
+  grid-template-columns: minmax(180px, 1.1fr) minmax(180px, 0.8fr) minmax(250px, 1.6fr) minmax(240px, 1.5fr);
+}
+
+.position-filter-results {
+  grid-template-columns: minmax(260px, 1.8fr) minmax(160px, 1fr) minmax(180px, 1fr) minmax(132px, 0.75fr) max-content;
+}
+
+.position-filter-actions { max-width: 132px; flex-wrap: wrap; justify-content: flex-end; }
+.position-filter-actions > button { flex: 0 0 auto; }
 
 .trade-history-controls input,
 .trade-history-controls select {
@@ -7679,14 +7699,33 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
   font-size: 18px;
 }
 
-@media (max-width: 900px) {
-  .trade-history-controls {
+@container position-controls (max-width: 930px) {
+  .position-filter-scope,
+  .position-filter-results {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .trade-history-controls .field {
-    min-width: 0;
-  }
+  .position-account-filter,
+  .position-stock-filter,
+  .position-search-filter { grid-column: 1 / -1; }
+
+  .position-filter-actions { justify-content: flex-start; }
+}
+
+@container position-controls (max-width: 540px) {
+  .position-filter-scope { grid-template-columns: minmax(0, 1fr); }
+  .position-type-filter { width: min(100%, 220px); }
+  .position-filter-results { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container position-controls (max-width: 360px) {
+  .position-filter-results { grid-template-columns: minmax(0, 1fr); }
+  .position-status-filter,
+  .position-sort-filter,
+  .position-direction-filter { width: min(100%, 220px); }
+}
+
+@media (max-width: 900px) {
 
   .holdings-table.trade-history-table {
     min-width: 0;
@@ -7709,10 +7748,6 @@ html[dir="rtl"] .report-account-card:not([open]) > summary::before {
   .report-grid.trade-history-detail-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
-}
-
-@media (max-width: 600px) {
-  .position-account-filter, .position-search-filter, .position-stock-filter { grid-column: 1 / -1; }
 }
 
 .report-section-heading {

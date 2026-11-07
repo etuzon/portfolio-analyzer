@@ -35,12 +35,16 @@ def validate_arguments(arguments: Any, schema: dict[str, Any]) -> dict[str, Any]
 
 
 class AssistantRestGateway:
-    def __init__(self, app: Any, catalog: dict[str, Any], headers: dict[str, str]):
+    def __init__(self, app: Any, catalog: dict[str, Any], headers: dict[str, str], *, max_calls: int = 5):
         self.app, self.catalog = app, catalog
+        self.max_calls, self.calls = min(max(int(max_calls), 1), 5), 0
         # Reuse the caller's authentication, never a privileged service identity.
         self.headers = {key: value for key, value in headers.items() if key.lower() in {"authorization", "cookie"}}
 
     async def read(self, name: str, arguments: dict[str, Any]) -> Any:
+        if self.calls >= self.max_calls:
+            raise AssistantError("The assistant reached its REST request limit.")
+        self.calls += 1
         entry = self.catalog.get(name)
         if not entry or entry.get("method", "GET") != "GET":
             raise AssistantError("The LLM requested an unavailable read tool.")

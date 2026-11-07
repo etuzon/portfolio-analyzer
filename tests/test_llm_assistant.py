@@ -64,7 +64,7 @@ def test_assistant_rejects_tool_outside_allow_list():
     try:
         assistant.ask("Delete data", "en", lambda _name, _args: {})
     except AssistantError as exc:
-        assert "configured 6-step" in str(exc)
+        assert "configured 5-step" in str(exc)
     else:
         raise AssertionError("the assistant must not execute a non-catalog tool")
 
@@ -113,7 +113,7 @@ def test_disabling_context_does_not_send_saved_messages():
     assert "Old private context" not in json.dumps(received)
 
 
-def test_sixth_exchange_answers_without_more_tools():
+def test_fifth_exchange_answers_without_more_tools():
     requests = []
     def caller(**kwargs):
         requests.append(kwargs["tools"])
@@ -124,7 +124,7 @@ def test_sixth_exchange_answers_without_more_tools():
     assistant = PortfolioAssistant(_settings(max_tool_loops=99), CATALOG, caller=caller)
     reads = []
     result = assistant.ask("Read the evidence", "en", lambda name, arguments: reads.append(name) or {"verified": True})
-    assert result["model_requests"] == len(requests) == 6
-    assert len(reads) == 5
+    assert result["model_requests"] == len(requests) == 5
+    assert len(reads) == 4
     assert requests[-1] == []
     assert result["answer"] == "The available evidence is complete."

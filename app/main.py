@@ -59,6 +59,10 @@ from .dividend_calendar import build_dividend_calendar
 from .external_import import ExternalImportClient
 from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, SUPPORTED_MANAGEMENT_CURRENCIES, CashBalanceError, LocalPortfolioStore, validate_portfolio_ownership
 from .llm_assistant import AssistantError, PortfolioAssistant, assistant_settings
+from .security_prices import price_router
+from .security_market_data import SecurityMarketData, security_market_router
+from .security_web_research import research_sources, validate_proposals
+from .security_enrichment import EnrichmentJobs, security_key as enrichment_security_key
 from .metrics import analyze_holding, moving_averages, screen, support_resistance, technical_signals, to_dict, volume_metrics
 from .mcp_server import create_portfolio_mcp_server
 from .models import Ohlcv
@@ -355,6 +359,16 @@ ASSISTANT_READ_TOOLS: dict[str, dict[str, Any]] = {
     "get_market_quote": {
         "path": "/api/assistant/market-quote", "description": "Read a quote for an explicit provider ticker (including exchange suffix where needed), with provider status and timestamps. Request time is not proof of quote freshness.",
         "parameters": {"type": "object", "properties": {"symbol": {"type": "string"}}, "required": ["symbol"]},
+    },
+    "get_security_market_data": {
+        "path": "/api/security/market-data",
+        "description": "Automatically retrieve and cache US bond, mutual-fund or ETF reference data and dated prices without manual price entry. Bonds accept exact CUSIP/ISIN; funds and ETFs accept supported identifiers/tickers. Provider coverage and subscriptions vary. Preserve percent-of-par versus currency-per-share units, coupon versus yield, NAV versus market close, source dates and partial coverage. Historical price queries may include a current provider profile, not historical holdings. This does not revalue positions or record local price overrides.",
+        "parameters": {"type": "object", "properties": {
+            "identifier": {"type": "string"}, "kind": {"type": "string", "enum": ["bond", "fund", "etf"]},
+            "identifier_type": {"type": "string", "enum": ["auto", "cusip", "isin", "ticker"]},
+            "provider": {"type": "string", "enum": ["auto", "finnhub", "eodhd", "treasury_direct"]},
+            "date_from": {"type": "string"}, "date_to": {"type": "string"}, "cache_only": {"type": "boolean"}, "refresh": {"type": "boolean"},
+        }, "required": ["identifier", "kind"]},
     },
     "get_stock_dividends": {
         "path": "/api/assistant/stock-dividends", "description": "Read provider dividend history for an explicit listed ticker. Amounts and payment/ex dates are per record; missing history is unknown.",
@@ -3120,7 +3134,7 @@ def event_impact_cases(symbol: str = "", event_id: str = "", limit: Annotated[in
 
 
 def _assistant_gateway(request: Request) -> AssistantRestGateway:
-    return AssistantRestGateway(app, ASSISTANT_READ_TOOLS, dict(request.headers))
+    return AssistantRestGateway(app, ASSISTANT_READ_TOOLS, dict(request.headers), max_calls=assistant_settings(config.raw)["max_rest_calls"])
 
 
 @app.get("/api/assistant/read-tools/{tool_name}")
@@ -4217,7 +4231,9 @@ def security_history(symbol: str, stock_market: str = "", period: str = "1y", da
 @app.post("/api/local/prices")
 def save_local_price(payload: dict[str, Any]):
     try:
-        return local_store.save_price(payload or {})
+        result = local_store.save_price(payload or {})
+        clear_portfolio_cache()
+        return result
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -4226,7 +4242,325 @@ def save_local_price(payload: dict[str, Any]):
 def delete_local_price(price_id: str):
     if not local_store.delete_price(price_id):
         raise HTTPException(status_code=404, detail="Price not found")
+    clear_portfolio_cache()
     return {"deleted": True}
+
+
+app.include_router(price_router(lambda: local_store, lambda: hub(), lambda: clear_portfolio_cache(), HISTORY_START_DATE))
+app.include_router(security_market_router(lambda: SecurityMarketData(config.market_data, hub().cache)))
+
+
+def _enrichment_missing_fields(item: dict[str, Any]) -> list[str]:
+    holding = item.get("holding") or {}
+    missing = set(item.get("missing") or [])
+    asset = str(holding.get("asset_class") or "").upper()
+    fields = []
+    if "price history" in missing or not any(
+        isinstance(values, dict) and values.get("current") is not None and values.get("current_date")
+        for values in (item.get("price_ranges") or {}).values()
+    ):
+        fields.append("prices")
+    if not holding.get("industry") or not holding.get("name") or str(holding.get("name")).upper() == str(holding.get("symbol")).upper():
+        fields.append("profile")
+    if asset == "EQUITY" and missing & {"income", "profit", "profit/market cap"}:
+        fields.append("fundamentals")
+    if asset in {"EQUITY", "ETF", "FUND"} and "dividend" in missing:
+        fields.append("dividends")
+    if asset in {"BOND", "ETF", "FUND"} and fields:
+        fields.append("reference")
+    return fields
+
+
+def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) -> dict[str, Any]:
+    """Application-owned inventory route; the AI coordinator never calls this directly."""
+    from .security_prices import quote_unit
+    by_key = {}
+    overrides = None
+    for analysis in enriched_local_holdings(cached_only=True):
+        item = to_dict(analysis)
+        holding = item.get("holding") or {}
+        quantity = _number_or_none(holding.get("quantity"))
+        if quantity is None or quantity == 0:
+            continue
+        if str(holding.get("asset_class") or "").upper() in {"CASH", "CURRENCY"}:
+            continue
+        symbol = str(holding.get("symbol") or "").strip().upper()
+        market = str(holding.get("stock_market") or "").strip().upper()
+        if not symbol or not market:
+            continue
+        if overrides is None:
+            overrides = {(str(row.get("symbol") or "").upper(), str(row.get("stock_market") or "").upper()): row
+                         for row in (local_store.list_security_industry_overrides() if hasattr(local_store, "list_security_industry_overrides") else [])}
+        # Match the displayed portfolio's effective metadata, including manual
+        # classification and cached profile fields on manual-only holdings.
+        market_hub = hub()
+        cached = market_hub.cached_profile(symbol, secondary_symbol=holding.get("secondary_symbol") or "", stock_market=market) if hasattr(market_hub, "cached_profile") else {}
+        if cached.get("name") and (not holding.get("name") or str(holding["name"]).upper() == symbol):
+            holding["name"] = cached["name"]
+        override = overrides.get((symbol, market)) or overrides.get((symbol, ""))
+        industry = ("Bonds" if str(holding.get("asset_class") or "").upper() == "BOND" else
+                    str((override or {}).get("industry") or item.get("industry") or holding.get("industry") or cached.get("industry") or
+                        holding.get("sector") or cached.get("sector") or "").strip())
+        holding["industry"] = industry
+        item["holding"] = holding
+        missing = _enrichment_missing_fields(item)
+        if not missing:
+            continue
+        key = enrichment_security_key(holding)
+        if not holding.get("symbol") or not holding.get("stock_market"):
+            continue
+        by_key[key] = {
+            "security_key": key, "symbol": holding["symbol"], "stock_market": holding["stock_market"],
+            "currency": holding.get("currency", ""), "secondary_symbol": holding.get("secondary_symbol", ""),
+            "location": holding.get("location", ""),
+            "quote_unit": quote_unit({"location": holding.get("location", ""), "asset_class": holding.get("asset_class", ""), "currency": holding.get("currency", "")}),
+            "asset_class": holding.get("asset_class", ""), "name": holding.get("name", ""),
+            "needs_name": not holding.get("name") or str(holding.get("name")).upper() == symbol,
+            "needs_industry": not bool(industry),
+            "missing_fields": missing, "available_fields": [],
+        }
+    previous = {item["security_key"]: item for item in _enrichment_outcomes() if isinstance(item, dict) and item.get("security_key")}
+    for key, candidate in by_key.items():
+        candidate["last_attempted_at"] = previous.get(key, {}).get("last_attempted_at")
+    items = sorted(by_key.values(), key=lambda item: (item.get("last_attempted_at") or "", "prices" not in item["missing_fields"], item["symbol"], item["stock_market"]))
+    visible = items if limit is None else items[:limit]
+    result = {"items": visible, "total_count": len(items), "truncated": len(visible) < len(items)}
+    if preflight:
+        # Application-owned API refresh runs before any model work, only for the
+        # bounded open-held selection. The original inventory remains truthful.
+        from .price_agent import price_agent_settings, PriceAgentError
+        try:
+            research_available = bool(price_agent_settings(config.raw).get("search_api_key"))
+        except PriceAgentError:
+            research_available = False
+        results = []
+        for candidate in visible[:3]:
+            try:
+                refreshed = _enrichment_fetch_security(candidate, "auto")
+            except Exception:
+                refreshed = {**candidate, "status": "unavailable", "code": "provider_unavailable", "available_fields": []}
+            results.append(refreshed)
+        result.update(preflight_outcomes=results, research_available=research_available)
+    return result
+
+
+def _enrichment_fetch_security(candidate: dict[str, Any], field: str) -> dict[str, Any]:
+    """Application-owned provider retrieval, invoked only by its authorized REST route."""
+    key = candidate["security_key"]
+    current = next((item for item in _enrichment_candidates(limit=None)["items"] if item["security_key"] == key), None)
+    if not current:
+        held = any(enrichment_security_key(to_dict(item).get("holding") or {}) == key
+                   and (quantity := _number_or_none((to_dict(item).get("holding") or {}).get("quantity"))) is not None and quantity != 0
+                   for item in enriched_local_holdings(cached_only=True))
+        return {**candidate, "status": "updated" if held else "not_attempted", "code": "data_found" if held else "not_open", "available_fields": [], "missing_fields": [] if held else candidate.get("missing_fields", [])}
+    market_hub = hub()
+    symbol, market = current["symbol"], current["stock_market"]
+    context = {"secondary_symbol": current.get("secondary_symbol") or "", "stock_market": market}
+    fields = current["missing_fields"] if field == "auto" else [field]
+    found, errors = [], []
+    for requested in fields:
+        try:
+            if requested == "prices":
+                data, status = market_hub.prices(symbol, max(HISTORY_START_DATE, date.today() - timedelta(days=366)), date.today(), **context)
+                available = bool(data)
+            elif requested == "profile":
+                data, status = market_hub.profile(symbol, **context)
+                available = bool(data)
+            elif requested == "fundamentals":
+                data, status = market_hub.fundamentals(symbol, **context)
+                available = bool(data)
+            elif requested == "dividends":
+                data, status = market_hub.dividends(symbol, **context)
+                available = bool(data)
+            elif requested == "reference":
+                asset = str(current.get("asset_class") or "").upper()
+                kind = {"BOND": "bond", "FUND": "fund", "ETF": "etf"}.get(asset)
+                if not kind or market.upper() not in {"US", "USA", "NASDAQ", "NYSE", "NYSEARCA", "AMEX", "BOND", "TREASURY", "MANUAL"}:
+                    errors.append("data_unavailable")
+                    continue
+                result = SecurityMarketData(config.market_data, market_hub.cache).fetch(symbol, kind)
+                available = bool(result.get("security") and (result.get("details") or result.get("items")))
+            else:
+                available = False
+            if available:
+                found.append(requested)
+            else:
+                errors.append("data_unavailable")
+        except Exception:
+            errors.append("provider_unavailable")
+    # Recheck through the application's cached analysis; successful provider HTTP
+    # alone never establishes that a missing dashboard field was completed.
+    after = next((item for item in _enrichment_candidates(limit=None)["items"] if item["security_key"] == key), None)
+    remaining = after["missing_fields"] if after else []
+    status = "updated" if not remaining else "partial" if found else "unavailable"
+    return {**candidate, "status": status, "code": "data_found" if status == "updated" else "partial_data" if found else "provider_unavailable" if "provider_unavailable" in errors else "data_unavailable",
+            "available_fields": found, "missing_fields": remaining}
+
+
+_enrichment_source_budgets: dict[str, Any] = {}
+_enrichment_source_lock = RLock()
+
+
+def _enrichment_research_security(candidate: dict[str, Any], field: str) -> dict[str, Any]:
+    """Application source route: the AI sees only this authenticated REST result."""
+    from .price_agent import price_agent_settings
+    from .us_market_providers import RequestBudget
+    current = next((item for item in _enrichment_candidates(limit=None)["items"] if item["security_key"] == candidate["security_key"]), None)
+    if not current:
+        return {"evidence": [], "status": "not_attempted", "source_status": "not_open", "code": "not_open"}
+    request_id = str(candidate.get("_request_id") or "")
+    with _enrichment_source_lock:
+        budget = _enrichment_source_budgets.setdefault(request_id, RequestBudget())
+        # The job manager bounds active jobs; also cap abandoned source state.
+        for key in list(_enrichment_source_budgets)[:-100]:
+            _enrichment_source_budgets.pop(key, None)
+    return research_sources(current, price_agent_settings(config.raw), budget)
+
+
+def _apply_enrichment_proposals(proposal, evidence_by_key, candidates) -> dict[str, dict[str, Any]]:
+    """Application-owned finalization; no model may access this storage directly."""
+    from .security_prices import PriceObservation, quote_unit
+    current = {item["security_key"]: item for item in _enrichment_candidates(limit=None)["items"]}
+    prepared = {}
+    for key, candidate in (candidates or {}).items():
+        if key not in current:
+            continue  # Closed or already completed: no model value is applied.
+        metadata = local_store.manual_security(candidate["symbol"], candidate["stock_market"])
+        if not metadata:
+            continue
+        prepared[key] = {**candidate, **metadata, "security_key": key,
+                         "missing_fields": current[key]["missing_fields"], "quote_unit": quote_unit(metadata)}
+    verified = validate_proposals(proposal, prepared, evidence_by_key or {})
+    results = {}
+    def still_missing(key, field):
+        # Re-read immediately before each application-owned write. Positions may
+        # have closed or the missing value may have been supplied during research.
+        return next((item for item in _enrichment_candidates(limit=None)["items"]
+                     if item["security_key"] == key and field in item["missing_fields"]), None)
+
+    for key, verified_fields in verified.items():
+        candidate = prepared[key]
+        found, rejected = [], verified_fields["rejected"]
+        for raw in verified_fields["observations"]:
+            try:
+                if not still_missing(key, "prices"):
+                    continue
+                observation = PriceObservation.model_validate(raw)
+                if date.fromisoformat(observation.price_date) < HISTORY_START_DATE:
+                    raise ValueError("The observation is outside retained history")
+                if (date.fromisoformat(observation.price_date) > observation.retrieved_at.date()
+                        or observation.observed_at is not None and (
+                            observation.observed_at.date().isoformat() != observation.price_date
+                            or observation.observed_at > observation.retrieved_at)):
+                    raise ValueError("The observation must precede retrieval and retain its actual date")
+                evidence = {"kind": "price_evidence_v1", **observation.model_dump(mode="json", exclude={"price_input", "price_date", "currency"})}
+                price_metadata = {name: candidate[name] for name in ("symbol", "stock_market", "currency", "asset_class", "location")}
+                local_store.save_prices([{**price_metadata, "price_input": observation.price_input,
+                                          "price_date": observation.price_date, "source": "web_evidence",
+                                          "comments": json.dumps(evidence, ensure_ascii=False)}])
+                found.append("prices")
+            except ValueError:
+                rejected = True
+        for profile in verified_fields["profiles"]:
+            try:
+                latest = still_missing(key, "profile")
+                if not latest:
+                    continue
+                if profile["field"] == "industry":
+                    if not latest.get("needs_industry", not latest.get("industry")):
+                        continue
+                    local_store.save_security_industry_override({"symbol": candidate["symbol"], "stock_market": candidate["stock_market"], "industry": profile["value"]})
+                    found.append("profile")
+                elif latest.get("needs_name", not latest.get("name") or str(latest["name"]).upper() == str(latest["symbol"]).upper()):
+                    metadata = local_store.manual_security(candidate["symbol"], candidate["stock_market"])
+                    if not metadata or (metadata.get("name") and str(metadata["name"]).upper() != str(metadata["symbol"]).upper()):
+                        continue
+                    local_store.save_manual_security({**metadata, "name": profile["value"]})
+                    found.append("profile")
+                else:
+                    continue
+                provenance = local_store.get_preference("security_enrichment_sources_v1", {})
+                if not isinstance(provenance, dict):
+                    provenance = {}
+                provenance[f"{key}|{profile['field']}"] = profile
+                provenance = dict(sorted(provenance.items(), key=lambda pair: pair[1].get("retrieved_at", ""), reverse=True)[:1000])
+                local_store.set_preference("security_enrichment_sources_v1", provenance)
+            except ValueError:
+                rejected = True
+        after = next((item for item in _enrichment_candidates(limit=None)["items"] if item["security_key"] == key), None)
+        remaining = after["missing_fields"] if after else []
+        status = "updated" if found and not remaining else "partial" if found else "unavailable"
+        results[key] = {**current[key], "status": status, "code": "data_found" if status == "updated" else "partial_data" if found else "evidence_rejected",
+                        "available_fields": sorted(set(found)), "missing_fields": remaining,
+                        "evidence_rejected": rejected}
+    return results
+
+
+def _enrichment_outcomes() -> list[dict[str, Any]]:
+    saved = local_store.get_preference("security_enrichment_outcomes_v1", {})
+    return list(saved.values()) if isinstance(saved, dict) else []
+
+
+def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, request_id: str, *, proposal=None, evidence_by_key=None, candidates=None):
+    saved = {item["security_key"]: item for item in _enrichment_outcomes() if isinstance(item, dict) and item.get("security_key")}
+    open_keys = {enrichment_security_key(to_dict(item).get("holding") or {}) for item in enriched_local_holdings(cached_only=True)
+                 if (quantity := _number_or_none((to_dict(item).get("holding") or {}).get("quantity"))) is not None and quantity != 0}
+    # The agent submits only proposals and request-bound fetched evidence through
+    # REST. Validation and any supported local save belong to this application.
+    applied = _apply_enrichment_proposals(proposal, evidence_by_key or {},
+                                          {key: item for key, item in (candidates or {}).items() if key in open_keys}) if proposal else {}
+    if proposal:
+        open_keys = {enrichment_security_key(to_dict(item).get("holding") or {}) for item in enriched_local_holdings(cached_only=True)
+                     if (quantity := _number_or_none((to_dict(item).get("holding") or {}).get("quantity"))) is not None and quantity != 0}
+    finalized = []
+    messages = {
+        "data_found": "Missing information was retrieved.", "partial_data": "Some information was retrieved; the remaining fields are unavailable.",
+        "data_unavailable": "The configured sources could not supply this information.", "provider_unavailable": "The data source could not be reached. Please try again later.",
+        "ai_unavailable": "AI assistance is unavailable. Check its connection and try again.", "request_limit": "This request reached its limit. Some information remains unavailable.",
+        "not_processed": "This security was not processed in this batch.", "authentication_expired": "The session expired. Sign in again before retrying.",
+        "job_failed": "The information could not be retrieved. Please try again later.",
+        "research_unavailable": "Internet research is unavailable. Configure the search service and try again.",
+        "evidence_rejected": "The source did not provide enough verified information.",
+    }
+    for outcome in outcomes:
+        if outcome["security_key"] in applied:
+            verified = applied[outcome["security_key"]]
+            available = sorted(set(outcome.get("available_fields") or []) | set(verified.get("available_fields") or []))
+            outcome = {**outcome, **verified, "available_fields": available}
+            if available and outcome.get("status") == "unavailable":
+                outcome["status"] = "partial"
+        if outcome["security_key"] not in open_keys:
+            finalized.append({**outcome, "status": "not_attempted", "code": "not_open", "attempted": False, "available_fields": [], "missing_fields": []})
+            continue
+        finalized.append(outcome)
+        saved[outcome["security_key"]] = outcome
+        _record_log("market-data", "security_ai_enrichment_result", request_id=request_id, user_id=user_id,
+                    symbol=outcome.get("symbol"), stock_market=outcome.get("stock_market"), code=outcome.get("code"),
+                    status=outcome.get("status"), missing_fields=outcome.get("missing_fields"),
+                    message=messages.get(outcome.get("code"), messages["job_failed"]))
+    saved = dict(sorted(saved.items(), key=lambda pair: str(pair[1].get("updated_at") or ""), reverse=True)[:1000])
+    local_store.set_preference("security_enrichment_outcomes_v1", saved)
+    if any(outcome.get("status") in {"updated", "partial"} for outcome in finalized):
+        clear_portfolio_cache()
+    return finalized
+
+
+def _enrichment_assistant_settings():
+    """Use one price-research provider selection for the button and host skill."""
+    from .price_agent import price_agent_settings
+    configured = price_agent_settings(config.raw)
+    return {**assistant_settings(config.raw),
+            "provider": "local_claude" if configured["provider"] == "claude" else "local_codex",
+            "model": configured["model"], "reasoning_effort": configured["reasoning_effort"],
+            "max_tool_loops": configured["max_model_calls"], "timeout_seconds": configured["timeout_seconds"]}
+
+
+security_enrichment = EnrichmentJobs(app, lambda: _enrichment_assistant_settings(),
+                                    candidate_reader=lambda: _enrichment_candidates(preflight=True),
+                                    security_fetcher=lambda candidate, field: _enrichment_research_security(candidate, field),
+                                    outcome_reader=lambda: _enrichment_outcomes(),
+                                    outcome_writer=lambda outcomes, user_id, request_id, **kwargs: _save_enrichment_outcomes(outcomes, user_id, request_id, **kwargs))
+app.include_router(security_enrichment.router())
 
 
 def _with_local_valuation(reader):

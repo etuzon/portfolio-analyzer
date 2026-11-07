@@ -3109,7 +3109,7 @@ class LocalPortfolioStore:
         by_date = {str(row["price_date"]): _dict(row) for row in rows}
         return [by_date[day] for day in sorted(by_date)]
 
-    def save_price(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def save_price(self, payload: dict[str, Any], *, _conn: sqlite3.Connection | None = None) -> dict[str, Any]:
         symbol = _clean_security_symbol(payload.get("symbol"))
         stock_market = str(payload.get("stock_market") or "").upper().strip()
         metadata = self.manual_security(symbol, stock_market)
@@ -3134,7 +3134,7 @@ class LocalPortfolioStore:
             raise ValueError("Symbol is required")
         if not record["stock_market"]:
             raise ValueError("Stock market is required")
-        with self._connect() as conn:
+        with (nullcontext(_conn) if _conn is not None else self._connect()) as conn:
             conn.execute(
                 """
                 insert into price_history
@@ -3152,7 +3152,32 @@ class LocalPortfolioStore:
                 """,
                 record,
             )
-        return record
+            saved = conn.execute(
+                "select * from price_history where symbol = ? and stock_market = ? and price_date = ?",
+                (symbol, stock_market, record["price_date"]),
+            ).fetchone()
+        return _dict(saved)
+
+    def save_prices(self, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Commit a validated price batch together; failed writes roll back all rows."""
+        with self._connect() as conn:
+            conn.execute("begin immediate")
+            for payload in payloads:
+                previous = conn.execute(
+                    "select comments from price_history where symbol = ? and stock_market = ? and price_date = ?",
+                    (payload.get("symbol"), payload.get("stock_market"), payload.get("price_date")),
+                ).fetchone()
+                try:
+                    before = json.loads(previous["comments"]) if previous else {}
+                    after = json.loads(payload.get("comments") or "{}")
+                    old_time = before.get("observed_at") if isinstance(before, dict) and before.get("kind") == "price_evidence_v1" else None
+                    new_time = after.get("observed_at") if isinstance(after, dict) else None
+                    if old_time and after.get("kind") == "price_evidence_v1":
+                        if not new_time or datetime.fromisoformat(new_time) < datetime.fromisoformat(old_time):
+                            raise ValueError("A newer timestamped observation is already saved for this date")
+                except (json.JSONDecodeError, TypeError):
+                    pass  # Legacy free-text comments have no observation timestamp.
+            return [self.save_price(payload, _conn=conn) for payload in payloads]
 
     def import_price_history(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         records = []
@@ -4145,7 +4170,8 @@ class LocalPortfolioStore:
 
     def _analysis(self, position: dict[str, Any]) -> SymbolAnalysis:
         account = position["account"] or {}
-        prices = self._prices(position["symbol"], position["stock_market"], position["asset_class"], position["location"], position["currency"], date.today())
+        price_rows = self.price_history(position["symbol"], position["stock_market"], to_date=date.today())
+        prices = self._prices(position["symbol"], position["stock_market"], position["asset_class"], position["location"], position["currency"], date.today(), _rows=price_rows)
         latest = prices[-1].adjusted_close if prices else abs(position["cost_basis"] / position["quantity"]) if position["quantity"] else 0
         quantity = position["quantity"]
         market_value = quantity * latest
@@ -4181,10 +4207,15 @@ class LocalPortfolioStore:
         ma_metrics = moving_averages(prices)
         level_metrics = support_resistance(prices)
         volume = volume_metrics(prices)
+        price_ranges = price_range_metrics(prices)
+        if price_rows and price_rows[-1].get("source") == "web_evidence":
+            for values in price_ranges.values():
+                if values.get("current_date") == price_rows[-1]["price_date"]:
+                    values["local_override"] = True
         analysis = SymbolAnalysis(
             holding=holding,
             provider_status={"local_portfolio": "ok", **({"manual_security": "manual prices only"} if position.get("is_manual_security") else {})},
-            price_ranges=price_range_metrics(prices),
+            price_ranges=price_ranges,
             moving_averages=ma_metrics,
             support_resistance=level_metrics,
             volume=volume,
@@ -4199,8 +4230,8 @@ class LocalPortfolioStore:
         analysis.missing.extend(["income", "profit", "dividend", "profit/market cap", "industry"])
         return analysis
 
-    def _prices(self, symbol: str, stock_market: str, asset_class: str, location: str, currency: str, up_to: date | None = None) -> list[Ohlcv]:
-        rows = self.price_history(symbol, stock_market, to_date=up_to)
+    def _prices(self, symbol: str, stock_market: str, asset_class: str, location: str, currency: str, up_to: date | None = None, *, _rows: list[dict[str, Any]] | None = None) -> list[Ohlcv]:
+        rows = _rows if _rows is not None else self.price_history(symbol, stock_market, to_date=up_to)
         return [
             Ohlcv(
                 date=date.fromisoformat(row["price_date"]),
@@ -4304,14 +4335,17 @@ class LocalPortfolioStore:
             for position in positions.values():
                 if abs(position["quantity"]) <= 1e-9:
                     continue
-                prices = self._prices(position["symbol"], position["stock_market"], position["asset_class"], position["location"], position["currency"], day)
+                price_rows = self.price_history(position["symbol"], position["stock_market"], to_date=day)
+                prices = self._prices(position["symbol"], position["stock_market"], position["asset_class"], position["location"], position["currency"], day, _rows=price_rows)
                 latest = prices[-1].adjusted_close if prices else abs(position["cost_basis"] / position["quantity"]) if position["quantity"] else 0
                 ranges = (valuation_ranges or {}).get(_valuation_key({**position, "account_id": account["id"]}))
                 quote = valuation_quote(ranges)
                 # A quote can affect this day only after it was observed.
-                # As on the dashboard, market evidence wins equal-date ties;
-                # a strictly newer saved quote keeps precedence.
-                if quote and quote[0] <= day and (not prices or quote[0] >= prices[-1].date):
+                # Explicit evidence-backed corrections win equal-date ties,
+                # as on the dashboard; a newer provider day supersedes them.
+                explicit_override = bool(price_rows and price_rows[-1].get("source") == "web_evidence")
+                if quote and quote[0] <= day and (not prices or quote[0] > prices[-1].date
+                        or (quote[0] == prices[-1].date and not explicit_override)):
                     latest = quote[1]
                 value += position["quantity"] * latest
                 basis += position["cost_basis"]

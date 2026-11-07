@@ -36,18 +36,20 @@ def clean_answer(content: str) -> str:
 def assistant_settings(raw: dict[str, Any]) -> dict[str, Any]:
     section = raw.get("llm") if isinstance(raw.get("llm"), dict) else {}
     provider = os.environ.get("PORTFOLIO_ASSISTANT_PROVIDER") or str(section.get("provider") or ("openai" if section.get("api_key") else "local_codex"))
+    provider = {"codex": "local_codex", "claude": "local_claude"}.get(provider, provider)
     reasoning_effort = str(section.get("reasoning_effort") or "medium").lower()
     if reasoning_effort not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
         reasoning_effort = "medium"
     return {
-        "enabled": bool(section.get("enabled", provider == "local_codex")) or os.environ.get("PORTFOLIO_ASSISTANT_PROVIDER") == "local_codex",
+        "enabled": bool(section.get("enabled", provider in {"local_codex", "local_claude"})) or os.environ.get("PORTFOLIO_ASSISTANT_PROVIDER") in {"local_codex", "local_claude"},
         "provider": provider,
         "codex_socket": os.environ.get("PORTFOLIO_CODEX_SOCKET") or str(section.get("codex_socket") or "/run/portfolio-codex/bridge.sock"),
         "base_url": str(section.get("base_url") or "").rstrip("/"),
         "api_key": str(section.get("api_key") or ""),
         "model": str(section.get("model") or ""),
         "reasoning_effort": reasoning_effort,
-        "max_tool_loops": min(max(int(section.get("max_tool_loops", 6) or 6), 1), 6),
+        "max_tool_loops": min(max(int(section.get("max_tool_loops", 5) or 5), 1), 5),
+        "max_rest_calls": min(max(int(section.get("max_rest_calls", 5) or 5), 1), 5),
         "max_context_messages": min(max(int(section.get("max_context_messages", 12)), 0), 30),
         "timeout_seconds": min(max(int(section.get("timeout_seconds", 30) or 30), 1), 120),
     }
@@ -68,18 +70,20 @@ def tool_definitions(catalog: dict[str, dict[str, Any]]) -> list[dict[str, Any]]
 
 
 class PortfolioAssistant:
-    def __init__(self, settings: dict[str, Any], catalog: dict[str, dict[str, Any]], caller: Callable[..., dict[str, Any]] | None = None):
+    def __init__(self, settings: dict[str, Any], catalog: dict[str, dict[str, Any]], caller: Callable[..., dict[str, Any]] | None = None, *, system_policy: str | None = None):
         self.settings, self.catalog = settings, catalog
         self.caller = caller or self._call_provider
+        self.system_policy = system_policy
 
     def status(self) -> dict[str, Any]:
-        local = self.settings.get("provider") == "local_codex"
+        local = self.settings.get("provider") in {"local_codex", "local_claude"}
         configured = Path(self.settings["codex_socket"]).is_socket() if local else bool(self.settings["base_url"] and self.settings["api_key"] and self.settings["model"])
         return {
             "enabled": self.settings["enabled"] and configured,
             "provider": self.settings.get("provider", "openai"),
             "model": self.settings["model"] if self.settings["enabled"] else "",
             "max_tool_loops": self.settings["max_tool_loops"],
+            "max_rest_calls": self.settings["max_rest_calls"],
             "tools": [{"name": name, "method": item.get("method", "GET"), "path": item["path"], "description": item["description"]} for name, item in self.catalog.items()],
         }
 
@@ -107,6 +111,7 @@ class PortfolioAssistant:
                 "Never add amounts in different currencies. Report account_details or currency groups separately; report-wide totals are not FX-converted. "
                 "For recorded transactions or paid dividends, use get_securities or get_trade_history. Scheduled/discovered get_events records are a separate dataset; an empty event list never disproves ledger transactions or cash income. "
                 "For account inventory, current holdings and share quantities, use get_portfolio_summary with account_id, not a filtered portfolio screen. A screen with no matches never establishes that an account has no holdings. "
+                "For US bond, mutual-fund or ETF prices, history and reference facts, prefer get_security_market_data when available. Match the exact CUSIP/ISIN or fund ticker and kind. Preserve returned quote units, price and adjustment basis, coverage, stale/provider status and actual observation dates. A historical price query may include a latest provider profile, not historical holdings or ratings. Never confuse a bond coupon or auction price with its current yield or secondary-market price, or a fund NAV with an ETF market price. These research reads do not save local portfolio prices or revalue positions. "
                 "If a needed fact is unavailable or the question is ambiguous, say what is unknown and ask a focused question. "
                 "Do not invent prices, holdings, returns, news, tool results or completed actions. Do not present investment advice."
                 " For world-event impacts, historical stock-move explanations or event-related probabilities, "
@@ -119,6 +124,8 @@ class PortfolioAssistant:
                 "Do not claim automatic learning, case storage or current-event verification without actual supporting tools and evidence."
             ),
         }]
+        if self.system_policy:
+            messages[0]["content"] = self.system_policy
         for item in ((history or [])[-self.settings["max_context_messages"]:] if self.settings["max_context_messages"] else []):
             if not isinstance(item, dict) or item.get("role") not in {"user", "assistant"}:
                 continue
@@ -127,8 +134,9 @@ class PortfolioAssistant:
                 messages.append({"role": item["role"], "content": content[:8_000]})
         messages.append({"role": "user", "content": prompt})
         calls: list[dict[str, Any]] = []
+        rest_attempts = 0
         for index in range(self.settings["max_tool_loops"]):
-            final_turn = index == self.settings["max_tool_loops"] - 1
+            final_turn = index == self.settings["max_tool_loops"] - 1 or rest_attempts >= self.settings["max_rest_calls"]
             if final_turn:
                 messages.append({"role": "system", "content": "This is the final allowed response. Answer from evidence already received. State any remaining unknowns; do not request more tools or guess."})
             if audit:
@@ -145,7 +153,7 @@ class PortfolioAssistant:
                 answer = clean_answer(content)
                 if not answer:
                     raise AssistantError("The LLM returned an empty answer.")
-                return {"answer": answer, "support_status": message.get("support_status", "answered"), "tool_calls": calls, "max_tool_loops": self.settings["max_tool_loops"], "model_requests": index + 1}
+                return {"answer": answer, "support_status": message.get("support_status", "answered"), "tool_calls": calls, "max_tool_loops": self.settings["max_tool_loops"], "model_requests": index + 1, "rest_requests": rest_attempts}
             if final_turn:
                 break
             if not isinstance(tool_calls, list) or len(tool_calls) != 1 or not isinstance(tool_calls[0], dict):
@@ -162,6 +170,7 @@ class PortfolioAssistant:
                         raise AssistantError("The LLM requested an unavailable read tool.")
                     if audit:
                         audit("tool_request", tool=name, path=self.catalog[name]["path"], arguments=arguments)
+                    rest_attempts += 1  # Failed attempts consume the same per-message budget.
                     result = run_tool(name, arguments)
                     if audit:
                         audit("tool_response", tool=name, path=self.catalog[name]["path"], result=json.loads(_tool_content(result)))
@@ -192,20 +201,20 @@ class PortfolioAssistant:
         return message
 
     def _call_provider(self, *, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
-        if self.settings.get("provider") == "local_codex":
+        if self.settings.get("provider") in {"local_codex", "local_claude"}:
             import httpx
             try:
                 with httpx.Client(transport=httpx.HTTPTransport(uds=self.settings["codex_socket"]), base_url="http://codex-local", timeout=max(self.settings["timeout_seconds"], 120)) as client:
-                    response = client.post("/completion", json={"messages": messages, "tools": tools})
+                    response = client.post("/completion", json={"messages": messages, "tools": tools, "provider": self.settings["provider"], "model": self.settings["model"], "reasoning_effort": self.settings["reasoning_effort"]})
                     if response.status_code != 200:
                         detail = response.json().get("error", {})
                         cause = detail.get("message", "") if isinstance(detail, dict) else ""
-                        raise AssistantError("The local Codex service is unavailable. " + cause)
+                        raise AssistantError("The local AI service is unavailable. " + cause)
                     return response.json()
             except (httpx.HTTPError, ValueError) as exc:
                 if isinstance(exc, AssistantError):
                     raise
-                raise AssistantError("The local Codex service is unavailable. Check that the bridge is running and Codex is signed in.") from exc
+                raise AssistantError("The local AI service is unavailable. Check that the bridge is running and the configured CLI is signed in.") from exc
         payload = {
             "model": self.settings["model"],
             "messages": messages,

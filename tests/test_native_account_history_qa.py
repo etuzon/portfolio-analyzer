@@ -272,6 +272,47 @@ def chromium(tmp_path):
             process.wait(timeout=5)
 
 
+@pytest.mark.parametrize("language", ["en", "he"])
+def test_portfolio_value_tooltip_lists_only_investment_accounts_without_changing_totals(tmp_path, chromium, language):
+    command, evaluate = chromium
+    command("Page.navigate", {"url": browser_document(tmp_path, language).as_uri()})
+    deadline = time.monotonic() + 15
+    while not evaluate("window.qa?.ready || window.qa?.errors?.length") and time.monotonic() < deadline:
+        time.sleep(.05)
+    assert evaluate("qa.errors") == []
+    evaluate('''
+state.localTransactions=[];
+state.localAccounts=[
+ {id:'invest',username:'Investment primary',type:'Investment',currency:'USD',initial_cash:1000,persons:[]},
+ {id:'zero',username:'Investment zero',type:'Investment',currency:'ILS',initial_cash:0,persons:[]},
+ {id:'negative',username:'Investment debt',type:'Investment',currency:'USD',initial_cash:-100,persons:[]},
+ {id:'unknown',username:'Investment unknown',type:'Investment',currency:'USD',persons:[]},
+ {id:'bank',username:'Excluded bank',type:'Bank',currency:'ILS',initial_cash:200,persons:[]},
+ {id:'savings',username:'Excluded savings',type:'Long-Term Savings',currency:'USD',initial_cash:50,persons:[]},
+ {id:'untyped',username:'Excluded untyped',type:'',currency:'ILS',initial_cash:25,persons:[]},
+ {id:'employee',username:'Excluded employee',type:'ESOP',currency:'USD',initial_cash:9000,persons:[]}
+];
+$('qa-value').innerHTML=renderPortfolioValueDashboard([]);
+''')
+    tooltip = evaluate("$('qa-value').querySelector('.balance-value').title")
+    for account in ["Investment primary", "Investment zero", "Investment debt", "Investment unknown"]:
+        assert account in tooltip
+    for account in ["Excluded bank", "Excluded savings", "Excluded untyped", "Excluded employee"]:
+        assert account not in tooltip
+    # Existing full non-ESOP cash = (1000 - 100 + 50) USD * 4 + 200 + 25 ILS.
+    assert "4,025" in evaluate("$('qa-value').querySelector('.balance-value').textContent")
+    assert all("4,025" in line for line in [tooltip.splitlines()[0], tooltip.splitlines()[2]])
+    assert "0.00" in tooltip and re.search(r"-[^\d\n]*100\.00", tooltip)
+    assert ("Not available" if language == "en" else "לא זמין") in tooltip
+    assert evaluate("$('qa-value').querySelector('.balance-value').getAttribute('aria-label')") == tooltip
+    # Once the final Investment account disappears, the account section disappears too.
+    evaluate("state.localAccounts=state.localAccounts.filter(a=>a.type!=='Investment');$('qa-value').innerHTML=renderPortfolioValueDashboard([]);")
+    tooltip = evaluate("$('qa-value').querySelector('.balance-value').title")
+    assert ("Cash by account" if language == "en" else "מזומן לפי חשבון") not in tooltip
+    assert "425" in evaluate("$('qa-value').querySelector('.balance-value').textContent")
+    assert evaluate("qa.errors") == []
+
+
 @pytest.mark.parametrize("width,language", [(390, "en"), (1440, "en"), (390, "he"), (1440, "he")])
 def test_history_currency_browser_interaction_and_native_cash_tooltip(tmp_path, chromium, width, language):
     fixture = browser_document(tmp_path, language)

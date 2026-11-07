@@ -54,6 +54,27 @@ heatmapView.account_id='empty';renderHeatmap();assert.ok(target.innerHTML.includ
 ''')
 
 
+def test_legend_is_last_and_requested_explanatory_copy_is_absent_in_both_languages():
+    run_ui(r'''
+seed();heatmapView.data.assets[0].valuation_status='stale';
+for(const language of ['en','he']){
+ state.language=language;renderHeatmap();const html=target.innerHTML;
+ for(const phrase of [
+  'Area: gross ILS value · Color: latest observed price move',
+  'Includes older or estimated values. Select a security to inspect its basis and dates.',
+  'Select a security in the map or list for prices, dates and account holdings.'
+ ])assert.ok(!html.includes(heatmapText(phrase)));
+ assert.ok(html.includes('<legend class="sr-only">'+heatmapText('Asset types')+'</legend>'));
+ const legend=html.lastIndexOf('<div class="heatmap-legend">');
+ assert.ok(legend>html.indexOf('id="heatmapMethod"'));
+ assert.ok(legend>html.indexOf('class="heatmap-all-list"'));
+ assert.ok(html.slice(legend).endsWith('</small></div>'));
+ for(const label of ['Fall','No change','Unavailable','Rise'])assert.ok(html.slice(legend).includes(heatmapText(label)));
+ assert.ok(heatmapTooltipHtml(heatmapScope()[0]).includes(heatmapText('Stale')));
+}
+''')
+
+
 def test_click_details_preserves_identity_dates_signed_breakdown_and_escapes():
     run_ui(r'''
 seed();heatmapView.selected={id:a.id,account_id:''};renderHeatmapSelection();let html=nodes.heatmapSelection.innerHTML;
