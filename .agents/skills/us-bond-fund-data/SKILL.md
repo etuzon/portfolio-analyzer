@@ -37,6 +37,15 @@ caches data automatically; the caller supplies an identifier, not manually
 entered prices. It does not create securities, transactions or local valuation
 overrides. The application may research an instrument it does not yet hold.
 
+Locally registered bonds without a stock ticker can still have an automatic
+bond feed. Do not infer unavailable market data from a `MANUAL` registration
+origin. The security-history response can include a separate `market_data`
+snapshot containing API reference observations and terms; check its provider,
+dates, quote unit and coverage. A price per $100 face must stay separate from
+the portfolio's currency-per-quantity-unit prices until the quantity/par mapping
+is explicit. Source programme purchase/redemption values are not generic
+exchange closes. Mixed historical bases need labels or separate series.
+
 Examples, using the same endpoint for different instruments:
 
 ```text

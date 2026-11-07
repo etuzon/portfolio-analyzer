@@ -14,11 +14,12 @@ def ready(tmp_path, chromium, language="en", width=1440):
     browser_wait(evaluate, "window.qa?.ready===true")
     evaluate(r'''
 qa.aiPosts=0;qa.aiGets=0;qa.logs=[];qa.apiMode='ok';qa.jobStatus='running';
+qa.progress={stage:'checking_apis',completed:0,total:0,current_security:null};
 qa.item={holding:{symbol:'91282CKD2',stock_market:'NYSE',currency:'USD'},missing:['price history'],price_ranges:{}};
 qa.other={holding:{symbol:'91282CKD2',stock_market:'TASE',currency:'ILS'},missing:['price history'],price_ranges:{}};
 state.allPortfolioItems=[qa.item,qa.other];
 qa.outcomes=[{symbol:'91282CKD2',stock_market:'NYSE',currency:'USD',status:'partial',code:'partial_data',missing_fields:['price_history']}];
-qa.job=()=>({request_id:'synthetic-job',status:qa.jobStatus,summary:{updated:0,partial:1,unavailable:0,not_attempted:0},outcomes:qa.jobStatus==='running'?[]:qa.outcomes,portfolio_refresh_required:qa.jobStatus==='completed'});
+qa.job=()=>({request_id:'synthetic-job',status:qa.jobStatus,progress:qa.progress,summary:{updated:0,partial:1,unavailable:0,not_attempted:0},outcomes:qa.jobStatus==='running'?[]:qa.outcomes,portfolio_refresh_required:qa.jobStatus==='completed'});
 qa.nativeTimeout=window.setTimeout;
 window.setTimeout=(callback,delay,...args)=>delay===3000?(qa.poll=callback,999999):qa.nativeTimeout(callback,delay,...args);
 api=async(path,options={})=>{
@@ -28,10 +29,12 @@ api=async(path,options={})=>{
   return qa.job();
  }
  qa.aiGets++;
+ if(qa.apiMode==='expired'){showLogin();const error=new Error('synthetic authentication expired');error.status=401;throw error;}
  if(qa.apiMode==='poll-failure'){qa.apiMode='ok';throw new Error('synthetic raw provider secret');}
  return path.endsWith('/status')?{items:qa.outcomes,active_job:qa.active?qa.job():null}:qa.job();
 };
 appLog=(event,detail)=>qa.logs.push({event,...detail});appWarn=appLog;
+qa.originalAIAction=$('enrichMissingData');ensureHierarchicalNav();ensureHierarchicalNav();
 renderAIEnrichment();
 ''')
     return command, evaluate
@@ -40,17 +43,36 @@ renderAIEnrichment();
 @pytest.mark.parametrize("width,language", [(1440, "en"), (1440, "he"), (390, "en"), (390, "he")])
 def test_ai_single_request_partial_results_tooltips_permissions_and_narrow_layout(tmp_path, chromium, width, language):
     command, evaluate = ready(tmp_path, chromium, language, width)
-    evaluate("$('enrichMissingData').click();$('enrichMissingData').click();")
+    assert evaluate("$('enrichMissingData')===qa.originalAIAction&&document.querySelectorAll('#enrichMissingData').length===1")
+    assert evaluate("$('enrichMissingData').closest('.nav-menu')===document.querySelector('.nav-menu')")
+    assert evaluate("!document.querySelector('.header-status').contains($('enrichMissingData'))")
+    evaluate("if(matchMedia('(max-width:760px)').matches)setMobileNavigation(true);$('enrichMissingData').closest('details').open=true;$('enrichMissingData').focus();")
+    command("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
+    command("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
+    evaluate("$('enrichMissingData').click();")
     browser_wait(evaluate, "state.aiEnrichment.pending===true&&qa.aiPosts===1&&!!qa.poll")
     assert evaluate("$('refresh').disabled") is False
     assert evaluate("$('loadingOverlay').hidden") is True
-    assert evaluate("$('enrichMissingData').disabled") is True
+    assert evaluate("$('aiEnrichmentModal').hidden") is False
+    assert evaluate("$('enrichMissingData').disabled") is False
+    assert evaluate("$('aiEnrichmentStart').disabled") is True
+    assert evaluate("$('aiEnrichmentProgress').hasAttribute('value')") is False
+    assert evaluate("$('aiEnrichmentPhase').textContent") == ("Checking data sources" if language == "en" else "בודק מקורות נתונים")
     assert evaluate("$('aiEnrichmentStatus').textContent") == (
         "AI is researching open holdings. You can keep using the dashboard." if language == "en"
         else "ה־AI מאתר נתונים להחזקות פתוחות. אפשר להמשיך להשתמש בלוח.")
-    evaluate("qa.jobStatus='completed';qa.poll();")
+    # Closing and reopening keeps the running job, its timer and the original menu listener.
+    evaluate("closeModal($('aiEnrichmentModal'));ensureHierarchicalNav();$('enrichMissingData').click();")
+    assert evaluate("qa.aiPosts") == 1
+    evaluate("qa.progress={stage:'researching',completed:1,total:3,current_security:qa.item.holding};qa.poll();")
+    browser_wait(evaluate, "$('aiEnrichmentProgress').value===1&&$('aiEnrichmentProgress').max===3")
+    assert "91282CKD2" in evaluate("$('aiEnrichmentCurrentSecurity').textContent")
+    assert ("Checked 1 of 3" if language == "en" else "נבדקו 1 מתוך 3") in evaluate("$('aiEnrichmentCounts').textContent")
+    assert "%" not in evaluate("$('aiEnrichmentCounts').textContent")
+    (tmp_path / f"ai-enrichment-running-{language}-{width}.png").write_bytes(base64.b64decode(command("Page.captureScreenshot", {"format": "png"})["data"]))
+    evaluate("qa.jobStatus='completed';qa.progress={stage:'completed',completed:1,total:1,current_security:null};qa.poll();")
     browser_wait(evaluate, "!state.aiEnrichment.pending&&qa.refreshes===1")
-    assert evaluate("qa.aiPosts") == 1 and evaluate("qa.aiGets") == 1
+    assert evaluate("qa.aiPosts") == 1 and evaluate("qa.aiGets") == 2
     assert evaluate("qa.logs.some(log=>log.code==='partial_data'&&log.symbol==='91282CKD2')")
     assert evaluate("$('aiEnrichmentDetails').hidden") is False
     assert "partial_data" not in evaluate("$('aiEnrichmentResults').textContent")
@@ -62,23 +84,36 @@ def test_ai_single_request_partial_results_tooltips_permissions_and_narrow_layou
     assert evaluate("aiOutcomeMessage({code:'evidence_rejected'})") == (
         "The source did not provide enough verified information." if language == "en"
         else "המקור לא סיפק מספיק מידע מאומת.")
+    assert evaluate("aiOutcomeMessage({code:'provider_timeout'})") == (
+        "The source check took longer than expected. Saved data is retained; use Refresh or try again later." if language == "en"
+        else "בדיקת המקור נמשכה זמן רב מהצפוי. הנתונים השמורים נשמרים; השתמשו ברענון או נסו שוב מאוחר יותר.")
+    assert evaluate("aiOutcomeMessage({code:'bond_reference_only'})") == (
+        "API bond reference data is available. Portfolio valuation still requires a defined quantity/face-value convention." if language == "en"
+        else "נתוני ייחוס לאג״ח זמינים מה־API. חישוב שווי ההחזקה עדיין דורש הגדרה של מוסכמת הכמות והערך הנקוב.")
     assert expected in evaluate("dataGapTooltip(qa.item)")
     assert expected not in evaluate("dataGapTooltip(qa.other)")
     # Later manual/provider corrections take precedence over old partial AI outcomes.
     assert ("All displayed data available" if language == "en" else "כל הנתונים המוצגים זמינים") in evaluate("statusCell({...qa.item,missing:[]})")
     assert "partial" not in evaluate("statusCell({...qa.item,missing:[]})")
-    evaluate("$('aiEnrichmentDetails').open=true;$('enrichMissingData').scrollIntoView({block:'center'});")
-    geometry = evaluate("(()=>{const b=$('enrichMissingData').getBoundingClientRect(),r=$('aiEnrichmentResults').getBoundingClientRect();return {left:b.left,right:b.right,resultLeft:r.left,resultRight:r.right,overflow:document.documentElement.scrollWidth-innerWidth};})()")
+    evaluate("$('aiEnrichmentTitle').scrollIntoView({block:'start'});")
+    geometry = evaluate("(()=>{const b=$('aiEnrichmentModal').querySelector('.modal-card').getBoundingClientRect(),r=$('aiEnrichmentResults').getBoundingClientRect();return {left:b.left,right:b.right,resultLeft:r.left,resultRight:r.right,overflow:document.documentElement.scrollWidth-innerWidth};})()")
     assert geometry["left"] >= 0 and geometry["right"] <= width, geometry
     assert geometry["resultLeft"] >= 0 and geometry["resultRight"] <= width, geometry
     assert geometry["overflow"] <= 1, geometry
     (tmp_path / f"ai-enrichment-{language}-{width}.png").write_bytes(base64.b64decode(command("Page.captureScreenshot", {"format": "png"})["data"]))
-    evaluate("state.auth.user.role='Viewer';renderCurrentUser();$('enrichMissingData').click();")
-    assert evaluate("$('enrichMissingData').disabled") is True
+    evaluate("closeModal($('aiEnrichmentModal'));state.auth.user.role='Viewer';renderCurrentUser();ensureHierarchicalNav();$('enrichMissingData').click();$('aiEnrichmentStart').click();")
+    assert evaluate("$('enrichMissingData').disabled") is False
+    assert evaluate("$('aiEnrichmentModal').hidden") is False
+    assert evaluate("$('aiEnrichmentStart').disabled") is True
     assert evaluate("$('aiEnrichmentAction').tabIndex") == 0
     assert evaluate("qa.aiPosts") == 1
     permission = "Admin or Operator" if language == "en" else "מנהל מערכת או מפעיל"
     assert permission in evaluate("$('aiEnrichmentAction').getAttribute('aria-label')")
+    # Reopening a completed job remains read-only until a new request is chosen explicitly.
+    evaluate("state.auth.user.role='Operator';renderCurrentUser();closeModal($('aiEnrichmentModal'));$('enrichMissingData').click();")
+    assert evaluate("qa.aiPosts") == 1
+    evaluate("$('aiEnrichmentStart').click();")
+    browser_wait(evaluate, "qa.aiPosts===2")
     assert evaluate("qa.errors") == []
 
 
@@ -89,14 +124,14 @@ def test_poll_interruption_and_limit_resume_same_job_without_another_post(tmp_pa
     evaluate("qa.apiMode='poll-failure';qa.poll();")
     browser_wait(evaluate, "state.aiEnrichment.resume===true")
     assert "synthetic raw" not in evaluate("$('aiEnrichmentStatus').textContent")
-    assert evaluate("$('enrichMissingData').textContent") == "Check AI progress"
-    evaluate("$('enrichMissingData').click();")
+    assert evaluate("$('aiEnrichmentStart').textContent") == "Check AI progress"
+    evaluate("$('aiEnrichmentStart').click();")
     browser_wait(evaluate, "state.aiEnrichment.pending===true&&!state.aiEnrichment.resume")
     assert evaluate("qa.aiPosts") == 1
     evaluate("state.aiEnrichment.polls=120;scheduleAIEnrichmentPoll();")
     assert evaluate("state.aiEnrichment.resume&&!state.aiEnrichment.pending")
     assert "taking longer" in evaluate("$('aiEnrichmentStatus').textContent")
-    evaluate("qa.jobStatus='completed';$('enrichMissingData').click();")
+    evaluate("qa.jobStatus='completed';$('aiEnrichmentStart').click();")
     browser_wait(evaluate, "!state.aiEnrichment.pending&&!state.aiEnrichment.resume")
     assert evaluate("qa.aiPosts") == 1
     assert evaluate("qa.refreshes") == 1
@@ -107,7 +142,7 @@ def test_lost_post_response_checks_active_job_and_late_session_result_is_discard
     _, evaluate = ready(tmp_path, chromium)
     evaluate("qa.apiMode='lost';$('enrichMissingData').click();")
     browser_wait(evaluate, "state.aiEnrichment.resume===true")
-    evaluate("qa.active=true;$('enrichMissingData').click();")
+    evaluate("qa.active=true;$('aiEnrichmentStart').click();")
     browser_wait(evaluate, "state.aiEnrichment.pending===true&&!state.aiEnrichment.resume")
     assert evaluate("qa.aiPosts") == 1
     assert evaluate("state.aiEnrichment.job.request_id") == "synthetic-job"
@@ -116,4 +151,22 @@ def test_lost_post_response_checks_active_job_and_late_session_result_is_discard
     evaluate("resetAIEnrichment();qa.resolve(qa.job());")
     browser_wait(evaluate, "state.aiEnrichment.job===null&&!state.aiEnrichment.pending")
     assert evaluate("state.aiEnrichment.outcomes.length") == 0
+    assert evaluate("qa.errors") == []
+
+
+def test_language_rebuild_retains_opener_focus_and_expired_session_clears_popup(tmp_path, chromium):
+    _, evaluate = ready(tmp_path, chromium)
+    evaluate("$('enrichMissingData').closest('details').open=true;$('enrichMissingData').focus();state.language='he';applyLanguage();")
+    assert evaluate("$('enrichMissingData')===qa.originalAIAction")
+    assert evaluate("document.querySelectorAll('#enrichMissingData').length") == 1
+    assert evaluate("document.activeElement.id") == "enrichMissingData"
+    assert evaluate("$('enrichMissingData').textContent") == "איתור נתונים חסרים בעזרת AI"
+    evaluate("$('enrichMissingData').click();")
+    browser_wait(evaluate, "qa.aiPosts===1&&!!qa.poll")
+    evaluate("qa.apiMode='expired';qa.poll();")
+    browser_wait(evaluate, "currentUser()===null&&$('aiEnrichmentModal').hidden")
+    assert evaluate("state.aiEnrichment.job") is None
+    assert evaluate("state.aiEnrichment.outcomes.length") == 0
+    assert evaluate("$('enrichMissingData').disabled") is True
+    assert evaluate("qa.aiPosts") == 1
     assert evaluate("qa.errors") == []

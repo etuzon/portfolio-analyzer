@@ -20,7 +20,7 @@ def js_functions(*names):
 def test_security_history_localizes_actions_cash_and_generated_notes_without_audit_ids():
     script = "const window = {};\n" + (ROOT / "web/i18n.js").read_text()
     script += SOURCE[SOURCE.index("const TRANSLATIONS ="):SOURCE.index("function locale(")]
-    script += js_functions("t", "securityTransactionCommentText", "renderSecurityDetail", "tradeHistoryActionLabel", "transactionCashImpact")
+    script += js_functions("t", "bondReferenceIdentifier", "isBondReferenceTarget", "securityTransactionCommentText", "renderSecurityDetail", "tradeHistoryActionLabel", "transactionCashImpact")
     script += r"""
 const assert = require('node:assert/strict');
 const auditId = 'cfbda34c-b7db-4e62-928a-2a02cdeef431';
@@ -50,6 +50,7 @@ const transactionMatchesSecurity = () => true;
 const priceMatchesSecurity = () => true;
 const renderSecurityTechnicalSignal = () => {};
 const renderSecurityChart = () => {};
+const renderBondReference = () => {};
 const outputs = [];
 for (const language of ['he', 'en', 'he']) {
   state.language = language;

@@ -329,7 +329,15 @@ write is performed by the test suite.
 
 #### Missing holding information with AI
 
-The dashboard's **Find missing data with AI** button first tries configured data
+Choose **Portfolio → Find missing data with AI** to open the progress popup.
+The first permitted menu activation starts one request; reopening an existing
+request shows its progress or results without starting another. The popup shows
+the current phase, security being checked, checked-work counts and readable
+per-security outcomes. Closing it leaves background work running. Starting a
+new batch or resuming an interrupted status check is an explicit popup action.
+Viewers can inspect results, while updates require Admin/Operator permission.
+
+The action first tries configured data
 APIs for a bounded selection of **open holdings only**, including shorts and
 reopened positions. Fully closed positions are excluded before model calls.
 Remaining gaps can use internet evidence; API-only success and an unavailable
@@ -338,6 +346,21 @@ the `price_agent` provider/model/effort settings (Codex by default, or Claude
 Code), and internet search uses `price_agent.search` above. The existing `llm`
 section supplies the shared host bridge socket and whether AI is enabled;
 read-only dashboard chat keeps its separate `llm` model selection.
+
+The CLI sign-in and internet search are separate prerequisites. A signed-in
+Codex/Claude CLI does not supply a Brave Search API key. Without that key, the
+app keeps ordinary API results, reports `research_unavailable`, and avoids model
+calls. Public TreasuryDirect retrieval needs no provider/search key; Finnhub
+and EODHD require their own configured access.
+
+Ordinary API preflight has a shared 25-second response budget, with at most three
+in-flight checks and deduplication across retries. Slow checks can finish caching
+evidence, but the job retains its eligible inventory and continues with the
+remaining gaps. It no longer discards a completed inventory because a serial
+provider check exceeded the agent REST timeout. Timeout and application failures
+have separate safe diagnostics; exception messages and credentials stay out of
+public status. Progress counts mean checks completed in that phase, not prices
+saved; verified updates are reported separately.
 
 The model sees only allowlisted REST tools under the initiating user's identity.
 It never reads or writes databases, files, or shell state. The application alone
@@ -354,6 +377,17 @@ are prioritized on a later user request. Polling resumes the same job without
 resetting budgets. Per-security friendly outcomes appear in tooltips and the
 result details and are recorded in market-data logs. Prices and missing fields
 are refreshed after completion; positions closed during research are skipped.
+
+Registered U.S. bonds with a CUSIP/ISIN can fetch API reference prices, history
+and terms even when registered locally without a stock ticker. Security history
+returns these separately as `market_data`; cached snapshots can identify the
+actual provider in holdings. Registration origin does not establish whether a
+price feed is available. API percent-of-par quotes retain their dates, basis,
+side and units per $100 face. They are not inserted into currency-per-unit price
+history or applied to portfolio valuation without an explicit quantity/par-unit
+mapping. Existing local valuation evidence stays separate. Treasury programme
+purchase/redemption reference values are not relabeled exchange closes, clean
+prices or executable quotes; partial historical coverage remains explicit.
 
 | Method | Route | Authorization and purpose |
 | --- | --- | --- |

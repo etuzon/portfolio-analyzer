@@ -1164,7 +1164,7 @@ async function saveLoggingSettings() {
 }
 
 const WRITE_CONTROL_IDS = new Set([
-  "enrichMissingData",
+  "aiEnrichmentStart",
   "saveXrayReport", "fetchXrayIssuer", "chooseXrayReportFile",
   "addAlertCondition", "newAlertRule", "addBannerItem", "addPensionPeriod", "addPensionRate", "addPensionScenario",
   "applyBackupSchedule", "attachAccountToMember", "attachEditAccountPerson", "attachLocalAccountPerson",
@@ -1217,6 +1217,8 @@ function aiOutcomeMessage(outcome) {
     ai_unavailable: "AI research is unavailable. Check the AI configuration or try again later.",
     request_limit: "The request limit was reached. This security may need a new request.",
     provider_unavailable: "The data source is unavailable. Try again later or enter verified data manually.",
+    provider_timeout: "The source check took longer than expected. Saved data is retained; use Refresh or try again later.",
+    bond_reference_only: "API bond reference data is available. Portfolio valuation still requires a defined quantity/face-value convention.",
     research_unavailable: "Internet research is unavailable. Configure the search service and try again.",
     evidence_rejected: "The source did not provide enough verified information.",
     not_processed: "This security was not checked in this request.",
@@ -1241,11 +1243,15 @@ function resetAIEnrichment() {
 }
 
 function renderAIEnrichment() {
-  const button = $("enrichMissingData");
-  if (!button) return;
+  const opener = $("enrichMissingData"), button = $("aiEnrichmentStart");
+  if (!button || !opener) return;
   const ui = state.aiEnrichment;
-  button.disabled = !canWrite() || ui.pending;
-  button.textContent = t(ui.pending ? "Finding missing data…" : ui.resume ? "Check AI progress" : "Find missing data with AI");
+  opener.disabled = !currentUser();
+  opener.textContent = t("Find missing data with AI");
+  opener.classList.toggle("is-running", ui.pending);
+  opener.title = t(ui.pending ? "AI research is running. Open to see progress." : "Open AI research and saved results.");
+  button.disabled = !canWrite() || ui.pending || state.auth.forcedPasswordChange || Boolean(currentUser()?.must_change_password);
+  button.textContent = t(ui.pending ? "Research in progress…" : ui.resume ? "Check AI progress" : ui.job ? "Start new request" : "Start research");
   const permission = t("AI data updates require Admin or Operator permission.");
   button.title = canWrite() ? t("Research missing data for open holdings and save verified results.") : permission;
   $("aiEnrichmentAction").title = button.title;
@@ -1255,16 +1261,39 @@ function renderAIEnrichment() {
   let message = ui.message ? t(ui.message) : (!canWrite() && currentUser() ? permission : "");
   if (ui.pending) message = t("AI is researching open holdings. You can keep using the dashboard.");
   else if (!message && ui.job) {
-    const summary = ui.job.summary || {};
-    message = ui.job.code === "nothing_missing" ? aiOutcomeMessage(ui.job)
-      : `${t("AI research finished")}: ${summary.updated || 0} ${t("securities updated")}, ${summary.partial || 0} ${t("partly updated")}, ${(summary.unavailable || 0) + (summary.not_attempted || 0)} ${t("still unavailable")}.`;
+    message = ui.job.code === "nothing_missing" ? aiOutcomeMessage(ui.job) : "";
     if (ui.job.status === "failed") message = aiOutcomeMessage(ui.job);
   }
-  status.textContent = message;
+  if (status.textContent !== message) status.textContent = message;
   status.hidden = !message;
-  $("aiEnrichmentDetails").hidden = !ui.outcomes.length;
+  const stage = ui.job?.progress?.stage || (ui.pending ? "queued" : ui.job?.status === "failed" ? "failed" : ui.job ? "completed" : "ready");
+  const phases = { ready: "Ready to research", queued: "Waiting to start", checking_apis: "Checking data sources", researching: "Researching remaining gaps", saving: "Saving verified results", completed: "Research finished", failed: "Research stopped" };
+  const phaseText = t(ui.resume ? "Progress check needed" : phases[stage] || "Research in progress");
+  if ($("aiEnrichmentPhase").textContent !== phaseText) $("aiEnrichmentPhase").textContent = phaseText;
+  const completed = Number(ui.job?.progress?.completed), total = Number(ui.job?.progress?.total);
+  const knownProgress = Number.isFinite(completed) && completed >= 0 && Number.isFinite(total) && total > 0;
+  const progress = $("aiEnrichmentProgress");
+  progress.hidden = !ui.pending && !knownProgress;
+  if (knownProgress) { progress.max = total; progress.value = Math.min(completed, total); }
+  else { progress.removeAttribute("value"); progress.removeAttribute("max"); }
+  $("aiEnrichmentCounts").hidden = !knownProgress;
+  const countText = knownProgress ? t("Checked {completed} of {total} securities in this phase").replace("{completed}", fmt(completed, 0)).replace("{total}", fmt(total, 0)) : "";
+  if ($("aiEnrichmentCounts").textContent !== countText) $("aiEnrichmentCounts").textContent = countText;
+  if (countText) progress.setAttribute("aria-valuetext", countText); else progress.removeAttribute("aria-valuetext");
+  const current = ui.pending && ui.job?.progress?.current_security;
+  $("aiEnrichmentCurrent").hidden = !current;
+  const currentText = current ? [current.symbol, current.stock_market, current.currency].filter(Boolean).join(" · ") : "";
+  if ($("aiEnrichmentCurrentSecurity").textContent !== currentText) $("aiEnrichmentCurrentSecurity").textContent = currentText;
+  const summary = ui.job?.summary;
+  $("aiEnrichmentSummary").hidden = !summary || ui.pending;
+  $("aiEnrichmentSummary").innerHTML = summary ? [[summary.updated || 0, "Updated"], [summary.partial || 0, "Partial results"], [(summary.unavailable || 0) + (summary.not_attempted || 0), "Unavailable or not checked"]].map(([count, label]) => `<div><strong>${esc(fmt(count, 0))}</strong><span>${esc(t(label))}</span></div>`).join("") : "";
+  const displayedOutcomes = ui.job ? ui.job.outcomes || [] : ui.pending ? [] : ui.outcomes;
+  $("aiEnrichmentDetails").hidden = !displayedOutcomes.length;
+  $("aiEnrichmentResultsTitle").textContent = t(ui.job ? "Results by security" : "Latest saved results");
+  $("aiEnrichmentEmpty").hidden = Boolean(displayedOutcomes.length);
+  $("aiEnrichmentEmpty").textContent = t(ui.pending ? "Results will appear as checks finish." : "No AI research results yet.");
   const results = $("aiEnrichmentResults");
-  const resultHtml = ui.outcomes.map((outcome) => `<li><bdi dir="auto">${esc([outcome.symbol, outcome.stock_market, outcome.currency].filter(Boolean).join(" · "))}</bdi>: ${esc(aiOutcomeMessage(outcome))}</li>`).join("");
+  const resultHtml = displayedOutcomes.map((outcome) => `<li><div class="ai-enrichment-result-heading"><bdi dir="auto">${esc([outcome.symbol, outcome.stock_market, outcome.currency].filter(Boolean).join(" · "))}</bdi><span class="badge ${outcome.status === "updated" ? "ok" : outcome.status === "partial" ? "partial" : "neutral"}">${esc(t({ updated: "Updated", partial: "Partial results", unavailable: "Unavailable", not_attempted: "Not checked" }[outcome.status] || "Unavailable"))}</span></div><p>${esc(aiOutcomeMessage(outcome))}</p></li>`).join("");
   if (results.innerHTML !== resultHtml) {
     const scrollTop = results.scrollTop;
     results.innerHTML = resultHtml;
@@ -1274,6 +1303,20 @@ function renderAIEnrichment() {
     const item = state.allPortfolioItems.find((entry) => aiSecurityKey(entry.holding) === node.dataset.aiGapKey);
     if (item) node.title = dataGapTooltip(item);
   });
+}
+
+function openAIEnrichment() {
+  if (!currentUser() || currentUser().must_change_password) return;
+  const mobile = window.matchMedia("(max-width: 760px)").matches;
+  openModal("aiEnrichmentModal", mobile ? $("navigationToggle") : $("enrichMissingData"), { focusId: "aiEnrichmentTitle" });
+  document.querySelectorAll(".nav-menu[open]").forEach((menu) => { menu.open = false; });
+  setMobileNavigation(false);
+  const ui = state.aiEnrichment;
+  renderAIEnrichment();
+  if (!ui.opened && !ui.job && !ui.pending && !ui.resume && canWrite()) {
+    ui.opened = true;
+    requestAIEnrichment();
+  }
 }
 
 function acceptAIEnrichmentJob(job) {
@@ -1347,7 +1390,7 @@ async function loadAIEnrichmentStatus() {
 
 async function requestAIEnrichment() {
   const ui = state.aiEnrichment;
-  if (!canWrite() || ui.pending) return;
+  if (!canWrite() || ui.pending || state.auth.forcedPasswordChange || currentUser()?.must_change_password) return;
   ui.version = (ui.version || 0) + 1;
   clearTimeout(ui.timer);
   ui.pending = true;
@@ -1830,6 +1873,8 @@ function ensureHierarchicalNav() {
   // Reuse the chat controls so language/role updates retain their listeners and draft.
   const chatLauncher = nav.querySelector?.(".assistant-launcher");
   const restoreChatFocus = chatLauncher?.contains(document.activeElement);
+  const aiAction = $("enrichMissingData");
+  const restoreAIFocus = aiAction && document.activeElement === aiAction;
   // Top-level groups open as compact popovers, so keep the header uncluttered
   // until the user chooses a group.
   const defaultOpen = "";
@@ -1842,6 +1887,7 @@ function ensureHierarchicalNav() {
         <button class="nav-item" type="button" data-modal="tradingJournalModal">${esc(t("Trading Journal"))}</button>
         <button class="nav-item" type="button" data-modal="eventsModal">${esc(t("Dividends & Events"))}</button>
         <button class="nav-item" type="button" data-modal="pricesModal">${esc(t("prices"))}</button>
+        <span data-ai-enrichment-slot hidden></span>
         <button class="nav-item" type="button" data-modal="reportsModal">${esc(t("Portfolio Reports"))}</button>
       </div>
     </details>
@@ -1898,6 +1944,14 @@ function ensureHierarchicalNav() {
         <button class="nav-item" type="button" data-modal="aboutModal">${esc(t("about"))}</button>
       </div>
     </details>`;
+  if (aiAction) {
+    nav.querySelector?.("[data-ai-enrichment-slot]")?.replaceWith(aiAction);
+    if (restoreAIFocus) {
+      const menu = aiAction.closest("details");
+      if (menu) menu.open = true;
+      aiAction.focus();
+    }
+  }
   if (chatLauncher) {
     nav.append(chatLauncher);
     if (restoreChatFocus) $("assistantLauncher").focus();
@@ -2322,6 +2376,7 @@ function applyLanguage() {
   if (state.items?.length) renderRows(state.items);
   if (state.positionTransactionsDetail) syncPositionTransactionLimit();
   if (state.securityDetail && $("securityDetailModal")?.hidden === false) renderSecurityDetail();
+  renderBondReference("prices");
   if (state.eventDividendSettings) renderEvents();
   refreshReportFilterOptions();
   document.querySelectorAll(".modal:not([hidden])").forEach(mountModalHomeLink);
@@ -3325,6 +3380,7 @@ function stockMarketDisplay(h, marketKey = "", exchange = "") {
 }
 
 function dataProviderDisplay(item, h, marketKey = "") {
+  if (item.market_data?.security && ["treasury_direct", "finnhub"].includes(item.market_data.provider)) return bondReferenceProvider(item.market_data.provider);
   if (isProviderName(marketKey)) return providerDisplayName(marketKey);
   const usable = Object.entries(item.provider_status || {}).filter(([key, value]) => (
     ["ok", "stale"].some((stateName) => String(value).toLowerCase().includes(stateName)) && key.includes(".")
@@ -4201,6 +4257,8 @@ function renderRows(items) {
     const marketKey = holdingMarketKey(h);
     const market = stockMarketDisplay(h, marketKey, item.exchange);
     const provider = dataProviderDisplay(item, h, marketKey);
+    const hasAPIReference = Boolean(item.market_data?.security && ["treasury_direct", "finnhub"].includes(item.market_data.provider));
+    const referenceBadge = hasAPIReference ? `<div class="security-reference-badges"><span class="badge neutral" title="${esc(t("API reference data does not change the holding's valuation."))}">${esc(t("API reference"))}: ${esc(provider)}</span></div>` : "";
     const securityName = String(h.name || "").trim();
     const companyLine = securityName || String(h.symbol || "").trim();
     const industry = industryLabel(item);
@@ -4218,7 +4276,7 @@ function renderRows(items) {
         ? optionLabel("Exposure unclassified")
         : "";
     const exposureLine = `<div class="security-exposure"><button class="secondary compact-button" type="button" data-edit-security-exposure-symbol="${esc(h.symbol)}" data-edit-security-exposure-market="${esc(marketKey)}" title="${esc(optionLabel("Edit exposure profile"))}">${esc(optionLabel("Exposure"))} ✎</button>${exposureText ? `<span>${esc(exposureText)}</span>` : ""}</div>`;
-    const marketLine = `${optionLabel(h.asset_class || "Asset")} · ${currencyDisplayLabel(h.currency || "")} · ${optionLabel("Market")}: ${market} · API: ${provider}`;
+    const marketLine = `${optionLabel(h.asset_class || "Asset")} · ${currencyDisplayLabel(h.currency || "")} · ${optionLabel("Market")}: ${market} · ${hasAPIReference ? `${t("API reference source")}: ${provider} · ${t("Valuation price source")}: ${dataProviderDisplay({ ...item, market_data: null }, h, marketKey)}` : `API: ${provider}`}`;
     const accountMeta = h.account_type
       ? optionLabel(h.account_type)
       : h.location
@@ -4229,7 +4287,7 @@ function renderRows(items) {
       ? Math.abs(Number(h.cost_basis || 0) / Number(h.quantity || 0))
       : 0;
     return `<tr data-portfolio-position="${esc(JSON.stringify([h.account_id, h.symbol, marketKey, h.currency, h.asset_class]))}">
-      <td data-label="Security"><div class="security-cell"><div class="security-symbols">${companyLogoHtml(h)}<button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}<span class="ux-tooltip security-meta-tooltip" tabindex="0" role="note" aria-label="Security details" title="${esc(marketLine)}" data-tooltip="${esc(marketLine)}">i</span></div><div class="security-name">${esc(companyLine)}</div>${industryLine}${exposureLine}</div></td>
+      <td data-label="Security"><div class="security-cell"><div class="security-symbols">${companyLogoHtml(h)}<button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}<span class="ux-tooltip security-meta-tooltip" tabindex="0" role="note" aria-label="Security details" title="${esc(marketLine)}" data-tooltip="${esc(marketLine)}">i</span></div><div class="security-name">${esc(companyLine)}</div>${referenceBadge}${industryLine}${exposureLine}</div></td>
       <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(accountMeta)}</div>${holdingTransactionActionsHtml(h)}</td>
       <td class="holding-risk-cell" data-label="Risk">${riskBadge(rowRisk)}</td>
       <td data-label="Value / P&L"><div class="value-cell">
@@ -5074,12 +5132,16 @@ function renderProfitBars(items) {
     .slice(0, 10);
   const total = unavailable ? t("Not available") : money(sum(entries.map((entry) => entry.value)), state.baseCurrency, 0);
   const maxAbs = Math.max(...top.map((entry) => Math.abs(entry.value)), 1);
-  const width = 430;
-  const height = 165;
-  const padLeft = 38;
+  const longestAmount = Math.max(1, ...top.map((entry) => String(fmt(entry.value, 0)).length));
+  const longestSymbol = Math.max(9, ...top.map((entry) => String(entry.item.holding.symbol || "").length));
+  const minBarSlot = Math.max(36, longestAmount * 6.5 + 10);
+  const padLeft = Math.max(38, Math.ceil(longestSymbol * 6 * Math.cos(25 * Math.PI / 180) - minBarSlot / 2 - 2));
   const padRight = 26;
   const baseline = 78;
   const topGuide = 25;
+  const symbolY = baseline + 82;
+  const height = symbolY + Math.max(32, Math.ceil(longestSymbol * 3) + 10);
+  const width = Math.max(430, padLeft + padRight + top.length * minBarSlot);
   const barSlot = (width - padLeft - padRight) / Math.max(1, top.length);
   const barWidth = Math.min(22, Math.max(8, barSlot * 0.54));
   const gainColor = "#726dff";
@@ -5093,7 +5155,7 @@ function renderProfitBars(items) {
         </div>
         <div class="chart-legend"><span><i style="background:${gainColor}"></i>${esc(t("Gain"))}</span><span><i style="background:${lossColor}"></i>${esc(t("Loss"))}</span></div>
       </div>
-      <svg viewBox="0 0 ${width} ${height}" role="group" aria-label="${esc(t("Unrealized profit and loss by holding"))}">
+      <div class="profit-chart-scroll"><svg viewBox="0 0 ${width} ${height}" style="min-width:${width}px" role="group" aria-label="${esc(t("Unrealized profit and loss by holding"))}">
         <line x1="${padLeft}" y1="${topGuide}" x2="${width - padRight}" y2="${topGuide}"></line>
         <line x1="${padLeft}" y1="${baseline}" x2="${width - padRight}" y2="${baseline}" class="axis-line"></line>
         ${top.map(({ item, value, local, currency, ils }, index) => {
@@ -5102,20 +5164,20 @@ function renderProfitBars(items) {
           const x = padLeft + index * barSlot + (barSlot - barWidth) / 2;
           const y = value >= 0 ? baseline - barHeight : baseline;
           const color = value >= 0 ? gainColor : lossColor;
-          const labelY = value >= 0 ? Math.max(topGuide - 6, y - 7) : Math.min(baseline + 34, y + barHeight + 13);
+          const labelY = value >= 0 ? topGuide - 8 : baseline + 48 + 8;
           return `
           <g tabindex="0" role="img" data-profit-holding-key="${esc(JSON.stringify([item.holding.account_id, item.holding.symbol, item.holding.stock_market, currency]))}" aria-label="${esc(tooltip)}" aria-describedby="profitChartTooltip">
             <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${barHeight.toFixed(1)}" rx="4" fill="${color}" opacity="${value >= 0 ? "1" : "0.94"}"></rect>
-            <text x="${(x + barWidth / 2).toFixed(1)}" y="${labelY.toFixed(1)}">${fmt(value, 0)}</text>
+            <text class="profit-value-label" x="${(x + barWidth / 2).toFixed(1)}" y="${labelY.toFixed(1)}" dominant-baseline="${value >= 0 ? "auto" : "hanging"}" direction="ltr" unicode-bidi="isolate">${fmt(value, 0)}</text>
           </g>
         `;
         }).join("")}
         ${top.map(({ item }, index) => {
           const x = padLeft + index * barSlot + barSlot / 2 + 10;
-          const y = baseline + 52;
+          const y = symbolY;
           return `<text class="tilted-axis-label" x="${x.toFixed(1)}" y="${y}" transform="rotate(-25 ${x.toFixed(1)} ${y})">${esc(item.holding.symbol)}</text>`;
         }).join("")}
-      </svg>
+      </svg></div>
       <div id="profitChartTooltip" class="profit-chart-tooltip" role="tooltip" hidden></div>
       ${unavailable ? `<p class="section-note">${esc(t("Holdings with unavailable P/L or chart-currency conversion are omitted; total P/L is unavailable."))}</p>` : ""}
     </div>`;
@@ -6903,6 +6965,148 @@ function priceMatchesFocus(price) {
     && String(price.stock_market || "").toUpperCase() === String(focus.stock_market || "").toUpperCase();
 }
 
+function bondReferenceIdentifier(target) {
+  if (!target) return "";
+  const holding = target.item?.holding || target;
+  if (![target.asset_class, target.asset_sub_class, holding.asset_class, holding.asset_sub_class].some((value) => String(value || "").toUpperCase() === "BOND")) return "";
+  const attached = target.market_data || target.item?.market_data || (state.securityDetail === target ? state.securityHistoryMeta?.market_data : null);
+  const confirmed = attached?.security && attached.request?.identifier;
+  if (confirmed && /^(?:[A-Z0-9*@#]{8}\d|US[A-Z0-9]{9}\d)$/i.test(confirmed)) return String(confirmed).toUpperCase();
+  const location = String(holding.location || "").toLowerCase().replace(/[\W_]+/gu, "");
+  const market = String(holding.stock_market || target.market_key || "").toUpperCase();
+  const usListing = ["us", "usa", "unitedstates", "unitedstatesofamerica"].includes(location)
+    || ["ארהב", "ארצותהברית"].includes(String(holding.location || "").replace(/[\s׳״'"._-]/gu, ""))
+    || ["US", "USA", "NASDAQ", "NYSE", "NYSEARCA", "AMEX", "TREASURY"].includes(market)
+    || (["MANUAL", "BOND"].includes(market) && String(holding.currency || "").toUpperCase() === "USD");
+  return [target.symbol, holding.symbol, target.secondary_symbol, holding.secondary_symbol].map((value) => String(value || "").trim().toUpperCase())
+    .find((value) => /^US[A-Z0-9]{9}\d$/.test(value) || usListing && /^[A-Z0-9*@#]{8}\d$/.test(value)) || "";
+}
+
+function isBondReferenceTarget(target) {
+  return Boolean(bondReferenceIdentifier(target));
+}
+
+function bondReferenceProvider(value) {
+  return { treasury_direct: "TreasuryDirect", finnhub: "Finnhub", eodhd: "EODHD" }[value] || t("Not available");
+}
+
+function bondReferenceUnit(row) {
+  const currency = /^[A-Z]{3}$/.test(String(row.currency || "")) ? row.currency : "";
+  if (row.quote_unit === "percent_of_par" && currency) return t("{currency} per 100 {currency} face value").replaceAll("{currency}", currency);
+  if (row.quote_unit === "percent_of_par") return t("Percent of par; face-value currency not specified");
+  if (row.quote_unit === "currency_per_unit" && currency) return t("{currency} per source-defined unit").replace("{currency}", currency);
+  return t("Unit not specified by source");
+}
+
+function bondReferenceConvention(value) {
+  return t({ valuation: "Reference valuation", programme_purchase: "Programme purchase price", programme_redemption: "Programme redemption price",
+    programme_purchase_mean: "Programme purchase mean", programme_redemption_bid: "Programme redemption bid",
+    clean: "Clean price", dirty: "Dirty price", close: "Closing price", bid: "Bid quote", ask: "Offer quote", last: "Last trade" }[value] || "Not specified");
+}
+
+function bondReferenceURL(value) {
+  try { const url = new URL(value); return ["https:", "http:"].includes(url.protocol) ? url.href : ""; }
+  catch { return ""; }
+}
+
+function renderBondReference(context) {
+  const target = context === "detail" ? state.securityDetail : state.priceFocus;
+  const frame = $(context === "detail" ? "securityMarketReference" : "priceMarketReference");
+  if (!frame) return;
+  frame.hidden = !isBondReferenceTarget(target);
+  if (frame.hidden) return;
+  const data = target.market_data || (context === "detail" ? state.securityHistoryMeta?.market_data || target.item?.market_data : null);
+  const loading = target.referenceLoading || (context === "detail" && state.securityDetailLoad?.history === "loading");
+  const button = frame.querySelector("[data-bond-reference]");
+  button.disabled = false;
+  button.setAttribute("aria-disabled", String(Boolean(loading)));
+  button.setAttribute("aria-busy", String(Boolean(loading)));
+  button.textContent = t(loading ? "Loading API reference…" : data?.security ? "Refresh API reference" : "Load API reference");
+  const content = frame.querySelector(".bond-reference-content");
+  const active = content.contains(document.activeElement) ? document.activeElement : null;
+  const focusSelector = ["[data-bond-reference-earlier]", "[data-bond-reference-latest]", ".bond-reference-history > summary", ".bond-reference-method > summary", ".bond-reference-table-wrap", "a"].find((selector) => active?.matches(selector));
+  const historyOpen = content.querySelector(".bond-reference-history")?.open ?? context === "prices";
+  const methodOpen = content.querySelector(".bond-reference-method")?.open || false;
+  const table = content.querySelector(".bond-reference-table-wrap");
+  const scroll = { top: table?.scrollTop || 0, left: table?.scrollLeft || 0 };
+  const rows = (Array.isArray(data?.items) ? data.items : []).filter((row) => row && Number.isFinite(row.price) && row.price >= 0 && /^\d{4}-\d{2}-\d{2}$/.test(row.price_date || ""));
+  const quote = data?.latest_in_range || data?.quote;
+  const details = data?.details || {}, coverage = data?.coverage || {};
+  const unitRow = quote || rows[0];
+  const mixedConventions = new Set(rows.map((row) => [row.quote_unit, row.price_basis, row.side].join("|"))).size > 1;
+  const statuses = { ok: "API data available", partial: "Partial API data", stale: "Saved API data is stale", missing: "No saved API data", not_configured: "API source needs configuration", not_found: "No API data returned", provider_error: "API lookup unavailable" };
+  const source = bondReferenceURL(data?.source_url || details.source_url);
+  const profile = [["Name", data?.security?.name], ["API source", data?.provider ? bondReferenceProvider(data.provider) : null],
+    ["CUSIP", data?.security?.cusip], ["ISIN", data?.security?.isin],
+    ["Coupon rate", Number.isFinite(details.coupon_rate_pct ?? details.coupon_rate_percent) ? `${fmt(details.coupon_rate_pct ?? details.coupon_rate_percent, 6)}% ${t("annually")}` : null],
+    ["Maturity date", details.maturity_date ? formatDate(details.maturity_date) : null]];
+  const first = coverage.first_observation || coverage.first_date || rows[0]?.price_date;
+  const last = coverage.last_observation || coverage.last_date || rows.at(-1)?.price_date;
+  const requestedFrom = data?.request?.date_from || coverage.requested_from, requestedTo = data?.request?.date_to || coverage.requested_to;
+  const continuation = coverage.next_date_to || coverage.next_date;
+  const canContinue = /^\d{4}-\d{2}-\d{2}$/.test(continuation || "") && continuation >= (requestedFrom || HISTORY_START_DATE) && continuation < (requestedTo || todayString());
+  const providerErrors = { entitlement_required: "The provider subscription does not include this data.", not_configured: "This provider needs configuration.", rate_limited: "The source limited requests. Try again later.",
+    invalid_response: "The source returned data that could not be verified.", request_limit: "This lookup reached its request limit. History may be partial.", not_found: "This source did not return data for this security.", unsupported: "This source did not return data for this security." };
+  content.innerHTML = `<p class="section-note bond-reference-notice">${esc(t("API reference data; portfolio valuation, quantity, saved prices and chart are unchanged."))}</p>
+    <div class="bond-reference-badges">${String(target.market_key || target.stock_market || "").toUpperCase() === "MANUAL" ? `<span class="badge neutral" title="${esc(t("Manual describes instrument registration, not whether API reference data is available."))}">${esc(t("Manual registration"))}</span>` : ""}${data ? `<span class="badge ${data.status === "ok" ? "ok" : "partial"}">${esc(t(statuses[data.status] || "API lookup unavailable"))}</span>` : ""}</div>
+    ${loading ? `<p class="section-note" role="status">${esc(t("Loading API reference…"))}</p>` : ""}
+    ${target.referenceError ? `<p class="section-note" role="status">${esc(target.referenceError === "provider_timeout" ? aiOutcomeMessage({ code: target.referenceError }) : t("API reference data could not be loaded. Saved reference data is retained; try again later."))}</p>` : ""}
+    ${!data && !loading && !target.referenceError ? `<p class="section-note">${esc(t("No API reference data is loaded. Use Load API reference to check this identifier."))}</p>` : ""}
+    ${profile.some(([, value]) => value !== null && value !== undefined && value !== "") ? `<dl class="bond-reference-profile">${profile.filter(([, value]) => value !== null && value !== undefined && value !== "").map(([label, value]) => `<div><dt>${esc(t(label))}</dt><dd><bdi dir="auto">${esc(value)}</bdi></dd></div>`).join("")}</dl>` : ""}
+    ${quote && Number.isFinite(quote.price) ? `<div class="bond-reference-quote"><span>${esc(t("Latest API observation in requested range"))}</span><strong><bdi dir="ltr">${fmt(quote.price, 6)}</bdi></strong><span>${esc(bondReferenceUnit(quote))}</span><span>${esc(formatDate(quote.price_date))} · ${esc(bondReferenceConvention(quote.price_basis))} · ${esc(bondReferenceConvention(quote.side))}</span></div>` : ""}
+    ${data?.security && !rows.length ? `<p class="section-note">${esc(t("Reference details only; no dated API prices were returned."))}</p>` : ""}
+    ${unitRow?.quote_unit === "percent_of_par" ? `<p class="section-note">${esc(t("Prices are per 100 of face value, not cents or a recorded holding unit. Clean/dirty basis is unspecified unless reported."))}</p>` : ""}
+    ${requestedFrom && requestedTo ? `<p class="section-note">${esc(t("Requested range"))}: ${esc(formatDate(requestedFrom))} – ${esc(formatDate(requestedTo))}</p>` : ""}
+    ${first && last ? `<p class="section-note">${esc(t("Observed range"))}: ${esc(formatDate(first))} – ${esc(formatDate(last))} · ${esc(t("{count} API observations").replace("{count}", fmt(rows.length, 0)))}</p>` : ""}
+    ${data && !coverage.complete ? `<p class="section-note">${esc(t("API history is partial. Missing dates are not filled, and full trading-day coverage is not established."))}${coverage.next_date_to || coverage.next_date ? ` ${esc(t("Earlier-history continuation date"))}: ${esc(formatDate(coverage.next_date_to || coverage.next_date))}.` : ""}</p>` : ""}
+    ${requestedTo && requestedTo < todayString() ? `<button class="secondary compact-button" type="button" data-bond-reference-latest="${context}" aria-disabled="${Boolean(loading)}">${esc(t("Load latest API observations"))}</button>` : ""}
+    ${canContinue ? `<button class="secondary compact-button" type="button" data-bond-reference-earlier="${context}" data-reference-to="${esc(continuation)}" aria-disabled="${Boolean(loading)}">${esc(t("Load earlier API observations"))}</button>` : ""}
+    ${data?.quote_status === "stale" || data?.status === "stale" ? `<p class="section-note">${esc(t("The API evidence is dated and may be stale. It is not a live quote."))}</p>` : ""}
+    ${mixedConventions ? `<p class="section-note">${esc(t("History contains different quote conventions; compare each row's unit, basis and side."))}</p>` : ""}
+    ${(data?.provider_errors || []).map((entry) => `<p class="section-note">${esc(bondReferenceProvider(entry.provider))}: ${esc(t(providerErrors[entry.code] || "The source could not be reached. Saved API evidence is retained; retry later."))}</p>`).join("")}
+    ${rows.length ? `<details class="bond-reference-history"${historyOpen ? " open" : ""}><summary>${esc(t("API price history"))} (${rows.length})</summary><div class="bond-reference-table-wrap" tabindex="0" role="region" aria-label="${esc(t("API price history"))}"><table><thead><tr>${["Observation date", "Raw API price", "Quote unit", "Price basis", "Quote side"].map((label) => `<th scope="col">${esc(t(label))}</th>`).join("")}</tr></thead><tbody>${[...rows].reverse().map((row) => `<tr><td>${esc(formatDate(row.price_date))}</td><td><bdi dir="ltr">${fmt(row.price, 6)}</bdi></td><td>${esc(bondReferenceUnit(row))}</td><td>${esc(bondReferenceConvention(row.price_basis))}</td><td>${esc(bondReferenceConvention(row.side))}</td></tr>`).join("")}</tbody></table></div></details>` : ""}
+    <details class="bond-reference-method"${methodOpen ? " open" : ""}><summary>${esc(t("Source and conventions"))}</summary>
+    ${data?.provider === "treasury_direct" ? `<p class="section-note">${esc(t("Treasury special-security reference/programme prices are not broker quotes. Programme purchase/redemption is not generic market bid/ask."))}</p>` : ""}
+    ${data?.security ? `<p class="section-note">${esc(t("Current profile terms are shown alongside dated observations."))}</p>` : ""}
+    <p class="section-note">${esc(t("Public TreasuryDirect coverage is limited to supported Treasury securities. Other U.S. bonds may require a configured bond provider."))}</p></details>
+    ${source ? `<p><a href="${esc(source)}" target="_blank" rel="noopener noreferrer">${esc(t("Open source"))}</a></p>` : ""}`;
+  const nextTable = content.querySelector(".bond-reference-table-wrap");
+  if (nextTable) { nextTable.scrollTop = scroll.top; nextTable.scrollLeft = scroll.left; }
+  if (focusSelector) (content.querySelector(focusSelector) || button).focus({ preventScroll: true });
+}
+
+async function loadBondReference(context, { refresh = true, dateTo = "" } = {}) {
+  const target = context === "detail" ? state.securityDetail : state.priceFocus;
+  if (!isBondReferenceTarget(target) || target.referenceLoading || !currentUser()) return;
+  const owner = currentUser().id, token = {};
+  target.referenceLoad = token;
+  target.referenceLoading = true;
+  target.referenceError = "";
+  renderBondReference(context);
+  const shown = target.market_data || (context === "detail" ? state.securityHistoryMeta?.market_data || target.item?.market_data : null);
+  const params = new URLSearchParams({ identifier: bondReferenceIdentifier(target), kind: "bond", date_from: shown?.request?.date_from || state.securityChartStartDate || HISTORY_START_DATE, date_to: dateTo || shown?.request?.date_to || todayString(), refresh: String(refresh) });
+  const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 30000);
+  const isCurrent = () => (context === "detail" ? state.securityDetail : state.priceFocus) === target && target.referenceLoad === token && currentUser()?.id === owner;
+  try {
+    const data = await api(`/api/security/market-data?${params}`, { signal: controller.signal });
+    if (!isCurrent()) return;
+    const saved = target.market_data || (context === "detail" ? state.securityHistoryMeta?.market_data || target.item?.market_data : null);
+    if (!data.security && !data.items?.length && saved?.security) {
+      target.market_data = { ...saved, status: "stale", provider_errors: data.provider_errors || [] };
+      target.referenceError = "provider_unavailable";
+    } else target.market_data = data;
+  } catch (error) {
+    if (!isCurrent()) return;
+    target.referenceError = error.name === "AbortError" ? "provider_timeout" : "provider_unavailable";
+  } finally {
+    clearTimeout(timeout);
+    if (isCurrent()) {
+      target.referenceLoading = false;
+      if (context === "detail") renderSecurityDetail(); else renderBondReference(context);
+    }
+  }
+}
+
 function openPriceHistoryForSecurity(dataset, returnFocus = document.activeElement) {
   state.priceFocus = {
     symbol: cleanSecuritySymbol(dataset.priceHistorySymbol || dataset.securityDetailSymbol),
@@ -6913,6 +7117,14 @@ function openPriceHistoryForSecurity(dataset, returnFocus = document.activeEleme
   };
   fillPriceFormFromFocus();
   openModal("pricesModal", returnFocus, { focusId: "priceInput" });
+  const item = (state.allPortfolioItems || []).find((entry) => securityMatches(entry, state.priceFocus.symbol, state.priceFocus.stock_market));
+  if (item) {
+    state.priceFocus.secondary_symbol = item.holding?.secondary_symbol || "";
+    state.priceFocus.asset_sub_class = item.holding?.asset_sub_class || "";
+    if (item.market_data) state.priceFocus.market_data = item.market_data;
+  }
+  renderBondReference("prices");
+  if (isBondReferenceTarget(state.priceFocus)) loadBondReference("prices", { refresh: false });
 }
 
 function securityMatches(item, symbol, market) {
@@ -7223,7 +7435,9 @@ async function openSecurityDetail(dataset, returnFocus = document.activeElement)
     market_key: marketKey,
     stock_market: dataset.securityDetailStockMarket || stockMarketDisplay(h, marketKey, item?.exchange),
     data_provider: dataset.securityDetailProvider || dataProviderDisplay(item || {}, h, marketKey),
+    valuation_provider: dataProviderDisplay({ ...(item || {}), market_data: null }, h, marketKey),
     asset_class: dataset.securityDetailAsset || h.asset_class || "EQUITY",
+    asset_sub_class: h.asset_sub_class || "",
     currency: dataset.securityDetailCurrency || h.currency || "USD",
     location: dataset.securityDetailLocation || h.country || h.location || "USA",
   };
@@ -7243,6 +7457,10 @@ async function openSecurityDetail(dataset, returnFocus = document.activeElement)
 async function loadSecurityDetail() {
   const detail = state.securityDetail;
   if (!detail) return;
+  delete detail.market_data;
+  detail.referenceLoad = null;
+  detail.referenceLoading = false;
+  detail.referenceError = "";
   const params = new URLSearchParams({
     symbol: detail.symbol,
     stock_market: detail.market_key,
@@ -7274,11 +7492,11 @@ async function loadSecurityDetail() {
     fetchPart("transactions", "/api/local/securities", (data) => { state.localTransactions = data.items || []; }),
     fetchPart("prices", "/api/local/prices", (data) => { state.localPrices = data.items || []; }),
     fetchPart("history", `/api/security/history?${params}`, (data) => {
+      state.securityHistoryMeta = data;
       if (data.state === "error" || (!data.points?.length && Object.values(data.status || {}).some((status) => /^error\b/i.test(String(status))))) {
         throw new Error("Price history unavailable");
       }
       state.securityHistory = data.points || [];
-      state.securityHistoryMeta = data;
     }),
   ]);
 }
@@ -7308,12 +7526,16 @@ function renderSecurityDetail() {
   if (!detail) return;
   const h = detail.item?.holding || {};
   const load = state.securityDetailLoad || {};
+  const bondReference = isBondReferenceTarget(detail);
+  const manualRegistration = bondReference && String(detail.market_key || "").toUpperCase() === "MANUAL";
+  const referenceData = detail.market_data || state.securityHistoryMeta?.market_data || detail.item?.market_data;
   $("securityDetailTitle").textContent = t(`${detail.symbol}${detail.secondary_symbol ? ` · ${detail.secondary_symbol}` : ""} overview`);
   $("securityDetailOverview").innerHTML = [
     ["Name", h.name || detail.symbol],
     ...(detail.secondary_symbol ? [["Secondary symbol", detail.secondary_symbol, "Optional alternate ticker used for market-data lookup."]] : []),
-    ["Stock market", detail.stock_market, "The exchange/market where the security trades. This is not the API provider."],
-    ["Data provider", detail.data_provider, "Where the market data was read from."],
+    [manualRegistration ? "Instrument registration" : "Stock market", manualRegistration ? t("Manual registration") : detail.stock_market, manualRegistration ? "Manual describes instrument registration, not whether API reference data is available." : "The exchange/market where the security trades. This is not the API provider."],
+    ...(bondReference ? [["Valuation price source", detail.valuation_provider || detail.data_provider, "Source of the prices currently used for the holding's value."], ["API reference source", referenceData?.security ? bondReferenceProvider(referenceData.provider) : t("Not available"), "API reference data does not change the holding's valuation."]]
+      : [["Data provider", detail.data_provider, "Where the market data was read from."]]),
     ["Type", optionLabel(h.asset_class || detail.asset_class)],
     ["Currency", currencyDisplayLabel(h.currency || detail.currency)],
     ["Quantity", fmt(h.quantity || 0, 4)],
@@ -7355,6 +7577,9 @@ function renderSecurityDetail() {
     : load.prices === "error" ? "Could not load saved prices." : "No saved price history for this security"))}</div>`;
   renderSecurityTechnicalSignal();
   renderSecurityChart();
+  renderBondReference("detail");
+  if ($("securityLocalPriceScope")) $("securityLocalPriceScope").hidden = !bondReference;
+  if ($("securityChartTitle")) $("securityChartTitle").textContent = t(bondReference ? "Local valuation price history" : "Price chart");
   const failed = Object.values(load).includes("error");
   const message = load.history === "loading" ? "Loading price history"
     : load.history === "error" ? "Could not load price history. Retry to load the chart."
@@ -9187,6 +9412,7 @@ async function loadLocalPrices() {
   state.localPrices = data.items || [];
   fillPriceFormFromFocus();
   renderPriceFocusBar();
+  renderBondReference("prices");
   if (state.items?.length) renderAnalytics(state.items);
   const visiblePrices = state.localPrices.filter(priceMatchesFocus);
   $("pricesList").innerHTML = visiblePrices.length ? visiblePrices.map((price) => `
@@ -14573,10 +14799,17 @@ document.addEventListener("click", (event) => {
 
   const equityPriceTrigger = event.target.closest("[data-price-history-symbol]");
   if (equityPriceTrigger) openPriceHistoryForSecurity(equityPriceTrigger.dataset, equityPriceTrigger);
+  const referenceTrigger = event.target.closest("[data-bond-reference]");
+  if (referenceTrigger) loadBondReference(referenceTrigger.dataset.bondReference);
+  const earlierReference = event.target.closest("[data-bond-reference-earlier]");
+  if (earlierReference) loadBondReference(earlierReference.dataset.bondReferenceEarlier, { refresh: false, dateTo: earlierReference.dataset.referenceTo });
+  const latestReference = event.target.closest("[data-bond-reference-latest]");
+  if (latestReference) loadBondReference(latestReference.dataset.bondReferenceLatest, { refresh: false, dateTo: todayString() });
 
   if (event.target.closest("[data-clear-price-focus]")) {
     state.priceFocus = null;
     renderPriceFocusBar();
+    renderBondReference("prices");
     loadLocalPrices();
   }
 
@@ -15116,7 +15349,8 @@ $("refresh").addEventListener("click", () => {
   loadPortfolio({ refresh: true }).catch((error) => { $("status").textContent = `Error: ${error.message}`; });
   loadBanner().catch(() => {});
 });
-$("enrichMissingData").addEventListener("click", requestAIEnrichment);
+$("enrichMissingData").addEventListener("click", openAIEnrichment);
+$("aiEnrichmentStart").addEventListener("click", requestAIEnrichment);
 $("assistantComposer").addEventListener("submit", (event) => {
   event.preventDefault();
   askPortfolioAssistant();

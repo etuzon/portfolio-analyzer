@@ -54,7 +54,7 @@ const refreshLocalizedFormOptions = noop, refreshBrokerSelects = noop,
   renderCurrentUser = noop, renderFamilyMembers = noop, renderFamilyMemberEditor = noop,
   refreshFamilyMemberSelects = noop, refreshFamilyAccountSelects = noop,
   renderMacroScenario = noop, renderAssistantChat = noop, renderLoggingSettings = noop, renderAlertDismissalSettings = noop, refreshReportFilterOptions = noop,
-  applyAutoDirection = noop, mountModalHomeLink = noop;
+  applyAutoDirection = noop, mountModalHomeLink = noop, renderBondReference = noop;
 const paid = {id:'paid', type:'DIVIDEND', symbol:'TRIN', status:'processed',
   event_date:'2026-08-14', transaction_id:'local-payment', currency:'USD', gross_amount:2.72, tax_amount:0.68,
   net_amount:2.04, details:{gross_per_share:0.17, shares:16}};

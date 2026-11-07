@@ -109,6 +109,8 @@ class SecurityMarketData:
             except (ValueError, TypeError, KeyError):
                 fresh = False
             if (fresh and not refresh) or cache_only:
+                if kind == "bond" and not cache_only and saved.get("provider") and saved.get("security"):
+                    self.cache.set_security_snapshot("security_lookup", identifier, SNAPSHOT_VERSION + ":latest:" + kind, saved)
                 return {**deepcopy(saved), "cache_status": "fresh" if fresh else "stale", "provider_requests": 0,
                         **({"status": "stale"} if not fresh else {})}
         if cache_only:
@@ -151,6 +153,8 @@ class SecurityMarketData:
                 # richer saved history or splice another provider's price basis.
                 return self._fallback(saved, best)
             self.cache.set_security_snapshot("security_lookup", identifier, key, best)
+            if kind == "bond" and best.get("provider") and best.get("security"):
+                self.cache.set_security_snapshot("security_lookup", identifier, SNAPSHOT_VERSION + ":latest:" + kind, best)
             return best
         codes = {entry["code"] for entry in errors}
         status = "not_found" if codes and codes <= {"not_found", "unsupported"} else "provider_error"
@@ -228,7 +232,7 @@ class SecurityMarketData:
         return result
 
 
-def security_market_router(service: Callable[[], SecurityMarketData]) -> APIRouter:
+def security_market_router(service: Callable[[], SecurityMarketData], on_reference_update: Callable[[], Any] | None = None) -> APIRouter:
     router = APIRouter(tags=["security market data"], route_class=PriceRoute)
 
     @router.get("/api/security/market-data")
@@ -236,8 +240,12 @@ def security_market_router(service: Callable[[], SecurityMarketData]) -> APIRout
                     identifier_type: IDENTIFIER_TYPES = "auto", provider: PROVIDERS = "auto",
                     date_from: str = "", date_to: str = "", refresh: bool = False, cache_only: bool = False):
         try:
-            return service().fetch(identifier, kind, identifier_type, provider,
-                                   date_from=date_from, date_to=date_to, refresh=refresh, cache_only=cache_only)
+            result = service().fetch(identifier, kind, identifier_type, provider,
+                                     date_from=date_from, date_to=date_to, refresh=refresh, cache_only=cache_only)
+            if (on_reference_update and kind == "bond" and not cache_only and result.get("provider") and result.get("security")
+                    and result.get("status") in {"ok", "partial"}):
+                on_reference_update()
+            return result
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
 

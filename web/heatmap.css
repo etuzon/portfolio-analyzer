@@ -3,8 +3,8 @@
 .portfolio-heatmap-card #heatmapContent>* { flex-shrink:0; }
 .portfolio-heatmap-card .chart-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
 .portfolio-heatmap-card .chart-title { margin:0; min-width:0; }
-.portfolio-heatmap-card .heatmap-reload { margin-inline-start:auto; flex:0 0 auto; display:grid; place-items:center; width:36px; height:36px; min-height:36px; padding:0; border:1px solid var(--ux-stroke); border-radius:8px; font-size:23px; }
-.heatmap-controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px; align-items:end; }
+.portfolio-heatmap-card .heatmap-reload { display:grid; place-items:center; width:38px; height:38px; min-height:38px; padding:0; border:1px solid var(--ux-stroke); border-radius:8px; font-size:23px; }
+.heatmap-controls { display:grid; grid-template-columns:minmax(0,300px) minmax(0,180px) 38px; gap:10px; align-items:end; }
 .heatmap-controls .field { min-width:0; font-size:12px; }
 .heatmap-controls select { width:100%; min-width:0; box-sizing:border-box; }
 #heatmapStatus:empty { display:none; }
@@ -60,10 +60,11 @@
  .heatmap-listing>span:last-child { flex-shrink:1; text-align:start; }
 }
 @container portfolio-heatmap (max-width:550px) {
+ .heatmap-controls { grid-template-columns:minmax(0,220px) 38px; }
+ .heatmap-account-control { grid-column:1 / -1; }
  .heatmap-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
 }
 @container portfolio-heatmap (max-width:430px) {
- .heatmap-controls { grid-template-columns:minmax(0,1fr); }
  .heatmap-canvas { height:260px; }
  .heatmap-summary { gap:8px; }
  .heatmap-summary b { font-size:15px; }

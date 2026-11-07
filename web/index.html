@@ -84,6 +84,7 @@
               <button class="nav-item" type="button" data-modal="tradingJournalModal">Trading Journal</button>
               <button class="nav-item" type="button" data-modal="eventsModal" data-dividends-section="calendar">Dividends &amp; Events</button>
               <button class="nav-item" type="button" data-modal="pricesModal">Prices</button>
+              <button id="enrichMissingData" class="nav-item" type="button" aria-haspopup="dialog" aria-controls="aiEnrichmentModal">Find missing data with AI</button>
               <button class="nav-item" type="button" data-modal="reportsModal">Portfolio Reports</button>
             </div>
           </details>
@@ -159,11 +160,6 @@
             <h1 id="dashboardTitle" class="sr-only" tabindex="-1">Portfolio analyzer</h1>
             <p id="status" class="sr-only" role="status" aria-live="polite">Preparing dashboard</p>
             <p id="dashboardNotice" class="dashboard-notice" aria-hidden="true" hidden></p>
-            <div class="ai-enrichment-tools">
-              <span id="aiEnrichmentAction" class="ai-enrichment-action"><button id="enrichMissingData" class="secondary compact-button" type="button" aria-describedby="aiEnrichmentStatus">Find missing data with AI</button></span>
-              <p id="aiEnrichmentStatus" role="status" aria-live="polite" hidden></p>
-              <details id="aiEnrichmentDetails" class="ai-enrichment-details" hidden><summary>AI data results</summary><ul id="aiEnrichmentResults"></ul></details>
-            </div>
           </div>
       </aside>
 
@@ -1105,6 +1101,10 @@
         </div>
         <p id="priceStatus" class="status-line"></p>
         <div id="priceFocusBar" class="info-strip" hidden></div>
+        <section id="priceMarketReference" class="bond-reference-panel" aria-labelledby="priceMarketReferenceTitle" hidden>
+          <div class="section-head"><h3 id="priceMarketReferenceTitle">API reference data</h3><button class="secondary compact-button" type="button" data-bond-reference="prices">Load API reference</button></div>
+          <div class="bond-reference-content"></div>
+        </section>
         <div id="pricesList" class="stack management-list"></div>
       </section>
     </div>
@@ -1160,7 +1160,8 @@
                 <p>Select the portfolio icon to return to the dashboard.</p>
                 <p>Use Area to choose investments, long-term savings, employee equity, or all areas. View switches between Glance and Full; Edit lets you arrange or hide cards. Compact summaries use narrower cards and fill available gaps beside taller charts. Card widths follow the dashboard’s available space. Edit keeps your saved arrangement; the display can place later cards in earlier gaps, while keyboard and single-column reading order follow the saved sequence.</p>
                 <p>Analytics refresh in the background while preserving your reading position, keyboard focus and expanded card details. In Portfolio stats or Portfolio snapshot, hover over Data gaps for a multiline breakdown by field, security and account. Select the count, or use Enter or Space, to open the complete scrollable details on desktop or touch screens. Each confirmed gap is one missing field in one position; the same field in two accounts counts twice. Updating and failed checks are shown separately and do not count as confirmed missing data. Details follow the displayed portfolio scope and update from loaded results without extra provider requests. All users can inspect them; close the dialog or press Escape to return to the count. Use Refresh to retry unavailable data. Unavailable dividend history does not confirm zero dividends. Currency tooltips use symbols and retain the converted base-currency value.</p>
-                <p>Use Find missing data with AI below the dashboard header to complete missing prices, security names and industry classifications for open holdings. The app tries its data API first, then uses configured Internet research only for remaining gaps. Admin and Operator users can start a request; Viewers can inspect saved results. Open long and short holdings are included regardless of dashboard or Holdings status filters; fully closed holdings are excluded. Internet research needs a configured search service; without it the app skips the AI model and keeps available API results. Each request shares at most five AI interactions and five application data operations across all securities. Research runs in the background. Open AI data results or a security's data-status tooltip for verified, partial or unavailable results. Other gaps, including fundamentals or dividends, may remain; unavailable values are never guessed. Saved results reload the portfolio once; use Refresh if that reload fails. Check AI progress resumes the same interrupted request. A new research batch requires another explicit click.</p>
+                <p>Open Portfolio → Find missing data with AI to complete missing prices, security names and industry classifications for open holdings. The app tries its data API first, then uses configured Internet research only for remaining gaps. Admin and Operator users can start a request; Viewers can inspect saved results. Open long and short holdings are included regardless of dashboard or Holdings status filters; fully closed holdings are excluded. Internet research needs a configured search service; without it the app skips the AI model and keeps available API results. Each request shares at most five AI interactions and five application data operations across all securities. The popup starts one request on its first opening for users with editing permission. It shows the current phase, security and checked counts when available; checked counts do not mean data was updated. Close it to keep working, then reopen it from Portfolio to see the same request. Research continues in the background. Results by security and each security's data-status tooltip distinguish verified, partial and unavailable data. Other gaps, including fundamentals or dividends, may remain; unavailable values are never guessed. Saved results reload the portfolio once; use Refresh if that reload fails. Check AI progress resumes the same interrupted request. After completion, use Start new request in the popup for another batch; reopening the popup never starts another request. Viewers can open the popup to read saved results, but cannot start or resume research.</p>
+                <p>When bond API reference data is available but its quote cannot be matched to the recorded quantity and face-value convention, the AI action reports reference data only and stops research for that valuation gap. It does not invent a conversion or change the portfolio value.</p>
                 <p>Each AI request checks up to three securities. Internet price updates require a supported last or closing price dated within the last seven days. Fund NAV and bond prices quoted as percent of par may be researched but cannot be saved as a compatible price by this action. Other securities remain for another explicit request.</p>
                 <p>Administrators choose Codex or Claude Code, the model and effort for missing-data research in price_agent in config.yaml. Codex is the default. The missing-data button and price-update skill share this choice; portfolio chat has its separate llm model setting. Enable AI and configure the shared host bridge in llm.</p>
                 <p>For Docker, configure optional search and provider keys in the private host environment or .env file, then recreate the container. The supported environment names are BRAVE_SEARCH_API_KEY, FINNHUB_API_KEY and EODHD_API_KEY. Never put credentials in chat or source evidence.</p>
@@ -1271,6 +1272,7 @@
               <article class="help-feature">
                 <h3>Prices</h3>
                 <p>Add a dated historical price when provider data is unavailable or needs a local correction. Use the actual price date so charts and valuations stay aligned.</p>
+                <p>Select a security symbol in the dashboard Holdings table to open its overview. Registered U.S. bonds with an exact CUSIP or U.S. ISIN, including a secondary identifier, show a separate API reference panel; focused Prices shows the same data. Public TreasuryDirect data does not require AI or an Internet-search key; other bond coverage may require a configured provider subscription. Manual registration describes how the instrument was entered, while API reference source identifies retrieved evidence. Read the actual observation dates, units, price basis and quote side. Percent-of-par prices are per 100 of face value and are not the price of one recorded holding unit. Coupon rates are annual rates, not yield to maturity. API profile terms can be newer than historical observations. Viewing or refreshing this data never changes the local valuation chart, saved prices, holding quantity or portfolio value, and never fills a manual price field. Viewer users can read and refresh it. Partial or stale data stays labelled; missing dates are not interpolated. Use Load earlier API observations for a supplied continuation date; each click makes one bounded lookup and replaces the reference table. Load latest API observations returns to the recent range. Refresh API reference retries a source; a failed refresh retains saved evidence. Dashboard Refresh reloads cached API reference source badges.</p>
                 <p>Ask portfolio chat for U.S. bond, mutual-fund or ETF data, or use the market-data REST endpoint with an exact identifier and security type. Bonds use CUSIP or ISIN; funds and ETFs use supported tickers or ISINs. Prices, history and reference details are fetched and cached automatically, without entering prices or first adding a held security. Viewer users can read this research data. Retrieval does not change portfolio prices, quantities or cash.</p>
                 <p>Administrators configure market_data.security_lookup in config.yaml. Finnhub bond access and EODHD fund access require suitable provider keys and subscriptions. Public TreasuryDirect coverage is limited to Treasury securities and may return partial daily history with a continuation date. Each fetch allows at most five provider attempts, including failures. Read the observation dates, units and coverage: bond percent-of-par quotes are not cents, and fund NAV is separate from an ETF market price. Historical prices may accompany a current profile. Cached results can be old; refresh retries the provider, while cache-only reads saved evidence. Failed refreshes retain available data marked stale. Missing configuration or coverage is reported explicitly.</p>
                 <p>External clients can read saved current and historical prices through the security price REST endpoints. Current means the latest saved observation, not a live quote. An Admin must enable REST access; price updates require Read and write mode and an Admin or Operator token. Updates stay local, retain source evidence, and refresh portfolio calculations. Adding older history does not replace a newer current price.</p>
@@ -1570,10 +1572,14 @@
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
         <div id="securityDetailOverview" class="report-grid security-overview-grid"></div>
+        <section id="securityMarketReference" class="bond-reference-panel" aria-labelledby="securityMarketReferenceTitle" hidden>
+          <div class="section-head"><h3 id="securityMarketReferenceTitle">API reference data</h3><button class="secondary compact-button" type="button" data-bond-reference="detail">Load API reference</button></div>
+          <div class="bond-reference-content"></div>
+        </section>
         <div class="management-section">
           <div class="section-head compact-head">
             <div>
-              <p class="form-caption">Price chart</p>
+              <p id="securityChartTitle" class="form-caption">Price chart</p>
             </div>
             <div class="security-chart-controls">
               <label class="chart-date-field"><span>From</span><input id="securityChartStartDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
@@ -1618,6 +1624,7 @@
             <button id="retrySecurityHistory" class="secondary compact-button" type="button" hidden>Retry</button>
           </div>
           <div id="securityDetailChart" class="security-chart" aria-busy="false"></div>
+          <p id="securityLocalPriceScope" class="section-note" hidden>Chart and saved prices use local valuation data. API reference observations are displayed separately above.</p>
         </div>
         <div class="management-section">
           <p class="form-caption">Update price history</p>
@@ -1883,6 +1890,24 @@
           <div id="historyList" class="stack management-list"></div>
           </div>
         </details>
+      </section>
+    </div>
+
+    <div id="aiEnrichmentModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card ai-enrichment-card" role="dialog" aria-modal="true" aria-labelledby="aiEnrichmentTitle" aria-describedby="aiEnrichmentScope">
+        <div class="modal-header"><h2 id="aiEnrichmentTitle" tabindex="-1">Find missing data with AI</h2><button class="icon-button" type="button" data-close="aiEnrichmentModal" aria-label="Close">×</button></div>
+        <p id="aiEnrichmentScope" class="section-note">Researches missing information for open long and short holdings.</p>
+        <div class="ai-enrichment-progress-panel" role="status" aria-live="polite" aria-atomic="true">
+          <div><h3 id="aiEnrichmentPhase">Ready to research</h3><p id="aiEnrichmentStatus"></p></div>
+          <progress id="aiEnrichmentProgress" aria-labelledby="aiEnrichmentPhase" hidden></progress>
+          <p id="aiEnrichmentCounts" class="section-note" hidden></p>
+          <p id="aiEnrichmentCurrent" class="ai-enrichment-current" hidden><span>Current security</span><bdi id="aiEnrichmentCurrentSecurity" dir="auto"></bdi></p>
+        </div>
+        <div id="aiEnrichmentSummary" class="ai-enrichment-summary" hidden></div>
+        <section id="aiEnrichmentDetails" class="ai-enrichment-details" aria-labelledby="aiEnrichmentResultsTitle" hidden><h3 id="aiEnrichmentResultsTitle">Results by security</h3><ul id="aiEnrichmentResults" tabindex="0" aria-labelledby="aiEnrichmentResultsTitle"></ul></section>
+        <p id="aiEnrichmentEmpty" class="section-note">No AI research results yet.</p>
+        <div class="ai-enrichment-footer"><p class="section-note">You can close this window while research continues. Reopen it from Portfolio to see progress.</p><span id="aiEnrichmentAction" class="ai-enrichment-action"><button id="aiEnrichmentStart" type="button" aria-describedby="aiEnrichmentStatus">Start research</button></span></div>
       </section>
     </div>
 

@@ -60,9 +60,10 @@ from .external_import import ExternalImportClient
 from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, SUPPORTED_MANAGEMENT_CURRENCIES, CashBalanceError, LocalPortfolioStore, validate_portfolio_ownership
 from .llm_assistant import AssistantError, PortfolioAssistant, assistant_settings
 from .security_prices import price_router
-from .security_market_data import SecurityMarketData, security_market_router
+from .security_market_data import SecurityMarketData, security_market_router, normalize_identifier, SNAPSHOT_VERSION
 from .security_web_research import research_sources, validate_proposals
 from .security_enrichment import EnrichmentJobs, security_key as enrichment_security_key
+from .enrichment_preflight import ApiPreflight
 from .metrics import analyze_holding, moving_averages, screen, support_resistance, technical_signals, to_dict, volume_metrics
 from .mcp_server import create_portfolio_mcp_server
 from .models import Ohlcv
@@ -2531,6 +2532,12 @@ def _serialized_portfolio_payload(analyses, cache_status: str) -> dict[str, Any]
         item["industry_source"] = source
         holding["industry"] = industry
         item["exposure_profile"] = exposure_profiles.get((symbol, stock_market)) or exposure_profiles.get((symbol, ""))
+        reference = _bond_market_data(holding, cache_only=True)
+        if reference:
+            item["market_data"] = reference
+            reference_name = str((reference.get("security") or {}).get("name") or "").strip()
+            if reference_name and (not holding.get("name") or str(holding["name"]).upper() == symbol):
+                holding["name"] = reference_name
         serialized_items.append(item)
     return {
         "status": {"local_portfolio": local_status, "portfolio_cache": cache_status},
@@ -4171,6 +4178,55 @@ def list_local_prices():
     return {"items": local_store.list_prices()}
 
 
+def _us_bond_identifier(security: dict[str, Any]) -> tuple[str, str] | None:
+    """Recognize registered US fixed-income identifiers without stock lookup."""
+    if str(security.get("asset_class") or "").upper() != "BOND" and str(security.get("asset_sub_class") or "").upper() != "BOND":
+        return None
+    location = re.sub(r"[\W_]+", "", str(security.get("location") or "").casefold())
+    market = str(security.get("stock_market") or "").upper()
+    us_listing = location in {"us", "usa", "unitedstates", "unitedstatesofamerica", "ארהב", "ארצותהברית"} or market in {"US", "USA", "NASDAQ", "NYSE", "NYSEARCA", "AMEX", "TREASURY"}
+    us_listing = us_listing or market in {"MANUAL", "BOND"} and str(security.get("currency") or "").upper() == "USD"
+    for field in ("symbol", "secondary_symbol"):
+        try:
+            identifier, kind = normalize_identifier(str(security.get(field) or ""), "auto", "bond")
+        except ValueError:
+            continue
+        if kind == "isin" and identifier.startswith("US") or kind == "cusip" and us_listing:
+            return identifier, kind
+    return None
+
+
+def _bond_market_data(security: dict[str, Any], *, cache_only: bool = False, date_from: str = "", date_to: str = "") -> dict[str, Any] | None:
+    """Keep provider-native bond evidence separate from portfolio price units."""
+    identified = _us_bond_identifier(security)
+    if not identified:
+        return None
+    identifier, identifier_type = identified
+    cache = getattr(hub(), "cache", None)
+    if cache is None:
+        return None
+    lookup = SecurityMarketData(config.market_data, cache)
+    if not cache_only:
+        return lookup.fetch(identifier, "bond", identifier_type, date_from=date_from, date_to=date_to)
+    saved = cache.get_security_snapshot("security_lookup", identifier, SNAPSHOT_VERSION + ":latest:bond")
+    if not isinstance(saved, dict) or saved.get("schema_version") != SNAPSHOT_VERSION:
+        saved = lookup.fetch(identifier, "bond", identifier_type, cache_only=True)
+    if not saved.get("provider") or not saved.get("security"):
+        return None
+    result = deepcopy(saved)
+    try:
+        fresh = (datetime.now(timezone.utc) - datetime.fromisoformat(result["retrieved_at"])).total_seconds() < lookup.ttl_seconds
+    except (ValueError, TypeError, KeyError):
+        fresh = False
+    result.update(provider_requests=0, cache_status="fresh" if fresh else "stale", portfolio_updated=False)
+    if not fresh:
+        result["status"] = "stale"
+    quote = result.get("quote")
+    if quote and date.fromisoformat(quote["price_date"]) < date.today() - timedelta(days=7):
+        result["quote_status"] = "stale"
+    return result
+
+
 @app.get("/api/security/history")
 def security_history(symbol: str, stock_market: str = "", period: str = "1y", date_from: str = "", level_periods: str = ""):
     days_by_period = {"1m": 31, "6m": 183, "1y": 366, "3y": 366 * 3, "5y": 366 * 5}
@@ -4195,6 +4251,14 @@ def security_history(symbol: str, stock_market: str = "", period: str = "1y", da
     )
     primary_symbol = str((security or {}).get("symbol") or symbol).strip()
     secondary_symbol = str((security or {}).get("secondary_symbol") or "").strip()
+    if security and _us_bond_identifier(security):
+        reference = _bond_market_data(security, date_from=from_date.isoformat(), date_to=to_date.isoformat())
+        if reference and reference.get("provider") and reference.get("security") and reference.get("status") in {"ok", "partial"}:
+            clear_portfolio_cache()
+        response = _security_history_response(symbol, stock_market, period, "manual" if known_manual else "local", local_chart_prices, local_prices)
+        if reference:
+            response["market_data"] = reference
+        return response
     if known_manual and not secondary_symbol:
         return _security_history_response(symbol, stock_market, period, "manual", local_chart_prices, local_prices)
     market_hub = hub()
@@ -4247,13 +4311,13 @@ def delete_local_price(price_id: str):
 
 
 app.include_router(price_router(lambda: local_store, lambda: hub(), lambda: clear_portfolio_cache(), HISTORY_START_DATE))
-app.include_router(security_market_router(lambda: SecurityMarketData(config.market_data, hub().cache)))
+app.include_router(security_market_router(lambda: SecurityMarketData(config.market_data, hub().cache), lambda: clear_portfolio_cache()))
 
 
 def _enrichment_missing_fields(item: dict[str, Any]) -> list[str]:
     holding = item.get("holding") or {}
     missing = set(item.get("missing") or [])
-    asset = str(holding.get("asset_class") or "").upper()
+    asset = "BOND" if str(holding.get("asset_sub_class") or "").upper() == "BOND" else str(holding.get("asset_class") or "").upper()
     fields = []
     if "price history" in missing or not any(
         isinstance(values, dict) and values.get("current") is not None and values.get("current_date")
@@ -4269,6 +4333,9 @@ def _enrichment_missing_fields(item: dict[str, Any]) -> list[str]:
     if asset in {"BOND", "ETF", "FUND"} and fields:
         fields.append("reference")
     return fields
+
+
+_enrichment_api_preflight = ApiPreflight()
 
 
 def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) -> dict[str, Any]:
@@ -4297,13 +4364,19 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
         cached = market_hub.cached_profile(symbol, secondary_symbol=holding.get("secondary_symbol") or "", stock_market=market) if hasattr(market_hub, "cached_profile") else {}
         if cached.get("name") and (not holding.get("name") or str(holding["name"]).upper() == symbol):
             holding["name"] = cached["name"]
+        reference = _bond_market_data(holding, cache_only=True)
+        reference_name = str(((reference or {}).get("security") or {}).get("name") or "").strip()
+        if reference_name and (not holding.get("name") or str(holding["name"]).upper() == symbol):
+            holding["name"] = reference_name
         override = overrides.get((symbol, market)) or overrides.get((symbol, ""))
-        industry = ("Bonds" if str(holding.get("asset_class") or "").upper() == "BOND" else
+        industry = ("Bonds" if str(holding.get("asset_class") or "").upper() == "BOND" or str(holding.get("asset_sub_class") or "").upper() == "BOND" else
                     str((override or {}).get("industry") or item.get("industry") or holding.get("industry") or cached.get("industry") or
                         holding.get("sector") or cached.get("sector") or "").strip())
         holding["industry"] = industry
         item["holding"] = holding
         missing = _enrichment_missing_fields(item)
+        if reference and "reference" in missing:
+            missing.remove("reference")
         if not missing:
             continue
         key = enrichment_security_key(holding)
@@ -4314,7 +4387,7 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
             "currency": holding.get("currency", ""), "secondary_symbol": holding.get("secondary_symbol", ""),
             "location": holding.get("location", ""),
             "quote_unit": quote_unit({"location": holding.get("location", ""), "asset_class": holding.get("asset_class", ""), "currency": holding.get("currency", "")}),
-            "asset_class": holding.get("asset_class", ""), "name": holding.get("name", ""),
+            "asset_class": holding.get("asset_class", ""), "asset_sub_class": holding.get("asset_sub_class", ""), "name": holding.get("name", ""),
             "needs_name": not holding.get("name") or str(holding.get("name")).upper() == symbol,
             "needs_industry": not bool(industry),
             "missing_fields": missing, "available_fields": [],
@@ -4333,13 +4406,7 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
             research_available = bool(price_agent_settings(config.raw).get("search_api_key"))
         except PriceAgentError:
             research_available = False
-        results = []
-        for candidate in visible[:3]:
-            try:
-                refreshed = _enrichment_fetch_security(candidate, "auto")
-            except Exception:
-                refreshed = {**candidate, "status": "unavailable", "code": "provider_unavailable", "available_fields": []}
-            results.append(refreshed)
+        results = _enrichment_api_preflight.run(visible, lambda candidate: _enrichment_fetch_security(candidate, "auto"))
         result.update(preflight_outcomes=results, research_available=research_available)
     return result
 
@@ -4355,9 +4422,24 @@ def _enrichment_fetch_security(candidate: dict[str, Any], field: str) -> dict[st
         return {**candidate, "status": "updated" if held else "not_attempted", "code": "data_found" if held else "not_open", "available_fields": [], "missing_fields": [] if held else candidate.get("missing_fields", [])}
     market_hub = hub()
     symbol, market = current["symbol"], current["stock_market"]
+    if _us_bond_identifier(current):
+        # A CUSIP/ISIN bond is not a stock ticker. Its provider-native reference
+        # prices cannot value holdings until face-per-unit conventions are known.
+        result = _bond_market_data(current)
+        available = bool(result and result.get("security") and (result.get("details") or result.get("items")))
+        after = next((item for item in _enrichment_candidates(limit=None)["items"] if item["security_key"] == key), None)
+        remaining = (after or {}).get("missing_fields", [])
+        if available:
+            remaining = [item for item in remaining if item != "reference"]
+        available_fields = (["reference"] if available else []) + (["profile"] if available and "profile" in current["missing_fields"] and "profile" not in remaining else [])
+        reference_only = bool(available and "prices" in remaining and set(remaining) <= {"prices", "reference"}
+                              and any(row.get("quote_unit") == "percent_of_par" for row in result.get("items", [])))
+        status = "updated" if available and not remaining else "partial" if available else "unavailable"
+        return {**candidate, "status": status, "code": "bond_reference_only" if reference_only else "data_found" if status == "updated" else "partial_data" if available else "data_unavailable",
+                "available_fields": available_fields, "missing_fields": remaining, "research_eligible": not reference_only}
     context = {"secondary_symbol": current.get("secondary_symbol") or "", "stock_market": market}
     fields = current["missing_fields"] if field == "auto" else [field]
-    found, errors = [], []
+    found, errors, diagnostics = [], [], []
     for requested in fields:
         try:
             if requested == "prices":
@@ -4386,15 +4468,19 @@ def _enrichment_fetch_security(candidate: dict[str, Any], field: str) -> dict[st
                 found.append(requested)
             else:
                 errors.append("data_unavailable")
-        except Exception:
+        except (ProviderError, TimeoutError, ConnectionError, OSError) as exc:
             errors.append("provider_unavailable")
+            diagnostics.append({"stage": "checking_apis", "code": "provider_unavailable", "error_type": type(exc).__name__, "http_status": None})
+        except Exception as exc:
+            errors.append("job_failed")
+            diagnostics.append({"stage": "checking_apis", "code": "job_failed", "error_type": type(exc).__name__, "http_status": None})
     # Recheck through the application's cached analysis; successful provider HTTP
     # alone never establishes that a missing dashboard field was completed.
     after = next((item for item in _enrichment_candidates(limit=None)["items"] if item["security_key"] == key), None)
     remaining = after["missing_fields"] if after else []
     status = "updated" if not remaining else "partial" if found else "unavailable"
-    return {**candidate, "status": status, "code": "data_found" if status == "updated" else "partial_data" if found else "provider_unavailable" if "provider_unavailable" in errors else "data_unavailable",
-            "available_fields": found, "missing_fields": remaining}
+    return {**candidate, "status": status, "code": "data_found" if status == "updated" else "partial_data" if found else "job_failed" if "job_failed" in errors else "provider_unavailable" if "provider_unavailable" in errors else "data_unavailable",
+            "available_fields": found, "missing_fields": remaining, **({"diagnostic": diagnostics[0]} if diagnostics else {})}
 
 
 _enrichment_source_budgets: dict[str, Any] = {}
@@ -4521,6 +4607,8 @@ def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, requ
         "job_failed": "The information could not be retrieved. Please try again later.",
         "research_unavailable": "Internet research is unavailable. Configure the search service and try again.",
         "evidence_rejected": "The source did not provide enough verified information.",
+        "provider_timeout": "The API source check took longer than allowed. Retained data is available; retry later.",
+        "bond_reference_only": "API bond reference data is available. Portfolio valuation still requires a defined quantity/face-value convention.",
     }
     for outcome in outcomes:
         if outcome["security_key"] in applied:
@@ -4537,7 +4625,16 @@ def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, requ
         _record_log("market-data", "security_ai_enrichment_result", request_id=request_id, user_id=user_id,
                     symbol=outcome.get("symbol"), stock_market=outcome.get("stock_market"), code=outcome.get("code"),
                     status=outcome.get("status"), missing_fields=outcome.get("missing_fields"),
+                    diagnostic=outcome.get("diagnostic"),
                     message=messages.get(outcome.get("code"), messages["job_failed"]))
+    try:
+        job = security_enrichment.get(request_id, user_id)
+    except HTTPException:
+        job = {}
+    if job.get("failure") or not outcomes:
+        _record_log("market-data", "security_ai_enrichment_job_result", request_id=request_id, user_id=user_id,
+                    code=job.get("code"), diagnostic=job.get("failure"),
+                    message=messages.get(job.get("code"), messages["job_failed"]) if job.get("failure") else "No eligible missing information remained.")
     saved = dict(sorted(saved.items(), key=lambda pair: str(pair[1].get("updated_at") or ""), reverse=True)[:1000])
     local_store.set_preference("security_enrichment_outcomes_v1", saved)
     if any(outcome.get("status") in {"updated", "partial"} for outcome in finalized):

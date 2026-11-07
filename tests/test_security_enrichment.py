@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import date, datetime, timezone
 import json
 from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -155,7 +156,7 @@ def test_looping_model_cannot_exceed_shared_call_limits(environment, monkeypatch
     assert env.state.fetched == []
 
 
-def test_provider_exception_is_logged_via_application_outcome_without_secret(environment):
+def test_unexpected_callback_exception_is_application_failure_without_secret(environment):
     env = environment
     env.state.fetch_error = True
     identifier = start(env)
@@ -163,7 +164,9 @@ def test_provider_exception_is_logged_via_application_outcome_without_secret(env
     result = job(env, identifier)
     assert result["summary"]["unavailable"] == 3
     assert "synthetic-secret" not in str(result)
-    assert all(item["code"] == "provider_unavailable" for item in env.state.saved[:3])
+    assert all(item["code"] == "job_failed" for item in env.state.saved[:3])
+    assert result["failure"] == {"stage": "researching", "code": "job_failed", "error_type": "RuntimeError", "http_status": None}
+    assert env.state.saved[0]["diagnostic"]["error_type"] == "RuntimeError"
 
 
 def test_jobs_require_auth_owner_role_and_csrf_and_cannot_finalize_early(environment):
@@ -270,8 +273,24 @@ def test_missing_search_configuration_runs_no_model_and_preserves_api_partial_re
     assert result["status"] == "completed"
     assert result["counts"]["model_requests"] == 0 and result["counts"]["rest_requests"] == 2
     assert result["outcomes"][0]["status"] == "partial"
+    assert result["outcomes"][0]["code"] == "research_unavailable"
     assert result["outcomes"][1]["code"] == "research_unavailable"
     assert result["outcomes"][1]["attempted"] is True  # Ordinary APIs already attempted it.
+
+
+def test_api_bond_reference_does_not_waste_ai_on_an_undefined_valuation_mapping(environment):
+    env = environment
+    env.state.items, env.state.total = env.state.items[:1], 1
+    item = env.state.items[0]
+    preflight(env, [{**item, "status": "partial", "code": "bond_reference_only", "available_fields": ["reference"],
+                     "missing_fields": ["prices"], "research_eligible": False}], research_available=True)
+    identifier = start(env)
+    env.run()
+    result = job(env, identifier)
+    assert result["status"] == "completed" and result["summary"]["partial"] == 1
+    assert result["outcomes"][0]["code"] == "bond_reference_only"
+    assert result["counts"]["model_requests"] == 0 and result["counts"]["rest_requests"] == 2
+    assert not env.state.model_messages
 
 
 def test_real_fetched_evidence_and_wrapped_model_proposal_cross_finalization_rest(environment, monkeypatch):
@@ -559,3 +578,80 @@ def test_dashboard_forwards_explicit_research_model_effort_and_bounded_settings(
     assert (settings["provider"], settings["model"], settings["reasoning_effort"]) == ("local_claude", "explicit-price-model", "high")
     assert settings["max_tool_loops"] == 5 and settings["timeout_seconds"] == 110
     assert assistant_settings(raw)["max_tool_loops"] == 1 and assistant_settings(raw)["model"] == "chat-model"
+
+
+def test_progress_reports_real_phase_work_without_claiming_price_updates(environment):
+    env = environment
+    observed = []
+    original_inventory, original_fetch, original_save = env.manager._candidate_reader, env.manager._security_fetcher, env.manager._outcome_writer
+    def snapshot():
+        return deepcopy(env.manager.get(identifier, "owner")["progress"])
+    def inventory():
+        observed.append(snapshot())
+        return original_inventory()
+    def fetch(item, field):
+        observed.append(snapshot())
+        return original_fetch(item, field)
+    def save(*args, **kwargs):
+        observed.append(snapshot())
+        return original_save(*args, **kwargs)
+    env.manager._candidate_reader, env.manager._security_fetcher, env.manager._outcome_writer = inventory, fetch, save
+    identifier = start(env)
+    assert job(env, identifier)["progress"] == {"stage": "queued", "completed": 0, "total": 0, "current_security": None}
+    env.run()
+    assert observed[0] == {"stage": "checking_apis", "completed": 0, "total": 0, "current_security": None}
+    for index, progress in enumerate(observed[1:4]):
+        assert progress == {"stage": "researching", "completed": index, "total": 3,
+                            "current_security": {"symbol": ("A", "B", "C")[index], "stock_market": "NASDAQ", "currency": "USD"}}
+    assert observed[4] == {"stage": "saving", "completed": 0, "total": 3, "current_security": None}
+    result = job(env, identifier)
+    assert result["progress"] == {"stage": "completed", "completed": 3, "total": 3, "current_security": None}
+    assert result["counts"]["rest_requests"] == 5 and result["counts"]["model_requests"] == 4
+
+
+def test_completed_source_reads_never_count_as_verified_field_updates(environment):
+    env = environment
+    env.state.unavailable = True
+    identifier = start(env)
+    env.run()
+    result = job(env, identifier)
+    assert result["progress"]["completed"] == result["progress"]["total"] == 3
+    assert result["summary"]["updated"] == result["summary"]["partial"] == 0
+    assert result["code"] == "data_unavailable"
+
+
+def test_saving_progress_can_be_polled_while_application_callback_is_running(environment):
+    env = environment
+    readable, observed = Event(), []
+    original_save = env.manager._outcome_writer
+    def save(*args, **kwargs):
+        def poll():
+            observed.append(env.manager.get(identifier, "owner")["progress"])
+            readable.set()
+        reader = Thread(target=poll, daemon=True)
+        reader.start()
+        assert readable.wait(1), "Status polling must not wait for application saving to finish"
+        reader.join()
+        return original_save(*args, **kwargs)
+    env.manager._outcome_writer = save
+    identifier = start(env)
+    env.run()
+    assert observed == [{"stage": "saving", "completed": 0, "total": 3, "current_security": None}]
+    assert job(env, identifier)["status"] == "completed"
+
+
+def test_failed_inventory_reports_application_phase_and_safe_type_without_blame_on_provider(environment):
+    env = environment
+    def broken_inventory():
+        raise AttributeError("synthetic-private-provider-password")
+    env.manager._candidate_reader = broken_inventory
+    identifier = start(env)
+    env.run()
+    result = job(env, identifier)
+    assert result["status"] == "failed" and result["code"] == "job_failed"
+    assert result["failure"] == {"stage": "checking_apis", "code": "job_failed", "error_type": "AttributeError", "http_status": 500}
+    assert result["progress"] == {"stage": "failed", "completed": 0, "total": 0, "current_security": None}
+    assert result["counts"]["model_requests"] == 0 and result["counts"]["rest_requests"] == 2
+    assert "synthetic-private" not in str(result)
+    other = env.client.get(PREFIX + "/ai/" + identifier, headers={"Authorization": "Bearer other"})
+    assert other.status_code == 404

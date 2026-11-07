@@ -107,6 +107,8 @@ class EnrichmentJobs:
                 "counts": {"model_requests": 0, "rest_requests": 0, "max_model_requests": MAX_MODEL_CALLS, "max_rest_requests": MAX_REST_CALLS},
                 "summary": {"total_candidates": 0, "selected": 0, "updated": 0, "partial": 0, "unavailable": 0, "not_attempted": 0},
                 "outcomes": [], "code": "queued", "portfolio_refresh_required": False,
+                "progress": {"stage": "queued", "completed": 0, "total": 0, "current_security": None},
+                "failure": None,
                 "coverage": {"inventory_truncated": False, "listed_candidates": 0},
                 "_user_id": user_id, "_candidates": {}, "_results": {}, "_research_responses": {}, "_evidence_by_key": {}, "_proposal": None,
                 "_finalized": False, "_ready_to_finalize": False,
@@ -127,15 +129,39 @@ class EnrichmentJobs:
     def _job(self, identifier: str) -> dict[str, Any]:
         return self._jobs[identifier]
 
+    @staticmethod
+    def _progress(job, stage, completed=0, total=0, current=None):
+        """Count finished phase work, never infer saved fields from a page read.
+
+        The bulk normal-API callback has no intermediate inventory, so its
+        initial zero total means indeterminate. Research counts completed
+        source callbacks. Terminal counts are selected outcomes actually
+        attempted; summary separately reports verified information updates.
+        """
+        total = max(0, int(total))
+        job["progress"] = {"stage": stage, "completed": min(max(0, int(completed)), total), "total": total,
+                           "current_security": {key: str(current.get(key) or "") for key in ("symbol", "stock_market", "currency")} if current else None}
+
+    @staticmethod
+    def _failure(job, code, error_type, http_status=None):
+        """Safe diagnostic identifiers only; never retain an exception message."""
+        diagnostic = {"stage": job["progress"]["stage"], "code": code,
+                      "error_type": str(error_type)[:80], "http_status": http_status}
+        job["failure"] = diagnostic
+        return deepcopy(diagnostic)
+
     def _request(self, job_id: str, headers: dict[str, str], method: str, path: str, *, params=None, payload=None):
         allowed = {("GET", PREFIX + "/candidates"), ("GET", PREFIX + "/security"),
                    ("POST", PREFIX + "/ai/" + job_id + "/finalize")}
         with self._lock:
             job = self._job(job_id)
             if job["counts"]["rest_requests"] >= MAX_REST_CALLS:
+                self._failure(job, "request_limit", "RequestLimit")
                 raise RestError("request_limit")
             job["counts"]["rest_requests"] += 1
         if (method, path) not in allowed:
+            with self._lock:
+                self._failure(job, "job_failed", "DisallowedEndpoint")
             raise RestError("job_failed")
 
         async def request():
@@ -145,14 +171,24 @@ class EnrichmentJobs:
                     with anyio.fail_after(40):
                         response = await client.request(method, path, params=params, json=payload, headers=headers)
                     if response.status_code in {401, 403}:
+                        with self._lock:
+                            self._failure(job, "authentication_expired", "HTTPStatusError", response.status_code)
                         raise RestError("authentication_expired")
                     if response.status_code != 200:
-                        raise RestError("provider_unavailable")
+                        code = "provider_unavailable" if response.status_code in {408, 429, 502, 503, 504} else "job_failed"
+                        with self._lock:
+                            previous = job.get("failure") or {}
+                            error_type = previous.get("error_type") if response.status_code == 500 and previous.get("stage") == job["progress"]["stage"] and previous.get("code") == code else None
+                            self._failure(job, code, error_type or "HTTPStatusError", response.status_code)
+                        raise RestError(code)
                     return response.json()
                 except (httpx.HTTPError, ValueError, TimeoutError) as exc:
                     if isinstance(exc, RestError):
                         raise
-                    raise RestError("provider_unavailable") from None
+                    code = "job_failed" if isinstance(exc, ValueError) else "provider_unavailable"
+                    with self._lock:
+                        self._failure(job, code, type(exc).__name__)
+                    raise RestError(code) from None
 
         return asyncio.run(request())
 
@@ -181,14 +217,21 @@ class EnrichmentJobs:
                 for result in preflight:
                     if isinstance(result, dict) and result.get("security_key") in job["_candidates"]:
                         job["_results"][result["security_key"]] = deepcopy(result)
-                pending = [item for item in selected if job["_results"].get(item["security_key"], {}).get("status") not in {"updated", "not_attempted"}]
+                pending = [item for item in selected if job["_results"].get(item["security_key"], {}).get("status") not in {"updated", "not_attempted"}
+                           and job["_results"].get(item["security_key"], {}).get("research_eligible", True)]
                 research_available = candidates.get("research_available", True)
                 if not research_available:
                     for item in pending:
                         prior = job["_results"].get(item["security_key"], item)
                         job["_results"][item["security_key"]] = {**prior, "status": "partial" if prior.get("available_fields") else "unavailable",
-                                                                  "code": "partial_data" if prior.get("available_fields") else "research_unavailable"}
+                                                                  "code": "research_unavailable"}
+                checked = sum(item["security_key"] in job["_results"] and job["_results"][item["security_key"]].get("status") != "not_attempted" for item in selected)
+                self._progress(job, "checking_apis", checked, len(selected))
+                job["_research_total"] = len(pending)
+                job["_research_completed"] = set()
             if pending and research_available:
+                with self._lock:
+                    self._progress(job, "researching", total=len(pending))
                 settings = dict(self.settings())
                 settings.update(max_tool_loops=min(settings.get("max_tool_loops", MAX_MODEL_CALLS), MAX_MODEL_CALLS),
                                 max_rest_calls=MAX_REST_CALLS - 2, max_context_messages=0)
@@ -234,8 +277,12 @@ class EnrichmentJobs:
             failure = exc.code
         except AssistantError as exc:
             failure = "request_limit" if "limit" in str(exc) else "ai_unavailable"
-        except Exception:
+            with self._lock:
+                self._failure(job, failure, type(exc).__name__)
+        except Exception as exc:
             failure = "job_failed"
+            with self._lock:
+                self._failure(job, failure, type(exc).__name__)
         with self._lock:
             self._outcomes(job, failure)
             job["code"] = failure or self._result_code(job)
@@ -250,6 +297,8 @@ class EnrichmentJobs:
             job.update(status="failed" if failure else "completed", finished_at=_now())
             if failure:
                 job["code"] = failure
+            attempted = sum(bool(item.get("attempted")) for item in job["outcomes"] if item.get("security_key") in job["_candidates"])
+            self._progress(job, job["status"], attempted, len(job["_candidates"]))
 
     @staticmethod
     def _result_code(job):
@@ -329,7 +378,13 @@ class EnrichmentJobs:
                 if job.get("_inventory_pending"):
                     raise HTTPException(409, "enrichment_inventory_pending")
                 job["_inventory_pending"] = True
-            result = self._candidate_reader()
+                self._progress(job, "checking_apis")
+            try:
+                result = self._candidate_reader()
+            except Exception as exc:
+                with self._lock:
+                    self._failure(job, "job_failed", type(exc).__name__)
+                raise
             with self._lock:
                 job["_inventory_response"] = deepcopy(result)
             return result
@@ -350,11 +405,15 @@ class EnrichmentJobs:
                     "status": "unavailable", "code": "provider_unavailable", "available_fields": [],
                     "missing_fields": job["_candidates"][security_key].get("missing_fields", [])})
                 job["_research_responses"][security_key] = {**previous, "code": "provider_unavailable"}
+                self._progress(job, "researching", len(job.get("_research_completed", set())), job.get("_research_total", len(job["_candidates"])),
+                               current=job["_candidates"][security_key])
             try:
                 candidate = {**deepcopy(job["_candidates"][security_key]), "_request_id": request_id}
                 result = self._security_fetcher(candidate, field)
-            except Exception:
+            except Exception as exc:
                 result = deepcopy(job["_research_responses"][security_key])
+                with self._lock:
+                    result.update(code="job_failed", diagnostic=self._failure(job, "job_failed", type(exc).__name__))
             with self._lock:
                 job["_research_responses"][security_key] = deepcopy(result)
                 if isinstance(result, dict) and "evidence" in result:
@@ -365,6 +424,8 @@ class EnrichmentJobs:
                         job["_results"][security_key] = {**previous, "code": "evidence_rejected" if result["evidence"] else result.get("source_status", "data_unavailable")}
                 else:
                     job["_results"][security_key] = result
+                job.setdefault("_research_completed", set()).add(security_key)
+                self._progress(job, "researching", len(job["_research_completed"]), job.get("_research_total", len(job["_candidates"])))
             return result
 
         @router.post(PREFIX + "/ai/{request_id}/finalize")
@@ -378,12 +439,24 @@ class EnrichmentJobs:
                     raise HTTPException(409, "enrichment_not_ready")
                 if job["_finalized"]:
                     return {"finalized": True}
+                if job.get("_finalizing"):
+                    raise HTTPException(409, "enrichment_finalizing")
                 if (payload or {}).get("proposal") != job["_proposal"]:
                     raise HTTPException(422, "invalid_enrichment_proposal")
                 extra = {"proposal": (payload or {}).get("proposal"),
                          "evidence_by_key": {key: value["evidence"] for key, value in job["_evidence_by_key"].items()},
                          "candidates": deepcopy(job["_candidates"])} if job.get("_research_mode") else {}
-                finalized_outcomes = self._outcome_writer(deepcopy(job["outcomes"]), owner["id"], request_id, **extra)
+                self._progress(job, "saving", total=len(job["_candidates"]))
+                job["_finalizing"] = True
+                pending_outcomes = deepcopy(job["outcomes"])
+            try:
+                finalized_outcomes = self._outcome_writer(pending_outcomes, owner["id"], request_id, **extra)
+            except Exception as exc:
+                with self._lock:
+                    job["_finalizing"] = False
+                    self._failure(job, "job_failed", type(exc).__name__)
+                raise
+            with self._lock:
                 if isinstance(finalized_outcomes, list):
                     job["outcomes"] = finalized_outcomes
                     for outcome_status in ("updated", "partial", "unavailable", "not_attempted"):
@@ -393,6 +466,7 @@ class EnrichmentJobs:
                     if job["code"] in {"nothing_missing", "data_found", "partial_data", "data_unavailable"}:
                         job["code"] = self._result_code(job)
                 job["_finalized"] = True
+                job["_finalizing"] = False
             return {"finalized": True}
 
         return router
