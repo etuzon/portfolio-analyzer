@@ -3699,14 +3699,19 @@ function renderPortfolioValueDashboard(items) {
   const symbols = new Set(items.map((item) => item.holding.symbol)).size;
   const bonds = items.filter((item) => item.holding.asset_class === "BOND").length;
   const equities = items.filter((item) => item.holding.asset_class === "EQUITY").length;
+  const accountShares = accountShareSnapshot();
+  const risksByAccount = new Map(state.riskSnapshot.accounts.map((entry) => [String(entry.key), entry]));
   const accountsHtml = accountTotals
     .map((account) => {
-      const accountRisk = state.riskSnapshot.accounts.find((entry) => entry.account === account.account)?.risk;
+      const accountKey = String(account.accountId || account.account);
+      const riskEntry = risksByAccount.get(accountKey);
+      const accountRisk = riskEntry?.risk;
+      const share = accountShares.shares.get(accountKey);
       const localAmounts = Object.entries(account.localValues || {})
         .filter(([currency]) => currency !== state.baseCurrency)
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([currency, value]) => money(value, currency, 0));
-      const localLine = localAmounts.length ? `<small>${esc(localAmounts.join(" · "))}</small>` : "";
+      const localLine = localAmounts.length ? `<small class="account-summary-local" title="${esc(optionLabel("Source currencies"))}"><bdi dir="auto">${esc(localAmounts.join(" · "))}</bdi></small>` : "";
       const title = [
         `${optionLabel("Account")}: ${account.account}`,
         `${optionLabel("Account type")}: ${optionLabel(account.type || "Account")}`,
@@ -3716,23 +3721,24 @@ function renderPortfolioValueDashboard(items) {
       ].filter(Boolean).join("\n");
       const localAccount = state.localAccounts.find((item) => String(item.id) === String(account.accountId));
       const cashSummary = typeof accountCashSummaryHtml === "function" ? accountCashSummaryHtml(localAccount, { compact: true, entry: "dashboard" }) : "";
-      return `<span class="account-chip" title="${esc(title)}"><b>${esc(account.account)}</b><span class="account-chip-values"><strong>${money(account.value, state.baseCurrency, 0)}</strong>${localLine}</span>${riskBadge(accountRisk, true)}${cashSummary}</span>`;
-    })
-    .join("");
-  const accountShares = accountShareSnapshot();
-  const accountRiskAllocationsHtml = state.riskSnapshot.accounts
-    .sort((left, right) => right.value - left.value)
-    .map((entry) => {
-      const allocation = entry.allocation;
-      if (!allocation?.total) return "";
-      const share = accountShares.shares.get(String(entry.key)) ?? accountShares.shares.get(cleanSourceLabel(entry.key));
-      const segments = allocation.bands.map((band) => `<span class="account-risk-segment account-risk-${band.key}" style="--risk-allocation:${band.percent}%" title="${esc(`${optionLabel(band.label)}: ${fmt(band.percent, 1)}%`)}"></span>`).join("");
-      const labels = allocation.bands.map((band) => `<span class="account-risk-allocation-label"><i class="account-risk-dot account-risk-${band.key}"></i>${esc(optionLabel(band.label))} <b>${esc(fmt(band.percent, 1))}%</b></span>`).join("");
-      return `<article class="account-risk-allocation-card" title="${esc(optionLabel("Allocation is based on each holding's asset-risk category. Cash and money-market holdings are No risk only in the base currency; foreign-currency exposure is Low risk."))}">
-        <div class="account-risk-allocation-heading"><b>${esc(entry.account)}</b><span class="account-risk-metrics">${riskBadge(entry.risk, true)}${accountShareBadge(share)}</span></div>
-        ${typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(entry.risk) : ""}
-        <div class="account-risk-allocation-bar" role="img" aria-label="${esc(`${entry.account}: ${allocation.bands.map((band) => `${optionLabel(band.label)} ${fmt(band.percent, 1)}%`).join(", ")}`)}">${segments}</div>
-        <div class="account-risk-allocation-labels">${labels}</div>
+      const allocation = riskEntry?.allocation;
+      const segments = allocation?.total ? allocation.bands.map((band) => `<span class="account-risk-segment account-risk-${band.key}" style="--risk-allocation:${band.percent}%" title="${esc(`${optionLabel(band.label)}: ${fmt(band.percent, 1)}%`)}"></span>`).join("") : "";
+      const labels = allocation?.total ? allocation.bands.map((band) => `<span class="account-risk-allocation-label"><i class="account-risk-dot account-risk-${band.key}"></i>${esc(optionLabel(band.label))} <b>${esc(fmt(band.percent, 1))}%</b></span>`).join("") : "";
+      return `<article class="account-chip account-summary-card" data-account-summary="${esc(accountKey)}">
+        <h3 class="account-summary-name" title="${esc(title)}"><bdi dir="auto">${esc(account.account)}</bdi></h3>
+        <div class="account-summary-finances">
+          <div class="account-summary-balance"><span>${esc(optionLabel("Account value"))}</span><strong><bdi dir="auto">${money(account.value, state.baseCurrency, 0)}</bdi></strong>${localLine}</div>
+          ${cashSummary}
+        </div>
+        <div class="account-summary-metrics">
+          ${accountRisk ? `<div><span class="account-summary-metric-label">${esc(optionLabel("Risk"))}</span>${riskBadge(accountRisk, true)}</div>` : ""}
+          <div><span class="account-summary-metric-label">${esc(optionLabel("Portfolio share"))}</span>${accountShareBadge(share)}</div>
+        </div>
+        ${accountRisk && typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(accountRisk) : ""}
+        ${segments ? `<div class="account-summary-allocation" title="${esc(optionLabel("Allocation is based on each holding's asset-risk category. Cash and money-market holdings are No risk only in the base currency; foreign-currency exposure is Low risk."))}">
+          <div class="account-risk-allocation-bar" role="img" aria-label="${esc(`${optionLabel("Account risk allocation")}: ${allocation.bands.map((band) => `${optionLabel(band.label)} ${fmt(band.percent, 1)}%`).join(", ")}`)}">${segments}</div>
+          <div class="account-risk-allocation-labels">${labels}</div>
+        </div>` : ""}
       </article>`;
     })
     .join("");
@@ -3775,8 +3781,7 @@ function renderPortfolioValueDashboard(items) {
           <summary>Portfolio stats</summary>
           <div class="summary">${statsHtml}</div>
         </details>
-        <div class="currency-strip">${accountsHtml}</div>
-        ${accountRiskAllocationsHtml ? `<section class="account-risk-allocations" aria-label="${esc(optionLabel("Account risk allocation"))}"><div class="account-risk-allocations-title"><span>${esc(optionLabel("Account risk allocation"))}</span></div><div class="account-risk-allocations-grid">${accountRiskAllocationsHtml}</div></section>` : ""}
+        ${accountsHtml ? `<section class="account-summary-grid account-risk-allocations-grid" aria-label="${esc(optionLabel("Accounts"))}">${accountsHtml}</section>` : ""}
       </div>
     </div>
   `;
@@ -3942,16 +3947,27 @@ function preserveRenderedInteraction(root) {
   if (!root) return () => {};
   const active = root.contains(document.activeElement) ? document.activeElement : null;
   const rowKey = active?.closest("[data-portfolio-position]")?.dataset.portfolioPosition;
-  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-open-(signal|risk|dividend|vesting)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
-  const detailStates = [...root.querySelectorAll("details")].map((node) => ({ open: node.open, className: node.className, id: node.id }));
+  const accountKey = active?.closest("[data-account-summary]")?.dataset.accountSummary;
+  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-update-account-cash|data-cash-entry|data-open-(signal|risk|dividend|vesting)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
+  const detailKey = (node) => JSON.stringify([node.closest?.("[data-account-summary]")?.dataset.accountSummary || "", node.id, node.className]);
+  const detailStates = new Map();
+  root.querySelectorAll("details").forEach((node) => {
+    const key = detailKey(node);
+    if (!detailStates.has(key)) detailStates.set(key, []);
+    detailStates.get(key).push(node.open);
+  });
   const tagName = active?.tagName, className = active?.className;
   return () => {
-    [...root.querySelectorAll("details")].forEach((node, index) => {
-      const previous = detailStates[index];
-      if (previous && previous.id === node.id && previous.className === node.className) node.open = previous.open;
+    const detailOffsets = new Map();
+    root.querySelectorAll("details").forEach((node) => {
+      const key = detailKey(node), index = detailOffsets.get(key) || 0;
+      const previous = detailStates.get(key)?.[index];
+      if (previous !== undefined) node.open = previous;
+      detailOffsets.set(key, index + 1);
     });
     if (!active || active.isConnected) return;
-    const scope = rowKey ? [...root.querySelectorAll("[data-portfolio-position]")].find((node) => node.dataset.portfolioPosition === rowKey) : root;
+    const scope = rowKey ? [...root.querySelectorAll("[data-portfolio-position]")].find((node) => node.dataset.portfolioPosition === rowKey)
+      : accountKey ? [...root.querySelectorAll("[data-account-summary]")].find((node) => node.dataset.accountSummary === accountKey) : root;
     const replacement = [...(scope?.querySelectorAll(tagName) || [])].find((node) => identity.length
       ? identity.every(([name, value]) => node.getAttribute(name) === value)
       : node.className === className);

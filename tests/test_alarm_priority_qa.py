@@ -422,7 +422,7 @@ def test_browser_header_modal_navigation_viewer_and_keyboard(tmp_path, width, la
             evaluate("document.querySelector('.alarm-settings-disclosure summary').focus()")
             key('Enter');time.sleep(.05)
             assert evaluate("document.querySelector('.alarm-settings-disclosure').open") is True
-            assert evaluate("$('vestingAlertDays').clientWidth") >= 80
+            assert evaluate("$('vestingAlertDays').getBoundingClientRect().width") >= 80
             assert evaluate("$('saveAlarmSettings').disabled") is True
             assert evaluate("(()=>{const c=$('alarmsModal').querySelector('.modal-card');return c.scrollWidth<=c.clientWidth+1})()") is True
             (artifacts / f'settings-{width}-{language}.png').write_bytes(base64.b64decode(command('Page.captureScreenshot', {'format':'png'})['data']))

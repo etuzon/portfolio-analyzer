@@ -282,8 +282,9 @@ async function clearSelectedAlarms({ all = false, key = "" } = {}) {
     if (sameSession()) {
       state.alarmClearPending = false;
       renderAlarms();
+      // A newly disabled control can remain active until the browser blurs it.
       if (restoreFocus && !$("alarmsModal").hidden && !$("alarmsModal").inert
-        && (!document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected)) {
+        && (!document.activeElement || document.activeElement === document.body || !document.activeElement.isConnected || document.activeElement.disabled)) {
         const replacement = focused?.dataset?.clearAlarm
           ? [...$("alarmsList").querySelectorAll("[data-clear-alarm]")].find((button) => button.dataset.clearAlarm === focused.dataset.clearAlarm) : null;
         const remaining = [...($("alarmsList")?.querySelectorAll?.("[data-clear-alarm]") || [])];

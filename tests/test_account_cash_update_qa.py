@@ -443,7 +443,7 @@ def test_inline_cash_balance_native_activation_permissions_and_focus(tmp_path, c
     assert "Synthetic Dollar" in trigger["label"], trigger
     assert trigger["tooltip"] == update_cash, trigger
     assert trigger["icon"] is False, trigger
-    assert trigger["chipHeight"] <= 100, trigger
+    assert evaluate("qaTrigger().closest('[data-account-summary]').querySelectorAll('.account-summary-balance').length") == 1
     assert trigger["left"] >= 0 and trigger["right"] <= width and trigger["height"] >= 28, trigger
     evaluate("qaTrigger().focus({preventScroll:true});")
     assert evaluate("document.activeElement===qaTrigger()&&qaTrigger().matches(':focus')"), evaluate("({active:document.activeElement.outerHTML,focus:document.hasFocus(),disabled:qaTrigger().disabled})")

@@ -3831,6 +3831,40 @@ textarea.muted-control {
   background: #171c26;
 }
 
+.account-summary-grid {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  align-items: start;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.account-summary-card {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #303b49;
+  border-radius: 10px;
+  background: #151c25;
+  text-align: start;
+}
+
+.account-summary-name { margin: 0; color: #eef4ff; font-size: 13px; line-height: 1.5; font-weight: 700; overflow-wrap: anywhere; }
+.account-summary-finances { display: flex; flex-wrap: wrap; align-items: end; gap: 6px 12px; min-width: 0; }
+.account-summary-balance { display: grid; flex: 1 1 140px; gap: 3px; min-width: 0; }
+.account-summary-balance > span, .account-summary-metric-label { color: #94a4ba; font-size: 11px; line-height: 1.4; }
+.account-summary-balance > strong { color: #f5f8ff; font-size: 23px; font-weight: 800; line-height: 1.2; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.account-summary-local { color: #a8b8cf; font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.account-summary-card .account-current-cash { flex: 0 1 auto; min-height: 32px; font-size: 12px; }
+.account-summary-metrics { display: flex; flex-wrap: wrap; gap: 8px 16px; padding-top: 9px; border-top: 1px solid #303b49; }
+.account-summary-metrics > div { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.account-summary-metrics .risk-badge, .account-summary-metrics .account-risk-portfolio-share { box-sizing: border-box; min-height: 34px; }
+.account-summary-card .risk-data-quality { margin: 0; }
+.account-summary-allocation { min-width: 0; }
+.account-summary-allocation .account-risk-allocation-bar { margin-top: 0; }
+.account-summary-allocation .account-risk-allocation-labels { gap: 5px 10px; font-size: 11px; }
+
 .account-risk-allocation-heading {
   justify-content: space-between;
   gap: 7px 10px;
