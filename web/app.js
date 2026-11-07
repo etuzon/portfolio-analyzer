@@ -2784,24 +2784,16 @@ function riskAllocationForItems(items, options = {}) {
   };
 }
 
-function riskBadge(risk, compact = false) {
-  if (!risk) return "";
+function riskBadge(risk) {
+  if (!risk || !Number.isFinite(risk.score) || risk.score < 0 || risk.score > 100) return "";
   const band = riskBand(risk.score);
-  return `<span class="risk-badge risk-${band.key}" title="${esc(riskTooltip(risk))}">
-    <span class="risk-symbol" aria-hidden="true">${esc(band.symbol)}</span>
-    <b>${esc(risk.score)}</b>${compact ? "" : `<span>${esc(band.label)}</span>`}
-  </span>`;
+  const label = `${optionLabel("Risk")}: ${risk.score} · ${band.label}`;
+  return `<button class="risk-badge risk-${band.key}" type="button" data-risk-badge="${esc(risk.label || "Risk")}" data-risk-explanation="${esc(riskTooltip(risk))}" aria-label="${esc(label)}" aria-describedby="riskBadgeExplanation"><b>${esc(risk.score)}</b></button>`;
 }
 
 function riskTooltip(risk) {
   const band = riskBand(risk.score);
-  const meaning = {
-    low: "Relatively stable, but losses are still possible.",
-    moderate: "Noticeable gains or losses are possible.",
-    elevated: "Price swings could cause meaningful losses.",
-    high: "Several factors create a high chance of large losses.",
-    extreme: "Sharp losses are possible from very strong risk factors.",
-  }[band.key];
+  const meaning = "This is a model-based risk estimate, not a probability or forecast of loss.";
   const componentSpecs = [
     ["concentration", "Concentration", 16],
     ["asset_mix", "Asset mix", 14],
@@ -2848,8 +2840,8 @@ function riskTooltip(risk) {
     .map(([key, label, maximum]) => key === "borrowing" ? `${optionLabel(label)}: +${fmt(risk.components[key], 1)}`
       : `${optionLabel(label)}: ${fmt(risk.components[key], 1)}/${maximum}`);
   const title = state.language === "he"
-    ? `${optionLabel("Risk")} ${band.label} · ${risk.score}/100`
-    : `${band.label} risk · ${risk.score}/100`;
+    ? `${optionLabel("Risk")} ${band.label} · ${risk.score}`
+    : `${band.label} risk · ${risk.score}`;
   return [
     title,
     optionLabel(meaning),
@@ -3701,12 +3693,33 @@ function renderPortfolioValueDashboard(items) {
   const equities = items.filter((item) => item.holding.asset_class === "EQUITY").length;
   const accountShares = accountShareSnapshot();
   const risksByAccount = new Map(state.riskSnapshot.accounts.map((entry) => [String(entry.key), entry]));
-  const accountsHtml = accountTotals
+  const localAccountsById = new Map(state.localAccounts.map((account) => [String(account.id), account]));
+  const localAccountsByLabel = new Map();
+  state.localAccounts.forEach((account) => {
+    const label = cleanSourceLabel(accountLabel(account));
+    if (!localAccountsByLabel.has(label)) localAccountsByLabel.set(label, []);
+    localAccountsByLabel.get(label).push(account);
+  });
+  const canonicalAccountForGroup = (account) => {
+    const linked = localAccountsById.get(String(account.accountId || ""));
+    if (linked) return linked;
+    const matches = localAccountsByLabel.get(cleanSourceLabel(account.account)) || [];
+    return matches.length === 1 ? matches[0] : null;
+  };
+  const investmentAccountTotals = accountTotals.filter((account) => {
+    const linked = canonicalAccountForGroup(account);
+    if (linked) return linked.type === "Investment";
+    const labelMatches = localAccountsByLabel.get(cleanSourceLabel(account.account)) || [];
+    if (labelMatches.length) return labelMatches.every((candidate) => candidate.type === "Investment");
+    return account.type === "Investment";
+  });
+  const accountsHtml = investmentAccountTotals
     .map((account) => {
       const accountKey = String(account.accountId || account.account);
       const riskEntry = risksByAccount.get(accountKey);
       const accountRisk = riskEntry?.risk;
       const share = accountShares.shares.get(accountKey);
+      const localAccount = canonicalAccountForGroup(account);
       const localAmounts = Object.entries(account.localValues || {})
         .filter(([currency]) => currency !== state.baseCurrency)
         .sort(([left], [right]) => left.localeCompare(right))
@@ -3714,12 +3727,11 @@ function renderPortfolioValueDashboard(items) {
       const localLine = localAmounts.length ? `<small class="account-summary-local" title="${esc(optionLabel("Source currencies"))}"><bdi dir="auto">${esc(localAmounts.join(" · "))}</bdi></small>` : "";
       const title = [
         `${optionLabel("Account")}: ${account.account}`,
-        `${optionLabel("Account type")}: ${optionLabel(account.type || "Account")}`,
+        `${optionLabel("Account type")}: ${optionLabel("Investment")}`,
         account.location ? `${optionLabel("Location")}: ${countryDisplayLabel(account.location)}` : "",
         `${optionLabel("Source currencies")}: ${account.currencies.map(currencyDisplayLabel).join(", ")}`,
         account.cashCurrency ? `${optionLabel("Cash")}: ${money(account.cashLocal || 0, account.cashCurrency, 2)}` : "",
       ].filter(Boolean).join("\n");
-      const localAccount = state.localAccounts.find((item) => String(item.id) === String(account.accountId));
       const cashSummary = typeof accountCashSummaryHtml === "function" ? accountCashSummaryHtml(localAccount, { compact: true, entry: "dashboard" }) : "";
       const allocation = riskEntry?.allocation;
       const segments = allocation?.total ? allocation.bands.map((band) => `<span class="account-risk-segment account-risk-${band.key}" style="--risk-allocation:${band.percent}%" title="${esc(`${optionLabel(band.label)}: ${fmt(band.percent, 1)}%`)}"></span>`).join("") : "";
@@ -3731,7 +3743,7 @@ function renderPortfolioValueDashboard(items) {
           ${cashSummary}
         </div>
         <div class="account-summary-metrics">
-          ${accountRisk ? `<div><span class="account-summary-metric-label">${esc(optionLabel("Risk"))}</span>${riskBadge(accountRisk, true)}</div>` : ""}
+          ${accountRisk ? `<div><span class="account-summary-metric-label">${esc(optionLabel("Risk"))}</span>${riskBadge(accountRisk)}</div>` : ""}
           <div><span class="account-summary-metric-label">${esc(optionLabel("Portfolio share"))}</span>${accountShareBadge(share)}</div>
         </div>
         ${accountRisk && typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(accountRisk) : ""}
@@ -3948,7 +3960,7 @@ function preserveRenderedInteraction(root) {
   const active = root.contains(document.activeElement) ? document.activeElement : null;
   const rowKey = active?.closest("[data-portfolio-position]")?.dataset.portfolioPosition;
   const accountKey = active?.closest("[data-account-summary]")?.dataset.accountSummary;
-  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-update-account-cash|data-cash-entry|data-open-(signal|risk|dividend|vesting)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
+  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-update-account-cash|data-cash-entry|data-risk-badge|data-open-(signal|risk|dividend|vesting)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
   const detailKey = (node) => JSON.stringify([node.closest?.("[data-account-summary]")?.dataset.accountSummary || "", node.id, node.className]);
   const detailStates = new Map();
   root.querySelectorAll("details").forEach((node) => {
@@ -4017,7 +4029,7 @@ function renderRows(items) {
     return `<tr data-portfolio-position="${esc(JSON.stringify([h.account_id, h.symbol, marketKey, h.currency, h.asset_class]))}">
       <td data-label="Security"><div class="security-cell"><div class="security-symbols">${companyLogoHtml(h)}<button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}<span class="ux-tooltip security-meta-tooltip" tabindex="0" role="note" aria-label="Security details" title="${esc(marketLine)}" data-tooltip="${esc(marketLine)}">i</span></div><div class="security-name">${esc(companyLine)}</div>${industryLine}${exposureLine}</div></td>
       <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(accountMeta)}</div>${holdingTransactionActionsHtml(h)}</td>
-      <td class="holding-risk-cell" data-label="Risk">${riskBadge(rowRisk, true)}</td>
+      <td class="holding-risk-cell" data-label="Risk">${riskBadge(rowRisk)}</td>
       <td data-label="Value / P&L"><div class="value-cell">
         <strong>${money(h.market_value, h.currency)}</strong>
         <button class="units-history-link" type="button" data-position-history-symbol="${esc(h.symbol)}" data-position-history-market="${esc(marketKey)}" data-position-history-account-id="${esc(h.account_id || "")}" data-position-history-account="${esc(cleanSourceLabel(h.account) || "")}" data-position-history-currency="${esc(h.currency || state.baseCurrency)}" data-position-history-quantity="${esc(h.quantity || 0)}" data-position-history-average="${esc(averageBuyPrice)}" data-position-history-asset="${esc(h.asset_class || "EQUITY")}" data-position-history-location="${esc(h.country || h.location || "")}" title="Open buy and sell history">${fmt(h.quantity, 3)} ${esc(optionLabel("units"))}</button>
@@ -4765,7 +4777,7 @@ function renderIndustrySplit(items) {
                 <div class="industry-split-metrics">
                   <span>${money(group.value, state.baseCurrency, 0)} · ${fmt(percent, 1)}%</span>
                   <small>${esc(optionLabel("Industry risk"))}</small>
-                  ${riskBadge(group.risk, true)}
+                  ${riskBadge(group.risk)}
                 </div>
               </div>
               <div class="industry-split-track" title="${esc(`${group.label}: ${fmt(percent, 1)}%`)}">

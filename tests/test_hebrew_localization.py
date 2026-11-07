@@ -387,7 +387,7 @@ def test_populated_dashboard_values_are_localized_at_composition_time():
 
     assert 'return { ...band, label: optionLabel(band.label) }' in script
     assert 'const drivers = (risk.drivers || []).slice(0, 4).map(simpleDriver).map(optionLabel)' in script
-    assert '? `${optionLabel("Risk")} ${band.label} · ${risk.score}/100`' in script
+    assert '? `${optionLabel("Risk")} ${band.label} · ${risk.score}`' in script
     assert 'optionLabel("Main reasons:")' in script
     assert 'optionLabel("Components:")' in script
     assert 'optionLabel("Total portfolio risk")' in script

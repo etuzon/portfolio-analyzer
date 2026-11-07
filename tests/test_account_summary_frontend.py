@@ -12,34 +12,41 @@ def test_one_card_per_account_joins_risk_by_id_and_keeps_zero_accounts():
     end = start + re.search(r'^}', source[start:], re.M).end()
     script = r'''
 const assert=require('node:assert/strict');
-const accounts=[{accountId:'A',account:'Same name',value:500,currencies:['USD'],localValues:{USD:500}},
+const accounts=[{accountId:'A',account:'Same name',type:'Bank',value:500,currencies:['USD'],localValues:{USD:500}},
  {accountId:'B',account:'Same name',value:200,currencies:['USD'],localValues:{USD:200}},
- {accountId:'Z',account:'Empty account',value:0,currencies:['USD'],localValues:{USD:0}}];
-const state={portfolioReady:true,baseCurrency:'USD',localAccounts:accounts.map(a=>({id:a.accountId,currency:'USD'}))};
+ {accountId:'Z',account:'Empty account',value:0,currencies:['USD'],localValues:{USD:0}},
+ ...['P','K','E','U','R','L','D'].map(id=>({accountId:id,account:id==='L'?'Legacy Pension':id==='D'?'Ambiguous':id,type:id==='U'?undefined:'Investment',value:50,currencies:['USD'],localValues:{USD:50}}))];
+const types={A:'Investment',B:'Investment',Z:'Investment',P:'Long-Term Savings',K:'Bank',E:'ESOP'};
+const state={portfolioReady:true,baseCurrency:'USD',localAccounts:Object.entries(types).map(([id,type])=>({id,type,currency:'USD'}))};
+state.localAccounts.push({id:'legacy-pension',username:'Legacy Pension',type:'Long-Term Savings'},
+ {id:'same-investment',username:'Ambiguous',type:'Investment'}, {id:'same-bank',username:'Ambiguous',type:'Bank'});
 const riskSource={total:{score:35},accounts:[{key:'B',account:'Same name',risk:{score:82}},
  {key:'A',account:'Same name',risk:{score:17}}]};
 const portfolioRiskSnapshot=()=>riskSource;
 const sum=xs=>xs.reduce((a,b)=>a+b,0),normalizedField=()=>0,normalizedAmount=v=>v;
 const portfolioAccounts=()=>state.localAccounts,accountCashBalance=()=>0,accountNativeCashBalance=()=>0;
-const accountLabel=a=>a.id,optionLabel=x=>x,t=x=>x,esc=x=>String(x??'');
+const accountLabel=a=>a.username||a.id,cleanSourceLabel=x=>String(x||'').trim(),optionLabel=x=>x,t=x=>x,esc=x=>String(x??'');
 const groupByAccount=()=>accounts.map(a=>({...a}));
 const accountShareSnapshot=()=>({shares:new Map([['A',71.4],['B',28.6],['Z',0]])});
 const money=(v,c)=>`${c} ${v}`,signedMoney=money,fmt=v=>String(v),currencyDisplayLabel=v=>v;
 const riskBadge=r=>`<span data-score="${r.score}"></span>`,accountShareBadge=v=>`<span data-share="${v}"></span>`;
-const accountCashSummaryHtml=a=>`<button data-update-account-cash="${a.id}">cash</button>`;
+const accountCashSummaryHtml=a=>a?`<button data-update-account-cash="${a.id}">cash</button>`:'';
 const riskBand=()=>({key:'medium',label:'Moderate'}),riskTooltip=()=>'',renderDataGapsStat=()=>'';
 ''' + source[start:end] + r'''
 const original=JSON.stringify(riskSource);
 const html=renderPortfolioValueDashboard([]);
-assert.equal((html.match(/data-account-summary=/g)||[]).length,3);
+assert.equal((html.match(/data-account-summary=/g)||[]).length,4);
 const card=id=>html.split(`data-account-summary="${id}"`)[1].split('</article>')[0];
 for(const [id,score,value,share] of [['A',17,500,71.4],['B',82,200,28.6]]){
  assert.ok(card(id).includes(`data-score="${score}"`),id);
  assert.ok(card(id).includes(`USD ${value}`),id);
  assert.ok(card(id).includes(`data-share="${share}"`),id);
  assert.ok(card(id).includes(`data-update-account-cash="${id}"`),id);
+ assert.ok(card(id).includes('Account type: Investment'),id);
 }
 assert.ok(card('Z').includes('USD 0')&&card('Z').includes('data-share="0"'));
+assert.ok(html.includes('data-account-summary="R"'),'unlinked imported Investment groups remain visible');
+for(const id of ['P','K','E','U','L','D'])assert.ok(!html.includes(`data-account-summary="${id}"`),'exclude '+id);
 assert.ok(!card('Z').includes('data-score='),'no fabricated risk on an empty account');
 assert.ok(!html.includes('account-risk-allocation-card'));
 assert.equal(JSON.stringify(riskSource),original);

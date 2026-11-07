@@ -20,6 +20,7 @@ function accountCashSaving() {
 function accountCashSummaryHtml(account, { button = true, compact = false, entry = "accounts" } = {}) {
   if (!account) return "";
   const value = accountNativeCashBalance(account);
+  const tone = value === null ? "unavailable" : value > 0 ? "positive" : value < 0 ? "negative" : "zero";
   const amount = value === null ? t("Not available") : money(value, account.currency, 2);
   const name = accountLabel(account);
   const label = `${esc(t("Current cash"))}:`;
@@ -28,7 +29,7 @@ function accountCashSummaryHtml(account, { button = true, compact = false, entry
   const content = editable
     ? `<button class="account-cash-edit ux-tooltip" type="button" data-update-account-cash="${esc(account.id)}" data-cash-entry="${esc(entry)}" aria-label="${esc(`${t("Update cash for {account}").replace("{account}", name)}. ${t("Current cash")}: ${amount}`)}" aria-haspopup="dialog" aria-controls="accountCashModal" title="" data-tooltip="${esc(t("Update cash"))}"><span class="account-cash-label">${label}</span><span class="account-cash-value">${balance}</span></button>`
     : `<span class="account-cash-readonly">${label} ${balance}</span>`;
-  return `<span class="account-current-cash${compact ? " account-current-cash-compact" : ""}">${content}</span>`;
+  return `<span class="account-current-cash cash-${tone}${compact ? " account-current-cash-compact" : ""}">${content}</span>`;
 }
 
 function renderAccountEditCash(account) {

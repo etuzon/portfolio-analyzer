@@ -3855,7 +3855,7 @@ textarea.muted-control {
 .account-summary-balance { display: grid; flex: 1 1 140px; gap: 3px; min-width: 0; }
 .account-summary-balance > span, .account-summary-metric-label { color: #94a4ba; font-size: 11px; line-height: 1.4; }
 .account-summary-balance > strong { color: #f5f8ff; font-size: 23px; font-weight: 800; line-height: 1.2; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.account-summary-local { color: #a8b8cf; font-size: 12px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.account-summary-local { color: #d2e0f2; font-size: 14px; font-weight: 750; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .account-summary-card .account-current-cash { flex: 0 1 auto; min-height: 32px; font-size: 12px; }
 .account-summary-metrics { display: flex; flex-wrap: wrap; gap: 8px 16px; padding-top: 9px; border-top: 1px solid #303b49; }
 .account-summary-metrics > div { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
@@ -4057,9 +4057,9 @@ textarea.muted-control {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   width: fit-content;
-  min-height: 28px;
+  min-width: 34px;
+  min-height: 34px;
   border: 1px solid transparent;
   border-radius: 7px;
   padding: 3px 8px;
@@ -4067,6 +4067,15 @@ textarea.muted-control {
   font-weight: 800;
   line-height: 1;
   white-space: nowrap;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+}
+
+.risk-badge:focus-visible { outline: 2px solid #d5e8ff; outline-offset: 3px; }
+.risk-badge-explanation { position: fixed; z-index: 12000; width: max-content; max-width: min(420px, calc(100vw - 24px)); max-height: min(460px, calc(100dvh - 32px)); overflow: auto; box-sizing: border-box; padding: 14px; border: 1px solid #60758c; border-radius: 8px; background: #111a25; color: #e3ecf8; box-shadow: 0 8px 30px #0008; font-size: 12px; line-height: 1.65; white-space: pre-line; overflow-wrap: anywhere; text-align: start; }
+.risk-badge-explanation[hidden] { display: none; }
+@media (max-width: 600px), (pointer: coarse) {
+  .risk-badge, .account-summary-metrics .risk-badge { min-width: 44px; min-height: 44px; }
 }
 
 .risk-badge b,
@@ -4086,12 +4095,6 @@ textarea.muted-control {
   color: inherit;
   font-size: 11px;
   font-weight: 850;
-}
-
-.risk-symbol {
-  min-width: 14px;
-  text-align: center;
-  font-size: 13px;
 }
 
 .risk-low {
@@ -5584,6 +5587,12 @@ textarea.muted-control {
 .account-edit-cash { margin-block:10px; }
 .account-current-cash { display:flex; align-items:center; color:#d9dee7; font-size:13px; min-width:0; max-width:100%; }
 .account-current-cash > span { min-width:0; overflow-wrap:anywhere; }
+.account-current-cash.cash-positive bdi { color:#6ee787; }
+.account-current-cash.cash-zero bdi { color:#77c8ff; }
+.account-current-cash.cash-negative bdi { color:#ff6f86; }
+.account-current-cash.cash-unavailable bdi { color:#a8b8cf; }
+.account-current-cash bdi { font-weight:750; font-variant-numeric:tabular-nums; }
+.account-summary-card .account-current-cash bdi { font-size:13px; }
 .account-management-item > .account-current-cash { grid-column:1 / -1; }
 .currency-strip .account-current-cash { grid-column:1 / -1; display:flex; padding:2px 0 0; min-height:0; gap:8px; background:transparent; border-radius:0; }
 .currency-strip .account-current-cash > span { padding:0; min-height:0; background:transparent; font-size:11px; overflow-wrap:anywhere; }
@@ -5953,6 +5962,11 @@ td {
 .holdings-table td.holding-risk-cell .risk-badge {
   min-height: 30px;
   padding: 4px 9px;
+}
+
+@media (max-width: 600px), (pointer: coarse) {
+  .holdings-table td.holding-risk-cell .risk-badge,
+  .industry-split-metrics .risk-badge { min-width: 44px; min-height: 44px; }
 }
 
 .holdings-table td.holding-risk-cell .risk-badge b {

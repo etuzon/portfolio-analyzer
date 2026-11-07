@@ -636,8 +636,10 @@ def test_real_cash_form_keyboard_retry_stale_cancel_and_field_layout(tmp_path, c
     browser_wait(evaluate, "document.activeElement=== $('editAccountCash').querySelector('[data-update-account-cash]')")
     assert evaluate("qa.posts.length") == 5
     evaluate("closeModal($('accountEditModal'));state.localAccounts.push({id:'qa-bank',username:'Synthetic Zero Bank',type:'Bank',location:'USA',currency:'USD',initial_cash:0,persons:[]});state.items=[];const section=document.createElement('section');section.id='qa-zero-dashboard';section.innerHTML=renderPortfolioValueDashboard([]);$('analyticsBoard').append(section);")
-    assert evaluate("!!$('qa-zero-dashboard').querySelector('[data-update-account-cash=qa-bank]')")
-    evaluate("$('qa-zero-dashboard').querySelector('[data-update-account-cash=qa-bank]').click();")
+    assert evaluate("!!$('qa-zero-dashboard').querySelector('[data-update-account-cash=qa-bank]')") is False
+    assert evaluate("!!$('qa-zero-dashboard').querySelector('[data-update-account-cash=qa-dollar]')")
+    # Bank cash stays available through Accounts, outside Investment-only cards.
+    evaluate("openModal('accountsModal');setAccountsTab('existing');renderLocalAccountsList();$('accountsList').querySelector('[data-update-account-cash=qa-bank]').click();")
     browser_wait(evaluate, "!$('accountCashModal').hidden&&!$('accountCashTarget').disabled")
     assert evaluate("$('accountCashTarget').value") == "0"
     assert evaluate("qa.calls.at(-1)") == "/api/local/accounts/qa-bank/cash-balance"

@@ -203,7 +203,7 @@ const risk=adapters.risk([stock('HELD',10000)],{cash:-1000,horizonYears:20});
 for(const language of ['en','he','en']) {
  state.language=language;
  const tooltip=riskTooltip(risk);
- assert.ok(tooltip.includes('55/100'),tooltip);
+ assert.ok(tooltip.split('\n')[0].includes('55')&&!tooltip.split('\n')[0].includes('/100'),tooltip);
  assert.ok(!/undefined|NaN|null/.test(tooltip),tooltip);
  if(language==='en') {
   assert.ok(/borrow|debt/i.test(tooltip),tooltip);

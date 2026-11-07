@@ -459,9 +459,9 @@ def test_browser_header_modal_navigation_viewer_and_keyboard(tmp_path, width, la
             assert evaluate("$('alarmsModal').inert") is True
             assert evaluate("$('alarmRiskModal').contains(document.activeElement)") is True
             evaluate("state.localAccounts[0].initial_cash=-1000;renderAlarms()")
-            assert '55/100' in evaluate("$('alarmRiskDetails').textContent")
+            assert '55' in evaluate("$('alarmRiskDetails').textContent")
             evaluate("state.localAccounts[0].initial_cash=-10000;renderAlarms()")
-            assert '100/100' in evaluate("$('alarmRiskDetails').textContent")
+            assert '100' in evaluate("$('alarmRiskDetails').textContent")
             key('Escape');time.sleep(.1)
             assert evaluate("$('alarmRiskModal').hidden") is True
             assert evaluate("$('alarmsModal').inert") is False
