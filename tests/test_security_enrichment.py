@@ -203,7 +203,12 @@ def test_large_candidate_inventory_reports_capped_coverage(environment):
     env.run()
     result = job(env, identifier)
     assert result["summary"]["total_candidates"] == 250
-    assert result["summary"]["not_attempted"] == 247
+    # Model setup failed before any security research. Selection alone does not
+    # establish an attempted lookup, including the three selected candidates.
+    assert result["summary"]["not_attempted"] == 250
+    assert result["summary"]["unavailable"] == 0
+    assert result["progress"]["completed"] == 0
+    assert not env.state.fetched
     assert result["coverage"] == {"inventory_truncated": True, "listed_candidates": 200}
     assert len(result["outcomes"]) == 200
 
@@ -345,35 +350,43 @@ def test_closed_after_research_cannot_keep_data_found_job_code(environment):
     assert result["portfolio_refresh_required"] is False
 
 
-@pytest.mark.parametrize("valid", [True, False])
-def test_application_finalizer_validates_source_saves_and_logs_real_outcome(environment, monkeypatch, valid):
+@pytest.mark.parametrize("valid, concurrent_manual_price", [(True, False), (False, False), (True, True)])
+def test_application_finalizer_validates_source_saves_and_logs_real_outcome(environment, monkeypatch, valid, concurrent_manual_price):
     """Exercise the real application callbacks with synthetic storage, never a DB."""
     from app import main
     env = environment
     item = {**env.state.items[0], "missing_fields": ["prices"]}
     metadata = {**item, "location": "US", "name": "Example Incorporated", "quantity": 4,
                 "id": "synthetic-security-id", "created_at": "2020-01-01", "updated_at": "2020-01-02"}
-    saved_prices, notes, logs = [], {}, []
+    saved_prices, manual_prices, notes, logs = [], [], {}, []
     class FakeStore:
         def manual_security(self, symbol, market):
             return deepcopy(metadata)
-        def save_prices(self, rows):
+        def save_prices(self, rows, *, only_missing=False):
+            assert only_missing is True
+            if concurrent_manual_price:
+                # Another caller commits after the last missing-data check,
+                # before this atomic insert. The store accepts no AI rows.
+                manual_prices.append({**deepcopy(rows[0]), "price_input": 99, "source": "manual", "comments": ""})
+                return []
             saved_prices.extend(deepcopy(rows))
+            return deepcopy(rows)
         def get_preference(self, key, default):
             return deepcopy(notes.get(key, default))
         def set_preference(self, key, value):
             notes[key] = deepcopy(value)
     def inventory(*, preflight=False, limit=200):
-        items = [] if saved_prices else [deepcopy(item)]
+        items = [] if saved_prices or manual_prices else [deepcopy(item)]
         payload = {"items": items, "total_count": len(items), "truncated": False}
         if preflight:
             payload.update(research_available=True, preflight_outcomes=[{**item, "status": "unavailable", "code": "data_unavailable",
                 "missing_fields": ["prices"], "available_fields": []}])
         return payload
-    day = date.today().isoformat()
+    retrieved = datetime.now(timezone.utc)
+    day = retrieved.date().isoformat()
     quote = "A NASDAQ USD Last 123.45 on " + day
     source = {"url": "https://example.invalid/quoted-price", "text": quote,
-              "retrieved_at": datetime.now(timezone.utc).isoformat()}
+              "retrieved_at": retrieved.isoformat()}
     proposal = {"observations": [{"security_key": item["security_key"], "price_input": 123.45,
         "price_date": day, "currency": "USD", "quote_unit": "currency", "price_basis": "last", "observed_at": None,
         "source_url": source["url"], "evidence_quote": quote if valid else "fabricated price evidence"}], "profiles": []}
@@ -394,13 +407,18 @@ def test_application_finalizer_validates_source_saves_and_logs_real_outcome(envi
     result = job(env, identifier)
     assert result["status"] == "completed", result
     assert result["counts"]["rest_requests"] == 3 and result["counts"]["model_requests"] == 2
-    assert len(saved_prices) == int(valid)
-    assert result["summary"]["updated"] == int(valid)
+    accepted = valid and not concurrent_manual_price
+    assert len(saved_prices) == int(accepted)
+    assert result["summary"]["updated"] == int(accepted)
     assert len(logs) == 1
-    assert logs[0]["code"] == ("data_found" if valid else "evidence_rejected")
+    assert logs[0]["code"] == ("data_found" if accepted else "evidence_rejected")
     persisted = notes["security_enrichment_outcomes_v1"][item["security_key"]]
     assert persisted["code"] == logs[0]["code"]
-    if valid:
+    if concurrent_manual_price:
+        assert len(manual_prices) == 1
+        assert manual_prices[0]["price_input"] == 99 and manual_prices[0]["source"] == "manual"
+        assert result["portfolio_refresh_required"] is False
+    if accepted:
         assert set(saved_prices[0]) == {"symbol", "stock_market", "currency", "asset_class", "location", "price_input", "price_date", "source", "comments"}
         evidence = json.loads(saved_prices[0]["comments"])
         assert evidence["source_url"] == source["url"] and evidence["evidence_quote"] == quote

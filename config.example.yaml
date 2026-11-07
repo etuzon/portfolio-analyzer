@@ -83,8 +83,9 @@ llm:
   max_context_messages: 12
   timeout_seconds: 30
 
-# Host-side skill runner; independent of the read-only dashboard chat.
-# Requires a signed-in CLI and an authorized REST bearer token.
+# Shared settings for dashboard missing-data research and the host skill runner;
+# independent of read-only portfolio chat. Requires a signed-in selected CLI.
+# The host runner also requires an authorized REST bearer token.
 price_agent:
   provider: "codex"  # codex (default) or claude
   # Empty resolves to gpt-6.1-sol for Codex, sonnet for Claude Code.
@@ -94,6 +95,9 @@ price_agent:
   max_rest_calls: 5
   timeout_seconds: 110
   base_url: "https://localhost:6443"
+  # auto/jina reads rendered public pages without a key; only public source URLs
+  # are sent to Jina Reader. direct uses the application's HTTPS text reader.
+  reader: "auto"
   search:
     provider: "auto"  # Brave with a key; otherwise public DuckDuckGo HTML search.
     api_key: "${BRAVE_SEARCH_API_KEY}"

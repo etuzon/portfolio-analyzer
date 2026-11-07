@@ -61,6 +61,9 @@ def price_agent_settings(raw: dict[str, Any]) -> dict[str, Any]:
     search = section.get("search") or {}
     if not isinstance(search, dict) or search.get("provider", "auto") not in {"auto", "brave", "duckduckgo"}:
         raise PriceAgentError("Price-agent search.provider must be auto, brave or duckduckgo.")
+    reader = str(section.get("reader") or "auto").lower()
+    if reader not in {"auto", "jina", "direct"}:
+        raise PriceAgentError("Price-agent reader must be auto, jina or direct.")
     timeout = section.get("timeout_seconds", 110)
     if not _finite_number(timeout) or timeout < 1:
         raise PriceAgentError("Price-agent timeout_seconds must be a positive number.")
@@ -74,6 +77,7 @@ def price_agent_settings(raw: dict[str, Any]) -> dict[str, Any]:
         "base_url": str(section.get("base_url") or "https://localhost:6443").rstrip("/"),
         "search_provider": str(search.get("provider") or "auto"),
         "search_api_key": str(search.get("api_key") or os.getenv("BRAVE_SEARCH_API_KEY") or ""),
+        "reader": reader,
     }
 
 
@@ -97,6 +101,12 @@ class RequestBudget:
 
 
 class _PageText(HTMLParser):
+    # Keep block boundaries after whitespace normalization. Otherwise a related
+    # security's quote can acquire the identity from the preceding HTML block.
+    _blocks = {"address", "article", "aside", "blockquote", "br", "dd", "div", "dl", "dt",
+               "fieldset", "figcaption", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6",
+               "header", "hr", "li", "main", "nav", "ol", "p", "section", "table", "tr", "ul"}
+
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
@@ -105,10 +115,14 @@ class _PageText(HTMLParser):
     def handle_starttag(self, tag: str, attrs: Any) -> None:
         if tag in {"script", "style", "noscript"}:
             self.hidden += 1
+        elif not self.hidden and tag in self._blocks:
+            self.parts.append(" | ")
 
     def handle_endtag(self, tag: str) -> None:
         if tag in {"script", "style", "noscript"}:
             self.hidden = max(0, self.hidden - 1)
+        elif not self.hidden and tag in self._blocks:
+            self.parts.append(" | ")
 
     def handle_data(self, data: str) -> None:
         if not self.hidden:
@@ -158,7 +172,7 @@ def fetch_public_source(url: str) -> str:
         if "html" in content_type:
             parser = _PageText()
             parser.feed(text)
-            text = " ".join(parser.parts)
+            text = re.sub(r"(?:\s*\|\s*)+", " | ", " ".join(parser.parts)).strip(" |")
         return " ".join(html.unescape(text).split())[:40_000]
     except (OSError, http.client.HTTPException) as exc:
         raise PriceAgentError("The public source page could not be read.") from exc
@@ -278,12 +292,12 @@ def _price_in_dated_quote(quote: str, day: date, price: float, basis: str, obser
         return False
     labels = r"(?<!\w)(?P<label>(?:שער|מחיר)\s+(?:אחרון|נעילה)|last|closing|close|נעילה)"
     filler = r"(?:(?:quoted|traded|price|trade|value|at|is|as|of|unadjusted)\s+)*"
-    currency = r"(?:\(?\s*(?:USD|ILS|NIS|EUR|GBP|US\$|agorot|agora|cents?)\s*\)?\s*)?[$€₪£¢]?\s*"
+    currency = r"(?:\(?\s*(?:USD|ILS|NIS|EUR|GBP|US\$|agorot|agora|cents?|ב?אגורות|אגורה)\s*\)?\s*)?[$€₪£¢]?\s*"
     # Accept plain decimals or actual groups of three thousands digits. Prevent
     # a malformed comma number from matching a smaller prefix as well.
     amount = r"(?P<amount>-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?![\w,]|\.\d)"
     expression = labels + r"\b\s*" + filler + r"[:=]?\s*" + currency + amount
-    connectors = {"on", "as", "of", "at", "observed", "observation", "quote", "quoted", "date", "in", "usd", "ils", "nis", "eur", "gbp", "agorot", "agora", "cents", "cent", "אגורות", "אגורה", "בתאריך", "ליום"}
+    connectors = {"on", "as", "of", "at", "observed", "observation", "quote", "quoted", "date", "in", "usd", "ils", "nis", "eur", "gbp", "agorot", "agora", "cents", "cent", "אגורות", "אגורה", "בתאריך", "ליום", "נכון", "לתאריך", "ל"}
     for match in re.finditer(expression, quote, re.I):
         label = match.group("label").lower()
         label_basis = "close" if label in {"close", "closing", "נעילה", "שער נעילה", "מחיר נעילה"} else "last" if label in {"last", "שער אחרון", "מחיר אחרון"} else None
@@ -323,13 +337,13 @@ def _source_identity(text: str, security: dict[str, Any], unit: str) -> bool:
     currency = str(security.get("currency") or "")
     currency_terms = {
         "USD": ("USD", "US dollars", "US dollar", "U.S. dollars", "U.S. dollar", "US$"),
-        "ILS": ("ILS", "NIS", "shekel", "shekels", "שקל", "שקלים", "₪", "agorot", "אגורות"),
+        "ILS": ("ILS", "NIS", "shekel", "shekels", "שקל", "שקלים", "₪", "agorot", "אגורות", "באגורות"),
         "EUR": ("EUR", "euro", "euros", "€"),
         "GBP": ("GBP", "pound sterling", "pounds sterling", "British pound", "British pounds"),
     }.get(currency, (currency,))
     if not any(token(term) for term in currency_terms):
         return False
-    scaled_terms = {"agorot": ("agorot", "agora", "אגורות", "אגורה"), "cents": ("cents", "cent", "¢")}
+    scaled_terms = {"agorot": ("agorot", "agora", "אגורות", "באגורות", "אגורה"), "cents": ("cents", "cent", "¢")}
     return unit not in scaled_terms or any(token(term) for term in scaled_terms[unit])
 
 

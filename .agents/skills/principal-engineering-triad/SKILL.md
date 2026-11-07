@@ -49,6 +49,7 @@ For defects, trace the user's actual action sequence through persisted source da
 - Require reproducible evidence at each gate. A prototype screenshot, passing unit tests, or a successful happy path alone is not sufficient.
 - Route by root cause, not by where the symptom appears. A slow screen caused by an API belongs with development; a confusing error presentation belongs with UX; mixed defects require a shared fix and full re-test.
 - Preserve QA independence. QA may advise but must not silently change the product oracle to match the implementation.
+- Carry unresolved or unexecuted required acceptance checks into user-facing progress and final reports as `🛑 Blocked`, naming the failure, accountable owner and next action. State that the task is incomplete and whether changes are local or deployed. Keep development and independent QA cycling until the actual acceptance checks pass; passing test totals or a narrower partial fix must not clear this marker. Continue useful authorized work while this reporting status is active.
 - Never infer authority to deploy, publish, merge, migrate production data, or contact users. QA sign-off recommends readiness; the user/product owner authorizes release.
 - Explicit authorization already given in the conversation satisfies the corresponding gate for that scope and target. Do not request it again merely because a workflow phase changed. Ask only for missing authorization or a material expansion of scope, target, side effects, or risk.
 

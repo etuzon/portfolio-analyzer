@@ -99,6 +99,16 @@ mean the controller could not read those pages, not that no price exists. Keep
 those failures separate from empty results, wrong identity or insufficient
 dated/unit evidence, and preserve the request's remaining budget.
 
+When checking the application's AI, a successful reviewing-agent lookup is a
+required acceptance benchmark: if the agent can retrieve supported public facts,
+the application must be able to retrieve them through its allowed tools too.
+Trace and fix discovery, source-reader, tool-access and validation gaps, then
+verify the real application path with the same identity, observation dates,
+units and requested fields. Chat results, indexed snippets and passing mocks
+alone cannot prove the application's retrieval or saved update. Do not relax
+evidence checks, database restrictions or call limits to claim parity; record
+an unexecuted or failing acceptance check explicitly.
+
 Read the source's field definition. Published unit value/NAV, redemption price
 (`מחיר פדיון`) and purchase price (`מחיר קנייה`) can have different meanings;
 preserve the selected basis rather than silently treating them as a stock's last
@@ -155,11 +165,27 @@ unusable for current research; use AI public-source research if no other usable
 API remains. This does not unlock the provider or permit bypassing its access
 controls. Normal refresh can retry access and restore API ownership.
 Only listings with no applicable API route, or exact verified unsupported
-coverage with no alternative, enter AI research. Its source endpoint searches
-and fetches evidence within a shared five-read
-budget; search snippets do not establish a fact. The model proposes facts, and
-an authenticated application finalization endpoint validates and saves supported
-ones. It currently accepts compatible raw Last/Close observations no older than
+coverage with no alternative, enter AI research.
+
+The dashboard exposes `search_security_sources`, `read_security_source` and
+`follow_security_source` through authenticated, request-bound REST tools to both
+CLI planners. Choose precise queries, inspect returned evidence, and follow
+useful returned links within the remaining budget. Read an official
+`source_hints` entry first when supplied: the server registers these discovery
+leads without a network read; a hint still proves no price or identity. Read
+only returned `source_id` values and follow only returned `link_id` values for
+that security and request. Never invent IDs, URLs or additional tools.
+
+Prefer selecting returned `context_records` with
+`records:[{security_key,source_id,record_id}]`. The server recomputes the selected
+record from its own fetched evidence and checks identity, date, raw unit,
+currency and price basis before applying anything. A known source context may
+connect a security header, quote card and date rather than requiring every
+claim in one sentence. Conflicting fields and related-security widgets cannot
+lend claims to the selected price. Unsupported contexts remain unknown;
+search snippets and source hints alone never establish a fact. The authenticated
+finalization endpoint alone saves supported missing values. It currently accepts
+compatible raw Last/Close observations no older than
 seven calendar days for this current-data action, plus literal sourced company
 names and industries. The separate background/dashboard refresh applies official
 fund redemption, compatible local U.S. bond marks and qualified fund/ETF closes
@@ -168,10 +194,27 @@ fundamentals, distributions or ambiguous conventions remain missing with a
 friendly per-security outcome.
 Do not report a fetched reference page as a completed portfolio update.
 
-For the current runner's tool capabilities, supported write fields and evidence
-parser limits, read [the controller contract](references/controller-contract.md)
-when preparing an automated update. Those are implementation limits, not general
+The dashboard uses `price_agent.reader: auto` (or `jina`) for key-free rendered
+Jina Reader pages. Only public source URLs are sent to that external reader;
+application credentials, portfolio records and browser sessions are not sent.
+Choose `direct` for the application's HTTPS text reader instead. There is no
+hidden reader fallback or retry. This adds rendered text and followable links,
+not the interactive agent's proprietary search index or signed-in browser access.
+
+One dashboard request shares at most **five model calls, five application REST
+attempts and five public search/page requests** across all candidates. The REST
+budget covers candidate reading, up to three research tool actions and
+finalization. Failures count. Identical tool choices with identical arguments
+can reuse a request-local response; a changed query, source or link is a new
+choice. Repeated model decisions still count. Polling does not restart the run;
+never split or rerun a limited request to reset its budget.
+
+Read [the controller contract](references/controller-contract.md) for the
+dashboard's context and reader rules or the separate host script's write schema
+and stricter excerpt parser. These are implementation limits, not general
 restrictions on researching prices.
+
+### Host script updates
 
 Run from the portfolio-analyzer repository root:
 

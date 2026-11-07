@@ -4854,7 +4854,57 @@ def _enrichment_fetch_security(candidate: dict[str, Any], field: str) -> dict[st
 
 
 _enrichment_source_budgets: dict[str, Any] = {}
+_enrichment_tool_sessions: dict[str, Any] = {}
 _enrichment_source_lock = RLock()
+
+
+def _enrichment_research_tool(candidate: dict[str, Any], action: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    """The server executes public reads; the agent uses authenticated REST only."""
+    from .price_agent import price_agent_settings
+    from .security_research_tools import ResearchSession, ResearchFailure
+    from .security_search import SearchFailure
+    from .us_market_providers import RequestBudget, ProviderFailure
+    current = next((item for item in _enrichment_candidates(limit=None)["items"] if item["security_key"] == candidate["security_key"]), None)
+    if not current:
+        return {"evidence": [], "source_status": "not_open"}
+    if _security_api_route(current)["owner"] != "ai":
+        return {"evidence": [], "source_status": "api_managed"}
+    request_id = str(candidate.get("_request_id") or "")
+    if not request_id:
+        return {"evidence": [], "source_status": "job_failed"}
+    with _enrichment_source_lock:
+        budget = _enrichment_source_budgets.setdefault(request_id, RequestBudget())
+        session = _enrichment_tool_sessions.setdefault(request_id, ResearchSession(price_agent_settings(config.raw), budget))
+        for key in list(_enrichment_tool_sessions)[:-100]:
+            _enrichment_tool_sessions.pop(key, None)
+            _enrichment_source_budgets.pop(key, None)
+    before = dict(session.diagnostics)
+    try:
+        if action == "discover":
+            return {"sources": session.discover(current), "evidence": [], "source_status": "search_results", "web_requests": budget.used}
+        if action == "search":
+            result = session.search(current, arguments["query"])
+            return {**result, "evidence": [], "source_status": "search_results", "web_requests": budget.used}
+        if action == "read":
+            source = session.read(current, arguments["source_id"])
+        elif action == "follow":
+            source = session.follow(current, arguments["source_id"], arguments["link_id"])
+        else:
+            raise ResearchFailure("invalid_request", "Unsupported research operation.")
+        from .security_source_context import context_records
+        source["context_records"] = context_records(source, current)[:30]
+        # Keep source text and its bindings readable by the planner's bounded
+        # tool transport instead of letting a long navigation menu hide them.
+        while len(json.dumps(source, ensure_ascii=False)) > 70_000 and source.get("links"):
+            source["links"].pop()
+        while len(json.dumps(source, ensure_ascii=False)) > 70_000 and len(source["context_records"]) > 1:
+            source["context_records"].pop()
+        return {"evidence": [source], "source_status": "evidence_found", "diagnostics": dict(session.diagnostics), "web_requests": budget.used}
+    except (ResearchFailure, SearchFailure, ProviderFailure, ValueError, OSError, TimeoutError) as failure:
+        # Diagnostics contain counters/codes only, never raw provider errors.
+        code = getattr(failure, "code", None) or "source_read_failed"
+        diagnostics = {key: session.diagnostics.get(key, 0) - before.get(key, 0) for key in session.diagnostics}
+        return {"evidence": [], "source_status": code, "code": code, "diagnostics": diagnostics, "web_requests": budget.used}
 
 
 def _enrichment_research_security(candidate: dict[str, Any], field: str) -> dict[str, Any]:
@@ -4906,7 +4956,7 @@ def _apply_enrichment_proposals(proposal, evidence_by_key, candidates) -> dict[s
             try:
                 if not still_missing(key, "prices"):
                     continue
-                observation = PriceObservation.model_validate(raw)
+                observation = PriceObservation.model_validate({key: value for key, value in raw.items() if not key.startswith("_")})
                 if date.fromisoformat(observation.price_date) < HISTORY_START_DATE:
                     raise ValueError("The observation is outside retained history")
                 if (date.fromisoformat(observation.price_date) > observation.retrieved_at.date()
@@ -4915,11 +4965,14 @@ def _apply_enrichment_proposals(proposal, evidence_by_key, candidates) -> dict[s
                             or observation.observed_at > observation.retrieved_at)):
                     raise ValueError("The observation must precede retrieval and retain its actual date")
                 evidence = {"kind": "price_evidence_v1", **observation.model_dump(mode="json", exclude={"price_input", "price_date", "currency"})}
+                if raw.get("_source_context"):
+                    evidence["source_context"] = raw["_source_context"]
                 price_metadata = {name: candidate[name] for name in ("symbol", "stock_market", "currency", "asset_class", "location")}
-                local_store.save_prices([{**price_metadata, "price_input": observation.price_input,
+                accepted = local_store.save_prices([{**price_metadata, "price_input": observation.price_input,
                                           "price_date": observation.price_date, "source": "web_evidence",
-                                          "comments": json.dumps(evidence, ensure_ascii=False)}])
-                found.append("prices")
+                                          "comments": json.dumps(evidence, ensure_ascii=False)}], only_missing=True)
+                if accepted:
+                    found.append("prices")
             except ValueError:
                 rejected = True
         for profile in verified_fields["profiles"]:
@@ -4951,7 +5004,7 @@ def _apply_enrichment_proposals(proposal, evidence_by_key, candidates) -> dict[s
         after = next((item for item in _enrichment_candidates(limit=None)["items"] if item["security_key"] == key), None)
         remaining = after["missing_fields"] if after else []
         status = "updated" if found and not remaining else "partial" if found else "unavailable"
-        results[key] = {**current[key], "status": status, "code": "data_found" if status == "updated" else "partial_data" if found else "evidence_rejected",
+        results[key] = {**(after or current[key]), "status": status, "code": "data_found" if status == "updated" else "partial_data" if found else "evidence_rejected",
                         "available_fields": sorted(set(found)), "missing_fields": remaining,
                         "evidence_rejected": rejected}
     return results
@@ -5026,6 +5079,13 @@ def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, requ
         "api_price_ready": "Verified API prices are ready to save.",
         "already_available": "Another update already supplied this price. Your saved price was kept.",
         "evidence_rejected": "The source did not provide enough verified information.",
+        "research_incomplete": "Sources were found, but this security was not fully checked before the request ended.",
+        "proposal_invalid": "The AI response could not be verified. Saved data is retained; start a new request to retry.",
+        "reader_not_configured": "The page reader needs configuration. Saved data is retained.",
+        "invalid_source": "The selected source is unavailable for this request. Saved data is retained.",
+        "source_limit": "The source limit was reached. Start another request to continue.",
+        "invalid_request": "The research request could not be completed. Saved data is retained.",
+        "search_failed": "The search service could not complete this search. Try again later.",
         "provider_timeout": "The API source check took longer than allowed. Retained data is available; retry later.",
         "bond_reference_only": "API bond reference data is available. Portfolio valuation still requires a defined quantity/face-value convention.",
         "api_managed": "The security uses an API route and is excluded from AI research.",
@@ -5076,6 +5136,8 @@ def _enrichment_assistant_settings():
 security_enrichment = EnrichmentJobs(app, lambda: _enrichment_assistant_settings(),
                                     candidate_reader=lambda: _ai_enrichment_candidates(),
                                     security_fetcher=lambda candidate, field: _enrichment_research_security(candidate, field),
+                                    research_tool_fetcher=lambda candidate, action, arguments: _enrichment_research_tool(candidate, action, arguments),
+                                    source_hint_reader=lambda candidate: _enrichment_research_tool(candidate, "discover", {}).get("sources", []),
                                     outcome_reader=lambda: _enrichment_outcomes(),
                                     outcome_writer=lambda outcomes, user_id, request_id, **kwargs: _save_enrichment_outcomes(outcomes, user_id, request_id, **kwargs))
 app.include_router(security_enrichment.router())

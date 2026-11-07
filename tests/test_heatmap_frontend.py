@@ -294,8 +294,8 @@ assert.ok(target.innerHTML.includes('לא זמין'));
 
 def test_three_color_bands_use_exact_symmetric_thresholds_and_readable_white_labels():
     run_ui(r'''
-const positive=['#24463f','#216452','#207158'];
-const negative=['#542b35','#7b2737','#a12e43'];
+const positive=['#207158','#216452','#24463f'];
+const negative=['#a12e43','#7b2737','#542b35'];
 for(const sign of [-1,1]){
  const palette=sign>0?positive:negative;
  for(const [value,index] of [[.00001,0],[.999999,0],[1,1],[2.999999,1],[3,2],[1000,2]])assert.equal(heatmapColor(sign*value),palette[index]);
@@ -303,6 +303,7 @@ for(const sign of [-1,1]){
 }
 const luminance=hex=>hex.slice(1).match(/../g).map(x=>parseInt(x,16)/255).map(x=>x<=.04045?x/12.92:((x+.055)/1.055)**2.4).reduce((s,x,i)=>s+x*[.2126,.7152,.0722][i],0);
 for(const color of [...positive,...negative,heatmapColor(0),heatmapColor(null)])assert.ok(1.05/(luminance(color)+.05)>=4.5,color);
+for(const palette of [positive,negative])assert.ok(luminance(palette[0])>luminance(palette[1])&&luminance(palette[1])>luminance(palette[2]),'Larger moves must have darker shades');
 seed();for(const language of ['en','he']){
  state.language=language;renderHeatmap();
  assert.ok(target.innerHTML.includes(heatmapText('Three levels in either direction: under 1%, 1% to under 3%, and 3% or more.')));

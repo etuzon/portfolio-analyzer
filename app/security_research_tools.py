@@ -1,0 +1,297 @@
+"""Request-scoped public research tools, with no model or storage access.
+
+The caller owns the REST/model budgets. This controller owns the shared five
+web-operation budget; a rendered-reader request is one application HTTP request,
+not a claim about the reader provider's internal asset requests.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from html.parser import HTMLParser
+import http.client
+import ipaddress
+import json
+import re
+import socket
+import ssl
+from typing import Any, Callable
+from urllib.parse import urljoin, urlsplit, urlunsplit
+from uuid import uuid4
+
+import httpx
+
+from .price_agent import _PageText
+from .security_search import search_web
+from .us_market_providers import RequestBudget
+
+
+class ResearchFailure(ValueError):
+    def __init__(self, code: str, message: str):
+        self.code = code
+        super().__init__(message)
+
+
+def public_source_url(value: Any, *, resolve: bool = True, resolver: Callable | None = None) -> str:
+    """Check every destination, including reader-reported final URLs."""
+    if not isinstance(value, str) or not 1 <= len(value) <= 2000 or any(ord(c) < 32 for c in value):
+        raise ResearchFailure("invalid_source", "The source URL is invalid.")
+    try:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if (parsed.scheme != "https" or not host or parsed.username or parsed.password
+                or parsed.port not in {None, 443} or "\\" in value
+                or host == "localhost" or host.endswith((".localhost", ".local", ".internal"))):
+            raise ValueError()
+        try:
+            if not ipaddress.ip_address(host).is_global:
+                raise ValueError()
+        except ValueError:
+            # A numeric private address must not fall through as a hostname.
+            if re.fullmatch(r"[0-9.]+", host) or ":" in host:
+                raise ValueError()
+        if resolve:
+            records = (resolver or socket.getaddrinfo)(host, 443, type=socket.SOCK_STREAM)
+            addresses = [record[4][0] for record in records]
+            if not addresses or any(not ipaddress.ip_address(address).is_global for address in addresses):
+                raise ValueError()
+        return urlunsplit(("https", parsed.netloc, parsed.path or "/", parsed.query, ""))
+    except (ValueError, OSError, TypeError, IndexError):
+        raise ResearchFailure("invalid_source", "Only public HTTPS source URLs are allowed.") from None
+
+
+class _Document(_PageText):
+    def __init__(self):
+        super().__init__()
+        self.links: list[dict[str, str]] = []
+        self.structured_data: list[Any] = []
+        self._script: list[str] | None = None
+        self._script_size = 0
+        self._anchor: dict[str, str] | None = None
+
+    def handle_starttag(self, tag, attrs):
+        values = dict(attrs)
+        if tag == "a" and isinstance(values.get("href"), str):
+            self._anchor = {"url": values["href"], "title": ""}
+        if tag == "script" and (values.get("type") == "application/ld+json" or values.get("id") == "__NEXT_DATA__"):
+            self._script, self._script_size = [], 0
+        super().handle_starttag(tag, attrs)
+
+    def handle_data(self, data):
+        if self._anchor is not None and not self.hidden:
+            self._anchor["title"] = (self._anchor["title"] + data)[:300]
+        if self._script is not None and self._script_size <= 16_000:
+            self._script.append(data)
+            self._script_size += len(data)
+        super().handle_data(data)
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._anchor is not None:
+            if len(self.links) < 100:
+                self.links.append(self._anchor)
+            self._anchor = None
+        if tag == "script" and self._script is not None:
+            if self._script_size <= 16_000 and len(self.structured_data) < 10:
+                try:
+                    self.structured_data.append(json.loads("".join(self._script)))
+                except ValueError:
+                    pass
+            self._script = None
+        super().handle_endtag(tag)
+
+
+def _direct_document(url: str) -> dict[str, Any]:
+    # Pin checked DNS just as the existing public evidence fetcher does.
+    from .price_agent import _public_address
+    parsed, address = _public_address(url)
+    connection = http.client.HTTPSConnection(parsed.hostname, 443, timeout=20, context=ssl.create_default_context())
+    connection._create_connection = lambda *_args, **_kwargs: socket.create_connection((address, 443), timeout=20)
+    try:
+        target = parsed.path or "/"
+        if parsed.query:
+            target += "?" + parsed.query
+        connection.request("GET", target, headers={"User-Agent": "PortfolioAnalyzerPriceResearch/1.0", "Accept": "text/html,text/plain,application/json"})
+        response = connection.getresponse()
+        if response.status != 200:
+            raise ResearchFailure("source_read_failed", "The source is unavailable or redirects; select another discovered source.")
+        content_type = response.getheader("Content-Type", "").lower()
+        if not any(kind in content_type for kind in ("text/html", "text/plain", "application/json")):
+            raise ResearchFailure("source_read_failed", "The source is not a supported text page.")
+        raw = response.read(1_000_001)
+        if len(raw) > 1_000_000:
+            raise ResearchFailure("source_read_failed", "The source exceeds the evidence size limit.")
+        text = raw.decode("utf-8", errors="replace")
+        document = {"url": url, "text": text, "links": [], "structured_data": []}
+        if "html" in content_type:
+            parser = _Document()
+            parser.feed(text)
+            document.update(text=" ".join(parser.parts), links=parser.links, structured_data=parser.structured_data)
+        elif "application/json" in content_type and len(text) <= 16_000:
+            try:
+                document["structured_data"] = [json.loads(text)]
+            except ValueError:
+                pass
+        return document
+    finally:
+        connection.close()
+
+
+def fetch_research_document(url: str, settings: dict[str, Any]) -> dict[str, Any]:
+    """One direct or key-free rendered-reader request, never a fallback loop."""
+    # ResearchSession performs the DNS check before this adapter. Repeat syntax
+    # checks here so even a direct adapter caller cannot pass a local URL.
+    url = public_source_url(url, resolve=False)
+    reader = str(settings.get("reader") or "auto").lower()
+    if reader == "direct":
+        return {**_direct_document(url), "reader": "direct"}
+    if reader not in {"auto", "jina"}:
+        raise ResearchFailure("reader_not_configured", "Choose auto, jina or direct for the source reader.")
+    headers = {"Accept": "application/json", "X-Respond-With": "markdown", "X-With-Links-Summary": "true",
+               "X-Retain-Images": "none", "X-With-Generated-Alt": "false", "X-Timeout": "20",
+               "X-No-Cache": "true", "DNT": "1"}
+    # Only the public URL is sent. No application identity, credentials, cookies,
+    # arbitrary headers, instructions, custom script or model feature is exposed.
+    with httpx.Client(timeout=25, follow_redirects=False, trust_env=False) as client:
+        with client.stream("GET", "https://r.jina.ai/" + url, headers=headers) as response:
+            if response.status_code != 200 or "application/json" not in response.headers.get("content-type", "").lower():
+                raise ResearchFailure("source_read_failed", "The rendered source reader is unavailable or blocked.")
+            raw = bytearray()
+            for chunk in response.iter_bytes():
+                raw.extend(chunk)
+                if len(raw) > 1_000_000:
+                    raise ResearchFailure("source_read_failed", "The rendered source exceeds the evidence size limit.")
+    payload = json.loads(raw)
+    data = payload.get("data") if isinstance(payload, dict) and payload.get("code") == 200 else None
+    if not isinstance(data, dict) or not isinstance(data.get("url"), str) or not isinstance(data.get("content"), str):
+        raise ResearchFailure("source_read_failed", "The rendered source reader returned an invalid document.")
+    if data.get("httpStatus", 200) != 200 or public_source_url(data["url"], resolve=False) != url:
+        raise ResearchFailure("source_read_failed", "The rendered source reader returned a different or unavailable source.")
+    return {"url": data.get("finalUrl") or data["url"], "text": data["content"], "title": data.get("title", ""),
+            "links": data.get("links") or {}, "structured_data": [], "reader": "jina"}
+
+
+class ResearchSession:
+    def __init__(self, settings: dict[str, Any], budget: RequestBudget, *, search: Callable | None = None,
+                 fetch: Callable | None = None, resolver: Callable | None = None):
+        self.settings, self.budget = dict(settings), budget
+        self._search, self._fetch, self._resolver = search or search_web, fetch or fetch_research_document, resolver
+        self._sources: dict[str, dict[str, Any]] = {}
+        self._evidence: dict[str, list[dict[str, Any]]] = {}
+        self.diagnostics = {"search_requests": 0, "source_requests": 0, "read_failures": 0}
+
+    @staticmethod
+    def _key(candidate):
+        key = candidate.get("security_key") if isinstance(candidate, dict) else None
+        if not isinstance(key, str) or not key:
+            raise ResearchFailure("invalid_request", "The research security is unavailable.")
+        return key
+
+    def _add(self, key, url, title=""):
+        url = public_source_url(url, resolve=False)
+        for source_id, source in self._sources.items():
+            if source["key"] == key and source["url"] == url:
+                return source_id
+        if len(self._sources) >= 500:
+            raise ResearchFailure("source_limit", "The discovered-source limit was reached.")
+        source_id = "source-" + uuid4().hex
+        self._sources[source_id] = {"key": key, "url": url, "title": str(title)[:300]}
+        return source_id
+
+    def _source(self, candidate, source_id):
+        key = self._key(candidate)
+        source = self._sources.get(source_id) if isinstance(source_id, str) else None
+        if not source or source["key"] != key:
+            raise ResearchFailure("invalid_source", "Select a source discovered for this security in this request.")
+        return key, source
+
+    def discover(self, candidate: dict[str, Any]) -> list[dict[str, str]]:
+        """Known provider namespace hints are discovery, never verified facts."""
+        key = self._key(candidate)
+        market = re.sub(r"\s+", "", str(candidate.get("stock_market") or "").upper())
+        symbol = str(candidate.get("symbol") or "").strip()
+        asset = str(candidate.get("asset_class") or "").upper()
+        if market not in {"TASE", "TLV", "TELAVIV"} or asset not in {"EQUITY", "STOCK", "SHARE"} or not re.fullmatch(r"[0-9]{5,8}", symbol) or int(symbol) <= 0:
+            return []
+        url = "https://market.tase.co.il/he/market_data/security/" + str(int(symbol)) + "/major_data"
+        source_id = self._add(key, url, "Official TASE security page")
+        return [{"source_id": source_id, "url": url, "title": "Official TASE security page", "discovery_only": True}]
+
+    def search(self, candidate: dict[str, Any], query: str = "") -> dict[str, Any]:
+        key = self._key(candidate)
+        identity = [str(candidate.get(field) or "").strip() for field in ("symbol", "secondary_symbol", "name", "stock_market")]
+        query = query or " ".join(value for value in identity if value) + " price date currency company industry"
+        if not isinstance(query, str) or not 1 <= len(query.strip()) <= 500:
+            raise ResearchFailure("invalid_request", "A research query must contain 1 to 500 characters.")
+        identifiers = identity[:3]
+        if not any(value and value.casefold() in query.casefold() for value in identifiers):
+            raise ResearchFailure("invalid_request", "Keep the security identifier or name in the search query.")
+        self.budget.consume()
+        self.diagnostics["search_requests"] += 1
+        rows = self._search(query, self.settings)
+        if not isinstance(rows, list):
+            raise ResearchFailure("search_failed", "The search provider returned invalid results.")
+        sources = []
+        for row in rows[:10]:
+            if not isinstance(row, dict):
+                continue
+            try:
+                source_id = self._add(key, row.get("url"), row.get("title", ""))
+            except ResearchFailure:
+                continue
+            source = self._sources[source_id]
+            sources.append({"source_id": source_id, "url": source["url"], "title": source["title"]})
+        return {"sources": sources, "discovery_only": True, "diagnostics": dict(self.diagnostics)}
+
+    def read(self, candidate: dict[str, Any], source_id: str) -> dict[str, Any]:
+        key, source = self._source(candidate, source_id)
+        self.budget.consume()
+        self.diagnostics["source_requests"] += 1
+        try:
+            url = public_source_url(source["url"], resolver=self._resolver)
+            document = self._fetch(url, self.settings)
+            if not isinstance(document, dict) or not isinstance(document.get("text"), str) or not document["text"].strip():
+                raise ResearchFailure("source_read_failed", "The source contains no readable evidence.")
+            actual = public_source_url(document.get("url") or url, resolver=self._resolver)
+            links = []
+            raw_links = document.get("links") or []
+            if isinstance(raw_links, dict):
+                raw_links = [{"title": title, "url": target} for title, target in raw_links.items()]
+            if not isinstance(raw_links, list):
+                raise ResearchFailure("source_read_failed", "The source returned invalid links.")
+            for row in raw_links[:100]:
+                if isinstance(row, str):
+                    row = {"url": row, "title": ""}
+                if not isinstance(row, dict) or not isinstance(row.get("url"), str):
+                    continue
+                try:
+                    target = urljoin(actual, row["url"])
+                    linked_source = self._add(key, target, row.get("title", ""))
+                except (ResearchFailure, ValueError):
+                    continue
+                link_id = "link-" + uuid4().hex
+                source.setdefault("links", {})[link_id] = linked_source
+                links.append({"link_id": link_id, "url": self._sources[linked_source]["url"], "title": str(row.get("title") or "")[:300]})
+            structured = document.get("structured_data") or []
+            if not isinstance(structured, list) or len(json.dumps(structured)) > 16_000:
+                structured = []
+            evidence = {"source_id": source_id, "url": actual, "requested_url": url,
+                        "text": "\n".join(" ".join(line.split()) for line in document["text"].splitlines())[:40_000], "title": str(document.get("title") or source["title"])[:300],
+                        "retrieved_at": datetime.now(timezone.utc).isoformat(), "links": links, "structured_data": structured,
+                        "locale": str(document.get("locale") or self.settings.get("locale") or "")[:20],
+                        "reader": str(document.get("reader") or self.settings.get("reader") or "auto")[:20]}
+            self._evidence.setdefault(key, []).append(evidence)
+            return evidence
+        except (ValueError, OSError, httpx.HTTPError, http.client.HTTPException) as exc:
+            self.diagnostics["read_failures"] += 1
+            if isinstance(exc, ResearchFailure):
+                raise
+            raise ResearchFailure("source_read_failed", "The public source could not be read.") from None
+
+    def follow(self, candidate: dict[str, Any], source_id: str, link_id: str) -> dict[str, Any]:
+        _, source = self._source(candidate, source_id)
+        linked_source = source.get("links", {}).get(link_id) if isinstance(link_id, str) else None
+        if not linked_source:
+            raise ResearchFailure("invalid_source", "Select a link returned by the source in this request.")
+        return self.read(candidate, linked_source)
+
+    def evidence(self, candidate: dict[str, Any]) -> list[dict[str, Any]]:
+        return list(self._evidence.get(self._key(candidate), []))

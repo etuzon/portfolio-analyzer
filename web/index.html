@@ -25,7 +25,7 @@
   <link rel="stylesheet" href="/trading-journal.css?v=1" />
   <link rel="stylesheet" href="/optimization.css?v=3" />
   <link rel="stylesheet" href="/var.css?v=1" />
-  <link rel="stylesheet" href="/heatmap.css?v=20261107-api-auto-heatmap" />
+  <link rel="stylesheet" href="/heatmap.css?v=20261107-darker-large-moves" />
   <link rel="stylesheet" href="/risk-data-gaps.css?v=1" />
   <link rel="stylesheet" href="/risk-history.css?v=1" />
   </head>
@@ -1174,6 +1174,11 @@
                 <p>When a bond API quote cannot be matched to the recorded quantity and face-value convention, it remains reference-only. Normal updates do not invent a conversion or use AI to fill that valuation gap.</p>
                 <p>For eligible holdings without an API route, Internet price updates require a supported last or closing price dated within the last seven days. Unsupported fund NAV or percent-of-par units are not guessed or saved as stock prices. Additional eligible securities wait for another explicit request.</p>
                 <p>Israeli price research uses the instrument type: stock searches use share-price terms, fund searches use redemption terms, and unknown instruments use neutral price terms. A source-page read failure is different from missing or mismatched evidence; neither means a price is unavailable everywhere. Actual source dates and quote units are still required, and failed reads count toward the shared request limits.</p>
+                <p>If a source returns only a loading page, research can try another source within the shared five-request Internet budget. Failed search and reader requests count too. A source found online does not count as an update until its supported facts are verified and saved.</p>
+                <p>AI research can choose a search query, read a discovered public page and follow links returned by that page. Recognized listings may supply an official source hint so research can start there even when search is blocked. Hints and search snippets are discovery leads, not verified prices. The request shares three research data operations across its selected securities, within the five AI-interaction and five application-operation limits. It may finish only some securities.</p>
+                <p>The default rendered page reader uses Jina Reader without a separate key. Only the public source URL is sent to that reader; portfolio quantities, credentials and browser sign-in state are not sent. Administrators can select auto, jina or direct with price_agent.reader in config.yaml. Direct reading supports ordinary text pages; rendered reading can handle JavaScript pages. Website access and search service availability can still limit research.</p>
+                <p>Verification can bind an instrument header, quote card or supported structured record. Dates, currency, raw units and price basis retain their source context; conflicting or unknown facts are rejected. The AI can select returned source-record IDs instead of rewriting numbers or quotes. The application revalidates those records and saves eligible missing fields, preserving prices entered by another update. Unsupported fields remain missing.</p>
+                <p>Checked counts include securities actually researched. Securities left untouched by a connection failure or an exhausted research budget remain Not checked. Each researched security keeps its own result and reason even if the request later fails.</p>
                 <p>Administrators choose Codex or Claude Code, the model and effort for missing-data research in price_agent in config.yaml. Codex is the default. The missing-data button and price-update skill share this choice; portfolio chat has its separate llm model setting. Enable AI and configure the shared host bridge in llm.</p>
                 <p>For Docker, configure optional search and provider keys in the private host environment or .env file, then recreate the container. The supported environment names are BRAVE_SEARCH_API_KEY, FINNHUB_API_KEY and EODHD_API_KEY. Never put credentials in chat or source evidence.</p>
                 <p>Market values and unrealized P/L are recalculated from each account's recorded quantity and cost basis using the latest available dated quote in the security's currency. Use Refresh to retry unavailable quotes; saved values remain visible when no valid quote is available. Quote dates can differ from live broker prices. Locally registered securities can use a supported API route; otherwise their saved prices remain until an authorized price update. Refreshing current valuations does not change cash, transactions or recorded historical account values.</p>
@@ -1189,6 +1194,7 @@
                 <p>A certificate icon marks a bond; a portfolio pie-chart icon marks a fund, including ETFs and mutual funds. An unboxed icon beside the symbol identifies its type; the tile does not repeat the type as text. The same icons appear beside the Bonds and Funds filters. Stocks have no icon. Hover, focus or select a security to read its asset type; on very small rectangles, use the complete holdings list.</p>
                 <p>Each rectangle represents a supported held security with a known ILS value. Area and weight use known gross exposure in the selected accounts and asset types, including estimates when qualified market prices are missing. Long and short positions across accounts are added by absolute value. Cash and unvalued holdings are excluded, so these weights are not shares of total account equity. Each account panel has its own denominator; compare ILS amounts to compare account sizes.</p>
                 <p>Color and Day change show the latest observed native-price change, (latest / previous − 1) × 100. The two saved observations can span multiple trading sessions; their dates are shown in the details. This is not your investment profit or an ILS return. Currency changes, dividends, bond coupons, fees and taxes are not added to this price change; splits and distributions may affect raw prices. Green rises and red falls each have three levels: under 1%, from 1% to under 3%, and 3% or more. Thresholds use the absolute price change in either direction.</p>
+                <p>Darker red means a larger drop; darker green means a larger rise.</p>
                 <p>A valued security stays on the map even when its price change is unknown. Tiles show price change only when available; unknown changes leave the tile gray with no change label. An observed zero change is gray and shows 0%. Hover or focus on any security to see its weight of known gross holdings, valuation basis and status, saved price and date when available, and account holdings. Select a tile or list row to keep details open on touch screens. Press Escape to dismiss the tooltip. Labels shrink to fit; very small rectangles retain full information in the tooltip and list.</p>
                 <p>Unrealized P/L uses the current saved price and recorded remaining cost basis, calculated separately for long and short holdings before combining accounts in the same security currency. The native amount excludes realized trades and income. Converted to ILS means that native P/L multiplied by the current saved exchange rate; it does not reconstruct historical FX gains or losses on the purchase cost. Unknown cost basis or stale prices leave P/L unavailable without inventing zero. Bond prices use stored currency per unit; no extra cents or agorot conversion is applied.</p>
                 <p>Sizing can use the latest qualified saved price and FX even when older than 7 days; stale values are labelled. If no compatible market price exists, a recorded holding value or recorded cost basis can provide an explicitly estimated size. An estimate never supplies a market price, price change or unrealized market P/L. Color still requires two usable price observations, a latest price no older than 7 days and a gap no greater than 7 days. Missing FX, invalid positions or conflicting classifications remain outside the map, with their reasons listed. Unknown change is dark gray; an observed zero change is lighter gray.</p>
@@ -2913,7 +2919,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <div id="riskBadgeExplanation" class="risk-badge-explanation" role="tooltip" hidden></div>
-  <script src="/i18n.js?v=20261107-ai-access-fallback"></script>
+  <script src="/i18n.js?v=20261108-context-research-tools"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
   <script src="/trade-planner.js?v=3"></script>
@@ -2927,12 +2933,12 @@
   <script src="/trading-journal-ui.js?v=1"></script>
   <script src="/optimization-ui.js?v=1"></script>
   <script src="/var-ui.js?v=1"></script>
-  <script src="/heatmap-ui.js?v=20261107-api-auto-heatmap"></script>
+  <script src="/heatmap-ui.js?v=20261107-darker-large-moves"></script>
   <script src="/risk-data-gaps-ui.js?v=1"></script>
   <script src="/risk-history-ui.js?v=1"></script>
   <script src="/alarm-priority-ui.js?v=3"></script>
   <script src="/account-cash-ui.js?v=3"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=20261107-ai-access-fallback"></script>
+  <script src="/app.js?v=20261108-context-research-tools"></script>
   </body>
 </html>

@@ -18,6 +18,11 @@ Run the test suite with:
 ./.venv/bin/python -m pytest
 ```
 
+`tests/conftest.py` forces an isolated temporary data directory and
+`config.example.yaml` before test collection imports application modules. Keep
+this guard in place; tests must never initialize stores in the runtime data
+directory or load private configuration by default.
+
 Run the app locally with:
 
 ```bash
@@ -75,6 +80,8 @@ The Docker app is served at `https://localhost:6443`.
 - The financial agent owns macro/microeconomic assumptions, company-report evidence, announcements, valuation, instrument conventions, scenario methods, and financial interpretation. Establish source cutoffs, units, formulas, missing-data behavior, scope, and raw numerical examples before implementation; re-check material outputs afterward. Maintained repository models below govern the implemented formulas.
 - Agents may ask each other directly for missing evidence and contracts, while recording consequential decisions with the coordinator. Ask the user only for material unresolved product choices, necessary personal suitability facts, or genuinely missing authorization; continue independent work while waiting.
 - Keep final QA independent for features and functional fixes under the triad. QA derives financial expectations from requirements and raw evidence; neither developer conclusions nor financial sign-off replace its review. Route financial-method defects to finance, implementation defects to development, and interaction defects to UX, then re-test.
+- When a QA acceptance failure remains unresolved or a required acceptance check cannot be completed, visibly report `🛑 Blocked` to the user in progress updates and the final response. State the failing check, development owner and next action; say the task is incomplete and whether changes are local or deployed. Passing test counts must not obscure this status. Keep the acceptance failure open, fix it and return it to independent QA; clear the marker only after the required checks actually pass. This reporting marker is not permission to abandon work that can continue.
+- AI Internet-retrieval acceptance must compare the application with the reviewing agent: when the agent can retrieve a supported public fact, the application's AI must also be able to retrieve it through its actual permitted workflow. Trace and fix differences in discovery, source reading, tool access or validation; do not accept an unavailable result merely because mocks pass or the error wording improved. Verify the same identity, source observation date, units and requested fields. Search snippets alone do not establish a verified fact. Keep the existing call limits, authentication, authorization and no-database boundary; record an unmet acceptance check when access prevents execution instead of claiming success.
 - Schedule role handoffs within available agent slots. Research-only questions need no software lifecycle; cosmetic-only edits need no financial agent. If delegation is unavailable, report same-agent review and any unmet independence requirement. Skill changes configure agent behavior; they do not install data feeds, enable broker execution, or authorize deployment.
 
 ### Existing Models and Implementation Patterns

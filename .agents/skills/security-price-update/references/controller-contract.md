@@ -1,11 +1,16 @@
-# Current controller contract
+# Price research controller contracts
 
-Use this reference when sending an automated price update through
-`scripts/update-security-prices.py`. Inspect `app/price_agent.py` and
-`app/security_prices.py` if behavior changes; this reference describes the
-implemented adapter rather than limiting general price research.
-The automated planner's prompt lives in `app/price_agent.py`; editing the skill
-guides agents invoking it but does not itself change that prompt or its tools.
+Use the matching section for dashboard missing-information research or an
+automated update through `scripts/update-security-prices.py`. These are separate
+implemented adapters with different tool and evidence contracts. Neither limits
+general research to a fixed source list or a stock-specific lookup recipe.
+Editing the skill guides agents invoking these adapters; it does not itself
+change their prompts, tools, credentials or provider access.
+
+## Host script
+
+Inspect `app/price_agent.py` and `app/security_prices.py` if this adapter changes.
+The host planner's prompt lives in `app/price_agent.py`.
 
 The runner currently exposes `search_web`, `read_source` and `submit_prices` to
 an isolated Codex or Claude Code planner. Search defaults to `auto`, selecting
@@ -66,21 +71,102 @@ when no other usable API remains. Normal refresh retries configured denied
 providers once within its existing bounded flow; recovery restores API ownership
 and blocks late AI reads/writes. API prices
 refresh through the normal background/dashboard flow. Closed positions never
-reach the model. The model gets only supported remaining gaps, a request-bound
-`fetch_security_information` REST tool, and fetched public
-evidence; it has no native tools or storage access. It returns proposed
-observations and profile fields as JSON. The authenticated finalization route
-validates exact listing/source/date/number/unit matches and applies supported
-missing values, preserving existing profile values. Each current price must be
-no older than seven calendar days. Company name and industry proposals require
-literal labeled evidence; unsupported fields remain unknown.
+reach the model. The model gets supported remaining gaps and the following
+authenticated REST tools, with the same interface for isolated Codex and Claude
+Code planners:
+
+| Tool | Allowed choice |
+| --- | --- |
+| `search_security_sources` | A precise query retaining the candidate's identifier or name. Results are discovery leads, not evidence. |
+| `read_security_source` | A `source_id` from the candidate's `source_hints` or this request's search. |
+| `follow_security_source` | A `source_id` already read and one of that response's `link_id` values. |
+
+Opaque source/link IDs belong to one request and security. The agent cannot
+supply arbitrary URLs, native browser commands or HTTP requests. Public HTTPS
+destinations and reported final URLs are validated; private/local destinations,
+credentials in URLs and nonstandard ports are rejected. Source hints register
+known official provider namespaces without fetching them. For example, eligible
+numeric TASE ordinary-share IDs can receive an official security-page hint;
+this is generic identifier routing, not verified data or a fixed security list.
+Read a supplied official hint first, then adapt discovery to the instrument and
+evidence. Search in useful languages, refine a query, inspect a different source
+or follow a relevant history/unit-definition link when budget remains. A blocked
+search service is not an empty result; prefer an existing hint/discovered source
+to repeating a blocked search. No automatic alternative-host search is hidden
+inside an explicit tool action.
+
+### Reader and privacy
+
+The dashboard reads `price_agent.reader` from application-owned configuration.
+`auto` and `jina` select key-free Jina Reader, which returns rendered Markdown
+and followable links. Only the public source URL is sent; no portfolio payload,
+application authentication, browser cookies, custom scripts or model extraction
+instructions are forwarded. Image captioning, OCR and ReaderLM modes are not
+enabled. `direct` selects the application's public HTTPS text reader, including
+HTML links and bounded structured JSON where present. It rejects redirects.
+There is no hidden fallback, retry or reader-provider switch. The host script
+continues to use its separate `read_source` reader and excerpt contract above.
+
+Rendered-reader responses preserve requested and reported final URLs, fetched
+text/Markdown boundaries, retrieval time and returned links. A reader timestamp
+never replaces the observation date. Rendering can still be blocked or omit a
+field; it does not grant the interactive agent's proprietary search index or
+signed-in browser state. One application request to the reader spends one public
+read; the provider's internal asset requests are not observable or capped by this
+application counter.
+
+### Context selection and financial validation
+
+A read can return `context_records` for supported price or profile fields.
+Prefer JSON `records:[{security_key,source_id,record_id}]`, selecting only IDs
+actually returned. Finalization recomputes each selection from server-held
+source evidence instead of trusting model-supplied prices, context claims or
+IDs. It then revalidates listing, observed date, raw number, currency, unit and
+basis, applies only supported missing values and preserves existing profile
+values. Current prices must be within seven calendar days. An independently
+qualified name or industry can be saved while an unsupported price stays unknown.
+
+Context claims may belong to a main instrument header, quote card, labelled
+table or structured record; they need not repeat in one sentence. Contexts retain
+literal field spans or explicitly labelled structured-data paths/raw values.
+Known source-context failures cannot fall back to a looser excerpt check. For
+unrecognized source formats, explicit `observations` and `profiles` JSON remains
+available under the strict legacy evidence checks. Never rewrite source text to
+make either path pass.
+
+The implemented official Hebrew TASE ordinary-share context requires the exact
+numeric listing/header, ordinary-share type, a Last label explicitly in agorot
+and the main quote card's date. That verified namespace uses `dd/mm/yyyy`;
+date-only evidence has `observed_at: null`. Related/news widgets, market-cap
+units and change amounts cannot supply price claims. Generic raw JSON contexts
+require exact identity, venue, currency, raw unit, Last/Close and ISO date in the
+same source object with literal field evidence. All explicit identity, currency,
+unit, market and adjustment aliases must agree. Adjusted prices, NAV, yield,
+coupon and percent-of-par are not silently relabelled as raw Last/Close.
+TheMarker's stock context can qualify a name from exact namespace/asset metadata
+and visible name evidence; it does not qualify a price whose unit is unknown.
+These are implemented context contracts, not a source allowlist for research.
+
+### Shared budgets and response reuse
 
 The whole click shares at most five model calls, five application REST attempts
-(candidate read, up to three source reads, finalization), and five upstream
-search/page reads. Failed attempts count. Source evidence belongs to that
-request and security. No configured search or no AI-eligible open candidates
-avoids model invocation. An unfinished batch requires a new user
-action; polling job status never restarts the agent or its budget.
+(candidate read, up to three search/read/follow actions, finalization), and five
+application-owned public search/page requests across all candidates. Failed
+attempts count. The planners have no native tools, shell, filesystem, database,
+generic HTTP or other-agent access. Source evidence belongs to the request and
+security. No AI-eligible open candidates avoids model invocation. An unfinished
+batch requires a new user action; polling job status never restarts research or
+resets counters.
+
+Response caches use the tool/action and full validated arguments, including
+security key, query, source ID and link ID as applicable. An identical choice can
+reuse a returned response without another REST/upstream attempt; changing any
+argument is a new choice. Each model decision still counts. Failed HTTP attempts
+consume their budgets and are not cached as successful reads; a returned
+unavailable result can be reused without repeating its upstream attempt.
+Untouched securities, including a source request rejected before any upstream
+read, remain not attempted. A later request-level failure does not overwrite the
+reason already recorded for a researched security.
 
 ## API-first price application
 

@@ -72,7 +72,7 @@ def _observation_currency_matches(item: dict[str, Any], candidate: dict[str, Any
     if currencies - {expected_currency}:
         return False
     units = set()
-    if re.search(r"(?<!\w)(?:agorot|agora|אגורות|אגורה)(?!\w)", excerpt, re.I):
+    if re.search(r"(?<!\w)(?:agorot|agora|ב?אגורות|אגורה)(?!\w)", excerpt, re.I):
         units.add("agorot")
     if re.search(r"(?<!\w)cents?(?!\w)|¢", excerpt, re.I):
         units.add("cents")
@@ -84,7 +84,7 @@ def _observation_currency_matches(item: dict[str, Any], candidate: dict[str, Any
     # inspect the same labelled amount for a currency or unit written beside it.
     labels = r"(?<!\w)(?:(?:שער|מחיר)\s+(?:אחרון|נעילה)|last|closing|close|נעילה)\b"
     filler = r"\s*(?:(?:quoted|traded|price|trade|value|at|is|as|of|unadjusted)\s+)*[:=]?\s*"
-    measure = r"(?:[A-Z]{3}|US\$|agorot|agora|cents?|אגורות|אגורה|[$€₪£¢])"
+    measure = r"(?:[A-Z]{3}|US\$|agorot|agora|cents?|ב?אגורות|אגורה|[$€₪£¢])"
     amount = r"(?P<amount>-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)(?![\w,]|\.\d)"
     expression = labels + filler + r"(?P<before>\(?\s*(?:" + measure + r"\s*\)?\s*)*)" + amount + r"(?P<after>\s*(?:" + measure + r"\b|[€₪£¢$]))?"
     for match in re.finditer(expression, excerpt, re.I):
@@ -116,6 +116,8 @@ def _observation_record_matches(item: dict[str, Any], candidate: dict[str, Any],
         if index + 1 < len(records) and re.match(r"^(?:observed|observation\s+date|quote\s+date|as\s+of)\b", records[index + 1], re.I):
             sentences.append(record + " " + records[index + 1])
         for sentence in sentences:
+            if _historical_identity_conflicts({"evidence_quote": sentence}, candidate):
+                continue
             if len(re.findall(r"(?<!\w)(?:NASDAQ|NYSE(?:\s+ARCA)?|TASE|LSE|AMEX)(?!\w)", sentence, re.I)) > 1:
                 continue
             if (_source_identity(sentence, candidate, candidate.get("quote_unit") or "currency")
@@ -135,7 +137,8 @@ def _historical_identity_conflicts(item: dict[str, Any], candidate: dict[str, An
     tokens = re.findall(r"(?<![\w.])(" + ticker + r")\s+(?=\(?\s*(?i:" + venues + "|" + price_labels + r")\b)", excerpt)
     tokens += re.findall(r"(?i:\b(?:symbol|ticker|CUSIP|ISIN)\s*[:=]\s*)([A-Za-z0-9][A-Za-z0-9.^/-]{0,24})", excerpt)
     tokens += re.findall(r"(?i:\b(?:" + venues + r")\s*:\s*)([A-Za-z0-9][A-Za-z0-9.^/-]{0,24})", excerpt)
-    non_tickers = {str(candidate.get("currency") or "").upper(), "USD", "US$", "ILS", "NIS", "AGOROT", "AGORA", "CENTS", "CENT"}
+    non_tickers = {str(candidate.get("currency") or "").upper(), "USD", "US$", "ILS", "NIS", "AGOROT", "AGORA", "CENTS", "CENT",
+                   "NASDAQ", "NYSE", "NYSEARCA", "TASE", "LSE", "AMEX"}
     for token in tokens:
         token = token.upper()
         # ISO/numeric dates and standalone day/year columns are ordinary rows,

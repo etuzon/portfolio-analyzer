@@ -133,7 +133,7 @@ def test_source_failures_and_shells_do_not_stop_the_next_matching_page_or_leak_d
             raise PriceAgentError("private-token https://private.example/")
         if url.endswith("shell"):
             return "Enable JavaScript"
-        return "Public source identifies security1101534; no dated price has been established."
+        return "Public source identifies security1101534 TASE ILS agorot Close 2901 on 06/11/2026."
     budget = RequestBudget()
     result = research_sources({"symbol": "1101534", "stock_market": "TASE", "asset_class": "EQUITY"}, {}, budget,
                               search=lambda *_: [{"url": "https://exchange.example/" + path} for path in ("blocked", "shell", "real")], fetch=fetch)
@@ -142,3 +142,92 @@ def test_source_failures_and_shells_do_not_stop_the_next_matching_page_or_leak_d
     assert result["diagnostics"] == {"search_requests": 1, "source_requests": 3, "read_failures": 1, "identity_rejections": 1, "empty_pages": 0}
     # This is source evidence only; research_sources never proposes or saves a price.
     assert not any(key in result for key in ("price", "price_input", "updated", "saved"))
+
+
+def test_fallback_prioritizes_exact_identifier_urls_on_distinct_hosts_with_one_shared_budget():
+    calls = []
+    def search(query, _key):
+        calls.append(('search', query))
+        if len([call for call in calls if call[0] == 'search']) == 1:
+            return [{'url': f'https://shell.example/1101534/{index}'} for index in range(5)]
+        return [{'url': url} for url in (
+            'https://first.example/stock/1101534',
+            'https://name-only.example/equities/company',
+            'https://another-name.example/instrument/27648',
+            'https://last.example/quote/1101534',
+        )]
+    def fetch(url):
+        calls.append(('fetch', url))
+        if 'shell.example' in url:
+            return 'דף הבית - הבורסה לניירות ערך בתל אביב | אתר הבורסה'
+        if 'first.example' in url:
+            from app.price_agent import PriceAgentError
+            raise PriceAgentError('The source page is unavailable.')
+        return '1101534 TASE שער אחרון באגורות 2901 בתאריך 06/11/2026'
+    budget = RequestBudget()
+    result = research_sources({'symbol': '1101534', 'stock_market': 'TASE', 'asset_class': 'EQUITY', 'missing_fields': ['prices', 'profile']},
+                              {}, budget, search=search, fetch=fetch)
+    assert result['code'] == 'evidence_found'
+    assert result['evidence'][0]['url'] == 'https://last.example/quote/1101534'
+    assert calls[2] == ('search', '1101534 מניה שער תאריך אגורות -site:shell.example')
+    assert [value for kind, value in calls if kind == 'fetch'] == [
+        'https://shell.example/1101534/0', 'https://first.example/stock/1101534', 'https://last.example/quote/1101534']
+    assert budget.used == len(calls) == 5
+    assert result['diagnostics']['search_requests'] == 2
+    assert result['diagnostics']['read_failures'] == 1
+
+
+def test_profile_source_is_retained_while_a_separate_dated_price_is_sought():
+    urls = ['https://profile.example/1101534', 'https://quote.example/1101534']
+    def fetch(url):
+        return ('1101534 TASE Company name: Cellcom | Industry: Telecommunications' if url == urls[0]
+                else '1101534 TASE ILS agorot Close 2901 on 06/11/2026')
+    budget = RequestBudget()
+    result = research_sources({'symbol': '1101534', 'missing_fields': ['prices', 'profile']}, {}, budget,
+                              search=lambda *_: [{'url': url} for url in urls], fetch=fetch)
+    assert [row['url'] for row in result['evidence']] == urls
+    assert budget.used == 3
+
+
+def test_profile_only_request_does_not_spend_budget_looking_for_a_price():
+    budget = RequestBudget()
+    result = research_sources({'symbol': '1101534', 'missing_fields': ['profile']}, {}, budget,
+                              search=lambda *_: [{'url': f'https://source.example/{index}'} for index in range(4)],
+                              fetch=lambda _: '1101534 TASE Company name: Cellcom')
+    assert result['code'] == 'evidence_found' and budget.used == 2
+
+
+def test_unique_host_sources_are_tried_before_duplicate_host_and_fourth_result_can_win():
+    urls = ['https://same.example/first', 'https://same.example/second',
+            'https://other.example/third', 'https://last.example/fourth']
+    reads = []
+    def fetch(url):
+        reads.append(url)
+        return ('1101534 TASE ILS agorot Close 2901 on 06/11/2026' if url == urls[3]
+                else 'Another security 9999999')
+    result = research_sources({'symbol': '1101534'}, {}, RequestBudget(),
+                              search=lambda *_: [{'url': url} for url in urls + [urls[0]]], fetch=fetch)
+    assert result['code'] == 'evidence_found'
+    assert reads == [urls[0], urls[2], urls[3]]
+
+
+def test_identity_without_price_or_profile_never_becomes_evidence():
+    result = research_sources({'symbol': '1101534'}, {}, RequestBudget(),
+                              search=lambda *_: [{'url': 'https://source.example/1101534'}],
+                              fetch=lambda _: 'Public source identifies security1101534; no dated price has been established.')
+    assert result['code'] == 'source_identity_unavailable' and not result['evidence']
+
+
+def test_fallback_is_not_attempted_unless_budget_can_also_read_a_source():
+    calls = []
+    def search(*_):
+        calls.append('search')
+        return [{'url': f'https://shell.example/{index}'} for index in range(4)]
+    def fetch(_):
+        calls.append('fetch')
+        return 'דף הבית'
+    budget = RequestBudget(limit=3)
+    result = research_sources({'symbol': '1101534'}, {}, budget, search=search, fetch=fetch)
+    assert result['code'] == 'request_limit'
+    assert calls == ['search', 'fetch', 'fetch']
+    assert budget.used == 3

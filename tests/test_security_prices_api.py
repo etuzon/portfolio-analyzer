@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 import json
 from types import SimpleNamespace
 
@@ -26,7 +26,9 @@ def observation(day=None, **changes):
         "price_input": 123.45, "price_date": (day or date.today()).isoformat(),
         "currency": "USD", "quote_unit": "currency", "price_basis": "close",
         "source_url": "https://exchange.example/ABC/history", "observed_at": None,
-        "retrieved_at": datetime.now(timezone.utc).isoformat(), **changes,
+        # Keep the retrieval calendar day aligned with date.today() even during
+        # the interval when local midnight precedes midnight in UTC.
+        "retrieved_at": datetime.now().astimezone().isoformat(), **changes,
     }
 
 

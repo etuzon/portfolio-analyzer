@@ -83,7 +83,7 @@ function heatmapColor(value) {
   if (!heatmapKnown(value)) return "#353942";
   if (value === 0) return "#4a5362";
   const band = Math.abs(value) < 1 ? 0 : Math.abs(value) < 3 ? 1 : 2;
-  return (value > 0 ? ["#24463f", "#216452", "#207158"] : ["#542b35", "#7b2737", "#a12e43"])[band];
+  return (value > 0 ? ["#207158", "#216452", "#24463f"] : ["#a12e43", "#7b2737", "#542b35"])[band];
 }
 /* Balanced rectangle splits preserve each asset's share, without minimum-area distortion. */
 function heatmapRectangles(items) {

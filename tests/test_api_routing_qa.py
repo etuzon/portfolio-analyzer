@@ -632,11 +632,11 @@ def test_numeric_israeli_stock_query_never_weakens_price_evidence_guards(case):
     symbol = "9999999" if case == "wrong_identity" else candidate["symbol"]
     body = (f"{symbol} TASE ILS Last 123.45 in agorot on {day.isoformat()}" if case != "identity_only"
             else "1101534 TASE stock identity only; no current price was verified.")
-    queries = []
+    queries, source_reads = [], []
     budget = RequestBudget()
     evidence = research_sources(candidate, {}, budget,
         search=lambda query, _key: queries.append(query) or [{"url": "https://exchange.example/stock/1101534"}],
-        fetch=lambda _url: body)
+        fetch=lambda url: source_reads.append(url) or body)
     assert "פדיון" not in queries[0] and "מניה" in queries[0] and "אגורות" in queries[0]
     observation = {"security_key": candidate["security_key"], "price_input": 123.45, "price_date": day.isoformat(),
         "currency": "ILS", "quote_unit": "currency" if case == "wrong_unit" else "agorot", "price_basis": "last",
@@ -647,5 +647,16 @@ def test_numeric_israeli_stock_query_never_weakens_price_evidence_guards(case):
     assert bool(records) is (case == "valid")
     if records:
         assert records[0]["price_input"] == 123.45 and records[0]["currency"] == "ILS"
-    assert budget.used == 2
+    assert budget.used == len(queries) + len(source_reads) <= 5
+    assert evidence["diagnostics"]["search_requests"] == len(queries)
+    assert evidence["diagnostics"]["source_requests"] == len(source_reads)
+    if case == "identity_only":
+        # An identity-only page triggers one new discovery request. Returning
+        # the same URL cannot reset the budget, duplicate the read, or make
+        # that unsupported price eligible for saving.
+        assert len(queries) == 2 and queries[0] != queries[1]
+        assert len(source_reads) == 1 and budget.used == 3
+        assert not evidence["evidence"] and not records
+    else:
+        assert len(queries) == len(source_reads) == 1 and budget.used == 2
 

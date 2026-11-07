@@ -87,7 +87,7 @@ class PortfolioAssistant:
             "tools": [{"name": name, "method": item.get("method", "GET"), "path": item["path"], "description": item["description"]} for name, item in self.catalog.items()],
         }
 
-    def ask(self, prompt: str, language: str, run_tool: Callable[[str, dict[str, Any]], Any], history: list[dict[str, Any]] | None = None, *, audit=None) -> dict[str, Any]:
+    def ask(self, prompt: str, language: str, run_tool: Callable[[str, dict[str, Any]], Any], history: list[dict[str, Any]] | None = None, *, audit=None, cache_read_results: bool = False) -> dict[str, Any]:
         if not self.status()["enabled"]:
             raise AssistantError("The portfolio assistant is not configured. Ask an administrator to enable the llm section in config.yaml.")
         prompt = str(prompt or "").strip()
@@ -135,6 +135,7 @@ class PortfolioAssistant:
         messages.append({"role": "user", "content": prompt})
         calls: list[dict[str, Any]] = []
         rest_attempts = 0
+        read_results: dict[str, Any] = {}
         for index in range(self.settings["max_tool_loops"]):
             final_turn = index == self.settings["max_tool_loops"] - 1 or rest_attempts >= self.settings["max_rest_calls"]
             if final_turn:
@@ -170,8 +171,21 @@ class PortfolioAssistant:
                         raise AssistantError("The LLM requested an unavailable read tool.")
                     if audit:
                         audit("tool_request", tool=name, path=self.catalog[name]["path"], arguments=arguments)
-                    rest_attempts += 1  # Failed attempts consume the same per-message budget.
-                    result = run_tool(name, arguments)
+                    cache_arguments = arguments
+                    if cache_read_results:
+                        from .assistant_rest import validate_arguments
+                        validate_arguments(arguments, self.catalog[name]["parameters"])
+                        cache_fields = self.catalog[name].get("cache_key_fields")
+                        if cache_fields:
+                            cache_arguments = {field: arguments.get(field) for field in cache_fields}
+                    read_key = json.dumps([name, cache_arguments], sort_keys=True, ensure_ascii=False)
+                    if cache_read_results and read_key in read_results:
+                        result = read_results[read_key]
+                    else:
+                        rest_attempts += 1  # Failed attempts consume the same per-message budget.
+                        result = run_tool(name, arguments)
+                        if cache_read_results:
+                            read_results[read_key] = result
                     if audit:
                         audit("tool_response", tool=name, path=self.catalog[name]["path"], result=json.loads(_tool_content(result)))
                     calls.append({"tool": name, "path": self.catalog[name]["path"], "arguments": arguments})
@@ -205,7 +219,10 @@ class PortfolioAssistant:
             import httpx
             try:
                 with httpx.Client(transport=httpx.HTTPTransport(uds=self.settings["codex_socket"]), base_url="http://codex-local", timeout=max(self.settings["timeout_seconds"], 120)) as client:
-                    response = client.post("/completion", json={"messages": messages, "tools": tools, "provider": self.settings["provider"], "model": self.settings["model"], "reasoning_effort": self.settings["reasoning_effort"]})
+                    payload = {"messages": messages, "tools": tools, "provider": self.settings["provider"], "model": self.settings["model"], "reasoning_effort": self.settings["reasoning_effort"]}
+                    if self.settings.get("research_mode"):
+                        payload["purpose"] = "security_research"
+                    response = client.post("/completion", json=payload)
                     if response.status_code != 200:
                         detail = response.json().get("error", {})
                         cause = detail.get("message", "") if isinstance(detail, dict) else ""

@@ -105,7 +105,10 @@ def parse_duckduckgo_results(page: str) -> list[dict[str, str]]:
         parser.feed(page)
     except (ValueError, TypeError):
         raise SearchFailure("provider_unavailable", "The public search response could not be read.") from None
-    unique = list({entry["url"]: entry for entry in parser.results}.values())[:5]
+    # Reading more links from the same response spends no extra HTTP attempts.
+    # Early results often repeat one exchange's JavaScript-only pages; keep
+    # enough alternatives for the controller's bounded source selection.
+    unique = list({entry["url"]: entry for entry in parser.results}.values())[:10]
     if unique or parser.result_anchors or any(marker in lowered for marker in ("no-results", "no results found", "no more results")):
         return unique
     raise SearchFailure("provider_unavailable", "The public search response contained no recognizable results.")
@@ -142,13 +145,13 @@ def search_web(query: str, settings: dict[str, Any]) -> list[dict[str, str]]:
                 with client.stream("GET", "https://html.duckduckgo.com/html/", params={"q": query}, headers={"User-Agent": "PortfolioAnalyzerPriceResearch/1.0", "Accept": "text/html"}) as response:
                     raw = _read_response(response, html=True)
                 return parse_duckduckgo_results(raw.decode("utf-8", errors="replace"))
-            with client.stream("GET", "https://api.search.brave.com/res/v1/web/search", params={"q": query, "count": 5}, headers={"X-Subscription-Token": api_key, "Accept": "application/json"}) as response:
+            with client.stream("GET", "https://api.search.brave.com/res/v1/web/search", params={"q": query, "count": 10}, headers={"X-Subscription-Token": api_key, "Accept": "application/json"}) as response:
                 raw = _read_response(response, html=False)
             result = json.loads(raw)
             if not isinstance(result, dict) or not isinstance(result.get("web"), dict) or not isinstance(result["web"].get("results"), list):
                 raise SearchFailure("provider_unavailable", "The search service returned an invalid result list.")
             output = []
-            for row in result["web"]["results"][:5]:
+            for row in result["web"]["results"][:10]:
                 if isinstance(row, dict) and (url := _source_url(row.get("url"))):
                     output.append({"url": url, "title": str(row.get("title") or "")[:300], "description": str(row.get("description") or "")[:1500]})
             return output
