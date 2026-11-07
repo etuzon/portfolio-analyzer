@@ -45,6 +45,7 @@ def test_ai_single_request_partial_results_tooltips_permissions_and_narrow_layou
     command, evaluate = ready(tmp_path, chromium, language, width)
     assert evaluate("$('enrichMissingData')===qa.originalAIAction&&document.querySelectorAll('#enrichMissingData').length===1")
     assert evaluate("$('enrichMissingData').closest('.nav-menu')===document.querySelector('.nav-menu')")
+    assert evaluate("$('enrichMissingData').parentElement.lastElementChild===$('enrichMissingData')")
     assert evaluate("!document.querySelector('.header-status').contains($('enrichMissingData'))")
     evaluate("if(matchMedia('(max-width:760px)').matches)setMobileNavigation(true);$('enrichMissingData').closest('details').open=true;$('enrichMissingData').focus();")
     command("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})

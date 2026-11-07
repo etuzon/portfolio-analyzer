@@ -1896,8 +1896,8 @@ function ensureHierarchicalNav() {
         <button class="nav-item" type="button" data-modal="tradingJournalModal">${esc(t("Trading Journal"))}</button>
         <button class="nav-item" type="button" data-modal="eventsModal">${esc(t("Dividends & Events"))}</button>
         <button class="nav-item" type="button" data-modal="pricesModal">${esc(t("prices"))}</button>
-        <span data-ai-enrichment-slot hidden></span>
         <button class="nav-item" type="button" data-modal="reportsModal">${esc(t("Portfolio Reports"))}</button>
+        <span data-ai-enrichment-slot hidden></span>
       </div>
     </details>
     <details class="nav-menu">
