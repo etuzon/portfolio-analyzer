@@ -1219,6 +1219,8 @@ function aiOutcomeMessage(outcome) {
     ai_unavailable: "AI research is unavailable. Check the AI configuration or try again later.",
     request_limit: "The request limit was reached. This security may need a new request.",
     provider_unavailable: "The data source is unavailable. Try again later or enter verified data manually.",
+    source_read_failed: "Search found source pages, but they could not be read. Try again later; saved data is retained.",
+    source_identity_unavailable: "The retrieved pages did not identify this exact security. Saved data is retained.",
     provider_timeout: "The source check took longer than expected. Saved data is retained; use Refresh or try again later.",
     bond_reference_only: "API bond reference data is available. Portfolio valuation still requires a defined quantity/face-value convention.",
     research_unavailable: "Internet research is unavailable. Configure the search service and try again.",
@@ -3626,7 +3628,10 @@ function securityDataRouteHint(item) {
     }
     return `${t("Automatic API refresh route")}${provider}\n${t("Normal background updates and dashboard Refresh use this API route. AI research is not used for this security.")}`;
   }
-  if (route.owner === "ai") return `${t("No supported price/reference API route")}\n${t("For an open holding, use Portfolio → Find missing data with AI to research unavailable information.")}`;
+  if (route.owner === "ai") {
+    if (route.reason === "api_access_denied") return `${t("API access denied")}${provider}\n${t("No other usable API route is available. AI research can use public sources; dashboard Refresh retries API access.")}`;
+    return `${t("No supported price/reference API route")}\n${t("For an open holding, use Portfolio → Find missing data with AI to research unavailable information.")}`;
+  }
   return t("This instrument is excluded from automatic price research. Its saved valuation is retained.");
 }
 

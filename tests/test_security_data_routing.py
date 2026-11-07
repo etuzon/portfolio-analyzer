@@ -1,4 +1,4 @@
-"""Routing is pure: provider failures and missing access never become AI work."""
+"""Pure routing distinguishes temporary failures from confirmed access denial."""
 from copy import deepcopy
 
 import pytest
@@ -46,14 +46,57 @@ def test_treasury_prefix_is_only_a_discovery_hint_not_exact_coverage():
     assert result["reason"] == "api_coverage_unverified"
 
 
-@pytest.mark.parametrize("code", ["timeout", "rate_limited", "provider_error", "invalid_response", "entitlement_required"])
-def test_configured_provider_failures_never_reclassify_a_listing_as_ai(code):
+@pytest.mark.parametrize("code", ["timeout", "rate_limited", "provider_error", "invalid_response"])
+def test_temporary_provider_failures_never_reclassify_a_listing_as_ai(code):
     config = {"security_lookup": {"finnhub": {"api_key": "synthetic-private-key"}}}
     reference = {"request": {"identifier": "121899CH9"}, "status": "provider_error", "provider_errors": [{"provider": "finnhub", "code": code}]}
     result = route_security(bond(), config, reference)
     assert result["owner"] == "api" and not result["ai_eligible"]
-    assert result["reason"] == ("configuration_required" if code == "entitlement_required" else "provider_unavailable")
+    assert result["reason"] == "provider_unavailable"
     assert "synthetic-private-key" not in str(result)
+
+
+@pytest.mark.parametrize("code", ["entitlement_required", "access_denied"])
+@pytest.mark.parametrize("positive_profile", [False, True])
+def test_exact_access_denial_can_release_api_ownership_without_discarding_evidence(code, positive_profile):
+    reference = {"request": {"identifier": "121899CH9"}, "status": "provider_error",
+        "provider_errors": [{"provider": "finnhub", "code": code}]}
+    if positive_profile:
+        reference.update(provider="finnhub", security={"cusip": "121899CH9", "name": "Saved exact bond"})
+    before = deepcopy(reference)
+    route = route_security(bond(), {"security_lookup": {"finnhub": {"api_key": "synthetic"}}}, reference)
+    assert route["owner"] == "ai" and route["ai_eligible"]
+    assert reference == before
+    assert route["providers"][0]["provider"] == "finnhub"
+
+
+@pytest.mark.parametrize("reference", [
+    {"status": "entitlement_required"},
+    {"request": {"identifier": "121899CH9"}, "status": "entitlement_required"},
+    {"request": {"identifier": "88059ESH8"}, "provider_errors": [{"provider": "finnhub", "code": "entitlement_required"}]},
+    {"request": {"identifier": "121899CH9"}, "provider": "finnhub", "security": {"cusip": "88059ESH8"},
+     "provider_errors": [{"provider": "finnhub", "code": "entitlement_required"}]},
+])
+def test_unqualified_or_other_instrument_denial_cannot_trigger_ai(reference):
+    route = route_security(bond(), {"security_lookup": {"finnhub": {"api_key": "synthetic"}}}, reference)
+    assert route["owner"] == "api" and not route["ai_eligible"]
+
+
+def test_a_usable_treasury_alternative_keeps_api_ownership_after_finnhub_denial():
+    candidate = bond(symbol="91282CJL6")
+    reference = {"request": {"identifier": candidate["symbol"]}, "provider_errors": [{"provider": "finnhub", "code": "entitlement_required"}]}
+    route = route_security(candidate, {"security_lookup": {"finnhub": {"api_key": "synthetic"}}}, reference)
+    assert route["owner"] == "api" and route["provider"] == "treasury_direct"
+    assert not route["ai_eligible"]
+
+
+@pytest.mark.parametrize("section", [{"api_key": ""}, {"api_key": "synthetic", "enabled": False}])
+def test_current_missing_or_disabled_configuration_overrides_old_denial(section):
+    reference = {"request": {"identifier": "121899CH9"},
+        "provider_errors": [{"provider": "finnhub", "code": "entitlement_required"}]}
+    route = route_security(bond(), {"security_lookup": {"finnhub": section}}, reference)
+    assert route["owner"] == "api" and not route["ai_eligible"]
+    assert route["reason"] == "configuration_required"
 
 
 def test_exact_provider_not_found_without_alternative_can_enable_ai():

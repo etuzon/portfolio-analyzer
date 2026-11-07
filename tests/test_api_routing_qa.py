@@ -23,6 +23,7 @@ def routing_application(monkeypatch):
     state = SimpleNamespace(holdings=[bond], metadata=deepcopy(bond), saved=[], logs=[], history_hook=None,
                             metadata_reads=0, metadata_hook=None, holdings_hook=None)
     state.original_enriched = main.enriched_local_holdings
+    state.original_bond_market_data = main._bond_market_data
     day = (date.today() - timedelta(days=1)).isoformat()
     state.snapshot = {"status": "partial", "cache_status": "fresh", "provider": "finnhub",
         "retrieved_at": datetime.now(timezone.utc).isoformat(),
@@ -118,6 +119,27 @@ def test_failed_model_attempt_is_counted_and_does_not_get_privileged_retry(envir
     assert result["counts"]["rest_requests"] == 2  # Inventory and finalization.
     assert not env.state.fetched
     assert "synthetic-provider-password" not in str(result)
+
+
+@pytest.mark.parametrize("code", ["source_read_failed", "source_identity_unavailable"])
+def test_failed_source_research_reports_safe_diagnostics_without_price_success(environment, code):
+    env = environment
+    env.manager._security_fetcher = lambda *_a: {"evidence": [], "source_status": code,
+        "failure_stage": "source_read" if code == "source_read_failed" else "source_identity",
+        "diagnostics": {"search_requests": 1, "source_requests": 3, "read_failures": 3,
+                        "identity_rejections": 0, "empty_pages": 0, "token": "synthetic-private-token",
+                        "unexpected": 9, "invalid_count": True}}
+    identifier = start(env)
+    env.run()
+    result = job(env, identifier)
+    assert result["summary"]["updated"] == result["summary"]["partial"] == 0
+    assert result["portfolio_refresh_required"] is False
+    assert result["counts"]["model_requests"] <= 5 and result["counts"]["rest_requests"] == 5
+    for outcome in result["outcomes"][:3]:
+        assert outcome["code"] == code and outcome["available_fields"] == []
+        assert outcome["diagnostic"]["source_requests"] == 3
+        assert "token" not in outcome["diagnostic"] and "unexpected" not in outcome["diagnostic"]
+    assert "synthetic-private-token" not in str(result)
 
 
 def test_ordinary_refresh_visits_already_priced_api_listing_without_ai(routing_application):
@@ -337,7 +359,7 @@ def test_final_inventory_rejects_location_contract_newer_than_metadata_read(rout
     assert state.saved == []
 
 
-@pytest.mark.parametrize("code", ["entitlement_required", "rate_limited", "provider_error", "invalid_response", "request_limit"])
+@pytest.mark.parametrize("code", ["rate_limited", "provider_error", "invalid_response", "request_limit"])
 def test_api_failure_inventory_remains_excluded_from_ai(routing_application, code):
     main, state = routing_application
     identifier = state.holdings[0]["symbol"]
@@ -349,6 +371,126 @@ def test_api_failure_inventory_remains_excluded_from_ai(routing_application, cod
     route = main._security_api_route(state.holdings[0])
     assert route["owner"] == "api" and route["coverage"] == "candidate"
     assert main._ai_enrichment_candidates()["items"] == []
+
+
+@pytest.mark.parametrize("identifier", ["121899CH9", "88059ESH8"])
+@pytest.mark.parametrize("saved_positive", [False, True])
+def test_exact_bond_entitlement_denial_makes_current_missing_fields_ai_eligible(routing_application, identifier, saved_positive):
+    main, state = routing_application
+    state.holdings[0]["symbol"] = state.metadata["symbol"] = identifier
+    state.snapshot = None
+    denial = {"retrieved_at": datetime.now(timezone.utc).isoformat(),
+        "request": {"identifier": identifier}, "status": "provider_error",
+        "provider_errors": [{"provider": "finnhub", "code": "entitlement_required"}]}
+    if saved_positive:
+        denial.update(provider="finnhub", security={"kind": "bond", "cusip": identifier, "name": "Saved exact bond"})
+    state.cache.set_security_snapshot("security_lookup", identifier, "security-coverage-v1:bond", denial)
+    inventory = main._ai_enrichment_candidates()
+    assert len(inventory["items"]) == 1 and inventory["items"][0]["symbol"] == identifier
+    assert inventory["items"][0]["api_data_route"]["owner"] == "ai"
+    assert "prices" in inventory["items"][0]["missing_fields"]
+    assert main._automatic_price_inventory() == []
+    assert state.saved == []
+    state.holdings[0]["quantity"] = 0
+    assert main._ai_enrichment_candidates()["items"] == []
+
+
+@pytest.mark.parametrize("recovers", [False, True])
+def test_normal_refresh_retries_denied_api_and_success_stops_late_ai(routing_application, monkeypatch, recovers):
+    from app.automatic_security_refresh import AutomaticSecurityRefresh
+    main, state = routing_application
+    identifier = state.holdings[0]["symbol"]
+    positive = deepcopy(state.snapshot)
+    positive["request"] = {"identifier": identifier}
+    denial = {"retrieved_at": datetime.now(timezone.utc).isoformat(), "request": {"identifier": identifier},
+        "status": "provider_error", "provider_errors": [{"provider": "finnhub", "code": "entitlement_required"}]}
+    state.snapshot = None
+    marker = "security-coverage-v1:bond"
+    state.cache.set_security_snapshot("security_lookup", identifier, marker, denial)
+    prior_ai = main._ai_enrichment_candidates()["items"][0]
+    calls = []
+
+    def fetch(candidate):
+        calls.append(candidate["symbol"])
+        response = positive if recovers else denial
+        state.cache.set_security_snapshot("security_lookup", identifier, marker, response)
+        if recovers:
+            state.snapshot = positive
+        return deepcopy(response)
+
+    runner = AutomaticSecurityRefresh()
+    monkeypatch.setattr(main, "_automatic_api_refresher", runner)
+    monkeypatch.setattr(main, "_fetch_automatic_security_prices", fetch)
+    monkeypatch.setattr(main, "research_sources", lambda *_a, **_k: pytest.fail("Recovered API must stop late AI research"))
+    try:
+        result = main._refresh_automatic_security_prices()
+        assert calls == [identifier] and result["checked"] == 1
+        assert result["updated"] == (1 if recovers else 0)
+        assert bool(state.saved) is recovers
+        assert bool(main._ai_enrichment_candidates()["items"]) is not recovers
+        if recovers:
+            assert main._enrichment_research_security(prior_ai, "auto")["source_status"] == "api_managed"
+    finally:
+        runner._pool.shutdown(wait=True)
+
+
+def test_denied_retry_cannot_reuse_earlier_positive_cache_as_recovered_access(routing_application, monkeypatch):
+    from app.automatic_security_refresh import AutomaticSecurityRefresh
+    from app.security_market_data import SecurityMarketData
+    from app.us_market_providers import ProviderFailure
+    main, state = routing_application
+    candidate = state.holdings[0]
+    payload = deepcopy(state.snapshot)
+
+    class Provider:
+        denied = False
+        calls = 0
+        def fetch(self, *_args):
+            self.calls += 1
+            _args[-1].consume()
+            if self.denied:
+                raise ProviderFailure("entitlement_required", "synthetic denied source")
+            return deepcopy(payload)
+
+    provider = Provider()
+    monkeypatch.setattr(main, "SecurityMarketData", lambda config, cache: SecurityMarketData(config, cache, providers={"finnhub": provider}))
+    monkeypatch.setattr(main, "_bond_market_data", state.original_bond_market_data)
+    main._bond_market_data(candidate)
+    assert provider.calls == 1
+    provider.denied = True
+    denied = SecurityMarketData(main.config.market_data, state.cache, providers={"finnhub": provider}).fetch(candidate["symbol"], "bond", refresh=True)
+    state.cache.set_security_snapshot("security_lookup", candidate["symbol"], "security-coverage-v1:bond", denied)
+    assert provider.calls == 2 and main._security_api_route(candidate)["owner"] == "ai"
+    runner = AutomaticSecurityRefresh()
+    monkeypatch.setattr(main, "_automatic_api_refresher", runner)
+    try:
+        failed = main._refresh_automatic_security_prices()
+        assert provider.calls == 3, "A denied retry must recheck provider access, not reuse a pre-denial positive cache"
+        assert failed["updated"] == 0 and state.saved == []
+        assert main._security_api_route(candidate)["owner"] == "ai"
+        provider.denied = False
+        recovered = main._refresh_automatic_security_prices()
+        assert provider.calls == 4 and recovered["updated"] == 1
+        assert main._security_api_route(candidate)["owner"] == "api"
+    finally:
+        runner._pool.shutdown(wait=True)
+
+
+def test_portfolio_route_configuration_invalidates_cache_without_hashing_secrets(routing_application, monkeypatch):
+    main, _state = routing_application
+    monkeypatch.setattr(main.local_store, "change_token", lambda: "synthetic-change-token", raising=False)
+    baseline = main.portfolio_cache_signature()
+    assert baseline
+    section = main.config.market_data["security_lookup"]["finnhub"]
+    section["api_key"] = "different-synthetic-secret"
+    assert main.portfolio_cache_signature() == baseline  # Presence only, never credential material.
+    assert "different-synthetic-secret" not in baseline
+    for field, value in [("enabled", False), ("quote_unit", "percent_of_par"), ("quote_currency", "USD")]:
+        before = main.portfolio_cache_signature()
+        section[field] = value
+        assert main.portfolio_cache_signature() != before
+    main.config.market_data["fallback"] = ["nasdaq_quote"]
+    assert main.portfolio_cache_signature() != baseline
 
 
 def test_unknown_exact_coverage_requires_configuration_and_never_spends_ai(routing_application):
@@ -477,4 +619,33 @@ for(const color of all){
  assert.ok(1.05/(luminance+0.05)>=4.5,`${color} white text contrast`);
 }
 ''')
+
+
+@pytest.mark.parametrize("case", ["valid", "identity_only", "wrong_unit", "stale", "wrong_identity"])
+def test_numeric_israeli_stock_query_never_weakens_price_evidence_guards(case):
+    from app.security_web_research import research_sources, validate_proposals
+    from app.us_market_providers import RequestBudget
+    candidate = {"security_key": "1101534|TASE|ILS", "symbol": "1101534", "secondary_symbol": "IL0011015349",
+        "stock_market": "TASE", "asset_class": "EQUITY", "location": "Israel", "currency": "ILS",
+        "quote_unit": "agorot", "missing_fields": ["prices"], "name": "Synthetic stock"}
+    day = date.today() - timedelta(days=8 if case == "stale" else 1)
+    symbol = "9999999" if case == "wrong_identity" else candidate["symbol"]
+    body = (f"{symbol} TASE ILS Last 123.45 in agorot on {day.isoformat()}" if case != "identity_only"
+            else "1101534 TASE stock identity only; no current price was verified.")
+    queries = []
+    budget = RequestBudget()
+    evidence = research_sources(candidate, {}, budget,
+        search=lambda query, _key: queries.append(query) or [{"url": "https://exchange.example/stock/1101534"}],
+        fetch=lambda _url: body)
+    assert "פדיון" not in queries[0] and "מניה" in queries[0] and "אגורות" in queries[0]
+    observation = {"security_key": candidate["security_key"], "price_input": 123.45, "price_date": day.isoformat(),
+        "currency": "ILS", "quote_unit": "currency" if case == "wrong_unit" else "agorot", "price_basis": "last",
+        "source_url": "https://exchange.example/stock/1101534", "observed_at": None, "evidence_quote": body}
+    result = validate_proposals({"observations": [observation], "profiles": []},
+        {candidate["security_key"]: candidate}, {candidate["security_key"]: evidence["evidence"]})
+    records = result[candidate["security_key"]]["observations"]
+    assert bool(records) is (case == "valid")
+    if records:
+        assert records[0]["price_input"] == 123.45 and records[0]["currency"] == "ILS"
+    assert budget.used == 2
 

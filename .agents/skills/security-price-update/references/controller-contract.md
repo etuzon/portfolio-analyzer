@@ -59,8 +59,12 @@ write whose outcome is uncertain.
 
 This is a separate application-controlled flow from the host script. Its
 candidate REST route inventories open holdings with no applicable API route.
-API-owned securities are excluded entirely, including when credentials are
-missing, a provider is unavailable or other fields are incomplete. API prices
+API-owned securities are excluded entirely when credentials are missing, a
+provider has a temporary network/rate failure or other fields are incomplete.
+A confirmed exact-identifier access denial permits AI public-source research
+when no other usable API remains. Normal refresh retries configured denied
+providers once within its existing bounded flow; recovery restores API ownership
+and blocks late AI reads/writes. API prices
 refresh through the normal background/dashboard flow. Closed positions never
 reach the model. The model gets only supported remaining gaps, a request-bound
 `fetch_security_information` REST tool, and fetched public
@@ -105,7 +109,8 @@ A bounded application coordinator alone applies automatic price rows, rechecking
 open/public holdings, current metadata and known units immediately before saving.
 Timed-out or cancelled work may finish caching source evidence but cannot perform
 late price writes. All open API listings are considered, without the AI batch's
-three-security limit. API failures stay in the API flow. Exact unsupported
+three-security limit. Transient API failures stay in the API flow; confirmed
+access denial can release AI eligibility. Exact unsupported
 coverage is cached separately and can make a listing AI-eligible; a generic
 transport error cannot. Compatibility alone is not proof of exact source coverage.
 Existing dated prices are preserved; current evidence must be within seven

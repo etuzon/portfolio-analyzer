@@ -422,6 +422,11 @@ class EnrichmentJobs:
                         job["_results"][security_key] = {**previous, "status": "not_attempted", "code": result["source_status"], "available_fields": [], "missing_fields": []}
                     else:
                         job["_results"][security_key] = {**previous, "code": "evidence_rejected" if result["evidence"] else result.get("source_status", "data_unavailable")}
+                        if isinstance(result.get("diagnostics"), dict):
+                            allowed = {name: value for name, value in result["diagnostics"].items()
+                                       if name in {"search_requests", "source_requests", "read_failures", "identity_rejections", "empty_pages"}
+                                       and type(value) is int and value >= 0}
+                            job["_results"][security_key]["diagnostic"] = {"stage": str(result.get("failure_stage") or "source_evidence")[:40], **allowed}
                 else:
                     job["_results"][security_key] = result
                 job.setdefault("_research_completed", set()).add(security_key)

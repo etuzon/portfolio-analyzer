@@ -156,8 +156,11 @@ completed portfolio update from a cached research response.
 The normal background refresh connects verified API evidence to the same
 application price input used for manual entry, separately from AI research.
 API-owned securities never enter the AI
-inventory; unavailable credentials or temporary provider failures remain API
-configuration/refresh problems. Exact unsupported coverage with no alternative
+inventory while a usable route exists; missing credentials and transient provider
+failures remain API configuration/refresh problems. Confirmed exact access denial
+can enable public-source AI research when no other usable API remains. Recovery
+returns the listing to automatic API refresh; never bypass access controls.
+Exact unsupported coverage with no alternative
 may allow AI research. Eligible local USA/USD/BOND
 CUSIP or ISIN positions use USD 1 face per recorded unit: P per100 normalizes
 once to P/100. Keep the real source valuation or Treasury programme side; never

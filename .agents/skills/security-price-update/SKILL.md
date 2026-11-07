@@ -92,6 +92,13 @@ while purchase remains separate. In other environments discover suitable officia
 sources using the tools actually available; these routes are useful leads, not
 restrictions on other reliable methods.
 
+Use the instrument type to guide discovery: stock searches use share-price
+terms; fund searches may use redemption/NAV terms. A numeric Israeli security
+number alone does not prove the instrument is a fund. Source-page read failures
+mean the controller could not read those pages, not that no price exists. Keep
+those failures separate from empty results, wrong identity or insufficient
+dated/unit evidence, and preserve the request's remaining budget.
+
 Read the source's field definition. Published unit value/NAV, redemption price
 (`מחיר פדיון`) and purchase price (`מחיר קנייה`) can have different meanings;
 preserve the selected basis rather than silently treating them as a stock's last
@@ -142,8 +149,11 @@ governs the application's missing-information action; an explicitly requested
 historical research task can still concern a security no longer held.
 
 The normal application refresh owns API-backed securities. They must not enter
-the AI action, even if some fields remain missing or the provider is temporarily
-unavailable. Missing credentials require provider configuration, not AI calls.
+the AI action, even if some fields remain missing or the provider has a temporary network/rate failure. Missing credentials require
+provider configuration. Exact confirmed access/entitlement denial makes that API
+unusable for current research; use AI public-source research if no other usable
+API remains. This does not unlock the provider or permit bypassing its access
+controls. Normal refresh can retry access and restore API ownership.
 Only listings with no applicable API route, or exact verified unsupported
 coverage with no alternative, enter AI research. Its source endpoint searches
 and fetches evidence within a shared five-read

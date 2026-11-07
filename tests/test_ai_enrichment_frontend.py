@@ -40,6 +40,31 @@ renderAIEnrichment();
     return command, evaluate
 
 
+@pytest.mark.parametrize("language", ["en", "he"])
+def test_access_denied_route_and_source_failure_need_explicit_new_request(tmp_path, chromium, language):
+    _, evaluate = ready(tmp_path, chromium, language)
+    evaluate(r'''
+qa.item.api_data_route={owner:'ai',provider:'finnhub',reason:'api_access_denied',coverage:'access_denied',configured:false};
+qa.oldOutcome={...qa.item.holding,status:'unavailable',code:'source_read_failed',available_fields:[],missing_fields:['prices']};
+state.aiEnrichment.job={request_id:'completed-before-query-fix',status:'completed',code:'data_unavailable',
+  progress:{stage:'completed',completed:1,total:1},summary:{updated:0,partial:0,unavailable:1,not_attempted:0},outcomes:[qa.oldOutcome]};
+state.aiEnrichment.outcomes=[qa.oldOutcome];state.aiEnrichment.pending=false;
+renderAIEnrichment();renderAIEnrichment();
+''')
+    assert evaluate("qa.aiPosts") == 0
+    hint = evaluate("securityDataRouteHint(qa.item)")
+    assert ("API access denied" if language == "en" else "הגישה ל־API נדחתה") in hint
+    message = evaluate("aiOutcomeMessage({code:'source_read_failed'})")
+    assert ("could not be read" if language == "en" else "לא ניתן") in message
+    assert "source_read_failed" not in evaluate("$('aiEnrichmentResults').textContent")
+    evaluate("$('enrichMissingData').click();")
+    assert evaluate("qa.aiPosts") == 0
+    assert evaluate("$('aiEnrichmentModal').hidden") is False
+    evaluate("$('aiEnrichmentStart').click();")
+    browser_wait(evaluate, "qa.aiPosts===1&&state.aiEnrichment.pending===true")
+    assert evaluate("qa.errors") == []
+
+
 @pytest.mark.parametrize("width,language", [(1440, "en"), (1440, "he"), (390, "en"), (390, "he")])
 def test_ai_single_request_partial_results_tooltips_permissions_and_narrow_layout(tmp_path, chromium, width, language):
     command, evaluate = ready(tmp_path, chromium, language, width)

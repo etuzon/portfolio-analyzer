@@ -89,6 +89,8 @@ def _provider_state(provider: str, reference: dict[str, Any] | None, identifiers
     same_provider = reference.get("provider") == provider
     if same_provider:
         codes.add(str(reference.get("refresh_status") or reference.get("status") or "").lower())
+    if "access_denied" in codes:
+        codes.add("entitlement_required")
     security = reference.get("security")
     own_identifiers = {_text(security.get(key)) for key in ("identifier", "cusip", "isin", "ticker", "fund_id") if isinstance(security, dict) and security.get(key)}
     positively_identified = same_provider and bool(own_identifiers & identifiers)
@@ -99,10 +101,12 @@ def _provider_state(provider: str, reference: dict[str, Any] | None, identifiers
         if _has_dated_price(reference):
             available.add("prices")
         # Keep saved exact evidence owned by its API even through an outage.
-        state = "entitlement_required" if codes & {"entitlement_required", "not_configured"} else "provider_unavailable" if codes & _UNAVAILABLE_CODES else "verified"
+        state = "entitlement_required" if "entitlement_required" in codes else "not_configured" if "not_configured" in codes else "provider_unavailable" if codes & _UNAVAILABLE_CODES else "verified"
         return state, True, available
-    if codes & {"entitlement_required", "not_configured"}:
+    if "entitlement_required" in codes:
         return "entitlement_required", False, set()
+    if "not_configured" in codes:
+        return "not_configured", False, set()
     if codes & _UNAVAILABLE_CODES:
         return "provider_unavailable", False, set()
     if codes & _NEGATIVE_CODES:
@@ -135,7 +139,7 @@ def route_security(candidate: dict[str, Any], market_data: dict[str, Any], refer
             coverage = "unsupported"
         else:
             coverage = "verified" if verified else "candidate"
-            if not configured and state not in {"entitlement_required", "provider_unavailable"}:
+            if not configured:
                 state = "not_configured" if enabled else "disabled"
         routes.append({"provider": name, "fields": sorted(fields), "configured": configured, "coverage": coverage, "status": state, "verified_fields": sorted(available), "price_scope": "current_quote_only" if name == "nasdaq_quote" else "provider_reported"})
 
@@ -183,20 +187,24 @@ def route_security(candidate: dict[str, Any], market_data: dict[str, Any], refer
     fields = {}
     for field in FIELDS:
         applicable = [route for route in routes if field in route["fields"]]
-        active = [route for route in applicable if route["coverage"] != "unsupported"]
+        active = [route for route in applicable if route["coverage"] != "unsupported" and route["status"] != "entitlement_required"]
         preferred = next((route for route in active if route["configured"]), active[0] if active else None)
         verified = bool(preferred and field in preferred["verified_fields"])
         state = preferred["status"] if preferred else "unsupported"
         if state == "verified" and not verified:
             state = "unverified"
         fields[field] = {"state": state, "providers": [route["provider"] for route in active], "verified": verified}
-    owners = [route for route in routes if route["coverage"] != "unsupported" and set(route["fields"]) & {"prices", "reference"}]
+    owners = [route for route in routes if route["coverage"] != "unsupported" and route["status"] != "entitlement_required" and set(route["fields"]) & {"prices", "reference"}]
     configured = [route for route in owners if route["configured"]]
     preferred = configured[0] if configured else owners[0] if owners else None
     if preferred:
-        reason = "configuration_required" if not configured or all(route["status"] == "entitlement_required" for route in configured) else "provider_unavailable" if all(route["status"] == "provider_unavailable" for route in configured) else "api_coverage_verified" if preferred["coverage"] == "verified" else "api_coverage_unverified"
+        reason = "configuration_required" if not configured or all(route["status"] in {"not_configured", "disabled"} for route in configured) else "provider_unavailable" if all(route["status"] == "provider_unavailable" for route in configured) else "api_coverage_verified" if preferred["coverage"] == "verified" else "api_coverage_unverified"
         owner, coverage = "api", preferred["coverage"]
     else:
         owner, coverage = "ai", "unsupported"
         reason = "api_coverage_unsupported" if routes and all(route["coverage"] == "unsupported" for route in routes) else "no_price_reference_api"
+        denied = next((route for route in routes if route["status"] == "entitlement_required"), None)
+        if denied:
+            reason, coverage = "api_access_denied", "access_denied"
+            preferred = denied  # Attribution only; no usable API ownership.
     return {"owner": owner, "provider": preferred["provider"] if preferred else None, "providers": routes, "configured": bool(configured), "coverage": coverage, "reason": reason, "ai_eligible": owner == "ai", "fields": fields}

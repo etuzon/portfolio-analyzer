@@ -18,12 +18,25 @@ from .price_evidence import _source_records, _observation_currency_matches, _obs
 
 def research_sources(candidate: dict[str, Any], settings: dict[str, Any], budget: RequestBudget, *,
                      search: Callable | None = None, fetch: Callable | None = None) -> dict[str, Any]:
+    diagnostics = {"search_requests": 0, "source_requests": 0, "read_failures": 0, "identity_rejections": 0, "empty_pages": 0}
+
+    def unavailable(code, stage):
+        return {"evidence": [], "source_status": code, "code": code,
+                "failure_stage": stage, "diagnostics": dict(diagnostics)}
+
     if not search_is_configured(settings):
-        return {"evidence": [], "source_status": "search_not_configured", "code": "search_not_configured"}
+        return unavailable("search_not_configured", "search_configuration")
     identity = list(dict.fromkeys(str(candidate.get(field) or "").strip() for field in ("symbol", "secondary_symbol", "name", "stock_market")))
     query = " ".join(part for part in identity if part)[:350]
-    if str(candidate.get("symbol") or "").isdigit() and str(candidate.get("stock_market") or "").upper() in {"TASE", "TEL AVIV"}:
-        query += " מחיר פדיון שער תאריך"
+    market = re.sub(r"\s+", "", str(candidate.get("stock_market") or "").upper())
+    asset = re.sub(r"[\W_]+", "", str(candidate.get("asset_class") or "").upper())
+    if market in {"TASE", "TLV", "TELAVIV"}:
+        if asset in {"FUND", "MUTUALFUND"}:
+            query += " מחיר פדיון שער תאריך"
+        elif asset in {"EQUITY", "STOCK", "SHARE"}:
+            query += " מניה שער תאריך אגורות"
+        else:
+            query += " מחיר שער תאריך מטבע"
     else:
         query += " price close observation date currency company industry"
     # Legacy injected test/search callbacks use (query,key). Production selects
@@ -32,27 +45,29 @@ def research_sources(candidate: dict[str, Any], settings: dict[str, Any], budget
     fetch = fetch or fetch_public_source
     try:
         budget.consume()
+        diagnostics["search_requests"] += 1
         results = search_call(query)
     except ProviderFailure as exc:
         code = "request_limit" if exc.code == "request_limit" else "provider_unavailable"
-        return {"evidence": [], "source_status": code, "code": code}
+        return unavailable(code, "request_budget" if code == "request_limit" else "search_provider")
     except SearchFailure as exc:
-        return {"evidence": [], "source_status": exc.code, "code": exc.code}
+        return unavailable(exc.code, "search_provider")
     except (PriceAgentError, ValueError, OSError):
-        return {"evidence": [], "source_status": "provider_unavailable", "code": "provider_unavailable"}
+        return unavailable("provider_unavailable", "search_provider")
     if not isinstance(results, list):
-        return {"evidence": [], "source_status": "provider_unavailable", "code": "provider_unavailable"}
+        return unavailable("provider_unavailable", "search_provider")
     # Return a real source page, never a search snippet. A failed first URL may
     # use the next search result, within the same shared upstream budget.
-    source_failures = 0
     for result in results[:3]:
         url = result.get("url") if isinstance(result, dict) else None
         if not isinstance(url, str):
             continue
         try:
             budget.consume()
+            diagnostics["source_requests"] += 1
             text = fetch(url)
             if not isinstance(text, str) or not text.strip():
+                diagnostics["empty_pages"] += 1
                 continue
             # Home pages and JavaScript-only shells are discovery failures,
             # not evidence for this instrument. Try the next result within the
@@ -61,19 +76,26 @@ def research_sources(candidate: dict[str, Any], settings: dict[str, Any], budget
             if not any(value and re.search((r"(?<!\d)" if value.isdigit() else r"(?<![A-Za-z0-9])") + re.escape(value)
                                           + (r"(?!\d)" if value.isdigit() else r"(?![A-Za-z0-9])"), text, re.I)
                        for value in identifiers):
+                diagnostics["identity_rejections"] += 1
                 continue
             return {"evidence": [{"url": url, "text": " ".join(text.split())[:30_000],
                                    "retrieved_at": datetime.now(timezone.utc).isoformat()}],
-                    "source_status": "evidence_found", "code": "evidence_found", "search_provider": selected_search_provider(settings)}
+                    "source_status": "evidence_found", "code": "evidence_found", "search_provider": selected_search_provider(settings),
+                    "diagnostics": dict(diagnostics)}
         except ProviderFailure as exc:
-            code = "request_limit" if exc.code == "request_limit" else "provider_unavailable"
-            return {"evidence": [], "source_status": code, "code": code}
+            code = "request_limit" if exc.code == "request_limit" else "source_read_failed"
+            return unavailable(code, "request_budget" if code == "request_limit" else "source_read")
         except (PriceAgentError, ValueError, OSError):
-            source_failures += 1
+            diagnostics["read_failures"] += 1
             if not budget.remaining:
                 break
-    code = "request_limit" if not budget.remaining else "provider_unavailable" if source_failures else "data_unavailable"
-    return {"evidence": [], "source_status": code, "code": code}
+    if not budget.remaining:
+        return unavailable("request_limit", "request_budget")
+    if diagnostics["read_failures"]:
+        return unavailable("source_read_failed", "source_read")
+    if diagnostics["identity_rejections"] or diagnostics["empty_pages"]:
+        return unavailable("source_identity_unavailable", "source_identity")
+    return unavailable("data_unavailable", "search_results")
 
 
 def _profile_proposal(item: dict[str, Any], candidate: dict[str, Any], sources: dict[str, dict[str, Any]]) -> dict[str, Any]:

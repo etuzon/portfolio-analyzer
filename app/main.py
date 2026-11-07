@@ -2840,7 +2840,16 @@ def portfolio_cache_signature() -> str | None:
         return None
     # Rebuild aggregates with the current dated-local-quote cutoff. Raw
     # provider caches and saved portfolio history remain intact.
-    return f"v11:{local_store.change_token()}"
+    market = config.market_data
+    settings = market.get("security_lookup") or {}
+    names = {"alpha_vantage", "financial_modeling_prep", "yahoo_finance", "stooq", "nasdaq_quote", "sec_company_facts"}
+    routing = {key: market.get(key) for key in ("primary", "fallback", "experimental_fallback")}
+    for name, section in [(name, market.get(name) or {}) for name in sorted(names)] + [(name, settings.get(name) or {}) for name in ("finnhub", "treasury_direct", "eodhd")]:
+        if isinstance(section, dict):
+            routing[name] = {"enabled": section.get("enabled"), "key_present": bool(section.get("api_key")),
+                             "quote_unit": section.get("quote_unit"), "quote_currency": section.get("quote_currency")}
+    digest = hashlib.sha256(json.dumps(routing, sort_keys=True, default=str).encode()).hexdigest()[:16]
+    return f"v12:{local_store.change_token()}:{digest}"
 
 
 def read_portfolio_cache() -> dict[str, Any] | None:
@@ -4245,7 +4254,7 @@ def _us_bond_identifier(security: dict[str, Any]) -> tuple[str, str] | None:
     return None
 
 
-def _bond_market_data(security: dict[str, Any], *, cache_only: bool = False, date_from: str = "", date_to: str = "") -> dict[str, Any] | None:
+def _bond_market_data(security: dict[str, Any], *, cache_only: bool = False, date_from: str = "", date_to: str = "", refresh: bool = False) -> dict[str, Any] | None:
     """Keep provider-native bond evidence separate from portfolio price units."""
     identified = _us_bond_identifier(security)
     if not identified:
@@ -4256,7 +4265,7 @@ def _bond_market_data(security: dict[str, Any], *, cache_only: bool = False, dat
         return None
     lookup = SecurityMarketData(config.market_data, cache)
     if not cache_only:
-        result = lookup.fetch(identifier, "bond", identifier_type, date_from=date_from, date_to=date_to)
+        result = lookup.fetch(identifier, "bond", identifier_type, date_from=date_from, date_to=date_to, refresh=refresh)
         # Retain exact coverage/error evidence separately from successful quote
         # history. A transient failure never erases the last confirmed prices.
         cache.set_security_snapshot("security_lookup", identifier, "security-coverage-v1:bond", result)
@@ -4302,13 +4311,13 @@ def _us_fund_lookup(security):
     return next((item for item in matches if item[1] == "isin"), matches[0] if matches else None)
 
 
-def _us_fund_market_data(security, *, cache_only=False):
+def _us_fund_market_data(security, *, cache_only=False, refresh=False):
     identified = _us_fund_lookup(security)
     cache = getattr(hub(), "cache", None)
     if not identified or cache is None:
         return None
     identifier, identifier_type, kind = identified
-    result = SecurityMarketData(config.market_data, cache).fetch(identifier, kind, identifier_type, cache_only=cache_only)
+    result = SecurityMarketData(config.market_data, cache).fetch(identifier, kind, identifier_type, cache_only=cache_only, refresh=refresh)
     if not cache_only:
         cache.set_security_snapshot("security_lookup", identifier, "security-coverage-v1:" + kind, result)
     return result
@@ -4540,7 +4549,7 @@ def _attach_ordinary_analysis(local, market):
                                   preserve_local_prices=manual and not compatible)
 
 
-def _automatic_price_inventory():
+def _automatic_price_inventory(*, include_denied=False):
     """All open native API listings, independent of missing fields or AI caps."""
     by_key = {}
     if not hasattr(local_store, "holdings"):
@@ -4553,10 +4562,13 @@ def _automatic_price_inventory():
         if not (_us_bond_identifier(holding) or _israeli_fund_identifier(holding) or _us_fund_lookup(holding)):
             continue
         route = _security_api_route(holding)
-        if route["owner"] != "api" or not route["configured"]:
+        retry_denied = include_denied and route["reason"] == "api_access_denied" and any(
+            provider.get("configured") for provider in route.get("providers", []))
+        if not retry_denied and (route["owner"] != "api" or not route["configured"]):
             continue
         key = enrichment_security_key(holding)
         candidate = by_key.setdefault(key, {**holding, "security_key": key, "quantity": 0, "_sources": set()})
+        candidate["_force_api_refresh"] = candidate.get("_force_api_refresh", False) or retry_denied
         candidate["quantity"] += quantity
         candidate["_sources"].add(holding.get("data_source", ""))
     for candidate in by_key.values():
@@ -4569,7 +4581,8 @@ def _automatic_price_inventory():
 def _fetch_automatic_security_prices(candidate):
     """Provider workers cache facts only; the coordinator decides publication."""
     fund_id = _israeli_fund_identifier(candidate)
-    return _israeli_fund_data(fund_id) if fund_id else _us_fund_market_data(candidate) if _us_fund_lookup(candidate) else _bond_market_data(candidate)
+    force = bool(candidate.get("_force_api_refresh"))
+    return _israeli_fund_data(fund_id, refresh=force) if fund_id else _us_fund_market_data(candidate, refresh=force) if _us_fund_lookup(candidate) else _bond_market_data(candidate, refresh=force)
 
 
 def _apply_automatic_security_prices(candidate, snapshot, *, cancelled=lambda: False):
@@ -4617,7 +4630,7 @@ def _refresh_automatic_security_prices(*, cancelled=lambda: False):
     from .automatic_security_refresh import AutomaticSecurityRefresh
     if _automatic_api_refresher is None:
         _automatic_api_refresher = AutomaticSecurityRefresh()
-    return _automatic_api_refresher.run(_automatic_price_inventory(), _fetch_automatic_security_prices,
+    return _automatic_api_refresher.run(_automatic_price_inventory(include_denied=True), _fetch_automatic_security_prices,
         lambda candidate, snapshot: _apply_automatic_security_prices(candidate, snapshot, cancelled=cancelled),
         cancelled=cancelled, timeout_seconds=25)
 
@@ -5002,6 +5015,8 @@ def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, requ
     messages = {
         "data_found": "Missing information was retrieved.", "partial_data": "Some information was retrieved; the remaining fields are unavailable.",
         "data_unavailable": "The configured sources could not supply this information.", "provider_unavailable": "The data source could not be reached. Please try again later.",
+        "source_read_failed": "Search found source pages, but the application could not read them. Saved data is retained.",
+        "source_identity_unavailable": "The retrieved pages did not identify the exact security. Saved data is retained.",
         "ai_unavailable": "AI assistance is unavailable. Check its connection and try again.", "request_limit": "This request reached its limit. Some information remains unavailable.",
         "not_processed": "This security was not processed in this batch.", "authentication_expired": "The session expired. Sign in again before retrying.",
         "job_failed": "The information could not be retrieved. Please try again later.",
