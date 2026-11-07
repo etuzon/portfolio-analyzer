@@ -57,7 +57,7 @@ from .benchmark_data import benchmark_comparison, benchmark_inputs, save_portfol
 from .xray import XrayError, build_xray, read_snapshot, require_fund, save_manual_report, snapshot_key
 from .dividend_calendar import build_dividend_calendar
 from .external_import import ExternalImportClient
-from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, SUPPORTED_MANAGEMENT_CURRENCIES, CashBalanceError, LocalPortfolioStore, validate_portfolio_ownership
+from .local_portfolio import ACCOUNT_TYPES, ASSET_CLASSES, FUND_KINDS, INSTRUMENT_TYPES, ISSUER_LISTING_STATUSES, OPTION_TYPES, SUPPORTED_MANAGEMENT_CURRENCIES, CashBalanceError, LocalPortfolioStore, validate_portfolio_ownership, normalize_price
 from .llm_assistant import AssistantError, PortfolioAssistant, assistant_settings
 from .security_prices import price_router
 from .security_market_data import SecurityMarketData, security_market_router, normalize_identifier, SNAPSHOT_VERSION
@@ -2490,6 +2490,13 @@ def _serialized_portfolio_payload(analyses, cache_status: str) -> dict[str, Any]
         (str(row.get("symbol") or "").upper(), str(row.get("stock_market") or "").upper()): row["profile"]
         for row in (local_store.list_security_exposure_profiles() if hasattr(local_store, "list_security_exposure_profiles") else [])
     }
+    api_marks = {}
+    for row in local_store.list_prices() if hasattr(local_store, "list_prices") else []:
+        if row.get("source") != "api_evidence":
+            continue
+        mark_key = (row.get("symbol"), row.get("stock_market"), row.get("currency"), row.get("asset_class"), row.get("location"))
+        if mark_key not in api_marks or str(row.get("price_date")) > str(api_marks[mark_key].get("price_date")):
+            api_marks[mark_key] = row
     serialized_items = []
     for analysis in analyses:
         item = to_dict(analysis)
@@ -2532,12 +2539,28 @@ def _serialized_portfolio_payload(analyses, cache_status: str) -> dict[str, Any]
         item["industry_source"] = source
         holding["industry"] = industry
         item["exposure_profile"] = exposure_profiles.get((symbol, stock_market)) or exposure_profiles.get((symbol, ""))
+        mark = api_marks.get((symbol, stock_market, holding.get("currency"), holding.get("asset_class"), holding.get("location")))
+        if mark and any(values.get("current_date") == mark.get("price_date")
+                        and _number_or_none(values.get("current")) == _number_or_none(mark.get("price"))
+                        for values in (item.get("price_ranges") or {}).values() if isinstance(values, dict)):
+            try:
+                evidence = json.loads(mark.get("comments") or "{}")
+                if evidence.get("provider") in {"maya", "treasury_direct", "finnhub"}:
+                    item["valuation_price_provider"] = evidence["provider"]
+            except (ValueError, TypeError, AttributeError):
+                pass
         reference = _bond_market_data(holding, cache_only=True)
         if reference:
             item["market_data"] = reference
             reference_name = str((reference.get("security") or {}).get("name") or "").strip()
             if reference_name and (not holding.get("name") or str(holding["name"]).upper() == symbol):
                 holding["name"] = reference_name
+        fund_id = _israeli_fund_identifier(holding)
+        if fund_id:
+            fund = _israeli_fund_data(fund_id, cache_only=True)
+            fund_name = str(((fund or {}).get("security") or {}).get("name") or "").strip()
+            if fund_name and (not holding.get("name") or str(holding["name"]).upper() == symbol):
+                holding["name"] = fund_name
         serialized_items.append(item)
     return {
         "status": {"local_portfolio": local_status, "portfolio_cache": cache_status},
@@ -4227,6 +4250,58 @@ def _bond_market_data(security: dict[str, Any], *, cache_only: bool = False, dat
     return result
 
 
+def _israeli_fund_identifier(security):
+    if str(security.get("asset_class") or "").upper() not in {"MUTUALFUND", "FUND"}:
+        return None
+    if str(security.get("currency") or "").upper() != "ILS" or normalize_price(100, security.get("location", ""), "EQUITY") != 1:
+        return None
+    for field in ("symbol", "secondary_symbol"):
+        value = str(security.get(field) or "").strip()
+        if re.fullmatch(r"\d{5,8}", value) and int(value) > 0:
+            return str(int(value))
+    return None
+
+
+def _israeli_fund_data(identifier, *, cache_only=False, date_from="", date_to="", refresh=False):
+    from .israeli_fund_provider import MayaFundProvider
+    from .us_market_providers import RequestBudget
+    from .security_market_data import lookup_range
+    start, end = lookup_range(date_from, date_to)
+    cache = getattr(hub(), "cache", None)
+    if cache is None:
+        return None
+    key = "maya-fund-v1:" + start.isoformat() + ":" + end.isoformat()
+    saved = cache.get_security_snapshot("security_lookup", identifier, "maya-fund-v1:latest" if cache_only else key)
+    if saved:
+        try:
+            fresh = (datetime.now(timezone.utc) - datetime.fromisoformat(saved["retrieved_at"])).total_seconds() < 86400
+        except (ValueError, TypeError, KeyError):
+            fresh = False
+        if cache_only or fresh and not refresh:
+            return {**deepcopy(saved), "cache_status": "fresh" if fresh else "stale", "provider_requests": 0,
+                    **({"status": "stale"} if not fresh else {})}
+    if cache_only:
+        return None
+    result = MayaFundProvider().fetch(identifier, start, end, RequestBudget())
+    result["cache_status"] = "fetched"
+    cache.set_security_snapshot("security_lookup", identifier, key, result)
+    cache.set_security_snapshot("security_lookup", identifier, "maya-fund-v1:latest", result)
+    return result
+
+
+@app.get("/api/security/israeli-fund")
+def israeli_fund_data(fund_id: str, date_from: str = "", date_to: str = "", refresh: bool = False):
+    from .us_market_providers import ProviderFailure
+    if not re.fullmatch(r"\d{5,8}", fund_id) or int(fund_id) <= 0:
+        raise HTTPException(422, "Use an exact Israeli fund number")
+    try:
+        return _israeli_fund_data(str(int(fund_id)), date_from=date_from, date_to=date_to, refresh=refresh) or {"status": "unavailable"}
+    except ProviderFailure as exc:
+        return {"status": "unavailable", "code": exc.code, "items": [], "portfolio_updated": False}
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from None
+
+
 @app.get("/api/security/history")
 def security_history(symbol: str, stock_market: str = "", period: str = "1y", date_from: str = "", level_periods: str = ""):
     days_by_period = {"1m": 31, "6m": 183, "1y": 366, "3y": 366 * 3, "5y": 366 * 5}
@@ -4318,9 +4393,12 @@ def _enrichment_missing_fields(item: dict[str, Any]) -> list[str]:
     holding = item.get("holding") or {}
     missing = set(item.get("missing") or [])
     asset = "BOND" if str(holding.get("asset_sub_class") or "").upper() == "BOND" else str(holding.get("asset_class") or "").upper()
+    asset = "FUND" if asset == "MUTUALFUND" else asset
     fields = []
     if "price history" in missing or not any(
-        isinstance(values, dict) and values.get("current") is not None and values.get("current_date")
+        isinstance(values, dict) and values.get("current") is not None
+        and (observed_day := _parse_query_date(values.get("current_date"))) is not None
+        and date.today() - timedelta(days=7) <= observed_day <= date.today()
         for values in (item.get("price_ranges") or {}).values()
     ):
         fields.append("prices")
@@ -4342,6 +4420,7 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
     """Application-owned inventory route; the AI coordinator never calls this directly."""
     from .security_prices import quote_unit
     by_key = {}
+    open_scope = {}
     overrides = None
     for analysis in enriched_local_holdings(cached_only=True):
         item = to_dict(analysis)
@@ -4355,6 +4434,13 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
         market = str(holding.get("stock_market") or "").strip().upper()
         if not symbol or not market:
             continue
+        # Private valuations and employee grants have no public listing to
+        # research. Never send their internal identifiers to an internet search.
+        if market == "PRIVATE" or str(holding.get("asset_class") or "").upper() in {"PRIVATE_STOCK", "EMPLOYEE_STOCK_OPTION", "STOCK_OPTION"}:
+            continue
+        scope = open_scope.setdefault(enrichment_security_key(holding), {"quantity": 0, "sources": set()})
+        scope["quantity"] += quantity
+        scope["sources"].add(holding.get("data_source", ""))
         if overrides is None:
             overrides = {(str(row.get("symbol") or "").upper(), str(row.get("stock_market") or "").upper()): row
                          for row in (local_store.list_security_industry_overrides() if hasattr(local_store, "list_security_industry_overrides") else [])}
@@ -4365,6 +4451,9 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
         if cached.get("name") and (not holding.get("name") or str(holding["name"]).upper() == symbol):
             holding["name"] = cached["name"]
         reference = _bond_market_data(holding, cache_only=True)
+        fund_id = _israeli_fund_identifier(holding)
+        if fund_id:
+            reference = _israeli_fund_data(fund_id, cache_only=True)
         reference_name = str(((reference or {}).get("security") or {}).get("name") or "").strip()
         if reference_name and (not holding.get("name") or str(holding["name"]).upper() == symbol):
             holding["name"] = reference_name
@@ -4382,9 +4471,12 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
         key = enrichment_security_key(holding)
         if not holding.get("symbol") or not holding.get("stock_market"):
             continue
+        previous_candidate = by_key.get(key)
         by_key[key] = {
             "security_key": key, "symbol": holding["symbol"], "stock_market": holding["stock_market"],
             "currency": holding.get("currency", ""), "secondary_symbol": holding.get("secondary_symbol", ""),
+            "data_source": holding.get("data_source", ""),
+            "quantity": quantity,
             "location": holding.get("location", ""),
             "quote_unit": quote_unit({"location": holding.get("location", ""), "asset_class": holding.get("asset_class", ""), "currency": holding.get("currency", "")}),
             "asset_class": holding.get("asset_class", ""), "asset_sub_class": holding.get("asset_sub_class", ""), "name": holding.get("name", ""),
@@ -4392,6 +4484,15 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
             "needs_industry": not bool(industry),
             "missing_fields": missing, "available_fields": [],
         }
+        if previous_candidate:
+            by_key[key]["missing_fields"] = sorted(set(previous_candidate["missing_fields"]) | set(missing))
+            by_key[key]["needs_name"] |= previous_candidate["needs_name"]
+            by_key[key]["needs_industry"] |= previous_candidate["needs_industry"]
+    for key, candidate in by_key.items():
+        scope = open_scope[key]
+        candidate["quantity"] = scope["quantity"]
+        if len(scope["sources"]) > 1:
+            candidate["data_source"] = "LOCAL" if scope["sources"] <= {"LOCAL", "MANUAL"} else "MIXED"
     previous = {item["security_key"]: item for item in _enrichment_outcomes() if isinstance(item, dict) and item.get("security_key")}
     for key, candidate in by_key.items():
         candidate["last_attempted_at"] = previous.get(key, {}).get("last_attempted_at")
@@ -4402,8 +4503,9 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
         # Application-owned API refresh runs before any model work, only for the
         # bounded open-held selection. The original inventory remains truthful.
         from .price_agent import price_agent_settings, PriceAgentError
+        from .security_search import search_is_configured
         try:
-            research_available = bool(price_agent_settings(config.raw).get("search_api_key"))
+            research_available = search_is_configured(price_agent_settings(config.raw))
         except PriceAgentError:
             research_available = False
         results = _enrichment_api_preflight.run(visible, lambda candidate: _enrichment_fetch_security(candidate, "auto"))
@@ -4418,10 +4520,23 @@ def _enrichment_fetch_security(candidate: dict[str, Any], field: str) -> dict[st
     if not current:
         held = any(enrichment_security_key(to_dict(item).get("holding") or {}) == key
                    and (quantity := _number_or_none((to_dict(item).get("holding") or {}).get("quantity"))) is not None and quantity != 0
+                   and str((to_dict(item).get("holding") or {}).get("stock_market") or "").upper() != "PRIVATE"
+                   and str((to_dict(item).get("holding") or {}).get("asset_class") or "").upper() not in {"PRIVATE_STOCK", "EMPLOYEE_STOCK_OPTION", "STOCK_OPTION"}
                    for item in enriched_local_holdings(cached_only=True))
         return {**candidate, "status": "updated" if held else "not_attempted", "code": "data_found" if held else "not_open", "available_fields": [], "missing_fields": [] if held else candidate.get("missing_fields", [])}
     market_hub = hub()
     symbol, market = current["symbol"], current["stock_market"]
+    fund_id = _israeli_fund_identifier(current)
+    if fund_id:
+        from .api_price_updates import fund_price_records
+        result = _israeli_fund_data(fund_id)
+        metadata = local_store.manual_security(symbol, market)
+        existing = local_store.price_history(symbol, market, HISTORY_START_DATE, date.today())
+        records = fund_price_records(current, metadata, result, existing, HISTORY_START_DATE)
+        available = ["reference"] if result and result.get("security") else []
+        return {**candidate, "status": "partial" if available else "unavailable",
+                "code": "api_price_ready" if records else "partial_data" if available else "data_unavailable",
+                "available_fields": available, "missing_fields": current["missing_fields"], "research_eligible": not bool(records)}
     if _us_bond_identifier(current):
         # A CUSIP/ISIN bond is not a stock ticker. Its provider-native reference
         # prices cannot value holdings until face-per-unit conventions are known.
@@ -4434,6 +4549,15 @@ def _enrichment_fetch_security(candidate: dict[str, Any], field: str) -> dict[st
         available_fields = (["reference"] if available else []) + (["profile"] if available and "profile" in current["missing_fields"] and "profile" not in remaining else [])
         reference_only = bool(available and "prices" in remaining and set(remaining) <= {"prices", "reference"}
                               and any(row.get("quote_unit") == "percent_of_par" for row in result.get("items", [])))
+        from .api_price_updates import bond_price_records
+        metadata = local_store.manual_security(symbol, market) if hasattr(local_store, "manual_security") else None
+        existing = local_store.price_history(symbol, market, HISTORY_START_DATE, date.today()) if metadata else []
+        ready = bond_price_records(current, metadata, result, existing, HISTORY_START_DATE)
+        if ready:
+            # Stage verified marks in the API cache. Only finalization may save
+            # portfolio prices; a read route never makes that write.
+            return {**candidate, "status": "partial", "code": "api_price_ready", "available_fields": available_fields,
+                    "missing_fields": remaining, "research_eligible": False}
         status = "updated" if available and not remaining else "partial" if available else "unavailable"
         return {**candidate, "status": status, "code": "bond_reference_only" if reference_only else "data_found" if status == "updated" else "partial_data" if available else "data_unavailable",
                 "available_fields": available_fields, "missing_fields": remaining, "research_eligible": not reference_only}
@@ -4598,6 +4722,44 @@ def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, requ
     if proposal:
         open_keys = {enrichment_security_key(to_dict(item).get("holding") or {}) for item in enriched_local_holdings(cached_only=True)
                      if (quantity := _number_or_none((to_dict(item).get("holding") or {}).get("quantity"))) is not None and quantity != 0}
+    # API-only results also reach this authenticated, authorized POST. Recheck
+    # open/missing eligibility and the local quantity convention before writing.
+    from .api_price_updates import bond_price_records, fund_price_records
+    api_applied = {}
+    current_candidates = {item["security_key"]: item for item in _enrichment_candidates(limit=None)["items"]}
+    for outcome in outcomes:
+        key = outcome["security_key"]
+        candidate = current_candidates.get(key)
+        if outcome.get("code") != "api_price_ready" or not candidate or "prices" not in candidate.get("missing_fields", []):
+            continue
+        metadata = local_store.manual_security(candidate["symbol"], candidate["stock_market"])
+        existing = local_store.price_history(candidate["symbol"], candidate["stock_market"], HISTORY_START_DATE, date.today())
+        fund_id = _israeli_fund_identifier(candidate)
+        snapshot = _israeli_fund_data(fund_id, cache_only=True) if fund_id else _bond_market_data(candidate, cache_only=True)
+        records = (fund_price_records if fund_id else bond_price_records)(candidate, metadata, snapshot, existing, HISTORY_START_DATE)
+        still_open_missing = next((item for item in _enrichment_candidates(limit=None)["items"]
+                                   if item["security_key"] == key and "prices" in item.get("missing_fields", [])), None)
+        if not still_open_missing:
+            continue
+        if records:
+            accepted = local_store.save_prices(records, only_missing=True)
+            clear_portfolio_cache()
+            if not accepted:
+                api_applied[key] = {**outcome, "status": "not_attempted", "code": "already_available",
+                                    "attempted": False, "available_fields": []}
+                continue
+            remaining = [field for field in candidate["missing_fields"] if field not in {"prices", "reference"}]
+            api_applied[key] = {**outcome, "status": "partial" if remaining else "updated",
+                                "code": "partial_data" if remaining else "data_found",
+                                "missing_fields": remaining,
+                                "available_fields": sorted(set(outcome.get("available_fields", [])) | {"prices", "reference"})}
+        else:
+            api_applied[key] = {**outcome, "code": "bond_reference_only", "status": "partial"}
+    open_keys = {enrichment_security_key(holding) for item in enriched_local_holdings(cached_only=True)
+                 if (holding := to_dict(item).get("holding") or {})
+                 and (quantity := _number_or_none(holding.get("quantity"))) is not None and quantity != 0
+                 and str(holding.get("stock_market") or "").upper() != "PRIVATE"
+                 and str(holding.get("asset_class") or "").upper() not in {"PRIVATE_STOCK", "EMPLOYEE_STOCK_OPTION", "STOCK_OPTION"}}
     finalized = []
     messages = {
         "data_found": "Missing information was retrieved.", "partial_data": "Some information was retrieved; the remaining fields are unavailable.",
@@ -4606,11 +4768,16 @@ def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, requ
         "not_processed": "This security was not processed in this batch.", "authentication_expired": "The session expired. Sign in again before retrying.",
         "job_failed": "The information could not be retrieved. Please try again later.",
         "research_unavailable": "Internet research is unavailable. Configure the search service and try again.",
+        "search_not_configured": "The selected search service requires configuration. Choose automatic search or configure its key.",
+        "search_blocked": "The search service temporarily blocked this request. Try again later or choose another search provider.",
+        "api_price_ready": "Verified API prices are ready to save.",
+        "already_available": "Another update already supplied this price. Your saved price was kept.",
         "evidence_rejected": "The source did not provide enough verified information.",
         "provider_timeout": "The API source check took longer than allowed. Retained data is available; retry later.",
         "bond_reference_only": "API bond reference data is available. Portfolio valuation still requires a defined quantity/face-value convention.",
     }
     for outcome in outcomes:
+        outcome = api_applied.get(outcome["security_key"], outcome)
         if outcome["security_key"] in applied:
             verified = applied[outcome["security_key"]]
             available = sorted(set(outcome.get("available_fields") or []) | set(verified.get("available_fields") or []))

@@ -33,6 +33,7 @@ const state = {
   localPrices: [],
   equityCompQuotes: {},
   priceFocus: null,
+  priceEntry: { initialized: false, scope: "", saving: false },
   securityDetail: null,
   positionTransactionsDetail: null,
   positionTransactionSaving: false,
@@ -1164,6 +1165,7 @@ async function saveLoggingSettings() {
 }
 
 const WRITE_CONTROL_IDS = new Set([
+  "addHistoricalPrice",
   "aiEnrichmentStart",
   "saveXrayReport", "fetchXrayIssuer", "chooseXrayReportFile",
   "addAlertCondition", "newAlertRule", "addBannerItem", "addPensionPeriod", "addPensionRate", "addPensionScenario",
@@ -1220,6 +1222,10 @@ function aiOutcomeMessage(outcome) {
     provider_timeout: "The source check took longer than expected. Saved data is retained; use Refresh or try again later.",
     bond_reference_only: "API bond reference data is available. Portfolio valuation still requires a defined quantity/face-value convention.",
     research_unavailable: "Internet research is unavailable. Configure the search service and try again.",
+    search_not_configured: "The selected search service requires configuration. Choose automatic search or configure its key.",
+    search_blocked: "The search service temporarily blocked this request. Try again later or choose another search provider.",
+    api_price_ready: "Verified API prices are ready to save.",
+    already_available: "Another update already supplied this price. Your saved price was kept.",
     evidence_rejected: "The source did not provide enough verified information.",
     not_processed: "This security was not checked in this request.",
     not_open: "This security no longer has an open holding.",
@@ -1490,11 +1496,13 @@ function renderCurrentUser() {
   if ($("currentUserRole")) $("currentUserRole").textContent = user ? optionLabel(user.role) : "";
   applyRolePermissions();
   renderAIEnrichment();
+  renderPriceEntryState();
   renderAssistantChat();
 }
 
 function setAuthenticatedSession(payload) {
   if (state.auth.user?.id !== payload?.user?.id) {
+    resetPriceEntry();
     resetAIEnrichment();
     state.alarmClearPending = false;
     state.alarmClearMessage = null;
@@ -1520,6 +1528,7 @@ function setAuthenticatedSession(payload) {
 }
 
 function showLogin(message = "") {
+  resetPriceEntry();
   resetAIEnrichment();
   clearBrokerForm();
   if (typeof resetVar === "function") resetVar();
@@ -3381,6 +3390,8 @@ function stockMarketDisplay(h, marketKey = "", exchange = "") {
 
 function dataProviderDisplay(item, h, marketKey = "") {
   if (item.market_data?.security && ["treasury_direct", "finnhub"].includes(item.market_data.provider)) return bondReferenceProvider(item.market_data.provider);
+  if (item.valuation_price_provider === "maya") return "MAYA";
+  if (["treasury_direct", "finnhub"].includes(item.valuation_price_provider)) return bondReferenceProvider(item.valuation_price_provider);
   if (isProviderName(marketKey)) return providerDisplayName(marketKey);
   const usable = Object.entries(item.provider_status || {}).filter(([key, value]) => (
     ["ok", "stale"].some((stateName) => String(value).toLowerCase().includes(stateName)) && key.includes(".")
@@ -6843,7 +6854,7 @@ function refreshManualSecuritySelects() {
   const priceSelect = $("priceKnownInstrument");
   if (priceSelect) {
     const current = priceSelect.value;
-    priceSelect.innerHTML = '<option value="">Free symbol / not defined</option>' + state.manualSecurities
+    priceSelect.innerHTML = `<option value="">${esc(t("Free symbol / not defined"))}</option>` + state.manualSecurities
       .map((item) => `<option value="${esc(item.id)}">${esc(instrumentLabel(item))}</option>`)
       .join("");
     if ([...priceSelect.options].some((option) => option.value === current)) priceSelect.value = current;
@@ -6943,6 +6954,62 @@ function fillPriceFormFromFocus() {
   setDateField("priceDate", todayString());
 }
 
+function resetPriceEntry() {
+  state.priceEntry = { initialized: false, scope: "", saving: false };
+  state.priceFocus = null;
+  const parent = $("pricesModal"), entry = $("priceEntryModal");
+  if (parent) { parent.inert = false; parent.removeAttribute("aria-hidden"); }
+  if (entry) { entry.hidden = true; delete entry.dataset.parentModalId; }
+  ["priceKnownInstrument", "priceSymbol", "priceMarket", "priceInput", "priceComments"].forEach((id) => { if ($(id)) $(id).value = ""; });
+  if ($("priceEntryStatus")) $("priceEntryStatus").textContent = "";
+}
+
+function renderPriceEntryState() {
+  const form = $("priceEntryForm");
+  if (!form) return;
+  const saving = Boolean(state.priceEntry?.saving);
+  form.querySelectorAll("input,select,button").forEach((control) => { control.disabled = saving; });
+  $("savePrice").disabled = saving || !canWrite();
+  $("savePrice").textContent = t(saving ? "Saving historical price…" : "Save price");
+  $("priceEntryModal").querySelectorAll("button[data-close]").forEach((button) => { button.disabled = saving; });
+  const location = valueOf("priceLocation").toLowerCase();
+  const unitText = ["israel", "ישראל"].includes(location)
+    ? "Israel entries use agorot; the app divides the entered price by 100."
+    : ["usa", "us", "united states", "united states of america", "ארצות הברית", "ארה״ב"].includes(location) && valueOf("priceAssetClass") === "BOND"
+      ? "For locally recorded U.S. bonds, enter the quote per 100 of face value; the app divides it by 100 once."
+      : "Enter the price in the selected currency per recorded unit.";
+  $("priceEntryUnits").textContent = t(unitText);
+}
+
+function preparePriceEntry() {
+  const ui = state.priceEntry;
+  const scope = JSON.stringify([currentUser()?.id, state.priceFocus?.symbol || "", state.priceFocus?.stock_market || "", state.priceFocus?.currency || ""]);
+  if (!ui.initialized || ui.scope !== scope) {
+    ["priceKnownInstrument", "priceSymbol", "priceMarket", "priceInput", "priceComments"].forEach((id) => { $(id).value = ""; });
+    if (state.priceFocus) fillPriceFormFromFocus();
+    else setDateField("priceDate", todayString());
+    ui.scope = scope;
+    ui.initialized = true;
+    $("priceEntryStatus").textContent = "";
+    $("priceEntryForm").querySelectorAll("[aria-invalid]").forEach((control) => control.removeAttribute("aria-invalid"));
+  }
+  renderPriceEntryState();
+}
+
+function priceEvidenceText(price) {
+  const comments = String(price.comments || "");
+  if (!["api_evidence", "web_evidence"].includes(price.source)) return comments;
+  let evidence;
+  try { evidence = JSON.parse(comments); } catch { return comments; }
+  if (evidence?.kind !== "price_evidence_v1") return comments;
+  let source = { treasury_direct: "TreasuryDirect", maya: "MAYA", finnhub: "Finnhub", eodhd: "EODHD" }[evidence.provider] || "";
+  try { if (!source && evidence.source_url) source = new URL(evidence.source_url).hostname; } catch { /* Keep the evidence label when the URL is unavailable. */ }
+  const basis = { redemption: "Redemption price", nav: "Net asset value", net_asset_value: "Net asset value" }[evidence.price_basis];
+  const units = { agorot: "Agorot", cents: "Cents", currency: "Recorded currency", percent_of_par: "Percent of par" }[evidence.quote_unit];
+  return [source && `${t("Source")}: ${source}`, evidence.price_basis && `${t("Price basis")}: ${basis ? t(basis) : bondReferenceConvention(evidence.price_basis)}`,
+    evidence.side && `${t("Quote side")}: ${bondReferenceConvention(evidence.side)}`, units && `${t("Source units")}: ${t(units)}`].filter(Boolean).join(" · ") || t("Verified source evidence");
+}
+
 function renderPriceFocusBar() {
   const bar = $("priceFocusBar");
   if (!bar) return;
@@ -6953,8 +7020,8 @@ function renderPriceFocusBar() {
     return;
   }
   bar.innerHTML = `
-    <span>Editing history for <b>${esc(focus.symbol)}</b> · ${esc(focus.stock_market || "MANUAL")} · ${esc(focus.asset_class || "")} · ${esc(currencyDisplayLabel(focus.currency || ""))}</span>
-    <button class="secondary compact-button" type="button" data-clear-price-focus>Show all prices</button>
+    <span>${esc(t("Price history for"))} <b>${esc(focus.symbol)}</b> · ${esc(focus.stock_market || "MANUAL")} · ${esc(optionLabel(focus.asset_class || ""))} · ${esc(currencyDisplayLabel(focus.currency || ""))}</span>
+    <button class="secondary compact-button" type="button" data-clear-price-focus>${esc(t("Show all prices"))}</button>
   `;
 }
 
@@ -7115,8 +7182,7 @@ function openPriceHistoryForSecurity(dataset, returnFocus = document.activeEleme
     currency: dataset.priceHistoryCurrency || dataset.securityDetailCurrency || "USD",
     location: dataset.priceHistoryLocation || dataset.securityDetailLocation || "USA",
   };
-  fillPriceFormFromFocus();
-  openModal("pricesModal", returnFocus, { focusId: "priceInput" });
+  openModal("pricesModal", returnFocus, { focusId: "pricesTitle" });
   const item = (state.allPortfolioItems || []).find((entry) => securityMatches(entry, state.priceFocus.symbol, state.priceFocus.stock_market));
   if (item) {
     state.priceFocus.secondary_symbol = item.holding?.secondary_symbol || "";
@@ -7571,7 +7637,7 @@ function renderSecurityDetail() {
       <b>${esc(formatDate(price.price_date))}</b>
       <span>${fmt(price.price_input, 4)} · ${esc(currencyDisplayLabel(price.currency))} ${fmt(price.price, 4)}</span>
       <button class="secondary compact-button" type="button" data-delete-price="${esc(price.id)}">${esc(t("Remove"))}</button>
-      <div class="sub">${esc(optionLabel(price.asset_class))} · ${esc(countryDisplayLabel(price.location))}${price.comments ? ` · ${esc(price.comments)}` : ""}</div>
+      <div class="sub">${esc(optionLabel(price.asset_class))} · ${esc(countryDisplayLabel(price.location))}${price.comments ? ` · ${esc(priceEvidenceText(price))}` : ""}</div>
     </div>
   `).join("") : `<div class="empty">${esc(t(load.prices === "loading" ? "Loading price history"
     : load.prices === "error" ? "Could not load saved prices." : "No saved price history for this security"))}</div>`;
@@ -9410,7 +9476,6 @@ async function loadLocalPrices() {
   await loadManualSecurities();
   const data = await api("/api/local/prices");
   state.localPrices = data.items || [];
-  fillPriceFormFromFocus();
   renderPriceFocusBar();
   renderBondReference("prices");
   if (state.items?.length) renderAnalytics(state.items);
@@ -9419,13 +9484,28 @@ async function loadLocalPrices() {
     <div class="stack-item management-item">
       <b>${esc(price.symbol)}</b>
       <span>${esc(formatDate(price.price_date))} · ${fmt(price.price_input, 4)} (${esc(currencyDisplayLabel(price.currency))} ${fmt(price.price, 4)})</span>
-      <button class="secondary compact-button" type="button" data-delete-price="${esc(price.id)}">Remove</button>
-      <div class="sub">${esc(price.stock_market)} · ${esc(price.asset_class)} · ${esc(countryDisplayLabel(price.location))} · ${esc(price.comments || "")}</div>
+      <button class="secondary compact-button" type="button" data-delete-price="${esc(price.id)}">${esc(t("Remove"))}</button>
+      <div class="sub">${esc(price.stock_market)} · ${esc(price.asset_class)} · ${esc(countryDisplayLabel(price.location))} · ${esc(priceEvidenceText(price))}</div>
     </div>
-  `).join("") : `<div class="empty">${state.priceFocus ? "No saved history for this security yet" : "No manual prices yet"}</div>`;
+  `).join("") : `<div class="empty">${esc(t(state.priceFocus ? "No saved history for this security yet" : "No saved prices yet"))}</div>`;
 }
 
 async function savePrice() {
+  const ui = state.priceEntry, owner = currentUser()?.id;
+  if (!canWrite() || ui.saving || currentUser()?.must_change_password) return;
+  const invalid = !valueOf("priceSymbol") ? ["priceSymbol", "Enter a security symbol."]
+    : !valueOf("priceMarket") ? ["priceMarket", "Enter a stock market."]
+    : !valueOf("priceInput") || !Number.isFinite(Number(valueOf("priceInput"))) ? ["priceInput", "Enter a finite historical price."]
+    : Number(valueOf("priceInput")) < 0 ? ["priceInput", "Enter a historical price of zero or more."]
+    : !dateValue("priceDate") ? ["priceDate", "Enter a valid observation date (dd/mm/yyyy)."]
+    : dateValue("priceDate") > todayString() ? ["priceDate", "Use an observation date on or before today."] : null;
+  $("priceEntryForm").querySelectorAll("[aria-invalid]").forEach((control) => control.removeAttribute("aria-invalid"));
+  if (invalid) {
+    $("priceEntryStatus").textContent = t(invalid[1]);
+    $(invalid[0]).setAttribute("aria-invalid", "true");
+    $(invalid[0]).focus();
+    return;
+  }
   const payload = {
     symbol: cleanSecuritySymbol(valueOf("priceSymbol")),
     stock_market: valueOf("priceMarket"),
@@ -9433,14 +9513,31 @@ async function savePrice() {
     location: valueOf("priceLocation") || "USA",
     currency: valueOf("priceCurrency") || "USD",
     price_input: valueOf("priceInput"),
-    price_date: dateValue("priceDate") || todayString(),
+    price_date: dateValue("priceDate"),
     comments: valueOf("priceComments"),
   };
-  await api("/api/local/prices", { method: "POST", body: JSON.stringify(payload) });
-  $("priceStatus").textContent = "Historic price saved";
-  ["priceSymbol", "priceMarket", "priceInput", "priceComments"].forEach((id) => { $(id).value = ""; });
-  await loadLocalPrices();
-  await loadPortfolio();
+  ui.saving = true;
+  $("priceEntryStatus").textContent = t("Saving historical price…");
+  renderPriceEntryState();
+  try {
+    await api("/api/local/prices", { method: "POST", body: JSON.stringify(payload) });
+    if (state.priceEntry !== ui || currentUser()?.id !== owner) return;
+    ui.saving = false;
+    ui.initialized = false;
+    renderPriceEntryState();
+    closeModal($("priceEntryModal"));
+    $("priceStatus").textContent = t("Historic price saved");
+    ["priceSymbol", "priceMarket", "priceInput", "priceComments"].forEach((id) => { $(id).value = ""; });
+    const results = await Promise.allSettled([loadLocalPrices(), loadPortfolio()]);
+    if (state.priceEntry === ui && currentUser()?.id === owner && results.some((result) => result.status === "rejected")) {
+      $("priceStatus").textContent = t("Price saved. Some displayed data could not reload. Reopen Prices or use dashboard Refresh to retry.");
+    }
+  } catch {
+    if (state.priceEntry !== ui || currentUser()?.id !== owner) return;
+    $("priceEntryStatus").textContent = t("The price could not be saved. Your draft is kept. Try again.");
+  } finally {
+    if (state.priceEntry === ui) { ui.saving = false; renderPriceEntryState(); }
+  }
 }
 
 // Report totals must never silently treat unlike currencies as equivalent.
@@ -14195,6 +14292,7 @@ function positionModalHomeLinks() {
 }
 
 function returnToDashboard() {
+  if (state.priceEntry?.saving) return;
   if (typeof accountCashSaving === "function" && accountCashSaving()) return;
   document.querySelectorAll(".modal:not([hidden])").forEach((modal) => {
     modal.hidden = true;
@@ -14213,6 +14311,7 @@ function returnToDashboard() {
 window.addEventListener("resize", positionModalHomeLinks);
 
 function openModal(id, returnFocus = document.activeElement, destination = {}) {
+  if (id === "priceEntryModal" && !canWrite()) return;
   if (id === "dividendCalendarModal") {
     id = "eventsModal";
     destination = { ...destination, dividendsSection: "calendar" };
@@ -14300,7 +14399,20 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
       if (status) status.textContent = `Error: ${error.message}`;
     });
   }
-  if (id === "pricesModal") loadLocalPrices();
+  if (id === "pricesModal") {
+    loadLocalPrices().catch(() => { $("priceStatus").textContent = t("Price history could not be loaded. Reopen Prices to retry."); });
+    requestAnimationFrame(() => { if (!modal.hidden) $("pricesTitle").focus({ preventScroll: true }); });
+  }
+  if (id === "priceEntryModal") {
+    const parent = $("pricesModal");
+    if (parent && !parent.hidden) {
+      modal.dataset.parentModalId = parent.id;
+      parent.inert = true;
+      parent.setAttribute("aria-hidden", "true");
+    }
+    preparePriceEntry();
+    requestAnimationFrame(() => { if (!modal.hidden) $(state.priceFocus ? "priceInput" : "priceSymbol").focus({ preventScroll: true }); });
+  }
   if (id === "eventsModal") {
     setDividendsSection(destination.dividendsSection || "calendar");
   }
@@ -14352,6 +14464,7 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
 
 function closeModal(modal) {
   if (!modal) return;
+  if (modal.id === "priceEntryModal" && state.priceEntry?.saving) return;
   if (modal.id === "accountCashModal" && accountCashSaving()) return;
   if (modal.id === "accountCashModal") modalReturnFocus.set(modal.id, accountCashReturnFocus());
   if (modal.id === "dataGapsModal" && !modalReturnFocus.get(modal.id)?.isConnected) {
@@ -14360,7 +14473,7 @@ function closeModal(modal) {
   if (modal.id === "brokerEditorModal" && state.brokerSaving) return;
   if (modal.id === "instrumentEditorModal" && state.manualSecuritySaving && !state.manualSecuritySaved) return;
   if (modal.id === "assistantModal") saveAssistantDraft();
-  if (["securityDetailModal", "tradingJournalModal", "brokerEditorModal", "instrumentEditorModal", "alarmRiskModal", "accountCashModal"].includes(modal.id) && modal.dataset.parentModalId) {
+  if (["securityDetailModal", "tradingJournalModal", "brokerEditorModal", "instrumentEditorModal", "alarmRiskModal", "accountCashModal", "priceEntryModal"].includes(modal.id) && modal.dataset.parentModalId) {
     const parentModal = $(modal.dataset.parentModalId);
     if (parentModal) {
       parentModal.inert = false;
@@ -14417,7 +14530,7 @@ function closeModal(modal) {
     if (focusTarget instanceof HTMLElement) {
       const parentMenu = focusTarget.closest("details");
       if (parentMenu && !parentMenu.open) parentMenu.open = true;
-      focusTarget.focus({ preventScroll: ["tradeHistoryDetailModal", "securityDetailModal", "alarmRiskModal", "accountCashModal", "dataGapsModal"].includes(modal.id) });
+      focusTarget.focus({ preventScroll: ["tradeHistoryDetailModal", "securityDetailModal", "alarmRiskModal", "accountCashModal", "dataGapsModal", "priceEntryModal"].includes(modal.id) });
     }
   });
 }
@@ -15184,6 +15297,7 @@ document.addEventListener("change", (event) => {
   if (event.target.id === "priceKnownInstrument") {
     applyInstrumentToForm(instrumentById(event.target.value), "price");
   }
+  if (["priceKnownInstrument", "priceAssetClass", "priceLocation", "priceCurrency"].includes(event.target.id)) renderPriceEntryState();
 
   if (event.target.id === "securityChartStartDate") {
     state.securityChartStartDate = clampedHistoryDate(event.target.value);
@@ -15504,7 +15618,7 @@ $("positionTransactionAction").addEventListener("change", syncPositionTransactio
 $("runDividendEvents").addEventListener("click", () => runDividendEvents().catch((error) => { $("eventsStatus").textContent = `Error: ${error.message}`; }));
 $("saveAlarmSettings").addEventListener("click", saveVestingAlertSettings);
 $("clearAlarms").addEventListener("click", clearAlarms);
-$("savePrice").addEventListener("click", () => savePrice().catch((error) => { $("priceStatus").textContent = `Error: ${error.message}`; }));
+$("priceEntryForm").addEventListener("submit", (event) => { event.preventDefault(); savePrice(); });
 $("saveDetailPrice").addEventListener("click", () => saveSecurityDetailPrice().catch((error) => { $("securityDetailStatus").textContent = `Error: ${error.message}`; }));
 $("loadReports").addEventListener("click", () => loadReports().catch(() => {}));
 $("updateReportHistory").addEventListener("click", () => loadReports().catch(() => {}));

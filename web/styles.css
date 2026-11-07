@@ -11799,21 +11799,28 @@ html[dir="rtl"] .settings-menu-button.active {
   .instrument-list-controls { grid-template-columns:minmax(0,1fr); }
 }
 
-#pricesModal .price-entry-form { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:10px; align-items:end; }
-#pricesModal .price-entry-form .management-field { min-width:0; }
-#pricesModal .price-entry-form input,#pricesModal .price-entry-form select { width:100%; min-width:0; box-sizing:border-box; }
-#pricesModal .price-instrument-field,#pricesModal .price-comments-field { grid-column:span 4; }
-#pricesModal .price-compact-field { grid-column:span 2; }
-#pricesModal .price-currency-field { grid-column:span 3; }
-#pricesModal #savePrice { min-width:80px; }
-@media(max-width:1050px) {
-  #pricesModal .price-entry-form { grid-template-columns:repeat(2,minmax(150px,1fr)); }
-  #pricesModal .price-entry-form .management-field { grid-column:auto; }
-  #pricesModal .price-entry-form .price-instrument-field,#pricesModal .price-entry-form .price-comments-field { grid-column:1/-1; }
-}
-@media(max-width:700px) {
-  #pricesModal .price-entry-form { grid-template-columns:minmax(0,1fr); }
-  #pricesModal .price-entry-form .management-field { grid-column:1/-1; }
+#priceEntryModal > .modal-card { width:min(760px,100%); }
+#priceEntryModal > .modal-card > .section-head { flex-direction:row; align-items:flex-start; }
+#priceEntryModal > .modal-card > .section-head h2 { margin:0; }
+#priceEntryModal > .modal-card > .section-head > button { flex:0 0 auto; }
+#priceEntryModal .price-entry-form { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; align-items:end; margin-top:16px; }
+#priceEntryModal .management-field { min-width:0; }
+#priceEntryModal .price-entry-form input,#priceEntryModal .price-entry-form select { width:100%; min-width:0; box-sizing:border-box; }
+#priceEntryModal .price-instrument-field,#priceEntryModal .price-comments-field,#priceEntryModal .price-observation-fields,#priceEntryUnits,#priceEntryStatus,#priceEntryModal .price-entry-actions { grid-column:1/-1; }
+#priceEntryModal .price-symbol-field { max-width:320px; }
+#priceEntryModal .price-market-field { max-width:240px; }
+#priceEntryModal .price-asset-field { max-width:240px; }
+#priceEntryModal .price-location-field { max-width:260px; }
+.price-observation-fields { display:flex; flex-wrap:wrap; align-items:end; gap:12px; min-width:0; }
+.price-observation-fields .price-amount-field { width:220px; max-width:100%; }
+.price-observation-fields .price-currency-field { width:120px; max-width:100%; }
+.price-observation-fields .price-date-field { width:160px; max-width:100%; }
+#priceEntryModal .price-entry-actions { display:flex; justify-content:flex-end; gap:10px; }
+#priceEntryModal .price-entry-actions button { min-width:90px; width:auto; }
+#priceEntryUnits,#priceEntryStatus { margin:0; }
+@media(max-width:600px) {
+  #priceEntryModal .price-entry-form { grid-template-columns:minmax(0,1fr); }
+  #priceEntryModal .price-entry-form > .management-field { grid-column:1/-1; max-width:100%; }
 }
 
 .dividend-summary-controls { display:grid; grid-template-columns:minmax(180px,1.4fr) minmax(130px,.7fr) minmax(190px,1.4fr) minmax(130px,.7fr); gap:10px; align-items:end; margin-block:12px; }

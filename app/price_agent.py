@@ -26,6 +26,10 @@ import httpx
 class PriceAgentError(ValueError):
     """A diagnostic that does not contain credentials or raw provider failures."""
 
+    def __init__(self, message: str, *, code: str | None = None):
+        self.code = code
+        super().__init__(message)
+
 
 def _finite_number(value: Any) -> bool:
     if type(value) not in {float, int}:
@@ -55,8 +59,8 @@ def price_agent_settings(raw: dict[str, Any]) -> dict[str, Any]:
     if effort not in {"low", "medium", "high"}:
         raise PriceAgentError("Price-agent reasoning_effort must be low, medium or high.")
     search = section.get("search") or {}
-    if not isinstance(search, dict) or search.get("provider", "brave") != "brave":
-        raise PriceAgentError("Price-agent search.provider must be brave.")
+    if not isinstance(search, dict) or search.get("provider", "auto") not in {"auto", "brave", "duckduckgo"}:
+        raise PriceAgentError("Price-agent search.provider must be auto, brave or duckduckgo.")
     timeout = section.get("timeout_seconds", 110)
     if not _finite_number(timeout) or timeout < 1:
         raise PriceAgentError("Price-agent timeout_seconds must be a positive number.")
@@ -68,6 +72,7 @@ def price_agent_settings(raw: dict[str, Any]) -> dict[str, Any]:
         "max_rest_calls": _limit(section.get("max_rest_calls")),
         "timeout_seconds": min(timeout, 110),
         "base_url": str(section.get("base_url") or "https://localhost:6443").rstrip("/"),
+        "search_provider": str(search.get("provider") or "auto"),
         "search_api_key": str(search.get("api_key") or os.getenv("BRAVE_SEARCH_API_KEY") or ""),
     }
 
@@ -162,24 +167,12 @@ def fetch_public_source(url: str) -> str:
 
 
 def brave_search(query: str, api_key: str) -> list[dict[str, str]]:
-    if not api_key:
-        raise PriceAgentError("Set BRAVE_SEARCH_API_KEY or price_agent.search.api_key to enable internet search.")
+    """Compatibility entrypoint for callers explicitly selecting Brave."""
+    from .security_search import SearchFailure, search_web
     try:
-        with httpx.Client(timeout=20, follow_redirects=False, trust_env=False) as client:
-            with client.stream("GET", "https://api.search.brave.com/res/v1/web/search", params={"q": query, "count": 5}, headers={"X-Subscription-Token": api_key, "Accept": "application/json"}) as response:
-                if response.status_code != 200:
-                    raise PriceAgentError("Internet search is unavailable; check the search service configuration.")
-                raw = bytearray()
-                for chunk in response.iter_bytes():
-                    raw.extend(chunk)
-                    if len(raw) > 1_000_000:
-                        raise PriceAgentError("Internet search exceeded the response size limit.")
-                result = json.loads(raw)
-    except (httpx.HTTPError, ValueError) as exc:
-        if isinstance(exc, PriceAgentError):
-            raise
-        raise PriceAgentError("Internet search is unavailable.") from exc
-    return [{"url": str(row.get("url") or ""), "title": str(row.get("title") or "")[:300], "description": str(row.get("description") or "")[:1500]} for row in (result.get("web", {}).get("results") or [])[:5] if isinstance(row, dict)]
+        return search_web(query, {"search_provider": "brave", "search_api_key": api_key})
+    except SearchFailure as exc:
+        raise PriceAgentError(str(exc), code=exc.code) from None
 
 
 def cli_decision(settings: dict[str, Any], messages: list[dict[str, Any]], tools: list[dict[str, Any]], policy: str) -> dict[str, Any]:
@@ -344,7 +337,8 @@ class PriceAgent:
     def __init__(self, settings: dict[str, Any], rest: Callable[..., Any], *, model: Callable[..., Any] | None = None, search: Callable[[str], Any] | None = None, fetch: Callable[[str], str] | None = None):
         self.settings, self.rest = settings, rest
         self.model = model or (lambda messages, tools: cli_decision(settings, messages, tools, POLICY))
-        self.search = search or (lambda query: brave_search(query, settings["search_api_key"]))
+        from .security_search import search_web
+        self.search = search or (lambda query: search_web(query, settings))
         self.fetch = fetch or fetch_public_source
         self.budget = RequestBudget(_limit(settings.get("max_model_calls")), _limit(settings.get("max_rest_calls")))
         self._started = False
@@ -417,7 +411,10 @@ class PriceAgent:
             except (ValueError, TypeError, KeyError) as exc:
                 if write_attempted:
                     raise
-                result = {"error": str(exc) if isinstance(exc, PriceAgentError) else "The requested price tool arguments were invalid."}
+                from .security_search import SearchFailure
+                result = {"error": str(exc) if isinstance(exc, (PriceAgentError, SearchFailure)) else "The requested price tool arguments were invalid."}
+                if getattr(exc, "code", None):
+                    result["code"] = exc.code
             messages.append({"role": "tool", "tool_call_id": str(call.get("id") or "price-tool"), "content": json.dumps(result, ensure_ascii=False)})
         raise PriceAgentError("The model call limit was reached; no prices were written. Review the evidence before starting another request.")
 

@@ -10,32 +10,41 @@ import json
 import re
 from typing import Any, Callable
 
-from .price_agent import PriceAgent, PriceAgentError, ITEM_PROPERTIES, brave_search, fetch_public_source
+from .price_agent import PriceAgent, PriceAgentError, ITEM_PROPERTIES, fetch_public_source
+from .security_search import SearchFailure, search_is_configured, search_web, selected_search_provider
 from .us_market_providers import RequestBudget, ProviderFailure
 from .price_evidence import _source_records, _observation_currency_matches, _observation_record_matches
 
 
 def research_sources(candidate: dict[str, Any], settings: dict[str, Any], budget: RequestBudget, *,
                      search: Callable | None = None, fetch: Callable | None = None) -> dict[str, Any]:
-    key = str(settings.get("search_api_key") or "")
-    if not key:
-        return {"evidence": [], "source_status": "research_unavailable", "code": "research_unavailable"}
-    query = " ".join(str(candidate.get(field) or "") for field in ("symbol", "secondary_symbol", "name", "stock_market"))
-    query = query.strip()[:350] + " price close observation date currency company industry"
-    search = search or brave_search
+    if not search_is_configured(settings):
+        return {"evidence": [], "source_status": "search_not_configured", "code": "search_not_configured"}
+    identity = list(dict.fromkeys(str(candidate.get(field) or "").strip() for field in ("symbol", "secondary_symbol", "name", "stock_market")))
+    query = " ".join(part for part in identity if part)[:350]
+    if str(candidate.get("symbol") or "").isdigit() and str(candidate.get("stock_market") or "").upper() in {"TASE", "TEL AVIV"}:
+        query += " מחיר פדיון שער תאריך"
+    else:
+        query += " price close observation date currency company industry"
+    # Legacy injected test/search callbacks use (query,key). Production selects
+    # one provider with no hidden fallback or uncounted retry.
+    search_call = (lambda query: search(query, str(settings.get("search_api_key") or ""))) if search else (lambda query: search_web(query, settings))
     fetch = fetch or fetch_public_source
     try:
         budget.consume()
-        results = search(query, key)
+        results = search_call(query)
     except ProviderFailure as exc:
         code = "request_limit" if exc.code == "request_limit" else "provider_unavailable"
         return {"evidence": [], "source_status": code, "code": code}
+    except SearchFailure as exc:
+        return {"evidence": [], "source_status": exc.code, "code": exc.code}
     except (PriceAgentError, ValueError, OSError):
-        return {"evidence": [], "source_status": "research_unavailable", "code": "research_unavailable"}
+        return {"evidence": [], "source_status": "provider_unavailable", "code": "provider_unavailable"}
     if not isinstance(results, list):
         return {"evidence": [], "source_status": "provider_unavailable", "code": "provider_unavailable"}
     # Return a real source page, never a search snippet. A failed first URL may
     # use the next search result, within the same shared upstream budget.
+    source_failures = 0
     for result in results[:3]:
         url = result.get("url") if isinstance(result, dict) else None
         if not isinstance(url, str):
@@ -45,16 +54,25 @@ def research_sources(candidate: dict[str, Any], settings: dict[str, Any], budget
             text = fetch(url)
             if not isinstance(text, str) or not text.strip():
                 continue
+            # Home pages and JavaScript-only shells are discovery failures,
+            # not evidence for this instrument. Try the next result within the
+            # same budget rather than giving the model an unrelated page.
+            identifiers = [str(candidate.get(key) or "").strip() for key in ("symbol", "secondary_symbol")]
+            if not any(value and re.search((r"(?<!\d)" if value.isdigit() else r"(?<![A-Za-z0-9])") + re.escape(value)
+                                          + (r"(?!\d)" if value.isdigit() else r"(?![A-Za-z0-9])"), text, re.I)
+                       for value in identifiers):
+                continue
             return {"evidence": [{"url": url, "text": " ".join(text.split())[:30_000],
                                    "retrieved_at": datetime.now(timezone.utc).isoformat()}],
-                    "source_status": "evidence_found", "code": "evidence_found"}
+                    "source_status": "evidence_found", "code": "evidence_found", "search_provider": selected_search_provider(settings)}
         except ProviderFailure as exc:
             code = "request_limit" if exc.code == "request_limit" else "provider_unavailable"
             return {"evidence": [], "source_status": code, "code": code}
         except (PriceAgentError, ValueError, OSError):
+            source_failures += 1
             if not budget.remaining:
                 break
-    code = "request_limit" if not budget.remaining else "data_unavailable"
+    code = "request_limit" if not budget.remaining else "provider_unavailable" if source_failures else "data_unavailable"
     return {"evidence": [], "source_status": code, "code": code}
 
 

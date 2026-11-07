@@ -81,7 +81,7 @@ llm:
   timeout_seconds: 30
 
 # Host-side skill runner; independent of the read-only dashboard chat.
-# Requires a signed-in CLI, an authorized REST bearer token, and Brave Search.
+# Requires a signed-in CLI and an authorized REST bearer token.
 price_agent:
   provider: "codex"  # codex (default) or claude
   # Empty resolves to gpt-6.1-sol for Codex, sonnet for Claude Code.
@@ -92,7 +92,7 @@ price_agent:
   timeout_seconds: 110
   base_url: "https://localhost:6443"
   search:
-    provider: "brave"
+    provider: "auto"  # Brave with a key; otherwise public DuckDuckGo HTML search.
     api_key: "${BRAVE_SEARCH_API_KEY}"
 
 dividends:

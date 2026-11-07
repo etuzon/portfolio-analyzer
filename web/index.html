@@ -20,7 +20,7 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/assets/portfolio-vault/icon-48.png?v=1" />
     <link rel="shortcut icon" href="/assets/portfolio-vault/favicon.ico?v=1" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=0.9.26-risk-badges" />
+  <link rel="stylesheet" href="/styles.css?v=20261107-api-prices-entry" />
   <link rel="stylesheet" href="/benchmark.css?v=3" />
   <link rel="stylesheet" href="/trading-journal.css?v=1" />
   <link rel="stylesheet" href="/optimization.css?v=3" />
@@ -1082,30 +1082,40 @@
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="pricesTitle">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Manual historical prices</p>
-            <h2 id="pricesTitle">Prices</h2>
+            <h2 id="pricesTitle" tabindex="-1">Prices</h2>
           </div>
-          <button class="icon-button" type="button" data-close aria-label="Close">×</button>
+          <div class="settings-actions"><button id="addHistoricalPrice" type="button" data-modal="priceEntryModal">Add historical price</button><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
         </div>
-        <div class="management-form price-entry-form">
-          <label class="management-field price-instrument-field"><span>Defined Instrument</span><select id="priceKnownInstrument"></select></label>
-          <label class="management-field price-compact-field"><span>Symbol</span><input id="priceSymbol" placeholder="Symbol" /></label>
-          <label class="management-field price-compact-field"><span>Stock market</span><input id="priceMarket" list="marketOptions" placeholder="Stock market" /></label>
-          <label class="management-field price-compact-field"><span>Asset class</span><select id="priceAssetClass"></select></label>
-          <label class="management-field price-compact-field"><span>Location</span><input id="priceLocation" list="countryOptions" placeholder="Location" /></label>
-          <label class="management-field price-currency-field"><span>Currency</span><select id="priceCurrency"></select></label>
-          <label class="management-field price-compact-field"><span>Historic price</span><input id="priceInput" type="number" step="0.0001" placeholder="Historic price" /></label>
-          <label class="management-field price-compact-field"><span>Date</span><input id="priceDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
-          <label class="management-field price-comments-field"><span>Comments</span><input id="priceComments" placeholder="Comments" /></label>
-          <button id="savePrice" type="button">Save</button>
-        </div>
-        <p id="priceStatus" class="status-line"></p>
+        <p id="priceStatus" class="status-line" role="status" aria-live="polite"></p>
         <div id="priceFocusBar" class="info-strip" hidden></div>
         <section id="priceMarketReference" class="bond-reference-panel" aria-labelledby="priceMarketReferenceTitle" hidden>
           <div class="section-head"><h3 id="priceMarketReferenceTitle">API reference data</h3><button class="secondary compact-button" type="button" data-bond-reference="prices">Load API reference</button></div>
           <div class="bond-reference-content"></div>
         </section>
         <div id="pricesList" class="stack management-list"></div>
+      </section>
+    </div>
+
+    <div id="priceEntryModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card price-entry-card" role="dialog" aria-modal="true" aria-labelledby="priceEntryTitle" aria-describedby="priceEntryUnits">
+        <div class="section-head"><h2 id="priceEntryTitle" tabindex="-1">Add historical price</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <form id="priceEntryForm" class="management-form price-entry-form" novalidate>
+          <label class="management-field price-instrument-field"><span>Defined Instrument</span><select id="priceKnownInstrument"></select></label>
+          <label class="management-field price-symbol-field"><span>Symbol</span><input id="priceSymbol" placeholder="Symbol" required /></label>
+          <label class="management-field price-market-field"><span>Stock market</span><input id="priceMarket" list="marketOptions" placeholder="Stock market" required /></label>
+          <label class="management-field price-asset-field"><span>Asset class</span><select id="priceAssetClass"></select></label>
+          <label class="management-field price-location-field"><span>Location</span><input id="priceLocation" list="countryOptions" placeholder="Location" /></label>
+          <div class="price-observation-fields">
+            <label class="management-field price-amount-field"><span>Historic price</span><input id="priceInput" type="number" step="0.0001" min="0" placeholder="Historic price" aria-describedby="priceEntryUnits" required /></label>
+            <label class="management-field price-currency-field"><span>Currency</span><select id="priceCurrency"></select></label>
+            <label class="management-field price-date-field"><span>Date</span><input id="priceDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" required /></label>
+          </div>
+          <p id="priceEntryUnits" class="section-note"></p>
+          <label class="management-field price-comments-field"><span>Comments</span><input id="priceComments" placeholder="Comments" /></label>
+          <p id="priceEntryStatus" class="status-line" role="alert" aria-live="polite"></p>
+          <div class="form-actions price-entry-actions"><button id="savePrice" type="submit">Save price</button><button class="secondary" type="button" data-close>Cancel</button></div>
+        </form>
       </section>
     </div>
 
@@ -1271,12 +1281,14 @@
               </article>
               <article class="help-feature">
                 <h3>Prices</h3>
-                <p>Add a dated historical price when provider data is unavailable or needs a local correction. Use the actual price date so charts and valuations stay aligned.</p>
+                <p>Prices opens on saved history. Select Add historical price to open the entry dialog. Choose a defined instrument or enter its symbol and market, then the price, currency and actual observation date in dd/mm/yyyy. Zero is allowed; negative prices and future dates are rejected. The units note follows location and asset class. A focused security is prefilled when entry opens; API reference quotes are never copied into the form. Admin and Operator users can save; Viewer users can inspect history and API reference data. Save closes only the entry dialog and reloads history and totals. Errors stay in the dialog with the draft. Cancel or Close keeps the current draft for reopening; changing the focused security or signing out resets it. Background history loads do not overwrite entries. After a confirmed save, failed reloads can be retried by reopening Prices or using dashboard Refresh. Source-generated history notes show readable source and price-basis labels; manual comments stay as entered.</p>
                 <p>Select a security symbol in the dashboard Holdings table to open its overview. Registered U.S. bonds with an exact CUSIP or U.S. ISIN, including a secondary identifier, show a separate API reference panel; focused Prices shows the same data. Public TreasuryDirect data does not require AI or an Internet-search key; other bond coverage may require a configured provider subscription. Manual registration describes how the instrument was entered, while API reference source identifies retrieved evidence. Read the actual observation dates, units, price basis and quote side. Percent-of-par prices are per 100 of face value and are not the price of one recorded holding unit. Coupon rates are annual rates, not yield to maturity. API profile terms can be newer than historical observations. Viewing or refreshing this data never changes the local valuation chart, saved prices, holding quantity or portfolio value, and never fills a manual price field. Viewer users can read and refresh it. Partial or stale data stays labelled; missing dates are not interpolated. Use Load earlier API observations for a supplied continuation date; each click makes one bounded lookup and replaces the reference table. Load latest API observations returns to the recent range. Refresh API reference retries a source; a failed refresh retains saved evidence. Dashboard Refresh reloads cached API reference source badges.</p>
                 <p>Ask portfolio chat for U.S. bond, mutual-fund or ETF data, or use the market-data REST endpoint with an exact identifier and security type. Bonds use CUSIP or ISIN; funds and ETFs use supported tickers or ISINs. Prices, history and reference details are fetched and cached automatically, without entering prices or first adding a held security. Viewer users can read this research data. Retrieval does not change portfolio prices, quantities or cash.</p>
                 <p>Administrators configure market_data.security_lookup in config.yaml. Finnhub bond access and EODHD fund access require suitable provider keys and subscriptions. Public TreasuryDirect coverage is limited to Treasury securities and may return partial daily history with a continuation date. Each fetch allows at most five provider attempts, including failures. Read the observation dates, units and coverage: bond percent-of-par quotes are not cents, and fund NAV is separate from an ETF market price. Historical prices may accompany a current profile. Cached results can be old; refresh retries the provider, while cache-only reads saved evidence. Failed refreshes retain available data marked stale. Missing configuration or coverage is reported explicitly.</p>
-                <p>External clients can read saved current and historical prices through the security price REST endpoints. Current means the latest saved observation, not a live quote. An Admin must enable REST access; price updates require Read and write mode and an Admin or Operator token. Updates stay local, retain source evidence, and refresh portfolio calculations. Adding older history does not replace a newer current price.</p>
-                <p>Use the security-price-update skill in Codex or Claude Code to research and save prices. Configure price_agent in config.yaml; Codex is the default. The security must already exist in Securities. The host runner requires a signed-in CLI, a REST token and a Brave Search API key. Supply the exact security and market and use actual observation dates. Enter Israeli quotes in agorot, US bonds in cents and other supported quotes in their currency. Adjusted prices and percent-of-par bond quotes are not supported by this updater. Each request allows at most five model exchanges and five application REST attempts, including failures. Missing or ambiguous evidence stops the update. Current-price requests reject sources older than the saved current observation. Use dry-run to review; after a failed verification, inspect saved prices before retrying.</p>
+                                <p>For supported locally recorded U.S. bonds, the missing-information action saves verified API prices using the same units as manual entry: each recorded unit represents USD 1 face value and a quote per 100 is divided by 100 once. The actual Treasury valuation or programme purchase/redemption basis is retained. Existing observations are preserved. Imported holdings or incompatible currency and unit conventions remain reference-only. Ordinary domestic ILS mutual funds use official MAYA redemption prices in agorot, divided by 100 once, with actual valuation dates and partial history preserved. Closed holdings, private securities and employee option grants are excluded from public research.</p>
+                <p>Search defaults to automatic: Brave is used when its key is configured; otherwise public DuckDuckGo search is available without a key. An explicit Brave selection requires its key. A temporary search block is reported separately from missing configuration or insufficient price evidence. The Israeli fund REST endpoint retrieves official current and historical redemption and purchase prices by fund number without AI. Reading reference data does not save portfolio prices; the missing-information action saves supported observations through authorized finalization.</p>
+<p>External clients can read saved current and historical prices through the security price REST endpoints. Current means the latest saved observation, not a live quote. An Admin must enable REST access; price updates require Read and write mode and an Admin or Operator token. Updates stay local, retain source evidence, and refresh portfolio calculations. Adding older history does not replace a newer current price.</p>
+                <p>Use the security-price-update skill in Codex or Claude Code to research and save prices. Configure price_agent in config.yaml; Codex is the default. The security must already exist in Securities. The host runner requires a signed-in CLI and a REST token. Automatic search does not require a search key. Supply the exact security and market and use actual observation dates. Enter Israeli quotes in agorot, US bonds in cents and other supported quotes in their currency. Adjusted prices and percent-of-par bond quotes are not supported by this updater. Each request allows at most five model exchanges and five application REST attempts, including failures. Missing or ambiguous evidence stops the update. Current-price requests reject sources older than the saved current observation. Use dry-run to review; after a failed verification, inspect saved prices before retrying.</p>
               </article>
               <article class="help-feature">
                 <h3>Portfolio Reports</h3>
@@ -2899,7 +2911,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <div id="riskBadgeExplanation" class="risk-badge-explanation" role="tooltip" hidden></div>
-  <script src="/i18n.js?v=1.2.21-risk-badges"></script>
+  <script src="/i18n.js?v=20261107-api-prices-entry"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
   <script src="/trade-planner.js?v=3"></script>
@@ -2919,6 +2931,6 @@
   <script src="/alarm-priority-ui.js?v=3"></script>
   <script src="/account-cash-ui.js?v=3"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=0.9.20-risk-badges"></script>
+  <script src="/app.js?v=20261107-api-prices-entry"></script>
   </body>
 </html>

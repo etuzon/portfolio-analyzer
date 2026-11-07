@@ -752,7 +752,7 @@ def test_equity_compensation_table_explains_type_and_exposes_missing_price_actio
     assert 'equityCompPriceHtml(group)' in table
     assert 'data-price-history-symbol=' in script
     assert 'openPriceHistoryForSecurity(equityPriceTrigger.dataset, equityPriceTrigger)' in script
-    assert 'openModal("pricesModal", returnFocus, { focusId: "priceInput" })' in script
+    assert 'openModal("pricesModal", returnFocus, { focusId: "pricesTitle" })' in script
     assert '.equity-price-cell {' in styles
     assert '"Instrument": "נייר ערך"' in i18n
     assert '"Investment type": "סוג השקעה"' in i18n

@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.config import load_config
 from app.price_agent import PriceAgent, PriceAgentError, make_rest_client, price_agent_settings
+from app.security_search import search_is_configured
 
 
 def input_date(value: str) -> str:
@@ -42,8 +43,8 @@ def main() -> int:
     try:
         settings = price_agent_settings(load_config().raw)
         # Prerequisites are checked before spending any application or model calls.
-        if not settings["search_api_key"]:
-            raise PriceAgentError("Set BRAVE_SEARCH_API_KEY or price_agent.search.api_key to enable internet search.")
+        if not search_is_configured(settings):
+            raise PriceAgentError("Brave search requires a configured API key; choose search.provider: auto or duckduckgo for key-free research.", code="search_not_configured")
         rest = make_rest_client(settings["base_url"], os.getenv("PORTFOLIO_API_TOKEN", ""), ca_file=args.ca_file)
         agent = PriceAgent(settings, rest)
         result = agent.run(args.symbol, args.stock_market, date_from=args.date_from, date_to=args.date_to, dry_run=args.dry_run)
@@ -51,6 +52,8 @@ def main() -> int:
         return 0 if result["status"] in {"updated", "dry_run"} else 2
     except (PriceAgentError, OSError) as exc:
         result = {"status": "failed", "error": str(exc)}
+        if getattr(exc, "code", None):
+            result["code"] = exc.code
         if agent:
             result.update(agent.budget.counts())
         print(json.dumps(result, ensure_ascii=False, indent=2), file=sys.stderr)

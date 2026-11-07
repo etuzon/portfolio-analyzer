@@ -3158,15 +3158,18 @@ class LocalPortfolioStore:
             ).fetchone()
         return _dict(saved)
 
-    def save_prices(self, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def save_prices(self, payloads: list[dict[str, Any]], *, only_missing: bool = False) -> list[dict[str, Any]]:
         """Commit a validated price batch together; failed writes roll back all rows."""
         with self._connect() as conn:
             conn.execute("begin immediate")
+            accepted = []
             for payload in payloads:
                 previous = conn.execute(
                     "select comments from price_history where symbol = ? and stock_market = ? and price_date = ?",
                     (payload.get("symbol"), payload.get("stock_market"), payload.get("price_date")),
                 ).fetchone()
+                if only_missing and previous:
+                    continue  # Preserve a price supplied while API retrieval ran.
                 try:
                     before = json.loads(previous["comments"]) if previous else {}
                     after = json.loads(payload.get("comments") or "{}")
@@ -3177,7 +3180,8 @@ class LocalPortfolioStore:
                             raise ValueError("A newer timestamped observation is already saved for this date")
                 except (json.JSONDecodeError, TypeError):
                     pass  # Legacy free-text comments have no observation timestamp.
-            return [self.save_price(payload, _conn=conn) for payload in payloads]
+                accepted.append(payload)
+            return [self.save_price(payload, _conn=conn) for payload in accepted]
 
     def import_price_history(self, rows: list[dict[str, Any]]) -> dict[str, Any]:
         records = []

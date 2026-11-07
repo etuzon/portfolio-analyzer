@@ -126,7 +126,7 @@ def test_api_metadata_completes_profile_without_requesting_ai_to_invent_a_face_m
     candidate = main._enrichment_candidates()["items"][0]
     result = main._enrichment_fetch_security(candidate, "auto")
     assert len(state.calls) == 1 and result["status"] == "partial"
-    assert result["code"] == "bond_reference_only" and result["research_eligible"] is False
+    assert result["code"] == "api_price_ready" and result["research_eligible"] is False
     assert result["available_fields"] == ["reference", "profile"] and result["missing_fields"] == ["prices"]
     assert state.security["name"] == CUSIP and state.security["market_value"] == 100.5
 

@@ -81,6 +81,17 @@ For example, `5139324` identifies **מור (00) כספית ניהול נזילו
 permanent guarantees of usable price evidence. Use the same identification
 approach for other fund numbers; do not reuse this fund's prices or dates.
 
+When the application's approved tools expose the Israeli fund REST lookup,
+prefer its official MAYA current/history observations before web research. The
+public source currently exposes an identity/current record and a bounded history
+page; the application handles those provider requests. Preserve ratesAsOf or
+tradeDate, not fund-assets dates or retrieval time. Domestic ordinary ILS fund
+prices use agorot per issued unit even when nominal value differs; do not multiply
+by nominal value. Fund redemption is the dashboard's declared held-fund policy,
+while purchase remains separate. In other environments discover suitable official
+sources using the tools actually available; these routes are useful leads, not
+restrictions on other reliable methods.
+
 Read the source's field definition. Published unit value/NAV, redemption price
 (`מחיר פדיון`) and purchase price (`מחיר קנייה`) can have different meanings;
 preserve the selected basis rather than silently treating them as a stock's last
@@ -125,7 +136,8 @@ When the application asks to fill missing holding information, use its approved
 enrichment REST tools and the request's existing budget. **Only open holdings
 are eligible**, including open shorts and reopened positions. Fully closed
 positions must be excluded before any model or source research; do not spend AI
-calls on them. Recheck eligibility before applying a result. This restriction
+calls on them. Private securities and employee option grants have no public
+listing and are excluded from public research; never search internal grant IDs. Recheck eligibility before applying a result. This restriction
 governs the application's missing-information action; an explicitly requested
 historical research task can still concern a security no longer held.
 
@@ -135,8 +147,10 @@ budget; search snippets do not establish a fact. The model proposes facts, and
 an authenticated application finalization endpoint validates and saves supported
 ones. It currently accepts compatible raw Last/Close observations no older than
 seven calendar days for this current-data action, plus literal sourced company
-names and industries. Unsupported fundamentals, distributions, fund price bases
-or bond quote conventions remain missing with a friendly per-security outcome.
+names and industries. The API-first phase can also apply official fund redemption and compatible local
+U.S. bond marks through authorized finalization without a model. Unsupported
+fundamentals, distributions or ambiguous conventions remain missing with a
+friendly per-security outcome.
 Do not report a fetched reference page as a completed portfolio update.
 
 For the current runner's tool capabilities, supported write fields and evidence
@@ -160,12 +174,15 @@ Configuration lives in the existing `config.yaml` (or `CONFIG_PATH`; explicit
 `--config PATH` overrides it). Read only the needed nonsecret fields. Use the
 `price_agent` section with `provider: codex` (default) or `provider: claude`,
 `model`, `reasoning_effort`, `max_model_calls`, `max_rest_calls`, `base_url`,
-`timeout_seconds`, and `search: {provider: brave, api_key: "${BRAVE_SEARCH_API_KEY}"}`.
+`timeout_seconds`, and `search: {provider: auto, api_key: "${BRAVE_SEARCH_API_KEY}"}`.
 An empty model selects `gpt-6.1-sol` for Codex or the `sonnet` alias for Claude.
 Medium effort is the default; low, medium and high are supported. The selected
-CLI must be installed and signed in on the host. The workflow requires the
-Brave Search API key for actual internet search; a model subscription alone does
-not configure that service. Preserve existing YAML sections and credentials.
+CLI must be installed and signed in on the host. Search defaults to `auto`: use
+Brave when its key is configured, otherwise public DuckDuckGo HTML results.
+Explicit `brave` requires its key; `duckduckgo` is also selectable. A source block
+or challenge is a temporary provider problem, not proof the price is unavailable.
+There are no hidden provider retries or budget resets. Preserve existing YAML
+sections and credentials.
 
 Supply application authentication through `PORTFOLIO_API_TOKEN`, an existing
 REST bearer token with write permission. Never include credentials in the model

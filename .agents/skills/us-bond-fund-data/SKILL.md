@@ -150,3 +150,16 @@ Report the instrument, observed date, value and unit, meaningful price basis,
 source and retrieval/coverage status. Distinguish retrieved facts from provider
 calculations and unverified fields. Never claim a live executable quote or a
 completed portfolio update from a cached research response.
+
+## Applying supported local bond prices
+
+The dashboard missing-information action connects verified API evidence to the
+same application price input used for manual entry. Eligible local USA/USD/BOND
+CUSIP or ISIN positions use USD 1 face per recorded unit: P per100 normalizes
+once to P/100. Keep the real source valuation or Treasury programme side; never
+rename a programme purchase/redemption mark as an exchange close. Existing dated
+observations and closed positions are preserved. Source-imported quantities,
+foreign currencies and subclass-only classifications do not establish this
+local convention; retrieve reference data without guessing a conversion.
+Finalization and storage belong to the authorized application REST endpoint,
+never the AI agent. Successful API-only results require no model request.
