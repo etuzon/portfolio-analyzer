@@ -18,11 +18,25 @@ from .security_identifiers import valid_cusip, valid_isin
 KINDS = Literal["bond", "fund", "etf"]
 IDENTIFIER_TYPES = Literal["auto", "cusip", "isin", "ticker"]
 PROVIDERS = Literal["auto", "finnhub", "eodhd", "treasury_direct"]
-SNAPSHOT_VERSION = "security-market-data-v1"
+SNAPSHOT_VERSION = "security-market-data-v2"
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def apply_maturity_guard(result: dict[str, Any]) -> dict[str, Any]:
+    """Recheck calendar-dependent current eligibility on every cache read."""
+    if (result.get("request") or {}).get("kind") != "bond" and (result.get("security") or {}).get("kind") != "bond":
+        return result
+    maturity = (result.get("details") or {}).get("maturity_date")
+    try:
+        matured = bool(maturity and date.fromisoformat(maturity) < date.today())
+    except (ValueError, TypeError):
+        matured = False
+    if matured or result.get("current_quote_eligible") is False:
+        result.update(quote=None, quote_status="matured", maturity_status="past_maturity", current_quote_eligible=False)
+    return result
 
 
 def normalize_identifier(identifier: str, identifier_type: str, kind: str) -> tuple[str, str]:
@@ -99,7 +113,11 @@ class SecurityMarketData:
             raise ValueError("Choose either refresh or cache_only")
         request = {"identifier": identifier, "identifier_type": identifier_type, "kind": kind,
                    "provider": provider, "date_from": start.isoformat(), "date_to": end.isoformat()}
-        key = SNAPSHOT_VERSION + ":" + hashlib.sha256(json.dumps(request, sort_keys=True).encode()).hexdigest()
+        contracts = {name: {field: (self.settings.get(name) or {}).get(field)
+                            for field in ("enabled", "quote_unit", "quote_currency")}
+                     for name in ("finnhub", "treasury_direct", "eodhd")
+                     if isinstance(self.settings.get(name) or {}, dict)}
+        key = SNAPSHOT_VERSION + ":" + hashlib.sha256(json.dumps({"request": request, "contracts": contracts}, sort_keys=True).encode()).hexdigest()
         saved = self.cache.get_security_snapshot("security_lookup", identifier, key)
         if isinstance(saved, dict) and saved.get("schema_version") != SNAPSHOT_VERSION:
             saved = None
@@ -111,8 +129,8 @@ class SecurityMarketData:
             if (fresh and not refresh) or cache_only:
                 if kind == "bond" and not cache_only and saved.get("provider") and saved.get("security"):
                     self.cache.set_security_snapshot("security_lookup", identifier, SNAPSHOT_VERSION + ":latest:" + kind, saved)
-                return {**deepcopy(saved), "cache_status": "fresh" if fresh else "stale", "provider_requests": 0,
-                        **({"status": "stale"} if not fresh else {})}
+                return apply_maturity_guard({**deepcopy(saved), "cache_status": "fresh" if fresh else "stale", "provider_requests": 0,
+                        **({"status": "stale"} if not fresh else {})})
         if cache_only:
             return self._empty(request, "missing", "cache_empty", 0)
         candidates = self._providers(kind, provider)
@@ -173,9 +191,9 @@ class SecurityMarketData:
 
     def _fallback(self, saved, failure):
         if saved:
-            return {**deepcopy(saved), "status": "stale", "cache_status": "stale",
+            return apply_maturity_guard({**deepcopy(saved), "status": "stale", "cache_status": "stale",
                     "refresh_status": failure["status"], "provider_errors": failure.get("provider_errors", []),
-                    "provider_requests": failure["provider_requests"], "reason": "refresh_unavailable_saved_evidence"}
+                    "provider_requests": failure["provider_requests"], "reason": "refresh_unavailable_saved_evidence"})
         return failure
 
     def _response(self, payload, request, name, start, end, calls):
@@ -227,8 +245,17 @@ class SecurityMarketData:
                       warnings=payload.get("warnings") or [], cache_status="fetched",
                       details_scope="latest_provider_profile_not_historical_point_in_time",
                       note="Provider research data. Quote units and price bases are explicit; no portfolio prices, quantities or cash were changed. Latest in range is not necessarily a live quote.")
+        maturity = (payload.get("details") or {}).get("maturity_date")
+        try:
+            past_maturity = bool(maturity and date.fromisoformat(maturity) < date.today())
+        except (ValueError, TypeError):
+            past_maturity = False
+        if request["kind"] == "bond" and (past_maturity or payload.get("current_quote_eligible") is False):
+            result.update(quote=None, quote_status="matured", maturity_status="past_maturity", current_quote_eligible=False)
         result["quote_status"] = ("missing" if result["quote"] is None else
                                   "stale" if date.fromisoformat(latest["price_date"]) < date.today() - timedelta(days=7) else "dated")
+        if result.get("maturity_status") == "past_maturity":
+            result["quote_status"] = "matured"
         return result
 
 

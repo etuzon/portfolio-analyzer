@@ -58,9 +58,12 @@ write whose outcome is uncertain.
 ## Dashboard missing-information action
 
 This is a separate application-controlled flow from the host script. Its
-candidate REST route inventories open holdings and first tries the ordinary
-providers. Closed positions never reach the model. The model gets only remaining
-gaps, a request-bound `fetch_security_information` REST tool, and fetched public
+candidate REST route inventories open holdings with no applicable API route.
+API-owned securities are excluded entirely, including when credentials are
+missing, a provider is unavailable or other fields are incomplete. API prices
+refresh through the normal background/dashboard flow. Closed positions never
+reach the model. The model gets only supported remaining gaps, a request-bound
+`fetch_security_information` REST tool, and fetched public
 evidence; it has no native tools or storage access. It returns proposed
 observations and profile fields as JSON. The authenticated finalization route
 validates exact listing/source/date/number/unit matches and applies supported
@@ -71,14 +74,14 @@ literal labeled evidence; unsupported fields remain unknown.
 The whole click shares at most five model calls, five application REST attempts
 (candidate read, up to three source reads, finalization), and five upstream
 search/page reads. Failed attempts count. Source evidence belongs to that
-request and security. No configured search, no open candidates, or an API-only
-resolution avoids model invocation. An unfinished batch requires a new user
+request and security. No configured search or no AI-eligible open candidates
+avoids model invocation. An unfinished batch requires a new user
 action; polling job status never restarts the agent or its budget.
 
 ## API-first price application
 
-The dashboard action first retrieves supported public API observations; this
-phase does not require a model or an Internet-search key. `GET
+The normal background refresh retrieves supported public API observations; this
+flow is separate from the AI action and requires no model or search key. `GET
 /api/security/israeli-fund?fund_id=...` returns exact-fund MAYA current and
 historical purchase/redemption observations, source dates, units and partial
 coverage. The fund number is generic, not a fixed list. Domestic ordinary ILS
@@ -97,11 +100,21 @@ labelled with its actual basis. These are reference valuation marks, not an
 executable broker quote. Imported, foreign-currency or subclass-only instrument
 conventions require a compatible mapping; never infer it from registration.
 
-Preflight reads stage verified observations in application-owned provider caches.
-The authorized finalization POST alone writes eligible missing local price rows,
-rechecking open/public holdings and known units immediately before saving.
+Normal provider workers stage verified observations in application-owned caches.
+A bounded application coordinator alone applies automatic price rows, rechecking
+open/public holdings, current metadata and known units immediately before saving.
+Timed-out or cancelled work may finish caching source evidence but cannot perform
+late price writes. All open API listings are considered, without the AI batch's
+three-security limit. API failures stay in the API flow. Exact unsupported
+coverage is cached separately and can make a listing AI-eligible; a generic
+transport error cannot. Compatibility alone is not proof of exact source coverage.
 Existing dated prices are preserved; current evidence must be within seven
-calendar days. Saving API observations spends no model calls. Source/provider
+calendar days. Past-maturity source history stays historical; no current quote,
+par payment or cash receipt is invented. Compatible U.S. fund/ETF closes in
+currency per share retain their raw amount, without a divide-by-100 conversion
+or NAV relabelling. Finnhub requires configured provider access, `quote_unit`
+and source or explicit `quote_currency`; actual units/currency keep their origin.
+Saving API observations spends no model calls. Source/provider
 reads are bounded separately; the agent's total remains five model requests and
 five authenticated application REST attempts, including failures. The runtime
 agent still has **no database, filesystem, shell or generic HTTP access**.

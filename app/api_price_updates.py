@@ -1,6 +1,6 @@
 """Pure conversion of identity-qualified API marks to the local price contract.
 
-Only the application's authorized finalization endpoint persists these records.
+Only application-owned automatic refresh or authorized finalization persists these records.
 The research agent never gets storage access or chooses a unit conversion.
 """
 from datetime import date, datetime, timedelta, timezone
@@ -29,6 +29,12 @@ def bond_price_records(candidate, metadata, snapshot, existing, history_start):
     if not local_bond_contract(candidate, metadata) or not isinstance(snapshot, dict):
         return []
     if snapshot.get("status") not in {"ok", "partial"} or snapshot.get("cache_status") == "stale":
+        return []
+    try:
+        maturity = (snapshot.get("details") or {}).get("maturity_date")
+        if snapshot.get("current_quote_eligible") is False or maturity and date.fromisoformat(maturity) < date.today():
+            return []  # Keep historical reference prices without inventing a current mark.
+    except (ValueError, TypeError):
         return []
     security = snapshot.get("security") or {}
     identifiers = {str(metadata.get(key) or "").upper() for key in ("symbol", "secondary_symbol")}

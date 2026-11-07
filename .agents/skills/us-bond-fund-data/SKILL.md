@@ -153,13 +153,20 @@ completed portfolio update from a cached research response.
 
 ## Applying supported local bond prices
 
-The dashboard missing-information action connects verified API evidence to the
-same application price input used for manual entry. Eligible local USA/USD/BOND
+The normal background refresh connects verified API evidence to the same
+application price input used for manual entry, separately from AI research.
+API-owned securities never enter the AI
+inventory; unavailable credentials or temporary provider failures remain API
+configuration/refresh problems. Exact unsupported coverage with no alternative
+may allow AI research. Eligible local USA/USD/BOND
 CUSIP or ISIN positions use USD 1 face per recorded unit: P per100 normalizes
 once to P/100. Keep the real source valuation or Treasury programme side; never
 rename a programme purchase/redemption mark as an exchange close. Existing dated
 observations and closed positions are preserved. Source-imported quantities,
 foreign currencies and subclass-only classifications do not establish this
 local convention; retrieve reference data without guessing a conversion.
-Finalization and storage belong to the authorized application REST endpoint,
-never the AI agent. Successful API-only results require no model request.
+Automatic publication and storage belong to application business logic, never
+the AI agent. Successful API-only results require no model request. Matured
+securities can still have actual price history, but do not manufacture a current
+price or assume redemption cash. API subscription/category support does not
+prove that a particular agency strip or corporate identifier has live coverage.

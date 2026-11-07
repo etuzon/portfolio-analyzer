@@ -61,14 +61,14 @@ def prefer_recorded_prices(recorded_ranges, market_ranges):
                                     or (explicit_override and recorded[0] == market[0]))
 
 
-def revalue_holding(holding, price_ranges):
+def revalue_holding(holding, price_ranges, *, allow_manual=False):
     """Apply an already normalized quote to this account's recorded position.
 
     Shared by completed analyses and serialized progress overlays. Market data
     belongs to a listing; quantities, basis, realized P/L and income do not.
     """
     get = holding.get if isinstance(holding, dict) else lambda key: getattr(holding, key, None)
-    if get("data_source") == "MANUAL" and not get("secondary_symbol"):
+    if get("data_source") == "MANUAL" and not get("secondary_symbol") and not allow_manual:
         return
     quote = valuation_quote(price_ranges)
     quantity, basis = get("quantity"), get("cost_basis")
@@ -85,7 +85,7 @@ def revalue_holding(holding, price_ranges):
         holding.market_value, holding.unrealized_profit = value, unrealized
 
 
-def attach_market_analysis(local, market):
+def attach_market_analysis(local, market, *, allow_manual=False, preserve_local_prices=False):
     result = deepcopy(market)
     holding = deepcopy(local.holding)
     if not holding.name or holding.name.upper() == holding.symbol.upper():
@@ -94,20 +94,26 @@ def attach_market_analysis(local, market):
     holding.industry = market.industry or holding.industry
     result.holding = holding
     result.provider_status = {**local.provider_status, **result.provider_status}
-    if prefer_recorded_prices(local.price_ranges, result.price_ranges) or (
+    if preserve_local_prices or prefer_recorded_prices(local.price_ranges, result.price_ranges) or (
         "price history" in result.missing and "price history" not in local.missing
     ):
         result.missing = [key for key in result.missing if key != "price history"]
         for key in PRICE_ANALYSIS_FIELDS:
             setattr(result, key, deepcopy(getattr(local, key)))
-    revalue_holding(holding, result.price_ranges)
+        if preserve_local_prices:
+            result.provider_status = {key: value for key, value in result.provider_status.items() if not key.startswith("prices.")}
+            result.provider_status.update({key: value for key, value in local.provider_status.items() if key.startswith("prices.")})
+            result.provider_status["prices.currency"] = "error: source_currency_mismatch"
+            if "price history" in local.missing and "price history" not in result.missing:
+                result.missing.append("price history")
+    revalue_holding(holding, result.price_ranges, allow_manual=allow_manual)
     return result
 
 
-def refresh_positions(analyses, hub, analyze, progress, timeout_seconds, fallback, cancelled=lambda: False):
+def refresh_positions(analyses, hub, analyze, progress, timeout_seconds, fallback, cancelled=lambda: False, *, include_manual=lambda holding: False, manual_price_compatible=lambda holding: True):
     groups = {}
     for local in analyses:
-        if local.holding.data_source == "MANUAL" and not local.holding.secondary_symbol:
+        if local.holding.data_source == "MANUAL" and not local.holding.secondary_symbol and not include_manual(local.holding):
             continue
         groups.setdefault(security_key(local.holding), []).append(local)
     total = len(groups)
@@ -141,6 +147,12 @@ def refresh_positions(analyses, hub, analyze, progress, timeout_seconds, fallbac
                 progress(key, "updating", None, total)
             pending[future] = key
     results = {}
+    def attach(local, market):
+        manual = include_manual(local.holding)
+        compatible = manual_price_compatible(local.holding) if manual else True
+        return attach_market_analysis(local, market, allow_manual=manual and compatible,
+                                      preserve_local_prices=manual and not compatible)
+
     while pending:
         if cancelled():
             break
@@ -155,12 +167,12 @@ def refresh_positions(analyses, hub, analyze, progress, timeout_seconds, fallbac
             try:
                 market = future.result()
                 results[key] = market
-                progress(key, "ready", attach_market_analysis(groups[key][0], market), total)
+                progress(key, "ready", attach(groups[key][0], market), total)
             except Exception:
                 progress(key, "failed", None, total)
     for future, key in pending.items():
         future.cancel()
         progress(key, "failed", None, total)
-    return [attach_market_analysis(local, results[security_key(local.holding)])
+    return [attach(local, results[security_key(local.holding)])
             if security_key(local.holding) in results else fallback(local) if security_key(local.holding) in groups else local
             for local in analyses]

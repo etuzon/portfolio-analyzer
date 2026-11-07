@@ -65,7 +65,7 @@ for(const language of ['en','he']){
   'Select a security in the map or list for prices, dates and account holdings.'
  ])assert.ok(!html.includes(heatmapText(phrase)));
  assert.ok(html.includes('<legend class="sr-only">'+heatmapText('Asset types')+'</legend>'));
- const legend=html.lastIndexOf('<div class="heatmap-legend">');
+ const legend=html.lastIndexOf('<div class="heatmap-legend"');
  assert.ok(legend>html.indexOf('id="heatmapMethod"'));
  assert.ok(legend>html.indexOf('class="heatmap-all-list"'));
  assert.ok(html.slice(legend).endsWith('</small></div>'));
@@ -270,11 +270,11 @@ assert.ok(heatmapTypeIcon(bond).includes('<title>אג״ח</title>'));
 ''')
 
 
-def test_no_change_is_blue_and_unavailable_is_gray_without_inventing_zero():
+def test_no_change_and_unavailable_are_distinct_grays_without_inventing_zero():
     run_ui(r'''
 seed();
-assert.equal(heatmapColor(0),'#145ea8');
-assert.equal(heatmapColor(-0),'#145ea8');
+assert.equal(heatmapColor(0),'#4a5362');
+assert.equal(heatmapColor(-0),'#4a5362');
 for(const value of [null,undefined,NaN,Infinity,'0'])assert.equal(heatmapColor(value),'#353942');
 assert.notEqual(heatmapColor(0.01),heatmapColor(0));
 assert.notEqual(heatmapColor(-0.01),heatmapColor(0));
@@ -282,11 +282,29 @@ const unchanged={...a,change_percent:0};
 const missing={...b,change_percent:null};
 const unchangedTile=heatmapTileMap([unchanged]);
 const missingTile=heatmapTileMap([missing]);
-assert.ok(unchangedTile.includes('background:#145ea8'));
+assert.ok(unchangedTile.includes('background:#4a5362'));
 assert.ok(unchangedTile.includes('>0.00%</bdi>'));
 assert.ok(missingTile.includes('background:#353942'));
 assert.ok(!missingTile.includes('>0.00%</bdi>'));
 state.language='he';renderHeatmap();
 assert.ok(target.innerHTML.includes('ללא שינוי'));
 assert.ok(target.innerHTML.includes('לא זמין'));
+''')
+
+
+def test_three_color_bands_use_exact_symmetric_thresholds_and_readable_white_labels():
+    run_ui(r'''
+const positive=['#24463f','#216452','#207158'];
+const negative=['#542b35','#7b2737','#a12e43'];
+for(const sign of [-1,1]){
+ const palette=sign>0?positive:negative;
+ for(const [value,index] of [[.00001,0],[.999999,0],[1,1],[2.999999,1],[3,2],[1000,2]])assert.equal(heatmapColor(sign*value),palette[index]);
+ assert.equal(new Set([.01,.99,1,2.99,3,100].map(value=>heatmapColor(sign*value))).size,3);
+}
+const luminance=hex=>hex.slice(1).match(/../g).map(x=>parseInt(x,16)/255).map(x=>x<=.04045?x/12.92:((x+.055)/1.055)**2.4).reduce((s,x,i)=>s+x*[.2126,.7152,.0722][i],0);
+for(const color of [...positive,...negative,heatmapColor(0),heatmapColor(null)])assert.ok(1.05/(luminance(color)+.05)>=4.5,color);
+seed();for(const language of ['en','he']){
+ state.language=language;renderHeatmap();
+ assert.ok(target.innerHTML.includes(heatmapText('Three levels in either direction: under 1%, 1% to under 3%, and 3% or more.')));
+}
 ''')

@@ -418,8 +418,8 @@ class EnrichmentJobs:
                 job["_research_responses"][security_key] = deepcopy(result)
                 if isinstance(result, dict) and "evidence" in result:
                     job["_evidence_by_key"][security_key] = {"evidence": deepcopy(result["evidence"])}
-                    if result.get("source_status") == "not_open":
-                        job["_results"][security_key] = {**previous, "status": "not_attempted", "code": "not_open", "available_fields": [], "missing_fields": []}
+                    if result.get("source_status") in {"not_open", "api_managed"}:
+                        job["_results"][security_key] = {**previous, "status": "not_attempted", "code": result["source_status"], "available_fields": [], "missing_fields": []}
                     else:
                         job["_results"][security_key] = {**previous, "code": "evidence_rejected" if result["evidence"] else result.get("source_status", "data_unavailable")}
                 else:

@@ -141,14 +141,19 @@ listing and are excluded from public research; never search internal grant IDs. 
 governs the application's missing-information action; an explicitly requested
 historical research task can still concern a security no longer held.
 
-The application tries ordinary data APIs first and sends only remaining gaps to
-AI. Its source endpoint searches and fetches evidence within a shared five-read
+The normal application refresh owns API-backed securities. They must not enter
+the AI action, even if some fields remain missing or the provider is temporarily
+unavailable. Missing credentials require provider configuration, not AI calls.
+Only listings with no applicable API route, or exact verified unsupported
+coverage with no alternative, enter AI research. Its source endpoint searches
+and fetches evidence within a shared five-read
 budget; search snippets do not establish a fact. The model proposes facts, and
 an authenticated application finalization endpoint validates and saves supported
 ones. It currently accepts compatible raw Last/Close observations no older than
 seven calendar days for this current-data action, plus literal sourced company
-names and industries. The API-first phase can also apply official fund redemption and compatible local
-U.S. bond marks through authorized finalization without a model. Unsupported
+names and industries. The separate background/dashboard refresh applies official
+fund redemption, compatible local U.S. bond marks and qualified fund/ETF closes
+without a model. Unsupported
 fundamentals, distributions or ambiguous conventions remain missing with a
 friendly per-security outcome.
 Do not report a fetched reference page as a completed portfolio update.

@@ -1226,17 +1226,22 @@ function aiOutcomeMessage(outcome) {
     search_blocked: "The search service temporarily blocked this request. Try again later or choose another search provider.",
     api_price_ready: "Verified API prices are ready to save.",
     already_available: "Another update already supplied this price. Your saved price was kept.",
+    api_managed: "This security uses automatic API updates. Use dashboard Refresh; AI research is not used.",
+    api_not_configured: "API provider setup or access is required. Configure the provider and use dashboard Refresh; AI research is not used for this security.",
+    configuration_required: "API provider setup or access is required. Configure the provider and use dashboard Refresh; AI research is not used for this security.",
+    api_unavailable: "The API update is unavailable. Use dashboard Refresh to retry; this security stays on its API route.",
     evidence_rejected: "The source did not provide enough verified information.",
     not_processed: "This security was not checked in this request.",
     not_open: "This security no longer has an open holding.",
     authentication_expired: "Sign in again before continuing AI research.",
     job_failed: "AI research could not finish. Saved data is retained.",
-    nothing_missing: "No supported missing data was found to research.",
+    nothing_missing: "No open holdings are eligible for AI research. API-supported securities use the normal dashboard update flow.",
   };
   return t(messages[outcome?.code] || (outcome?.status === "updated" ? messages.data_found : outcome?.status === "partial" ? messages.partial_data : messages.data_unavailable));
 }
 
 function aiOutcomeFor(item) {
+  if (item.api_data_route && item.api_data_route.owner !== "ai") return undefined;
   const key = aiSecurityKey(item.holding);
   return state.aiEnrichment.outcomes.find((outcome) => aiSecurityKey(outcome) === key);
 }
@@ -1259,13 +1264,13 @@ function renderAIEnrichment() {
   button.disabled = !canWrite() || ui.pending || state.auth.forcedPasswordChange || Boolean(currentUser()?.must_change_password);
   button.textContent = t(ui.pending ? "Research in progress…" : ui.resume ? "Check AI progress" : ui.job ? "Start new request" : "Start research");
   const permission = t("AI data updates require Admin or Operator permission.");
-  button.title = canWrite() ? t("Research missing data for open holdings and save verified results.") : permission;
+  button.title = canWrite() ? t("Research missing data for open holdings without an API route and save verified results.") : permission;
   $("aiEnrichmentAction").title = button.title;
   $("aiEnrichmentAction").tabIndex = canWrite() ? -1 : 0;
   $("aiEnrichmentAction").setAttribute("aria-label", button.title);
   const status = $("aiEnrichmentStatus");
   let message = ui.message ? t(ui.message) : (!canWrite() && currentUser() ? permission : "");
-  if (ui.pending) message = t("AI is researching open holdings. You can keep using the dashboard.");
+  if (ui.pending) message = t("Researching eligible holdings. You can keep using the dashboard.");
   else if (!message && ui.job) {
     message = ui.job.code === "nothing_missing" ? aiOutcomeMessage(ui.job) : "";
     if (ui.job.status === "failed") message = aiOutcomeMessage(ui.job);
@@ -1273,8 +1278,8 @@ function renderAIEnrichment() {
   if (status.textContent !== message) status.textContent = message;
   status.hidden = !message;
   const stage = ui.job?.progress?.stage || (ui.pending ? "queued" : ui.job?.status === "failed" ? "failed" : ui.job ? "completed" : "ready");
-  const phases = { ready: "Ready to research", queued: "Waiting to start", checking_apis: "Checking data sources", researching: "Researching remaining gaps", saving: "Saving verified results", completed: "Research finished", failed: "Research stopped" };
-  const phaseText = t(ui.resume ? "Progress check needed" : phases[stage] || "Research in progress");
+  const phases = { ready: "Ready to research", queued: "Waiting to start", checking_apis: "Checking AI eligibility", researching: "Researching remaining gaps", saving: "Saving verified results", completed: "Research finished", failed: "Research stopped" };
+  const phaseText = t(ui.resume ? "Progress check needed" : ui.job?.code === "nothing_missing" ? "No AI research needed" : phases[stage] || "Research in progress");
   if ($("aiEnrichmentPhase").textContent !== phaseText) $("aiEnrichmentPhase").textContent = phaseText;
   const completed = Number(ui.job?.progress?.completed), total = Number(ui.job?.progress?.total);
   const knownProgress = Number.isFinite(completed) && completed >= 0 && Number.isFinite(total) && total > 0;
@@ -1291,12 +1296,16 @@ function renderAIEnrichment() {
   const currentText = current ? [current.symbol, current.stock_market, current.currency].filter(Boolean).join(" · ") : "";
   if ($("aiEnrichmentCurrentSecurity").textContent !== currentText) $("aiEnrichmentCurrentSecurity").textContent = currentText;
   const summary = ui.job?.summary;
-  $("aiEnrichmentSummary").hidden = !summary || ui.pending;
+  $("aiEnrichmentSummary").hidden = !summary || ui.pending || ui.job?.code === "nothing_missing";
   $("aiEnrichmentSummary").innerHTML = summary ? [[summary.updated || 0, "Updated"], [summary.partial || 0, "Partial results"], [(summary.unavailable || 0) + (summary.not_attempted || 0), "Unavailable or not checked"]].map(([count, label]) => `<div><strong>${esc(fmt(count, 0))}</strong><span>${esc(t(label))}</span></div>`).join("") : "";
-  const displayedOutcomes = ui.job ? ui.job.outcomes || [] : ui.pending ? [] : ui.outcomes;
+  const displayedOutcomes = (ui.job ? ui.job.outcomes || [] : ui.pending ? [] : ui.outcomes).filter((outcome) => {
+    const item = state.allPortfolioItems.find((entry) => aiSecurityKey(entry.holding) === aiSecurityKey(outcome));
+    if (item?.api_data_route) return item.api_data_route.owner === "ai";
+    return Boolean(ui.job);
+  });
   $("aiEnrichmentDetails").hidden = !displayedOutcomes.length;
   $("aiEnrichmentResultsTitle").textContent = t(ui.job ? "Results by security" : "Latest saved results");
-  $("aiEnrichmentEmpty").hidden = Boolean(displayedOutcomes.length);
+  $("aiEnrichmentEmpty").hidden = Boolean(displayedOutcomes.length) || ui.job?.code === "nothing_missing";
   $("aiEnrichmentEmpty").textContent = t(ui.pending ? "Results will appear as checks finish." : "No AI research results yet.");
   const results = $("aiEnrichmentResults");
   const resultHtml = displayedOutcomes.map((outcome) => `<li><div class="ai-enrichment-result-heading"><bdi dir="auto">${esc([outcome.symbol, outcome.stock_market, outcome.currency].filter(Boolean).join(" · "))}</bdi><span class="badge ${outcome.status === "updated" ? "ok" : outcome.status === "partial" ? "partial" : "neutral"}">${esc(t({ updated: "Updated", partial: "Partial results", unavailable: "Unavailable", not_attempted: "Not checked" }[outcome.status] || "Unavailable"))}</span></div><p>${esc(aiOutcomeMessage(outcome))}</p></li>`).join("");
@@ -3391,6 +3400,8 @@ function stockMarketDisplay(h, marketKey = "", exchange = "") {
 function dataProviderDisplay(item, h, marketKey = "") {
   if (item.market_data?.security && ["treasury_direct", "finnhub"].includes(item.market_data.provider)) return bondReferenceProvider(item.market_data.provider);
   if (item.valuation_price_provider === "maya") return "MAYA";
+  if (item.valuation_price_provider === "eodhd") return "EODHD";
+  if (item.valuation_price_provider === "manual") return providerDisplayName("manual");
   if (["treasury_direct", "finnhub"].includes(item.valuation_price_provider)) return bondReferenceProvider(item.valuation_price_provider);
   if (isProviderName(marketKey)) return providerDisplayName(marketKey);
   const usable = Object.entries(item.provider_status || {}).filter(([key, value]) => (
@@ -3594,7 +3605,29 @@ function dataGapDetails(item) {
 function dataGapTooltip(item) {
   const reasons = dataGapDetails(item).map(({ label, reason }) => `• ${optionLabel(label)}${reason ? `: ${t(reason)}` : ""}`);
   const outcome = aiOutcomeFor(item);
-  return [t("Missing data"), ...reasons, ...(outcome ? [`${t("Last AI research")}: ${aiOutcomeMessage(outcome)}`] : [])].join("\n");
+  const route = securityDataRouteHint(item);
+  return [t("Missing data"), ...reasons, ...(route ? [route] : []), ...(outcome ? [`${t("Last AI research")}: ${aiOutcomeMessage(outcome)}`] : [])].join("\n");
+}
+
+function securityDataRouteHint(item) {
+  const route = item.api_data_route;
+  if (!route?.owner) return "";
+  const names = { maya: "MAYA", treasury_direct: "TreasuryDirect", finnhub: "Finnhub", eodhd: "EODHD", alpha_vantage: "Alpha Vantage", financial_modeling_prep: "FMP", nasdaq_quote: "Nasdaq", stooq: "Stooq", sec_company_facts: "SEC", yahoo_finance: "Yahoo Finance" };
+  const provider = names[route.provider] ? ` · ${names[route.provider]}` : "";
+  if (route.owner === "api") {
+    if (route.configured === false || route.coverage === "not_configured" || ["api_not_configured", "configuration_required"].includes(route.reason)) {
+      return `${t("API configuration required")}${provider}\n${t("Set up or enable the required provider access, then use dashboard Refresh. This security is excluded from AI research.")}`;
+    }
+    if (route.coverage === "unsupported" || route.reason === "api_coverage_unsupported") {
+      return `${t("API coverage unavailable")}${provider}\n${t("Check the API provider's coverage or use dashboard Refresh. This security stays on its API route and is excluded from AI research.")}`;
+    }
+    if (["api_unavailable", "provider_unavailable"].includes(route.reason)) {
+      return `${t("API update unavailable")}${provider}\n${t("Use dashboard Refresh to retry. Saved data is retained, and this security stays excluded from AI research.")}`;
+    }
+    return `${t("Automatic API refresh route")}${provider}\n${t("Normal background updates and dashboard Refresh use this API route. AI research is not used for this security.")}`;
+  }
+  if (route.owner === "ai") return `${t("No supported price/reference API route")}\n${t("For an open holding, use Portfolio → Find missing data with AI to research unavailable information.")}`;
+  return t("This instrument is excluded from automatic price research. Its saved valuation is retained.");
 }
 
 function statusCell(item) {
@@ -4287,7 +4320,8 @@ function renderRows(items) {
         ? optionLabel("Exposure unclassified")
         : "";
     const exposureLine = `<div class="security-exposure"><button class="secondary compact-button" type="button" data-edit-security-exposure-symbol="${esc(h.symbol)}" data-edit-security-exposure-market="${esc(marketKey)}" title="${esc(optionLabel("Edit exposure profile"))}">${esc(optionLabel("Exposure"))} ✎</button>${exposureText ? `<span>${esc(exposureText)}</span>` : ""}</div>`;
-    const marketLine = `${optionLabel(h.asset_class || "Asset")} · ${currencyDisplayLabel(h.currency || "")} · ${optionLabel("Market")}: ${market} · ${hasAPIReference ? `${t("API reference source")}: ${provider} · ${t("Valuation price source")}: ${dataProviderDisplay({ ...item, market_data: null }, h, marketKey)}` : `API: ${provider}`}`;
+    const routeHint = securityDataRouteHint(item);
+    const marketLine = `${optionLabel(h.asset_class || "Asset")} · ${currencyDisplayLabel(h.currency || "")} · ${optionLabel("Market")}: ${market} · ${hasAPIReference ? `${t("API reference source")}: ${provider} · ${t("Valuation price source")}: ${dataProviderDisplay({ ...item, market_data: null }, h, marketKey)}` : `API: ${provider}`}${routeHint ? `\n${routeHint}` : ""}`;
     const accountMeta = h.account_type
       ? optionLabel(h.account_type)
       : h.location
@@ -5785,6 +5819,7 @@ function renderPortfolio(items) {
     renderSummary(rows);
     renderAnalytics(rows);
     renderRows(rows);
+    renderAIEnrichment();
   } finally {
     restore();
   }
@@ -7129,6 +7164,7 @@ function renderBondReference(context) {
     ${requestedTo && requestedTo < todayString() ? `<button class="secondary compact-button" type="button" data-bond-reference-latest="${context}" aria-disabled="${Boolean(loading)}">${esc(t("Load latest API observations"))}</button>` : ""}
     ${canContinue ? `<button class="secondary compact-button" type="button" data-bond-reference-earlier="${context}" data-reference-to="${esc(continuation)}" aria-disabled="${Boolean(loading)}">${esc(t("Load earlier API observations"))}</button>` : ""}
     ${data?.quote_status === "stale" || data?.status === "stale" ? `<p class="section-note">${esc(t("The API evidence is dated and may be stale. It is not a live quote."))}</p>` : ""}
+    ${data?.quote_status === "matured" ? `<p class="section-note">${esc(t("This bond has matured. API observations are historical, not a current price."))}</p>` : ""}
     ${mixedConventions ? `<p class="section-note">${esc(t("History contains different quote conventions; compare each row's unit, basis and side."))}</p>` : ""}
     ${(data?.provider_errors || []).map((entry) => `<p class="section-note">${esc(bondReferenceProvider(entry.provider))}: ${esc(t(providerErrors[entry.code] || "The source could not be reached. Saved API evidence is retained; retry later."))}</p>`).join("")}
     ${rows.length ? `<details class="bond-reference-history"${historyOpen ? " open" : ""}><summary>${esc(t("API price history"))} (${rows.length})</summary><div class="bond-reference-table-wrap" tabindex="0" role="region" aria-label="${esc(t("API price history"))}"><table><thead><tr>${["Observation date", "Raw API price", "Quote unit", "Price basis", "Quote side"].map((label) => `<th scope="col">${esc(t(label))}</th>`).join("")}</tr></thead><tbody>${[...rows].reverse().map((row) => `<tr><td>${esc(formatDate(row.price_date))}</td><td><bdi dir="ltr">${fmt(row.price, 6)}</bdi></td><td>${esc(bondReferenceUnit(row))}</td><td>${esc(bondReferenceConvention(row.price_basis))}</td><td>${esc(bondReferenceConvention(row.side))}</td></tr>`).join("")}</tbody></table></div></details>` : ""}

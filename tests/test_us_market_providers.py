@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 import gzip
 
@@ -65,6 +65,99 @@ def test_finnhub_accepts_other_corporate_cusip_and_configured_unit_without_hardc
     assert result["items"][1]["quote_unit"] == "percent_of_par"
     assert result["items"][1]["quote_unit_origin"] == "configuration"
     assert result["items"][1]["currency"] == "USD"
+
+
+@pytest.mark.parametrize("cusip,isin", [("121899CH9", "US121899CH98"), ("88059ESH8", "US88059ESH89")])
+def test_finnhub_generic_exact_bond_lookup_retains_explicit_currency_and_unit_provenance(cusip, isin):
+    """Synthetic responses test transport/contract, not actual paid coverage."""
+    seen = []
+    def handle(request):
+        seen.append(request)
+        if request.url.path.endswith("profile"):
+            assert request.url.params["cusip"] == cusip
+            return httpx.Response(200, json=bond_profile(cusip=cusip, isin=isin))
+        assert request.url.params["isin"] == isin
+        return httpx.Response(200, json={"s": "ok", "c": [87.25], "t": [timestamp(END)]})
+    result = FinnhubBondProvider({"api_key": "synthetic", "quote_currency": "usd", "quote_unit": "percent_of_par"}, client_for(handle)).fetch(cusip, "cusip", "bond", START, END, RequestBudget())
+    assert len(seen) == 2
+    item = result["items"][0]
+    assert item["currency"] == "USD" and item["currency_origin"] == "configuration"
+    assert item["quote_unit"] == "percent_of_par" and item["quote_unit_origin"] == "configuration"
+    assert result["security"]["currency_origin"] == "configuration"
+    assert item["observed_at"] is None and item["price_date"] == END.isoformat()
+
+
+def test_explicit_currency_does_not_supply_an_unverified_quote_unit():
+    def handle(request):
+        return httpx.Response(200, json=bond_profile()) if request.url.path.endswith("profile") else httpx.Response(200, json={"s": "ok", "c": [99], "t": [timestamp(END)]})
+    result = FinnhubBondProvider({"api_key": "synthetic", "quote_currency": "USD"}, client_for(handle)).fetch(CUSIP, "cusip", "bond", START, END, RequestBudget())
+    assert result["items"][0]["currency"] == "USD"
+    assert result["items"][0]["quote_unit"] == "unknown"
+    assert result["items"][0]["quote_unit_origin"] == "unverified"
+
+
+@pytest.mark.parametrize("reported", ["USD", "usd"])
+def test_reported_currency_keeps_provider_origin_when_matching_configuration(reported):
+    def handle(request):
+        return httpx.Response(200, json=bond_profile(currency=reported)) if request.url.path.endswith("profile") else httpx.Response(200, json={"s": "no_data"})
+    result = FinnhubBondProvider({"api_key": "synthetic", "quote_currency": "USD"}, client_for(handle)).fetch(CUSIP, "cusip", "bond", START, END, RequestBudget())
+    assert result["security"]["currency"] == "USD" and result["security"]["currency_origin"] == "provider_profile"
+
+
+@pytest.mark.parametrize("reported", ["EUR", "US dollars", False])
+def test_conflicting_or_invalid_reported_currency_fails_before_price_lookup(reported):
+    seen = []
+    provider = FinnhubBondProvider({"api_key": "synthetic", "quote_currency": "USD"}, client_for(lambda request: seen.append(request) or httpx.Response(200, json=bond_profile(currency=reported))))
+    with pytest.raises(ProviderFailure) as error:
+        provider.fetch(CUSIP, "cusip", "bond", START, END, RequestBudget())
+    assert error.value.code == "invalid_response" and len(seen) == 1
+
+
+@pytest.mark.parametrize("configured", [False, 123, "US", "US D", ""])
+def test_invalid_configured_currency_never_calls_upstream(configured):
+    seen = []
+    provider = FinnhubBondProvider({"api_key": "synthetic", "quote_currency": configured}, client_for(lambda request: seen.append(request) or httpx.Response(200, json={})))
+    with pytest.raises(ProviderFailure) as error:
+        provider.fetch(CUSIP, "cusip", "bond", START, END, RequestBudget())
+    assert error.value.code == "not_configured" and not seen
+
+
+def test_past_maturity_preserves_actual_history_without_current_quote_eligibility():
+    maturity = date.today() - timedelta(days=365)
+    observed = maturity.replace(day=1)
+    def handle(request):
+        return httpx.Response(200, json=bond_profile(maturityDate=maturity.isoformat())) if request.url.path.endswith("profile") else httpx.Response(200, json={"s": "ok", "c": [98.5], "t": [timestamp(observed)]})
+    result = FinnhubBondProvider({"api_key": "synthetic", "quote_currency": "USD", "quote_unit": "percent_of_par"}, client_for(handle)).fetch(CUSIP, "cusip", "bond", observed, date.today(), RequestBudget())
+    assert result["current_quote_eligible"] is False and result["maturity_status"] == "past_maturity"
+    assert result["details"]["maturity_status"] == "past_maturity"
+    assert result["items"][0]["price"] == 98.5 and result["items"][0]["price_date"] == observed.isoformat()
+    assert len(result["items"]) == 1  # No par, zero or today's observation is added.
+
+
+def test_past_maturity_no_data_remains_reference_only():
+    def handle(request):
+        return httpx.Response(200, json=bond_profile(maturityDate="2000-01-01")) if request.url.path.endswith("profile") else httpx.Response(200, json={"s": "no_data"})
+    result = FinnhubBondProvider({"api_key": "synthetic"}, client_for(handle)).fetch(CUSIP, "cusip", "bond", START, END, RequestBudget())
+    assert not result["items"] and result["current_quote_eligible"] is False
+
+
+def test_empty_provider_cusip_can_use_checked_matching_us_isin_alias_only():
+    seen = []
+    def handle(request):
+        seen.append(request)
+        return httpx.Response(200, json=bond_profile(cusip="")) if request.url.path.endswith("profile") else httpx.Response(200, json={"s": "ok", "c": [99], "t": [timestamp(END)]})
+    result = FinnhubBondProvider({"api_key": "synthetic"}, client_for(handle)).fetch(CUSIP, "cusip", "bond", START, END, RequestBudget())
+    assert len(seen) == 2 and result["security"]["cusip"] == CUSIP
+    assert result["security"]["cusip_origin"] == "validated_us_isin"
+    assert result["security"]["currency"] is None and result["items"][0]["quote_unit"] == "unknown"
+
+
+@pytest.mark.parametrize("isin", ["US91282CKD20", "US037833AK68"])
+def test_empty_cusip_cannot_borrow_an_invalid_or_another_security_isin(isin):
+    seen = []
+    provider = FinnhubBondProvider({"api_key": "synthetic"}, client_for(lambda request: seen.append(request) or httpx.Response(200, json=bond_profile(cusip="", isin=isin))))
+    with pytest.raises(ProviderFailure):provider.fetch(CUSIP, "cusip", "bond", START, END, RequestBudget())
+    assert len(seen) == 1
 
 
 @pytest.mark.parametrize("profile", [bond_profile(cusip="000000000"), {}, [], bond_profile(isin=""), bond_profile(isin="US91282CKD20"), bond_profile(isin="US037833AK68")])

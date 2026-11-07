@@ -63,3 +63,28 @@ return {inside:[...labels,...symbols].every(r=>r.left>=s.left-1&&r.right<=s.righ
     assert geometry["firstVisible"], geometry
     (tmp_path / f"profit-labels-{language}-{width}.png").write_bytes(base64.b64decode(command("Page.captureScreenshot", {"format": "png"})["data"]))
     assert evaluate("qa.errors") == []
+
+
+@pytest.mark.parametrize("width,language", [(1440, "en"), (1440, "he"), (390, "en"), (390, "he")])
+def test_heatmap_discrete_color_bands_keep_readable_labels_and_bottom_legend(tmp_path, chromium, width, language):
+    command, evaluate = ready(tmp_path, chromium, width, language)
+    evaluate('''
+resetHeatmap();
+heatmapView.data={accounts:[{id:'synthetic',type:'Investment',account_id:'Synthetic'}],assets:[-.25,-1,-3,.25,1,3,0,null].map((change,index)=>({
+ id:'COLOR'+index,symbol:'COLOR'+index,name:'Synthetic color fixture',stock_market:'NASDAQ',currency:'USD',asset_class:'EQUITY',
+ gross_value_ils:1000,value_ils:1000,quantity:10,gross_quantity:10,price:10,previous_price:9,price_date:'2026-11-07',previous_date:'2026-11-06',
+ change_percent:change,valuation_status:'ok',valuation_basis:'saved_price',status:'ok',issues:[],accounts:[{account_id:'synthetic',quantity:10,gross_value_ils:1000,value_ils:1000}]
+})),excluded:[],fx:[]};
+$('analyticsBoard').innerHTML=withDashboardToolbar({id:'stock_heatmap'},renderDashboardHeatmap());renderHeatmap();observeDashboardLayout($('analyticsBoard'));
+''')
+    geometry = evaluate(r'''(()=>{
+const tiles=[...document.querySelectorAll('.heatmap-tile')];
+const luminance=rgb=>rgb.match(/[\d.]+/g).slice(0,3).map(x=>Number(x)/255).map(x=>x<=.04045?x/12.92:((x+.055)/1.055)**2.4).reduce((s,x,i)=>s+x*[.2126,.7152,.0722][i],0);
+return {colors:tiles.map(e=>getComputedStyle(e).backgroundColor),contrast:tiles.map(e=>{const c=getComputedStyle(e);return (luminance(c.color)+.05)/(luminance(c.backgroundColor)+.05)}),title:document.querySelector('.heatmap-legend').title,legendLast:$('heatmapContent').lastElementChild.classList.contains('heatmap-legend'),overflow:document.documentElement.scrollWidth-innerWidth};})()''')
+    assert len(geometry["colors"]) == len(set(geometry["colors"])) == 8, geometry
+    assert min(geometry["contrast"]) >= 4.5, geometry
+    assert ("Three levels" if language == "en" else "שלוש דרגות") in geometry["title"], geometry
+    assert geometry["legendLast"] and geometry["overflow"] <= 1, geometry
+    evaluate("$('heatmapContent').closest('.portfolio-heatmap-card').scrollIntoView({block:'start'});")
+    (tmp_path / f"heatmap-three-bands-{language}-{width}.png").write_bytes(base64.b64decode(command("Page.captureScreenshot", {"format": "png"})["data"]))
+    assert evaluate("qa.errors") == []

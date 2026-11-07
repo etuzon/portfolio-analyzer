@@ -22,7 +22,8 @@ market_data:
   google_finance:
     enabled: false
   # Automatic US bond/fund research; GET /api/security/market-data.
-  # These feeds populate the provider cache, never recorded portfolio prices.
+  # Background/dashboard refresh also saves qualified automatic price observations.
+  # Existing manual observations and recorded positions/transactions are preserved.
   security_lookup:
     cache_ttl_hours: 24
     max_provider_requests: 5
@@ -31,6 +32,8 @@ market_data:
     finnhub:
       enabled: true
       api_key: "${FINNHUB_API_KEY}"  # Bond data requires suitable provider access.
+      quote_unit: "percent_of_par"  # Explicit contract; never inferred from price.
+      quote_currency: "USD"  # Restrict to the verified denomination of your feed.
     eodhd:
       enabled: true
       api_key: "${EODHD_API_KEY}"  # US mutual fund/ETF fundamentals and EOD history.

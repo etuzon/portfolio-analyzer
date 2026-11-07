@@ -58,10 +58,10 @@ def test_ai_single_request_partial_results_tooltips_permissions_and_narrow_layou
     assert evaluate("$('enrichMissingData').disabled") is False
     assert evaluate("$('aiEnrichmentStart').disabled") is True
     assert evaluate("$('aiEnrichmentProgress').hasAttribute('value')") is False
-    assert evaluate("$('aiEnrichmentPhase').textContent") == ("Checking data sources" if language == "en" else "בודק מקורות נתונים")
+    assert evaluate("$('aiEnrichmentPhase').textContent") == ("Checking AI eligibility" if language == "en" else "בודק התאמה לאיתור בעזרת AI")
     assert evaluate("$('aiEnrichmentStatus').textContent") == (
-        "AI is researching open holdings. You can keep using the dashboard." if language == "en"
-        else "ה־AI מאתר נתונים להחזקות פתוחות. אפשר להמשיך להשתמש בלוח.")
+        "Researching eligible holdings. You can keep using the dashboard." if language == "en"
+        else "מאתר נתונים להחזקות מתאימות. אפשר להמשיך להשתמש בלוח.")
     # Closing and reopening keeps the running job, its timer and the original menu listener.
     evaluate("closeModal($('aiEnrichmentModal'));ensureHierarchicalNav();$('enrichMissingData').click();")
     assert evaluate("qa.aiPosts") == 1
@@ -170,4 +170,42 @@ def test_language_rebuild_retains_opener_focus_and_expired_session_clears_popup(
     assert evaluate("state.aiEnrichment.outcomes.length") == 0
     assert evaluate("$('enrichMissingData').disabled") is True
     assert evaluate("qa.aiPosts") == 1
+    assert evaluate("qa.errors") == []
+
+
+@pytest.mark.parametrize("language", ["en", "he"])
+def test_api_routes_exclude_old_ai_outcomes_and_explain_setup_retry_and_empty_batch(tmp_path, chromium, language):
+    _, evaluate = ready(tmp_path, chromium, language)
+    evaluate('''
+qa.item.api_data_route={owner:'api',provider:'finnhub',configured:false,coverage:'candidate',reason:'configuration_required'};
+qa.other.api_data_route={owner:'ai',configured:false,coverage:'unsupported',reason:'no_price_reference_api'};
+state.aiEnrichment.outcomes=qa.outcomes;
+renderAIEnrichment();
+''')
+    assert evaluate("$('aiEnrichmentDetails').hidden") is True
+    hint = evaluate("dataGapTooltip(qa.item)")
+    assert ("API configuration required" if language == "en" else "נדרשת הגדרת API") in hint
+    assert "Finnhub" in hint
+    assert ("Last AI research" if language == "en" else "איתור AI אחרון") not in hint
+    assert evaluate("aiOutcomeFor(qa.item)===undefined")
+    evaluate("qa.item.api_data_route={owner:'api',provider:'finnhub',configured:true,coverage:'candidate',reason:'provider_unavailable'};")
+    assert ("API update unavailable" if language == "en" else "עדכון ה־API אינו זמין") in evaluate("securityDataRouteHint(qa.item)")
+    evaluate("qa.item.api_data_route.reason='api_coverage_unsupported';qa.item.api_data_route.coverage='unsupported';")
+    assert ("API coverage unavailable" if language == "en" else "כיסוי ה־API אינו זמין") in evaluate("securityDataRouteHint(qa.item)")
+    evaluate("qa.item.api_data_route.reason='api_coverage_verified';qa.item.api_data_route.coverage='verified';")
+    assert ("Automatic API refresh route" if language == "en" else "מסלול עדכון API אוטומטי") in evaluate("securityDataRouteHint(qa.item)")
+    # Current and saved API outcomes are removed after routing changes, even when a prior request listed them.
+    evaluate("state.aiEnrichment.job={...qa.job(),status:'completed',outcomes:qa.outcomes};renderAIEnrichment();")
+    assert evaluate("$('aiEnrichmentResults').children.length") == 0
+    evaluate("qa.other.api_data_route.owner='ai';state.aiEnrichment.job.outcomes=[{...qa.outcomes[0],stock_market:'TASE',currency:'ILS'}];renderAIEnrichment();")
+    assert evaluate("$('aiEnrichmentResults').children.length") == 1
+    assert ("No supported price/reference API route" if language == "en" else "אין מסלול API נתמך למחירים או לנתוני ייחוס") in evaluate("securityDataRouteHint(qa.other)")
+    assert evaluate("aiOutcomeMessage({code:'api_managed'})") == (
+        "This security uses automatic API updates. Use dashboard Refresh; AI research is not used." if language == "en" else
+        "נייר זה משתמש בעדכוני API אוטומטיים. השתמשו ברענון הלוח; לא מופעל חיפוש AI.")
+    evaluate("state.aiEnrichment.job={...qa.job(),status:'completed',code:'nothing_missing',outcomes:[],progress:{stage:'completed',completed:0,total:0}};renderAIEnrichment();$('enrichMissingData').click();closeModal($('aiEnrichmentModal'));$('enrichMissingData').click();")
+    assert evaluate("qa.aiPosts") == 0
+    assert evaluate("$('aiEnrichmentSummary').hidden&&$('aiEnrichmentEmpty').hidden&&$('aiEnrichmentProgress').hidden")
+    assert evaluate("$('aiEnrichmentPhase').textContent") == ("No AI research needed" if language == "en" else "אין צורך בחיפוש AI")
+    assert ("normal dashboard update flow" if language == "en" else "בעדכוני לוח הבקרה הרגילים") in evaluate("$('aiEnrichmentStatus').textContent")
     assert evaluate("qa.errors") == []

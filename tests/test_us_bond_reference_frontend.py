@@ -123,3 +123,18 @@ def test_slow_reference_result_cannot_update_another_security_or_session(tmp_pat
     browser_wait(evaluate, "state.securityDetail.symbol==='OTHER'")
     assert evaluate("state.securityDetail.market_data||null") is None
     assert evaluate("qa.referencePosts") == 0 and evaluate("qa.errors") == []
+
+
+@pytest.mark.parametrize("language", ["en", "he"])
+def test_matured_bond_keeps_historical_observations_without_current_quote(tmp_path, chromium, language):
+    _, evaluate = ready(tmp_path, chromium, language)
+    evaluate("qa.snapshot.quote_status='matured';qa.snapshot.quote=null;qa.snapshot.details.maturity_date='2026-10-30';qa.open();")
+    browser_wait(evaluate, "state.securityDetailLoad?.history==='ready'")
+    content = evaluate("$('securityMarketReference').textContent")
+    assert ("This bond has matured. API observations are historical, not a current price." if language == "en" else
+            "אג״ח זו הגיעה לפדיון. תצפיות ה־API הן היסטוריות ואינן מחיר נוכחי.") in content
+    assert evaluate("$('securityMarketReference').querySelectorAll('tbody tr').length") == 3
+    assert "99.34375" in content and "27/10/2026" in content
+    assert evaluate("qa.referencePosts") == 0
+    assert evaluate("qa.holding.market_value") == 470
+    assert evaluate("qa.errors") == []

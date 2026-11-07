@@ -179,6 +179,11 @@ class FinnhubBondProvider(_Adapter):
         key = str(self.config.get("api_key") or "")
         if not key:
             raise ProviderFailure("not_configured", "Configure market_data.security_lookup.finnhub.api_key for bond data.")
+        configured_currency = self.config.get("quote_currency")
+        if configured_currency is not None:
+            if not isinstance(configured_currency, str) or not re.fullmatch(r"[A-Za-z]{3}", configured_currency.strip()):
+                raise ProviderFailure("not_configured", "Configure a three-letter Finnhub bond quote currency or omit it.")
+            configured_currency = configured_currency.strip().upper()
         identifier = identifier.upper()
         headers = {"X-Finnhub-Token": key}
         profile_url, prices_url = self.base_url + "/bond/profile", self.base_url + "/bond/price"
@@ -186,14 +191,32 @@ class FinnhubBondProvider(_Adapter):
             profile = self._json(client, budget, profile_url, params={identifier_type: identifier}, headers=headers)
             if not isinstance(profile, dict) or not profile:
                 raise ProviderFailure("not_found", "The provider did not find this bond.")
-            if str(profile.get(identifier_type) or "").upper() != identifier:
-                raise ProviderFailure("identity_mismatch", "The provider returned a different or unverified bond identity.")
             isin = str(profile.get("isin") or "").upper()
+            reported_cusip = str(profile.get("cusip") or "").upper()
+            # The documented profile example leaves CUSIP empty. A verified US
+            # ISIN carries that same checked CUSIP; it is an identity alias,
+            # never evidence for the security's currency or price convention.
+            cusip = reported_cusip or (isin[2:11] if isin.startswith("US") and valid_isin(isin) and valid_cusip(isin[2:11]) else "")
+            matched = cusip if identifier_type == "cusip" else str(profile.get(identifier_type) or "").upper()
+            if matched != identifier:
+                raise ProviderFailure("identity_mismatch", "The provider returned a different or unverified bond identity.")
             if not valid_isin(isin):
                 raise ProviderFailure("missing_identifier", "The provider did not supply the ISIN required for price history.")
-            cusip = str(profile.get("cusip") or "").upper()
             if cusip and (not valid_cusip(cusip) or (isin.startswith("US") and isin[2:11] != cusip)):
                 raise ProviderFailure("identity_mismatch", "The provider returned inconsistent bond identifiers.")
+            raw_currency = profile.get("currency")
+            if raw_currency in (None, ""):
+                raw_currency = profile.get("currencyCode")
+            if raw_currency not in (None, ""):
+                if not isinstance(raw_currency, str) or not re.fullmatch(r"[A-Za-z]{3}", raw_currency.strip()):
+                    raise ProviderFailure("invalid_response", "The provider returned an invalid bond currency.")
+                currency = raw_currency.strip().upper()
+                if configured_currency and currency != configured_currency:
+                    raise ProviderFailure("invalid_response", "The reported bond currency conflicts with the configured source contract.")
+                currency_origin = "provider_profile"
+            else:
+                currency = configured_currency
+                currency_origin = "configuration" if currency else "unverified"
             prices = self._json(client, budget, prices_url, headers=headers, params={
                 "isin": isin,
                 "from": int(datetime.combine(from_date, datetime.min.time(), timezone.utc).timestamp()),
@@ -201,13 +224,13 @@ class FinnhubBondProvider(_Adapter):
             })
         if not isinstance(prices, dict) or prices.get("s") not in {"ok", "no_data"}:
             raise ProviderFailure("invalid_response", "The provider returned an invalid bond price series.")
-        currency = _text(profile.get("currency") or profile.get("currencyCode"))
-        currency = currency.upper() if currency and re.fullmatch(r"[A-Za-z]{3}", currency) else None
         configured_unit = self.config.get("quote_unit", "unknown")
         unit = configured_unit if configured_unit in {"percent_of_par", "currency_per_unit"} else "unknown"
         security = {"identifier": identifier, "identifier_type": identifier_type, "kind": "bond",
                     "cusip": cusip or None, "isin": isin, "figi": _text(profile.get("figi")),
+                    "cusip_origin": "provider_profile" if reported_cusip else "validated_us_isin" if cusip else "unverified",
                     "name": _text(profile.get("name") or profile.get("asset")), "currency": currency,
+                    "currency_origin": currency_origin,
                     "venue": "US bond market", "market_scope": "US government and TRACE corporate/144A provider coverage"}
         items, rejected = [], 0
         closes, timestamps = prices.get("c") or [], prices.get("t") or []
@@ -226,11 +249,16 @@ class FinnhubBondProvider(_Adapter):
                 rejected += 1
                 continue
             items.append(_item(day.isoformat(), value, currency, unit, "close", prices_url,
-                               quote_unit_origin="configuration" if unit != "unknown" else "unverified"))
+                               quote_unit_origin="configuration" if unit != "unknown" else "unverified",
+                               currency_origin=currency_origin))
         items = _unique_items(items)
+        maturity = _day(profile.get("maturityDate"))
+        past_maturity = bool(maturity and date.fromisoformat(maturity) < date.today())
+        maturity_status = "past_maturity" if past_maturity else "not_past_maturity" if maturity else "unknown"
         details = {
             "coupon_rate_pct": _number(profile.get("coupon")),
-            "maturity_date": _day(profile.get("maturityDate")), "issue_date": _day(profile.get("issueDate")),
+            "maturity_date": maturity, "maturity_status": maturity_status,
+            "issue_date": _day(profile.get("issueDate")),
             "payment_frequency_reported": _text(profile.get("paymentFrequency")),
             "offering_price": _number(profile.get("offeringPrice")), "offering_price_is_current": False,
             "first_coupon_date": _day(profile.get("firstCouponDate")),
@@ -245,9 +273,12 @@ class FinnhubBondProvider(_Adapter):
                     "Clean/dirty accrual basis is not established by this provider response."]
         if unit == "unknown" or currency is None:
             warnings.append("Source quote unit or currency is unverified; do not apply this raw series to portfolio valuation.")
+        if past_maturity:
+            warnings.append("The published maturity date has passed. Actual dated history is retained; neither a current quote, redemption price nor settlement cash is invented.")
         if rejected:
             warnings.append(f"Rejected {rejected} invalid or out-of-range price records.")
         return {"provider": self.name, "security": security, "items": items, "details": details,
+                "maturity_status": maturity_status, "current_quote_eligible": not past_maturity,
                 "source_url": profile_url, "coverage": _coverage(items, from_date, to_date), "warnings": warnings}
 
 

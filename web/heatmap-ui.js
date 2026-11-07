@@ -24,6 +24,7 @@ const HEATMAP_HE = {
   "Loading saved securities data…": "טוען נתוני ניירות ערך שמורים…", "Could not load the heatmap. Use Reload saved data to retry.": "לא ניתן לטעון את מפת החום. יש לנסות שוב באמצעות טעינת נתונים שמורים מחדש.",
   "Previous saved result shown; the latest reload failed.": "מוצגת התוצאה השמורה הקודמת; הטעינה האחרונה נכשלה.",
   "Map area = gross value of the selected securities in ILS. Color = latest observed price change in the security's currency.": "שטח המלבן = שווי ברוטו של ניירות הערך שנבחרו בשקלים. הצבע = שינוי המחיר האחרון שנצפה במטבע הנייר.",
+  "Three levels in either direction: under 1%, 1% to under 3%, and 3% or more.": "שלוש דרגות בכל כיוון: פחות מ־1%, מ־1% עד פחות מ־3%, ו־3% ומעלה.",
   "Fall": "ירידה", "Rise": "עלייה", "No change": "ללא שינוי", "Colors saturate at ±3%.": "עוצמת הצבע מגיעה לשיאה ב־±3%.",
   "Asset types": "סוגי נכסים", "Stocks": "מניות", "Bonds": "אג״ח", "Funds": "קרנות", "Bond": "אג״ח", "Company": "חברה", "Accounts": "חשבונות", "Gross quantity": "כמות ברוטו", "Unrealized profit / loss": "רווח / הפסד לא ממומש", "Converted to ILS": "המרה לשקלים", "Observed price change": "שינוי המחיר שנצפה", "Choose Stocks, Bonds or Funds to display holdings.": "בחרו מניות, אג״ח או קרנות כדי להציג החזקות.", "No holdings match the selected asset types in this account scope.": "אין החזקות מסוגי הנכסים שנבחרו בחשבונות אלה.", "The recorded cost basis is unavailable or invalid.": "בסיס העלות הרשום חסר או אינו תקין.", "ILS profit is the native-currency unrealized profit converted at the current saved FX rate; it does not measure historical FX profit.": "הרווח בשקלים הוא הרווח הלא ממומש במטבע הנייר, לפי שער המט״ח השמור הנוכחי; הוא אינו מודד רווח היסטורי משינויי מט״ח.", "Priced gross exposure": "חשיפה ברוטו עם שווי זמין", "Sized listings": "ניירות עם שטח מחושב", "Known price moves": "שינויי מחיר זמינים", "As of": "נכון ל־", "Unavailable": "לא זמין",
   "Each account panel is scaled independently. Compare the ILS amounts to compare account sizes.": "השטח בכל לוח חשבון מחושב בנפרד. להשוואת גודל החשבונות יש להשוות את הסכומים בשקלים.",
@@ -80,9 +81,9 @@ function heatmapDirection(asset) {
 function heatmapExcluded() { return (heatmapView.data?.excluded || []).filter(row => !heatmapView.account_id || row.account_id === heatmapView.account_id); }
 function heatmapColor(value) {
   if (!heatmapKnown(value)) return "#353942";
-  if (value === 0) return "#145ea8";
-  const intensity = Math.min(Math.abs(value) / 3, 1);
-  return value > 0 ? `hsl(165 58% ${19 + intensity * 9}%)` : `hsl(350 56% ${22 + intensity * 10}%)`;
+  if (value === 0) return "#4a5362";
+  const band = Math.abs(value) < 1 ? 0 : Math.abs(value) < 3 ? 1 : 2;
+  return (value > 0 ? ["#24463f", "#216452", "#207158"] : ["#542b35", "#7b2737", "#a12e43"])[band];
 }
 /* Balanced rectangle splits preserve each asset's share, without minimum-area distortion. */
 function heatmapRectangles(items) {
@@ -164,7 +165,7 @@ function renderHeatmap() {
     if(excluded.length)html+=`<details class="heatmap-excluded"><summary>${heatmapEsc("Excluded holdings")} (${excluded.length})</summary><ul>${excluded.map(row=>`<li><bdi>${esc([row.symbol,row.stock_market,row.account_id?heatmapAccount(row.account_id):""].filter(Boolean).join(" · "))}</bdi> · ${heatmapEsc(heatmapReason(row.reason || "unsupported_asset"))}</li>`).join("")}</ul></details>`;
     if(d.fx?.length)html+=`<details class="heatmap-fx"><summary>${heatmapEsc("Saved exchange rates")}</summary><ul>${d.fx.map(row=>`<li><bdi>${esc(currencyDisplayLabel(row.currency))}</bdi> · ${heatmapEsc("ILS per unit")}: <bdi>${heatmapKnown(row.rate)?esc(fmt(row.rate,6)):heatmapEsc("Unavailable")}</bdi>${row.date?` · <bdi>${esc(formatDate(row.date))}</bdi>`:""}${row.source?` · ${heatmapEsc("Source")}: ${esc(heatmapFxSource(row.source))}`:""}${row.status&&row.status!=="ok"?` · ${heatmapEsc(heatmapReason(row.status))}`:""}</li>`).join("")}</ul></details>`;
     html+=`<p class="section-note">${heatmapEsc("Observed prices may span more than one trading session. Dates can differ between markets. Raw price changes can reflect splits or dividends; they exclude FX and are not position profit or total return.")}</p><p class="section-note">${heatmapEsc("Long and short positions are added by absolute value for rectangle sizes; they are not netted across accounts.")}</p><p class="section-note">${heatmapEsc("Recorded holdings only; no trades or external writes.")}</p><p class="section-note">${heatmapEsc("ILS profit is the native-currency unrealized profit converted at the current saved FX rate; it does not measure historical FX profit.")}</p></details>`;
-    html+=`<div class="heatmap-legend"><span class="heatmap-loss">${heatmapEsc("Fall")}</span><span class="heatmap-neutral">${heatmapEsc("No change")}</span><span class="heatmap-unavailable">${heatmapEsc("Unavailable")}</span><span class="heatmap-gain">${heatmapEsc("Rise")}</span><small>${heatmapEsc("Colors saturate at ±3%.")}</small></div>`;
+    html+=`<div class="heatmap-legend" title="${heatmapEsc("Three levels in either direction: under 1%, 1% to under 3%, and 3% or more.")}"><span class="heatmap-loss">${heatmapEsc("Fall")}</span><span class="heatmap-neutral">${heatmapEsc("No change")}</span><span class="heatmap-unavailable">${heatmapEsc("Unavailable")}</span><span class="heatmap-gain">${heatmapEsc("Rise")}</span><small>${heatmapEsc("Colors saturate at ±3%.")}</small></div>`;
   }
   target.innerHTML=html;renderHeatmapSelection();restoreInteraction();heatmapObserveLabels(target);
 }
