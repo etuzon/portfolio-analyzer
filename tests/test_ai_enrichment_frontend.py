@@ -21,7 +21,7 @@ state.allPortfolioItems=[qa.item,qa.other];
 qa.outcomes=[{symbol:'91282CKD2',stock_market:'NYSE',currency:'USD',status:'partial',code:'partial_data',missing_fields:['price_history']}];
 qa.job=()=>({request_id:'synthetic-job',status:qa.jobStatus,progress:qa.progress,summary:{updated:0,partial:1,unavailable:0,not_attempted:0},outcomes:qa.jobStatus==='running'?[]:qa.outcomes,portfolio_refresh_required:qa.jobStatus==='completed'});
 qa.nativeTimeout=window.setTimeout;
-window.setTimeout=(callback,delay,...args)=>delay===3000?(qa.poll=callback,999999):qa.nativeTimeout(callback,delay,...args);
+window.setTimeout=(callback,delay,...args)=>delay===3000?(qa.poll=callback,999999):qa.nativeTimeout.call(window,callback,delay,...args);
 api=async(path,options={})=>{
  if(options.method==='POST'){
   qa.aiPosts++;if(qa.apiMode==='lost'){qa.apiMode='ok';throw new Error('synthetic raw provider secret');}
@@ -38,6 +38,77 @@ qa.originalAIAction=$('enrichMissingData');ensureHierarchicalNav();ensureHierarc
 renderAIEnrichment();
 ''')
     return command, evaluate
+
+
+@pytest.mark.parametrize("language,width", [("en", 1440), ("he", 1440), ("en", 390), ("he", 390)])
+def test_saved_result_field_tooltips_support_pointer_keyboard_and_touch(tmp_path, chromium, language, width):
+    command, evaluate = ready(tmp_path, chromium, language, width)
+    evaluate(r'''
+qa.outcomes=[
+ {symbol:'1101534',stock_market:'TASE',currency:'ILS',status:'unavailable',code:'data_unavailable',available_fields:[],missing_fields:['prices','profile'],needs_name:false,needs_industry:true},
+ {symbol:'88059ESH8',stock_market:'MANUAL',currency:'USD',status:'partial',code:'partial_data',available_fields:['profile'],missing_fields:['prices','reference']},
+ {symbol:'121899CH9',stock_market:'MANUAL',currency:'USD',status:'partial',code:'partial_data',available_fields:['reference'],missing_fields:['profile'],needs_name:true,needs_industry:false},
+ {symbol:'LEGACY',stock_market:'MANUAL',currency:'USD',status:'not_attempted',code:'request_limit'},
+ {symbol:'COMPLETE',stock_market:'MANUAL',currency:'USD',status:'updated',code:'data_found',available_fields:['prices'],missing_fields:[]}
+];
+state.allPortfolioItems=qa.outcomes.map(outcome=>({holding:outcome,api_data_route:{owner:'ai'},missing:[]}));
+qa.savedBefore=JSON.stringify(qa.outcomes);
+state.aiEnrichment.job={request_id:'saved-field-details',status:'completed',outcomes:qa.outcomes};
+renderAIEnrichment();openModal('aiEnrichmentModal');
+qa.badges=Array.from($('aiEnrichmentResults').querySelectorAll('button'));
+qa.badges[0].scrollIntoView({block:'center'});
+''')
+    assert evaluate("qa.badges.length") == 5
+    assert evaluate("JSON.stringify(qa.outcomes)===qa.savedBefore")
+    available = "Available fields" if language == "en" else "נתונים זמינים"
+    missing = "Still missing" if language == "en" else "נתונים שעדיין חסרים"
+    none = "None" if language == "en" else "אין"
+    unknown = "Field details were not recorded." if language == "en" else "פירוט השדות לא נשמר."
+    industry = "Industry" if language == "en" else "ענף"
+    name = "Security name" if language == "en" else "שם נייר הערך"
+    details = evaluate("qa.badges.map(b=>b.dataset.explanation)")
+    assert available + "\n" + none in details[0]
+    assert missing + "\n" in details[0] and "• " + industry in details[0]
+    assert "• " + name not in details[0]
+    assert "• " + name in details[2] and "• " + industry not in details[2]
+    assert details[3].count(unknown) == 2
+    assert missing + "\n" + none in details[4]
+    assert all("\n\n" in detail for detail in details)
+    if language == "he":
+        assert not any(token in " ".join(details) for token in ("Available fields", "Still missing", "None", "Industry", "Annual financial"))
+
+    rect = evaluate("(()=>{const r=qa.badges[0].getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()")
+    command("Input.dispatchMouseEvent", {"type": "mouseMoved", **rect})
+    browser_wait(evaluate, "!$('riskBadgeExplanation').hidden")
+    assert evaluate("$('riskBadgeExplanation').textContent") == details[0]
+    assert evaluate("getComputedStyle($('riskBadgeExplanation')).whiteSpace") == "pre-line"
+    geometry = evaluate("(()=>{const r=$('riskBadgeExplanation').getBoundingClientRect();return {left:r.left,right:r.right,top:r.top,bottom:r.bottom,overflow:document.documentElement.scrollWidth-innerWidth};})()")
+    assert geometry["left"] >= 0 and geometry["right"] <= width, geometry
+    assert geometry["top"] >= 0 and geometry["bottom"] <= 1000, geometry
+    assert geometry["overflow"] <= 1
+    assert evaluate("getComputedStyle($('riskBadgeExplanation')).direction") == ("rtl" if language == "he" else "ltr")
+    (tmp_path / f"ai-result-fields-{language}-{width}.png").write_bytes(base64.b64decode(command("Page.captureScreenshot", {"format": "png"})["data"]))
+
+    command("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": 1, "y": 1})
+    evaluate("qa.badges[0].focus();")
+    command("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Tab", "code": "Tab", "windowsVirtualKeyCode": 9})
+    command("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Tab", "code": "Tab", "windowsVirtualKeyCode": 9})
+    assert evaluate("document.activeElement===qa.badges[1]")
+    assert evaluate("!$('riskBadgeExplanation').hidden&&$('riskBadgeExplanation').textContent===qa.badges[1].dataset.explanation")
+    command("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Escape", "code": "Escape", "windowsVirtualKeyCode": 27})
+    command("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Escape", "code": "Escape", "windowsVirtualKeyCode": 27})
+    assert evaluate("$('riskBadgeExplanation').hidden")
+    assert evaluate("!$('aiEnrichmentModal').hidden&&document.activeElement===qa.badges[1]")
+
+    evaluate("qa.badges[2].scrollIntoView({block:'center'});")
+    tap = evaluate("(()=>{const r=qa.badges[2].getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()")
+    for opened in [True, False]:
+        command("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{**tap, "radiusX": 2, "radiusY": 2}]})
+        command("Input.dispatchTouchEvent", {"type": "touchEnd", "touchPoints": []})
+        browser_wait(evaluate, "$('riskBadgeExplanation').hidden===" + ("false" if opened else "true"))
+    assert evaluate("JSON.stringify(qa.outcomes)===qa.savedBefore")
+    assert evaluate("qa.aiPosts") == 0
+    assert evaluate("qa.errors") == []
 
 
 @pytest.mark.parametrize("language,width", [("en", 1440), ("he", 390)])

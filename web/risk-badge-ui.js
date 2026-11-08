@@ -1,10 +1,10 @@
-/* Shared, read-only risk explanations for mouse, keyboard and touch. */
+/* Shared, read-only explanations for mouse, keyboard and touch. */
 (() => {
   let source = null;
   let pinned = false;
   let hideTimer;
   const panel = () => document.getElementById("riskBadgeExplanation");
-  const badge = (target) => target?.closest?.("[data-risk-explanation]");
+  const badge = (target) => target?.closest?.("[data-risk-explanation], [data-explanation]");
   function hide() {
     clearTimeout(hideTimer);
     if (panel()) panel().hidden = true;
@@ -34,7 +34,7 @@
     clearTimeout(hideTimer);
     const popup = panel();
     if (!popup || !control) return;
-    const content = control.dataset.riskExplanation;
+    const content = control.dataset.explanation ?? control.dataset.riskExplanation;
     const changed = source !== control || popup.textContent !== content;
     if (source !== control) pinned = false;
     source = control;

@@ -1259,6 +1259,24 @@ function aiOutcomeFor(item) {
   return state.aiEnrichment.outcomes.find((outcome) => aiSecurityKey(outcome) === key);
 }
 
+function aiOutcomeTooltip(outcome) {
+  const labels = { prices: "Recent dated price / price history", price_history: "Price history",
+    profile: "Security name / industry", fundamentals: "Annual financial reports",
+    dividends: "Dividend history", reference: "Instrument reference information" };
+  const fields = (values, missing = false) => {
+    if (!Array.isArray(values)) return [t("Field details were not recorded.")];
+    if (!values.length) return [t("None")];
+    return [...new Set(values)].flatMap((field) => {
+      if (missing && field === "profile" && (outcome.needs_name || outcome.needs_industry)) {
+        return [outcome.needs_name && t("Security name"), outcome.needs_industry && t("Industry")].filter(Boolean);
+      }
+      return [t(labels[field] || "Other requested information")];
+    }).map((label) => `• ${label}`);
+  };
+  return [aiOutcomeMessage(outcome), "", t("Available fields"), ...fields(outcome.available_fields),
+    "", t("Still missing"), ...fields(outcome.missing_fields, true)].join("\n");
+}
+
 function resetAIEnrichment() {
   const ui = state.aiEnrichment;
   clearTimeout(ui.timer);
@@ -1330,7 +1348,13 @@ function renderAIEnrichment() {
   $("aiEnrichmentEmpty").hidden = Boolean(displayedOutcomes.length) || ui.job?.code === "nothing_missing";
   $("aiEnrichmentEmpty").textContent = t(ui.pending ? "Results will appear as checks finish." : "No AI research results yet.");
   const results = $("aiEnrichmentResults");
-  const resultHtml = displayedOutcomes.map((outcome) => `<li><div class="ai-enrichment-result-heading"><bdi dir="auto">${esc([outcome.symbol, outcome.stock_market, outcome.currency].filter(Boolean).join(" · "))}</bdi><span class="badge ${outcome.status === "updated" ? "ok" : outcome.status === "partial" ? "partial" : "neutral"}">${esc(t({ updated: "Updated", partial: "Partial results", unavailable: "Unavailable", not_attempted: "Not checked" }[outcome.status] || "Unavailable"))}</span></div><p>${esc(aiOutcomeMessage(outcome))}</p></li>`).join("");
+  const resultHtml = displayedOutcomes.map((outcome) => {
+    const statusLabel = t({ updated: "Updated", partial: "Partial results", unavailable: "Unavailable", not_attempted: "Not checked" }[outcome.status] || "Unavailable");
+    const tone = outcome.status === "updated" ? "ok" : outcome.status === "partial" ? "partial" : "neutral";
+    const identity = [outcome.symbol, outcome.stock_market, outcome.currency].filter(Boolean).join(" · ");
+    const accessibleLabel = `${t("Research result details")}: ${identity} · ${statusLabel}`;
+    return `<li><div class="ai-enrichment-result-heading"><bdi dir="auto">${esc(identity)}</bdi><button type="button" class="badge ai-outcome-details ${tone}" data-explanation="${esc(aiOutcomeTooltip(outcome))}" aria-describedby="riskBadgeExplanation" aria-label="${esc(accessibleLabel)}">${esc(statusLabel)} ⓘ</button></div><p>${esc(aiOutcomeMessage(outcome))}</p></li>`;
+  }).join("");
   if (results.innerHTML !== resultHtml) {
     const scrollTop = results.scrollTop;
     results.innerHTML = resultHtml;

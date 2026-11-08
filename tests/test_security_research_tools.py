@@ -196,3 +196,25 @@ def test_rendered_reader_does_not_retry_or_fallback_on_block(monkeypatch):
     with pytest.raises(ResearchFailure):
         fetch_research_document("https://example.com/quote", {})
     assert len(requests) == 1
+
+
+@pytest.mark.parametrize('field,host', [('needs_industry', 'www.globes.co.il'), ('needs_name', 'finance.themarker.com')])
+def test_missing_tase_profile_has_field_specific_unverified_lead(field, host):
+    research = session()
+    candidate = {'security_key': 'stock', 'symbol': '1101534', 'stock_market': 'TASE',
+                 'asset_class': 'EQUITY', 'missing_fields': ['profile'], field: True}
+    leads = research.discover(candidate)
+    assert host in leads[0]['url'] and '1101534' in leads[0]['url']
+    assert all(lead['discovery_only'] for lead in leads)
+    assert research.budget.used == 0 and research.evidence(candidate) == []
+
+
+def test_blocked_reader_document_is_failure_and_consumes_one_read():
+    research = session(fetch=lambda url, settings: {'url': url, 'text': 'webtransit.live is blocked ERR_BLOCKED_BY_CLIENT'})
+    lead = research.search(CANDIDATE)['sources'][0]
+    with pytest.raises(ResearchFailure) as error:
+        research.read(CANDIDATE, lead['source_id'])
+    assert error.value.code == 'source_read_failed'
+    assert research.budget.used == 2  # discovery search + failed read
+    assert research.diagnostics['read_failures'] == 1
+    assert research.evidence(CANDIDATE) == []

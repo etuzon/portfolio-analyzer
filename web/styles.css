@@ -878,6 +878,8 @@ html[dir="rtl"] .assistant-table-wrap table { direction: rtl; }
 .ai-enrichment-details li + li { border-top: 1px solid #303b49; }
 .ai-enrichment-details ul:focus-visible { outline: 2px solid var(--ux-blue); outline-offset: 3px; }
 .ai-enrichment-result-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 750; }
+.ai-outcome-details { width: auto; min-height: 30px; font: inherit; font-size: 12px; cursor: pointer; }
+.ai-outcome-details:focus-visible { outline: 2px solid var(--ux-blue); outline-offset: 3px; }
 .ai-enrichment-details li p { margin: 8px 0 0; color: #b7c6d9; font-size: 13px; line-height: 1.6; }
 .ai-enrichment-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding-top: 14px; border-top: 1px solid #303b49; }
 .ai-enrichment-footer p { flex: 1 1 300px; margin: 0; line-height: 1.6; }

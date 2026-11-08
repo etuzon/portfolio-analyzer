@@ -279,7 +279,16 @@ class ResearchSession:
             return []
         url = "https://market.tase.co.il/he/market_data/security/" + str(int(symbol)) + "/major_data"
         source_id = self._add(key, url, "Official TASE security page")
-        return [{"source_id": source_id, "url": url, "title": "Official TASE security page", "discovery_only": True}]
+        hints = [{"source_id": source_id, "url": url, "title": "Official TASE security page", "discovery_only": True}]
+        # Field-specific alternatives are leads only. They still spend a read
+        # and pass the same exact-identity validation as any discovered source.
+        for needed, url, title in (
+            (candidate.get("needs_industry"), "https://www.globes.co.il/portal/instrument.aspx?quote=TASE:" + str(int(symbol)), "Globes primary security industry"),
+            (candidate.get("needs_name"), "https://finance.themarker.com/stock/" + str(int(symbol)), "TheMarker primary security name"),
+        ):
+            if needed and "profile" in candidate.get("missing_fields", []):
+                hints.insert(0, {"source_id": self._add(key, url, title), "url": url, "title": title, "discovery_only": True})
+        return hints
 
     def search(self, candidate: dict[str, Any], query: str = "", *, provider: str = "auto") -> dict[str, Any]:
         key = self._key(candidate)
@@ -327,6 +336,8 @@ class ResearchSession:
             document = self._fetch(url, self.settings)
             if not isinstance(document, dict) or not isinstance(document.get("text"), str) or not document["text"].strip():
                 raise ResearchFailure("source_read_failed", "The source contains no readable evidence.")
+            if re.search(r"\b(?:ERR_BLOCKED_BY_CLIENT|ERR_BLOCKED_BY_RESPONSE)\b", document["text"]):
+                raise ResearchFailure("source_read_failed", "The source reader returned a blocked page.")
             actual = public_source_url(document.get("url") or url, resolver=self._resolver)
             links = []
             raw_links = document.get("links") or []

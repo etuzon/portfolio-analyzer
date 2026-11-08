@@ -12,7 +12,7 @@ import json
 import math
 import re
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from .price_agent import _unsupported_price_basis
 from .price_evidence import _observation_currency_matches
@@ -220,6 +220,21 @@ def _themarker_profiles(source, candidate):
             or str(candidate.get("asset_class") or "STOCK").upper() not in {"STOCK", "EQUITY", "SHARE"}):
         return []
     output = []
+    # The rendered reader exposes visible Markdown, without the original
+    # script objects. Bind the primary card's heading to its own typed ID;
+    # related listings below the card cannot establish this name.
+    cards = list(re.finditer(r"(?m)^## ([^\n<>]{1,200})\n+למידע נוסף על המניה\b", source["text"]))
+    if len(cards) == 1:
+        card = cards[0]
+        body = source["text"][card.end():card.end() + 2000]
+        body = re.split(r"(?m)^#{1,6} |^\*\s+\[", body, maxsplit=1)[0]
+        identities = re.findall(r"סוג נייר:\s*מניה רגילה\s+מספר נייר:\s*(\d+)(?!\d)", body)
+        if (len(identities) == 1 and _same_id(identities[0], route[1])
+                and all(_same_id(value, route[1]) for value in _explicit_security_numbers(body))
+                and not _isin_conflicts(source, candidate, body)):
+            name = card[1].strip()
+            output.append(_record(source, candidate, "profile", card[0],
+                                  {"identity": identities[0], "primary_card": card[0] + body}, field="name", value=name))
     for path, obj in islice(_objects(source.get("structured_data") or []), 500):
         type_key = next((key for key in ("assetType", "type") if key in obj), "")
         source_type = str(obj.get(type_key) or "").casefold()
@@ -236,6 +251,41 @@ def _themarker_profiles(source, candidate):
                   "name": {"path": path + "[" + json.dumps(name_key) + "]", "value": name}}
         output.append(_record(source, candidate, "profile", name, claims, field="name", value=name))
     return output
+
+
+def _globes_profiles(source, candidate):
+    parsed = urlsplit(source["url"])
+    query = parse_qs(parsed.query)
+    quote = query.get("quote", [])
+    if (parsed.hostname not in {"www.globes.co.il", "globes.co.il"} or parsed.path != "/portal/instrument.aspx"
+            or len(quote) != 1 or not re.fullmatch(r"TASE:\d+", quote[0])
+            or _market(candidate.get("stock_market")) != "TASE"
+            or str(candidate.get("asset_class") or "STOCK").upper() not in {"STOCK", "EQUITY", "SHARE"}
+            or not any(_same_id(quote[0].split(":")[1], candidate.get(key)) for key in ("symbol", "secondary_symbol"))):
+        return []
+    text = source["text"]
+    headers = list(re.finditer(r"(?m)^# מניית [^\n<>]{1,200}\n", text))
+    if len(headers) != 1:
+        return []
+    header = headers[0]
+    card = re.split(r"(?m)^#{1,6} ", text[header.end():header.end() + 1000], maxsplit=1)[0]
+    identities = re.findall(r"(?m)^מניה (\d+) תל-אביב NIS(?:\s|$)", card)
+    if (len(identities) != 1 or not _same_id(identities[0], quote[0].split(":")[1])
+            or any(not _same_id(value, identities[0]) for value in _explicit_security_numbers(card))
+            or _isin_conflicts(source, candidate, card)):
+        return []
+    sections = list(re.finditer(r"(?m)^### תיאור חברה\s*$", text[header.end():]))
+    if len(sections) != 1:
+        return []
+    start = header.end() + sections[0].end()
+    section = re.split(r"(?m)^#{1,6} ", text[start:], maxsplit=1)[0]
+    fields = list(re.finditer(r"(?m)^\*\*תת-ענף:\*\*\[([^\]\n<>]{1,200})\]\(https://www\.globes\.co\.il/portal/quotes/[^\s)]+\)", section))
+    if len(fields) != 1:
+        return []
+    field = fields[0]
+    return [_record(source, candidate, "profile", field[0],
+                    {"identity": header[0] + card, "company_section": "### תיאור חברה", "industry": field[0]},
+                    field="industry", value=field[1])]
 
 
 def bond_profile_identity(candidate, text):
@@ -352,7 +402,7 @@ def context_records(source: dict[str, Any], candidate: dict[str, Any]) -> list[d
     if parsed.scheme != "https" or parsed.username or parsed.password:
         return []
     return (_tase_records(source, candidate) + _structured_records(source, candidate) + _themarker_profiles(source, candidate)
-            + _bond_profiles(source, candidate) + _issuer_strip_profiles(source, candidate))
+            + _globes_profiles(source, candidate) + _bond_profiles(source, candidate) + _issuer_strip_profiles(source, candidate))
 
 
 def context_supported(source: dict[str, Any]) -> bool:
@@ -373,7 +423,8 @@ def context_supported(source: dict[str, Any]) -> bool:
         return False
     return bool(parsed.scheme == "https" and not parsed.username and not parsed.password and (
         parsed.hostname == "market.tase.co.il" and _TASE_MAIN_PATH.fullmatch(parsed.path)
-        or parsed.hostname == "finance.themarker.com" and re.fullmatch(r"/stock/\d+/?", parsed.path)))
+        or parsed.hostname == "finance.themarker.com" and re.fullmatch(r"/stock/\d+/?", parsed.path)
+        or parsed.hostname in {"www.globes.co.il", "globes.co.il"} and parsed.path == "/portal/instrument.aspx"))
 
 
 def supports_context(source: dict[str, Any], candidate=None) -> bool:

@@ -133,7 +133,7 @@ def test_mixed_batch_industry_only_finalization_preserves_known_name_and_bond_pr
             if item["asset_class"] == "BOND":
                 assert all(hint["url"] != URL and hint["discovery_only"] is True
                            for hint in item.get("source_hints", []))
-        hint, = supplied_stock["source_hints"]
+        hint = next(hint for hint in supplied_stock["source_hints"] if hint["url"] == URL)
         assert hint["url"] == URL
         return tool("read_security_source", security_key=TASE_KEY, source_id=hint["source_id"])
 
@@ -194,7 +194,7 @@ def test_mixed_batch_search_hints_are_instrument_specific_unverified_leads(resea
 def test_mixed_batch_bond_cannot_read_stock_hint_even_in_same_request(research_app):
     env = research_app
     candidates = mixed_candidates()
-    hint, = env.session.discover(candidates[1])
+    hint = next(hint for hint in env.session.discover(candidates[1]) if hint["url"] == URL)
     with pytest.raises(ResearchFailure) as failure:
         env.session.read(candidates[0], hint["source_id"])
     assert failure.value.code == "invalid_source"
