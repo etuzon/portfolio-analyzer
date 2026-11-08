@@ -129,7 +129,7 @@ class _Document(_PageText):
         super().handle_endtag(tag)
 
 
-def _direct_document(url: str) -> dict[str, Any]:
+def _direct_document(url: str, *, compatible: bool = False) -> dict[str, Any]:
     # Pin checked DNS just as the existing public evidence fetcher does.
     from .price_agent import _public_address
     parsed, address = _public_address(url)
@@ -139,22 +139,28 @@ def _direct_document(url: str) -> dict[str, Any]:
         target = parsed.path or "/"
         if parsed.query:
             target += "?" + parsed.query
-        connection.request("GET", target, headers={"User-Agent": "PortfolioAnalyzerPriceResearch/1.0", "Accept": "text/html,text/plain,application/json"})
+        headers = {"User-Agent": "PortfolioAnalyzerPriceResearch/1.0", "Accept": "text/html,text/plain,application/json"}
+        if compatible:
+            headers.update({"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+                            "Accept-Language": "en-US,en;q=0.9"})
+        connection.request("GET", target, headers=headers)
         response = connection.getresponse()
         if response.status != 200:
             raise ResearchFailure("source_read_failed", "The source is unavailable or redirects; select another discovered source.")
         content_type = response.getheader("Content-Type", "").lower()
         if not any(kind in content_type for kind in ("text/html", "text/plain", "application/json")):
             raise ResearchFailure("source_read_failed", "The source is not a supported text page.")
-        raw = response.read(1_000_001)
-        if len(raw) > 1_000_000:
+        limit = 2_000_000 if compatible else 1_000_000
+        raw = response.read(limit + 1)
+        if len(raw) > limit:
             raise ResearchFailure("source_read_failed", "The source exceeds the evidence size limit.")
         text = raw.decode("utf-8", errors="replace")
         document = {"url": url, "text": text, "links": [], "structured_data": []}
         if "html" in content_type:
             parser = _Document()
             parser.feed(text)
-            document.update(text=" ".join(parser.parts), links=parser.links, structured_data=parser.structured_data)
+            text = "\n".join(part.strip() for part in parser.parts if part.strip() and part.strip() != "|") if compatible else " ".join(parser.parts)
+            document.update(text=text, links=parser.links, structured_data=parser.structured_data)
         elif "application/json" in content_type and len(text) <= 16_000:
             try:
                 document["structured_data"] = [json.loads(text)]
@@ -171,10 +177,15 @@ def fetch_research_document(url: str, settings: dict[str, Any]) -> dict[str, Any
     # checks here so even a direct adapter caller cannot pass a local URL.
     url = public_source_url(url, resolve=False)
     reader = str(settings.get("reader") or "auto").lower()
+    parsed = urlsplit(url)
+    # Select one compatible transport before the read; never hide retries or
+    # fallback requests inside one budget operation. This is HTTP, not JS.
+    if reader == "compatible" or reader == "auto" and parsed.hostname in {"www.google.com", "google.com"} and re.fullmatch(r"/finance/(?:beta/)?quote/[^/]+", parsed.path):
+        return {**_direct_document(url, compatible=True), "reader": "compatible"}
     if reader == "direct":
         return {**_direct_document(url), "reader": "direct"}
     if reader not in {"auto", "jina"}:
-        raise ResearchFailure("reader_not_configured", "Choose auto, jina or direct for the source reader.")
+        raise ResearchFailure("reader_not_configured", "Choose auto, jina, direct or compatible for the source reader.")
     headers = {"Accept": "application/json", "X-Respond-With": "markdown", "X-With-Links-Summary": "true",
                "X-Retain-Images": "none", "X-With-Generated-Alt": "false", "X-Timeout": "20",
                "X-No-Cache": "true", "DNT": "1"}
@@ -275,7 +286,7 @@ class ResearchSession:
                 source_id = self._add(key, url, title)
                 hints.append({"source_id": source_id, "url": url, "title": title, "discovery_only": True})
             return hints
-        if market not in {"TASE", "TLV", "TELAVIV"} or asset not in {"EQUITY", "STOCK", "SHARE"} or not re.fullmatch(r"[0-9]{5,8}", symbol) or int(symbol) <= 0:
+        if market not in {"TASE", "TLV", "TELAVIV"} or asset not in {"EQUITY", "STOCK", "SHARE", "RSU"} or not re.fullmatch(r"[0-9]{5,8}", symbol) or int(symbol) <= 0:
             return []
         url = "https://market.tase.co.il/he/market_data/security/" + str(int(symbol)) + "/major_data"
         source_id = self._add(key, url, "Official TASE security page")
@@ -288,6 +299,12 @@ class ResearchSession:
         ):
             if needed and "profile" in candidate.get("missing_fields", []):
                 hints.insert(0, {"source_id": self._add(key, url, title), "url": url, "title": title, "discovery_only": True})
+        ticker = str(candidate.get("secondary_symbol") or "").strip().upper()
+        if ("profile" in candidate.get("missing_fields", []) and (candidate.get("needs_name") or candidate.get("needs_industry"))
+                and re.fullmatch(r"[A-Z][A-Z0-9.-]{0,29}", ticker)):
+            url = "https://www.google.com/finance/beta/quote/" + ticker + ":TLV?hl=en"
+            title = "Google Finance exact mapped ticker; name and industry"
+            hints.insert(0, {"source_id": self._add(key, url, title), "url": url, "title": title, "discovery_only": True})
         return hints
 
     def search(self, candidate: dict[str, Any], query: str = "", *, provider: str = "auto") -> dict[str, Any]:
@@ -327,13 +344,15 @@ class ResearchSession:
             sources.append({"source_id": source_id, "url": source["url"], "title": source["title"]})
         return {"sources": sources, "discovery_only": True, "search_provider": self.last_search_provider, "diagnostics": dict(self.diagnostics)}
 
-    def read(self, candidate: dict[str, Any], source_id: str) -> dict[str, Any]:
+    def read(self, candidate: dict[str, Any], source_id: str, *, reader: str | None = None) -> dict[str, Any]:
+        if reader is not None and reader not in {"auto", "jina", "direct", "compatible"}:
+            raise ResearchFailure("invalid_request", "Choose an allowed page reader.")
         key, source = self._source(candidate, source_id)
         self.budget.consume()
         self.diagnostics["source_requests"] += 1
         try:
             url = public_source_url(source["url"], resolver=self._resolver)
-            document = self._fetch(url, self.settings)
+            document = self._fetch(url, self.settings if reader is None else {**self.settings, "reader": reader})
             if not isinstance(document, dict) or not isinstance(document.get("text"), str) or not document["text"].strip():
                 raise ResearchFailure("source_read_failed", "The source contains no readable evidence.")
             if re.search(r"\b(?:ERR_BLOCKED_BY_CLIENT|ERR_BLOCKED_BY_RESPONSE)\b", document["text"]):
@@ -374,12 +393,12 @@ class ResearchSession:
                 raise
             raise ResearchFailure("source_read_failed", "The public source could not be read.") from None
 
-    def follow(self, candidate: dict[str, Any], source_id: str, link_id: str) -> dict[str, Any]:
+    def follow(self, candidate: dict[str, Any], source_id: str, link_id: str, *, reader: str | None = None) -> dict[str, Any]:
         _, source = self._source(candidate, source_id)
         linked_source = source.get("links", {}).get(link_id) if isinstance(link_id, str) else None
         if not linked_source:
             raise ResearchFailure("invalid_source", "Select a link returned by the source in this request.")
-        return self.read(candidate, linked_source)
+        return self.read(candidate, linked_source, reader=reader)
 
     def evidence(self, candidate: dict[str, Any]) -> list[dict[str, Any]]:
         return list(self._evidence.get(self._key(candidate), []))

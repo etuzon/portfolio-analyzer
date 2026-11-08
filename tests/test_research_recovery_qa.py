@@ -42,7 +42,9 @@ def test_conflicting_industries_are_not_recovered_from_either_full_source():
 
 
 def test_conflicting_prices_do_not_discard_matching_industry():
-    candidate = {**mixed_candidates()[1], "missing_fields": ["prices", "profile"]}
+    # This oracle requires ordinary-share price evidence. The production-shaped
+    # mixed batch fixture is RSU, whose context contract permits profiles only.
+    candidate = {**mixed_candidates()[1], "asset_class": "STOCK", "missing_fields": ["prices", "profile"]}
     evidence = [fetched(), fetched(TASE.replace("**2,901**", "**2,902**"),
                                   source_id="source-qa-alternate", url=URL.removesuffix("/major_data"))]
     assert all(any(record["kind"] == "price" for record in context_records(source, candidate)) for source in evidence)

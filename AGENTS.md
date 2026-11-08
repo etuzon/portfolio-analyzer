@@ -47,7 +47,7 @@ The Docker app is served at `https://localhost:6443`.
 ## Project Chat Shortcuts
 
 - Use `$cad` to invoke the commit-and-deploy skill, or `/prompts:cad` for the legacy custom prompt after reloading Codex. Optional text provides a commit message or release scope. Repository instructions do not register a bare `/cad` command in the slash menu.
-- Use the `cad` skill when available. Run `./scripts/commit-and-deploy.sh "<commit message>" <explicit task-owned file>...` from the repository root; the script runs tests, commits the selected files, rebuilds Docker Compose, and checks HTTPS health.
+- Use the `cad` skill when available. Run `./scripts/commit-and-deploy.sh --quiet "<commit message>" <explicit task-owned file>...` from the repository root; the script runs tests, commits the selected files, rebuilds Docker Compose, checks HTTPS health, and verifies deployed task files against the commit. Quiet mode saves verbose logs under `.runtime/releases/` and returns a compact result; inspect logs only when needed.
 - Preserve unrelated edits and exclude them from both the commit and deployment build. Keep secrets and runtime data out of the commit.
 - Complete the script's validation gates, verify the deployed task behavior, and report the commit hash and deployment result. Do not push or merge unless separately requested.
 - Explicitly invoking the commit-and-deploy shortcut authorizes this project's established local deployment without another confirmation. A request to create, explain, or edit the shortcut does not invoke a release.

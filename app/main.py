@@ -4905,9 +4905,9 @@ def _enrichment_research_tool(candidate: dict[str, Any], action: str, arguments:
             result = session.search(current, arguments["query"], provider=arguments.get("provider", "auto"))
             return {**result, "evidence": [], "source_status": "search_results", "web_requests": budget.used}
         if action == "read":
-            source = session.read(current, arguments["source_id"])
+            source = session.read(current, arguments["source_id"], reader=arguments.get("reader"))
         elif action == "follow":
-            source = session.follow(current, arguments["source_id"], arguments["link_id"])
+            source = session.follow(current, arguments["source_id"], arguments["link_id"], reader=arguments.get("reader"))
         else:
             raise ResearchFailure("invalid_request", "Unsupported research operation.")
         from .security_source_context import context_records

@@ -26,7 +26,7 @@ def mixed_candidates():
                 "needs_name": False, "needs_industry": False}
     return [bond("88059ESH8"),
             {"security_key": TASE_KEY, "symbol": "1101534", "secondary_symbol": "CEL",
-             "stock_market": "TASE", "currency": "ILS", "asset_class": "STOCK",
+             "stock_market": "TASE", "currency": "ILS", "asset_class": "RSU",
              "name": "סלקום", "industry": "", "quantity": 1, "location": "Israel",
              "quote_unit": "agorot", "missing_fields": ["profile"], "available_fields": [],
              "needs_name": False, "needs_industry": True},

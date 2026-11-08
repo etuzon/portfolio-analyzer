@@ -97,7 +97,9 @@ price_agent:
   timeout_seconds: 110
   base_url: "https://localhost:6443"
   # auto/jina reads rendered public pages without a key; only public source URLs
-  # are sent to Jina Reader. direct uses the application's HTTPS text reader.
+  # are sent to Jina Reader. auto uses compatible HTTP for Google Finance.
+  # compatible reads actual HTML with browser headers (no JavaScript or sign-in);
+  # direct uses the plain HTTPS text reader. The AI can choose a reader per read.
   reader: "auto"
   search:
     provider: "auto"  # Brave with a key; otherwise Yahoo. duckduckgo is also selectable.

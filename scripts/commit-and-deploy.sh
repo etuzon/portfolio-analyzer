@@ -3,8 +3,29 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 \"commit message\" <file> [file ...]" >&2
+  echo "Usage: $0 [--quiet] \"commit message\" <file> [file ...]" >&2
 }
+
+if [[ "${1:-}" == "--quiet" ]]; then
+  shift
+  # Keep verbose build/test output out of the agent context. The child retains
+  # all validation gates; waiting here requires no model or polling decisions.
+  release_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+  mkdir -p -- "$release_root/.runtime/releases"
+  umask 077
+  release_log=$(mktemp "$release_root/.runtime/releases/release.XXXXXXXX.log")
+  echo "Release running; detailed log: $release_log"
+  release_status=0
+  bash "${BASH_SOURCE[0]}" "$@" >"$release_log" 2>&1 || release_status=$?
+  if (( release_status == 0 )); then
+    tail -n 3 -- "$release_log"
+  else
+    echo "Release failed (exit $release_status). Last 40 log lines:" >&2
+    tail -n 40 -- "$release_log" >&2
+  fi
+  echo "Detailed log: $release_log"
+  exit "$release_status"
+fi
 
 if (( $# < 2 )); then
   usage
@@ -86,5 +107,7 @@ for attempt in {1..30}; do
 done
 
 docker compose ps
+echo "Verifying deployed task files..."
+./.venv/bin/python scripts/verify-deployment.py "${files[@]}"
 echo "Committed $(git rev-parse --short HEAD) and deployed successfully."
 echo "Health: $health_response"

@@ -783,3 +783,25 @@ def test_authenticated_finalizer_saves_rendered_name_and_industry_without_naviga
             "[פרטי החברה](https://maya.tase.co.il/he/companies/2066)\n\n###### Chart")
     document = {"url": "https://market.tase.co.il/he/market_data/security/1101534/major_data", "text": text, "reader": "jina"}
     exercise_profile_finalizer(research_app, monkeypatch, document)
+
+
+def test_planner_can_choose_reader_for_open_and_follow_within_original_budget(research_app):
+    env = research_app
+    modes = []
+    original_fetch = env.session._fetch
+    def fetch(url, settings):
+        modes.append(settings.get('reader'))
+        return original_fetch(url, settings)
+    env.session._fetch = fetch
+    def read(messages):
+        source = last_result(messages)['sources'][0]
+        return tool('read_security_source', source_id=source['source_id'], reader='compatible')
+    def follow(messages):
+        source = last_result(messages)
+        return tool('follow_security_source', source_id=source['source_id'], link_id=source['links'][0]['link_id'], reader='direct')
+    env.state.responses = [tool('search_security_sources', query='QAEXAMPLE listing'), read, follow, final()]
+    result = run_job(env)
+    assert modes == ['compatible', 'direct']
+    assert result['counts']['rest_requests'] == 5 and result['counts']['model_requests'] == 4
+    assert env.session.budget.used == 3
+    assert env.state.saved[0]['evidence_by_key'][KEY]

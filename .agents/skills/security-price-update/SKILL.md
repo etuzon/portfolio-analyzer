@@ -222,12 +222,16 @@ log files or storage directly to inspect that trace.
 
 Recovery never bypasses expired authorization, cancellation or changed eligibility. A valid empty proposal is an intentional no-save result. Keep the original interruption reason and actual recovered fields separate.
 
-The dashboard uses `price_agent.reader: auto` (or `jina`) for key-free rendered
-Jina Reader pages. Only public source URLs are sent to that external reader;
-application credentials, portfolio records and browser sessions are not sent.
-Choose `direct` for the application's HTTPS text reader instead. There is no
-hidden reader fallback or retry. This adds rendered text and followable links,
-not the interactive agent's proprietary search index or signed-in browser access.
+The dashboard's `auto` reader uses browser-compatible HTTP for Google Finance
+quote pages and key-free Jina Reader elsewhere. `compatible` reads actual HTML
+with standard browser headers; it runs no JavaScript and uses no signed-in state.
+`direct` uses the plain HTTPS text reader; `jina` explicitly selects rendered
+pages. Read/follow tools may choose a `reader` per call. Every attempt consumes
+the same existing budget; there is no hidden fallback or retry. Only public
+source URLs reach an external reader, never application credentials or portfolio
+records. Google Finance profiles require an existing exact ticker/exchange
+mapping and primary-page evidence; this does not add price support or the
+interactive agent's proprietary search index.
 
 One dashboard request shares at most **eight model calls, eight application REST
 attempts and eight public search/page requests** across all candidates. These are

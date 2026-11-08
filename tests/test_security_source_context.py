@@ -300,3 +300,16 @@ def test_context_provider_recognition_does_not_depend_on_successful_price_parse(
     assert not context_supported(source("plain text", "https://example.com/quote"))
     assert not context_supported(source(url="https://other.example/he/market_data/security/1101534/major_data"))
     assert not context_supported(source(url="https://[invalid"))
+
+
+def test_legacy_rsu_profiles_preserve_class_and_do_not_enable_prices():
+    candidate = {**CANDIDATE, 'asset_class': 'RSU'}
+    records = context_records(source(), candidate)
+    assert {r['field'] for r in records} == {'name', 'industry'}
+    assert all(r['kind'] == 'profile' for r in records)
+    assert candidate['asset_class'] == 'RSU'
+
+
+@pytest.mark.parametrize('asset_class', ['PRIVATE_STOCK', 'EMPLOYEE_STOCK_OPTION', 'STOCK_OPTION'])
+def test_grants_and_private_instruments_cannot_use_public_share_context(asset_class):
+    assert context_records(source(), {**CANDIDATE, 'asset_class': asset_class}) == []

@@ -198,11 +198,12 @@ def test_rendered_reader_does_not_retry_or_fallback_on_block(monkeypatch):
     assert len(requests) == 1
 
 
+@pytest.mark.parametrize('asset_class', ['EQUITY', 'RSU'])
 @pytest.mark.parametrize('field,host', [('needs_industry', 'www.globes.co.il'), ('needs_name', 'finance.themarker.com')])
-def test_missing_tase_profile_has_field_specific_unverified_lead(field, host):
+def test_missing_tase_profile_has_field_specific_unverified_lead(field, host, asset_class):
     research = session()
     candidate = {'security_key': 'stock', 'symbol': '1101534', 'stock_market': 'TASE',
-                 'asset_class': 'EQUITY', 'missing_fields': ['profile'], field: True}
+                 'asset_class': asset_class, 'missing_fields': ['profile'], field: True}
     leads = research.discover(candidate)
     assert host in leads[0]['url'] and '1101534' in leads[0]['url']
     assert all(lead['discovery_only'] for lead in leads)

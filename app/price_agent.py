@@ -62,8 +62,8 @@ def price_agent_settings(raw: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(search, dict) or search.get("provider", "auto") not in {"auto", "brave", "duckduckgo", "yahoo"}:
         raise PriceAgentError("Price-agent search.provider must be auto, brave, duckduckgo or yahoo.")
     reader = str(section.get("reader") or "auto").lower()
-    if reader not in {"auto", "jina", "direct"}:
-        raise PriceAgentError("Price-agent reader must be auto, jina or direct.")
+    if reader not in {"auto", "jina", "direct", "compatible"}:
+        raise PriceAgentError("Price-agent reader must be auto, jina, direct or compatible.")
     timeout = section.get("timeout_seconds", 110)
     if not _finite_number(timeout) or timeout < 1:
         raise PriceAgentError("Price-agent timeout_seconds must be a positive number.")

@@ -50,13 +50,13 @@ WEB_CATALOG = {
     },
     "read_security_source": {
         "path": PREFIX + "/web/read",
-        "description": "Read a source_id returned in the candidate's source_hints or this request's search. Inspect its content, structured facts and followable links; match identity, price basis, date, currency and units.",
-        "parameters": {"type": "object", "properties": {"security_key": {"type": "string"}, "source_id": {"type": "string"}}, "required": ["security_key", "source_id"]},
+        "description": "Open a discovered source_id and inspect its fetched page text, facts and links. reader=auto selects the configured reader with Google Finance HTTP compatibility. You may explicitly choose compatible (browser headers, no JavaScript), jina (rendered page) or direct (plain HTTPS); each attempt spends one research operation. Match identity, price basis, date, currency and units.",
+        "parameters": {"type": "object", "properties": {"security_key": {"type": "string"}, "source_id": {"type": "string"}, "reader": {"type": "string", "enum": ["auto", "jina", "direct", "compatible"]}}, "required": ["security_key", "source_id"]},
     },
     "follow_security_source": {
         "path": PREFIX + "/web/follow",
         "description": "Read one link_id returned by a previously read source_id in this request, for example a price-history or quote-convention page. Never invent links or IDs.",
-        "parameters": {"type": "object", "properties": {"security_key": {"type": "string"}, "source_id": {"type": "string"}, "link_id": {"type": "string"}}, "required": ["security_key", "source_id", "link_id"]},
+        "parameters": {"type": "object", "properties": {"security_key": {"type": "string"}, "source_id": {"type": "string"}, "link_id": {"type": "string"}, "reader": {"type": "string", "enum": ["auto", "jina", "direct", "compatible"]}}, "required": ["security_key", "source_id", "link_id"]},
     },
 }
 
@@ -604,12 +604,12 @@ class EnrichmentJobs:
             return research_tool("search", request_id, security_key, request, arguments)
 
         @router.get(PREFIX + "/web/read")
-        def read_source(request_id: str, security_key: str, source_id: str, request: Request):
-            return research_tool("read", request_id, security_key, request, {"source_id": source_id})
+        def read_source(request_id: str, security_key: str, source_id: str, request: Request, reader: str | None = None):
+            return research_tool("read", request_id, security_key, request, {"source_id": source_id, **({"reader": reader} if reader is not None else {})})
 
         @router.get(PREFIX + "/web/follow")
-        def follow_source(request_id: str, security_key: str, source_id: str, link_id: str, request: Request):
-            return research_tool("follow", request_id, security_key, request, {"source_id": source_id, "link_id": link_id})
+        def follow_source(request_id: str, security_key: str, source_id: str, link_id: str, request: Request, reader: str | None = None):
+            return research_tool("follow", request_id, security_key, request, {"source_id": source_id, "link_id": link_id, **({"reader": reader} if reader is not None else {})})
 
         @router.post(PREFIX + "/ai/{request_id}/finalize")
         def finalize(request_id: str, request: Request, payload: dict[str, Any] | None = None):

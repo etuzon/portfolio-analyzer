@@ -55,13 +55,15 @@ def source(kind):
             "source_id": "rendered", "retrieved_at": "2026-11-08T12:00:00+00:00"}
 
 
+@pytest.mark.parametrize("asset_class", ["EQUITY", "RSU"])
 @pytest.mark.parametrize("kind,value", [("name", "סלקום"), ("industry", "חברות תקשורת ומדיה")])
-def test_actual_rendered_primary_profile_reaches_final_proposal_validation(kind, value):
+def test_actual_rendered_primary_profile_reaches_final_proposal_validation(kind, value, asset_class):
+    candidate = {**CANDIDATE, "asset_class": asset_class}
     src = source(kind)
-    record, = context_records(src, CANDIDATE)
+    record, = context_records(src, candidate)
     assert record["kind"] == "profile" and record["field"] == kind and record["value"] == value
     proposal = {"records": [{"security_key": CANDIDATE["security_key"], "source_id": src["source_id"], "record_id": record["record_id"]}]}
-    result = validate_proposals(proposal, {CANDIDATE["security_key"]: CANDIDATE}, {CANDIDATE["security_key"]: [src]})
+    result = validate_proposals(proposal, {CANDIDATE["security_key"]: candidate}, {CANDIDATE["security_key"]: [src]})
     assert not result[CANDIDATE["security_key"]]["rejected"]
     assert result[CANDIDATE["security_key"]]["profiles"][0]["value"] == value
     assert result[CANDIDATE["security_key"]]["observations"] == []

@@ -78,8 +78,8 @@ Code planners:
 | Tool | Allowed choice |
 | --- | --- |
 | `search_security_sources` | A precise query retaining the candidate's identifier or name. Results are discovery leads, not evidence. |
-| `read_security_source` | A `source_id` from the candidate's `source_hints` or this request's search. |
-| `follow_security_source` | A `source_id` already read and one of that response's `link_id` values. |
+| `read_security_source` | A `source_id` from the candidate's `source_hints` or this request's search; optional `reader` selects auto, jina, direct or compatible. |
+| `follow_security_source` | A `source_id` already read and one of that response's `link_id` values; optional `reader` selects the next read's transport. |
 
 Opaque source/link IDs belong to one request and security. The agent cannot
 supply arbitrary URLs, native browser commands or HTTP requests. Public HTTPS
@@ -103,13 +103,17 @@ inside an explicit tool action.
 ### Reader and privacy
 
 The dashboard reads `price_agent.reader` from application-owned configuration.
-`auto` and `jina` select key-free Jina Reader, which returns rendered Markdown
+`auto` selects compatible HTTP for Google Finance quote pages and Jina elsewhere.
+`jina` explicitly selects key-free Jina Reader, which returns rendered Markdown
 and followable links. Only the public source URL is sent; no portfolio payload,
 application authentication, browser cookies, custom scripts or model extraction
 instructions are forwarded. Image captioning, OCR and ReaderLM modes are not
 enabled. `direct` selects the application's public HTTPS text reader, including
 HTML links and bounded structured JSON where present. It rejects redirects.
-There is no hidden fallback, retry or reader-provider switch. The host script
+`compatible` uses standard browser headers with no JavaScript or signed-in state;
+it reads up to two MB of HTML and retains the same bounded evidence text. Read
+and follow tools can explicitly select a reader per attempt without changing the
+configured default. There is no hidden fallback or retry. The host script
 continues to use its separate `read_source` reader and excerpt contract above.
 
 Rendered-reader responses preserve requested and reported final URLs, fetched
