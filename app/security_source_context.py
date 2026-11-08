@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 from .price_agent import _unsupported_price_basis
 from .price_evidence import _observation_currency_matches
+from .security_identifiers import valid_cusip, valid_isin
 
 
 # The exchange's main security page is published at both the listing root and
@@ -237,6 +238,110 @@ def _themarker_profiles(source, candidate):
     return output
 
 
+def bond_profile_identity(candidate, text):
+    """A validated debt identifier binds a profile without an exchange name.
+
+    MANUAL records registration origin. This contract qualifies only profile
+    facts; price/date/currency/unit validation continues to use its own rules.
+    """
+    if "BOND" not in {str(candidate.get(key) or "").upper() for key in ("asset_class", "asset_sub_class")}:
+        return False
+    expected = set()
+    for key in ("symbol", "secondary_symbol", "cusip", "isin"):
+        value = str(candidate.get(key) or "").upper().strip()
+        if valid_cusip(value):
+            expected.add(value)
+        elif valid_isin(value) and value.startswith("US") and valid_cusip(value[2:11]):
+            expected.add(value[2:11])
+    if len(expected) != 1:
+        return False
+    actual = set()
+    for value in re.findall(r"(?<!\w)[A-Z0-9*@#]{8}\d(?!\w)", text.upper()):
+        if valid_cusip(value):
+            actual.add(value)
+    for value in re.findall(r"(?<!\w)[A-Z]{2}[A-Z0-9]{9}\d(?!\w)", text.upper()):
+        if not valid_isin(value) or not value.startswith("US") or not valid_cusip(value[2:11]):
+            return False
+        actual.add(value[2:11])
+    # Explicit malformed/conflicting IDs may not be discarded as incidental
+    # text while a matching identifier elsewhere qualifies the record.
+    for label, value in re.findall(r"\b(CUSIP|ISIN)\b[\s*：:|]*([A-Z0-9*@#]+)", text, re.I):
+        value = value.upper()
+        if (label.upper() == "CUSIP" and (not valid_cusip(value) or value not in expected)
+                or label.upper() == "ISIN" and (not valid_isin(value) or not value.startswith("US") or value[2:11] not in expected)):
+            return False
+    return bool(actual) and actual == expected
+
+
+def _bond_profiles(source, candidate):
+    parsed = urlsplit(source["url"])
+    text = source["text"]
+    if parsed.hostname == "public.com":
+        route = re.fullmatch(r"/(?:stocks/([A-Za-z0-9]{9})-bond|bonds/([A-Za-z0-9]{9}))/?", parsed.path)
+        if not route:
+            return []
+        identifier = route[1] or route[2]
+        if not bond_profile_identity(candidate, identifier):
+            return []
+        # The first instrument heading owns the page; never borrow identity
+        # from a later About/Related heading or navigation link.
+        heading = re.search(r"(?m)^#{1,3}\s+(?P<value>[^\r\n]{1,200}?)\s+\((?P<id>[A-Za-z0-9]{9})\)\s*$", text)
+        if not heading or not bond_profile_identity(candidate, heading[0]) or heading["id"].upper() != identifier.upper():
+            return []
+        return [_record(source, candidate, "profile", heading[0], {"identity": heading["id"], "field": "instrument heading"},
+                        field="name", value=heading["value"].strip())]
+    if parsed.hostname in {"www.tradingview.com", "tradingview.com"} and re.fullmatch(r"/symbols/FINRA-[A-Za-z0-9]+/?", parsed.path):
+        section = re.search(r"(?m)^#{1,4}\s+(?:\*\*)?Bond info(?:\*\*)?\s*$", text)
+        if not section:
+            return []
+        card = re.split(r"(?m)^#{1,4}\s+", text[section.end():], maxsplit=1)[0]
+        issuer = re.search(r"(?m)^\s*(?:\*\*)?Issuer(?:\*\*)?\s*\n+\s*(?P<value>[^\r\n]{1,200})", card)
+        if not issuer or not bond_profile_identity(candidate, card):
+            return []
+        value = issuer["value"].strip(" *")
+        if re.search(r"[<>\[\]#]|https?://", value, re.I):
+            return []
+        return [_record(source, candidate, "profile", card.strip(), {"identity": "bond card CUSIP/ISIN", "field": "Issuer"},
+                        field="name", value=value)]
+    return []
+
+
+def _issuer_strip_profiles(source, candidate):
+    """TVA's issuer offering documents bind component IDs to their issuer.
+
+    Only the issuer name is returned. Cover coupon and parent maturity are not
+    component terms, a price, or evidence that a held position was redeemed.
+    """
+    parsed = urlsplit(source["url"])
+    if (parsed.hostname != "s205.q4cdn.com"
+            or not re.fullmatch(r"/318912997/files/doc_downloads/irw/tva_bonds/[^/]+\.pdf", parsed.path, re.I)):
+        return []
+    text = source["text"]
+    cover = re.search(r"(?m)^#\s+U\.S\.\$[\d,]+\s+(?P<issuer>[A-Za-z][A-Za-z &,.]{3,150}?)\s+\d+(?:\.\d+)?%\s+Global Power Bonds[^\r\n]*", text[:1000])
+    if not cover or cover["issuer"] != "Tennessee Valley Authority":
+        return []
+    definition = re.search(r"of the " + re.escape(cover["issuer"]) + r"\s*\([^)]*TVA[^)]*\)", text[:2000])
+    scope = re.search(r"If the Bonds are stripped into their separate Interest and Principal Components, the following Common Code, ISIN and CUSIP numbers will apply:", text)
+    if not definition or not scope:
+        return []
+    table = text[scope.end():]
+    if not re.match(r"\s*Common Code ISIN CUSIP\s+Interest Components\b", table):
+        return []
+    table = table.split("Principal Component", 1)[0]
+    months = r"(?:January|February|March|April|May|June|July|August|September|October|November|December)"
+    pattern = (r"(?P<date>" + months + r"\s+\d{1,2},\s+\d{4})\s+[^A-Za-z\d]*\s*\d{9}\s+"
+               r"(?P<isin>US[A-Z0-9]{9}\d)\s+(?P<issuer_code>[A-Z0-9]{6})\s+(?P<issue>[A-Z0-9]{3})(?!\w)")
+    output = []
+    for row in re.finditer(pattern, table):
+        cusip = row["issuer_code"] + row["issue"]
+        if not valid_isin(row["isin"]) or row["isin"][2:11] != cusip or not bond_profile_identity(candidate, row["isin"] + " " + cusip):
+            continue
+        claims = {"issuer_title": cover[0], "issuer_definition": definition[0], "component_section": scope[0],
+                  "component_row": row[0], "identity": {"isin": row["isin"], "cusip": cusip}, "component_date": row["date"]}
+        output.append(_record(source, candidate, "profile", cover[0], claims, field="name", value=cover["issuer"]))
+    return output
+
+
 def context_records(source: dict[str, Any], candidate: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(source, dict) or not isinstance(candidate, dict) or not all(isinstance(source.get(key), str) for key in ("url", "text")):
         return []
@@ -246,7 +351,8 @@ def context_records(source: dict[str, Any], candidate: dict[str, Any]) -> list[d
         return []
     if parsed.scheme != "https" or parsed.username or parsed.password:
         return []
-    return _tase_records(source, candidate) + _structured_records(source, candidate) + _themarker_profiles(source, candidate)
+    return (_tase_records(source, candidate) + _structured_records(source, candidate) + _themarker_profiles(source, candidate)
+            + _bond_profiles(source, candidate) + _issuer_strip_profiles(source, candidate))
 
 
 def context_supported(source: dict[str, Any]) -> bool:

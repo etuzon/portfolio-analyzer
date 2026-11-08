@@ -138,10 +138,10 @@ def test_missing_ai_configuration_has_friendly_per_security_outcomes(environment
     identifier = start(env)
     env.run()
     result = job(env, identifier)
-    assert result["status"] == "failed" and result["code"] == "ai_unavailable"
+    assert result["status"] == "failed" and result["code"] == "ai_disabled"
     assert result["counts"]["model_requests"] == 0 and result["counts"]["rest_requests"] == 2
     assert len(env.state.saved) == 4
-    assert all(item["code"] == "ai_unavailable" for item in result["outcomes"][:3])
+    assert all(item["code"] == "ai_disabled" for item in result["outcomes"][:3])
 
 
 def test_looping_model_cannot_exceed_shared_call_limits(environment, monkeypatch):
@@ -496,6 +496,28 @@ def test_ai_profile_cannot_replace_existing_user_industry(monkeypatch):
     results = main._apply_enrichment_proposals(proposal, {candidate["security_key"]: [source]}, {candidate["security_key"]: candidate})
     assert not state.profiles and state.holding["industry"] == "User classification"
     assert results[candidate["security_key"]]["available_fields"] == []
+
+
+def test_saved_partial_profile_keeps_this_requests_attempt_time(monkeypatch):
+    main, state = metadata_application(monkeypatch, industry="Software")
+    monkeypatch.setattr(main, "enriched_local_holdings", lambda **_: [{"holding": deepcopy(state.holding),
+        "missing": ["price history"], "price_ranges": {}}])
+    monkeypatch.setattr(main, "_record_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "clear_portfolio_cache", lambda: None)
+    candidate = main._enrichment_candidates()["items"][0]
+    excerpt = "A NASDAQ Company name: Example Incorporated"
+    source = {"url": "https://example.invalid/profile", "text": excerpt, "retrieved_at": datetime.now(timezone.utc).isoformat()}
+    proposal = {"profiles": [{"security_key": candidate["security_key"], "field": "name", "value": "Example Incorporated",
+                              "source_url": source["url"], "evidence_quote": excerpt}]}
+    attempted_at = datetime.now(timezone.utc).isoformat()
+    outcome = {**candidate, "attempted": True, "last_attempted_at": attempted_at,
+               "status": "unavailable", "code": "evidence_rejected"}
+    saved = main._save_enrichment_outcomes([outcome], "synthetic-user", "synthetic-request",
+        proposal=proposal, candidates={candidate["security_key"]: candidate}, evidence_by_key={candidate["security_key"]: [source]})
+    assert saved[0]["status"] == "partial" and saved[0]["missing_fields"] == ["prices"]
+    assert saved[0]["last_attempted_at"] == attempted_at
+    assert main._enrichment_outcomes()[0]["last_attempted_at"] == attempted_at
+    assert main._enrichment_candidates()["items"][0]["last_attempted_at"] == attempted_at
 
 
 def test_close_after_preparation_before_save_prevents_any_write(monkeypatch):

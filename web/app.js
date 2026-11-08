@@ -1217,6 +1217,10 @@ function aiOutcomeMessage(outcome) {
     partial_data: "Some data was found; other fields remain unavailable.",
     data_unavailable: "Reliable data could not be found. You can enter it in Prices or security settings.",
     ai_unavailable: "AI research is unavailable. Check the AI configuration or try again later.",
+    ai_disabled: "AI is disabled. An administrator must enable it before research can start.",
+    ai_bridge_missing: "The host AI bridge is not running. An administrator must start it, then start a new request.",
+    ai_bridge_unavailable: "The app cannot connect to the host AI bridge. An administrator must restore the connection, then start a new request.",
+    ai_provider_unavailable: "The AI bridge could not run the selected model. An administrator must check the AI sign-in and model settings, then start a new request.",
     request_limit: "The request limit was reached. This security may need a new request.",
     provider_unavailable: "The data source is unavailable. Try again later or enter verified data manually.",
     source_read_failed: "Search found source pages, but they could not be read. Try again later; saved data is retained.",
@@ -1266,6 +1270,15 @@ function renderAIEnrichment() {
   const opener = $("enrichMissingData"), button = $("aiEnrichmentStart");
   if (!button || !opener) return;
   const ui = state.aiEnrichment;
+  const bondScope = $("aiEnrichmentBondScope");
+  const bonds = [...new Map(state.allPortfolioItems.filter((item) => isBondHolding(item.holding))
+    .map((item) => [aiSecurityKey(item.holding), item])).values()];
+  const apiBonds = bonds.filter((item) => item.api_data_route?.owner === "api");
+  bondScope.hidden = !bonds.length;
+  bondScope.innerHTML = bonds.length ? `${esc(t("Open bond securities: {total}. These results are not the full holdings list.").replace("{total}", fmt(bonds.length, 0)))}${apiBonds.length ? ` ${esc(t("Bonds using API updates are excluded from AI research and remain in Holdings:"))} ${apiBonds.map((item) => `<bdi dir="auto">${esc(item.holding.symbol)}</bdi>`).join(", ")}` : ""}` : "";
+  $("aiEnrichmentFooterNote").textContent = t(ui.pending || ui.resume
+    ? "You can close this window while research continues. Reopen it from Portfolio to see progress."
+    : "You can close this window. Reopen it from Portfolio to view results or start a new request.");
   opener.disabled = !currentUser();
   opener.textContent = t("Find missing data with AI");
   opener.classList.toggle("is-running", ui.pending);
@@ -4003,7 +4016,7 @@ function renderPortfolioValueDashboard(items) {
   const primaryProfit = sum(items.map((item) => normalizedField(item, "unrealized_profit")));
   const accountTotals = groupByAccount(items).sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
   const symbols = new Set(items.map((item) => item.holding.symbol)).size;
-  const bonds = items.filter((item) => item.holding.asset_class === "BOND").length;
+  const bonds = items.filter((item) => isBondHolding(item.holding)).length;
   const equities = items.filter((item) => item.holding.asset_class === "EQUITY").length;
   const accountShares = accountShareSnapshot();
   const risksByAccount = new Map(state.riskSnapshot.accounts.map((entry) => [String(entry.key), entry]));
@@ -4940,12 +4953,15 @@ function renderCashByCurrencyBars() {
     </div>`;
 }
 
+function isBondHolding(holding = {}) {
+  return [holding.asset_class, holding.asset_sub_class]
+    .some((value) => String(value || "").toUpperCase() === "BOND");
+}
+
 function bondsByCurrencyData(items) {
   const groups = (items || []).reduce((totals, item) => {
     const holding = item.holding || {};
-    const isBond = [holding.asset_class, holding.asset_sub_class]
-      .some((value) => String(value || "").toUpperCase() === "BOND");
-    if (!isBond) return totals;
+    if (!isBondHolding(holding)) return totals;
     const currency = String(holding.currency || state.baseCurrency).toUpperCase();
     const group = totals[currency] || { currency, amount: 0, positions: 0 };
     group.amount += Number(holding.market_value || 0);

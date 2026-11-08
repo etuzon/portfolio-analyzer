@@ -9,7 +9,7 @@ services:
       - ./data:/app/data
       - ./certs:/app/certs
       # Contains only a Unix socket, never Codex credentials or portfolio files.
-      - ${PORTFOLIO_CODEX_DIR:-/tmp/portfolio-codex}:/run/portfolio-codex:ro
+      - ${PORTFOLIO_CODEX_DIR:-./.runtime/portfolio-codex}:/run/portfolio-codex:ro
     environment:
       CONFIG_PATH: /app/config.yaml
       DATA_DIR: /app/data

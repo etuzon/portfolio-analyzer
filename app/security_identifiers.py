@@ -24,3 +24,16 @@ def valid_isin(value: str) -> bool:
         number = int(character) * (2 if index % 2 else 1)
         total += number // 10 + number % 10
     return total % 10 == 0
+
+
+def us_isin_discovery_hint(cusip: str) -> str | None:
+    """Generate an alternative search spelling, never issuer/coverage proof.
+
+    A fetched source must still independently establish this identifier. Do not
+    save the generated value into instrument metadata as a verified identity.
+    """
+    cusip = str(cusip or "").strip().upper()
+    if not valid_cusip(cusip) or not cusip.isalnum():
+        return None
+    return next(("US" + cusip + str(digit) for digit in range(10)
+                 if valid_isin("US" + cusip + str(digit))), None)

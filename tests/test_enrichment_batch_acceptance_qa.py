@@ -85,7 +85,7 @@ def _batch(monkeypatch, script, *, enabled=True, source_result=None):
 def test_model_unavailable_does_not_claim_untouched_candidates_were_unavailable(monkeypatch):
     batch = _batch(monkeypatch, [], enabled=False)
     result = batch.result
-    assert result["status"] == "failed" and result["code"] == "ai_unavailable"
+    assert result["status"] == "failed" and result["code"] == "ai_disabled"
     assert result["progress"]["completed"] == 0
     assert result["summary"]["unavailable"] == 0
     assert result["summary"]["not_attempted"] == 3

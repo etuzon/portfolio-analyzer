@@ -91,7 +91,9 @@ WEB_RESEARCH_POLICY = (
     "The request supplies its model and research REST budgets across ALL candidates; failures and your final answer count. Hard ceilings are eight model, eight REST and eight web operations; lower configured limits still apply. "
     "Candidate reading and finalization reserve two application REST operations, leaving at most six for research. Repeated choices still spend model decisions. "
     "Preserve supported records as soon as received. Once a requested field has a compatible context_record, spend remaining operations on another unresolved field or security rather than following redundant links. Never reset, split or retry the request after its limit. "
+    "Give each selected security an initial useful source read before chasing additional quotes for a security that already has a supported profile. Prefer its strongest supplied exact-identifier source hint. If a first page is empty or only a shell, read a remaining exact-identifier alternative within the existing budget before declaring that security unavailable. Do not finalize early while an unchecked security has an unread useful source hint and a research operation remains. "
     "A candidate missing only industry needs industry evidence, not fresh price research. MANUAL is a registration source, not an exchange; U.S. bonds require their own exact CUSIP/ISIN sources, never an Israeli stock page. "
+    "For a bond whose name is missing, identify the issuer and exact instrument first; issuer offering documents can supply a name even when no current quote is available. A STRIP is a distinct security: do not assign its parent bond's coupon or maturity to it. "
     "Find exact identity/listing, actual price date, raw price basis, currency and scaled quote unit. "
     "Read whole instrument context: headers, tables, quote cards and structured source records may establish separate claims; they need not repeat in one sentence. "
     "The application's expected quote_unit describes its input convention, not proof of the source's unit. Do not guess or convert numbers. "
@@ -117,8 +119,7 @@ def _now() -> str:
 
 class RestError(AssistantError):
     def __init__(self, code: str):
-        self.code = code
-        super().__init__(code)
+        super().__init__(code, code=code)
 
 
 def _public_job(job: dict[str, Any]) -> dict[str, Any]:
@@ -373,7 +374,7 @@ class EnrichmentJobs:
             if failure == "request_limit":
                 job["_context_recovery_reason"] = "request_limit"
         except AssistantError as exc:
-            failure = "request_limit" if "limit" in str(exc) else "ai_unavailable"
+            failure = "request_limit" if "limit" in str(exc) else (exc.code or "ai_unavailable")
             if failure == "request_limit" or "timed out" in str(exc).lower() or "timeout" in str(exc).lower():
                 job["_context_recovery_reason"] = "request_limit" if failure == "request_limit" else "planner_timeout"
             with self._lock:
@@ -488,6 +489,16 @@ class EnrichmentJobs:
                     kind = "bond" if asset == "BOND" else "fund" if asset in {"FUND", "MUTUALFUND", "ETF"} else "security"
                     subject = "price date currency quote units" if "prices" in item.get("missing_fields", []) else "industry company classification"
                     item["search_hints"] = [{"query": identity + " " + kind + " " + subject, "discovery_only": True}]
+                    if "profile" in item.get("missing_fields", []) and item.get("needs_name"):
+                        item["search_hints"].insert(0, {"query": identity + " " + kind + " issuer instrument name", "discovery_only": True})
+                    if kind == "bond":
+                        from .security_identifiers import valid_cusip, us_isin_discovery_hint
+                        for identifier in (str(item.get("symbol") or ""), str(item.get("secondary_symbol") or "")):
+                            if valid_cusip(identifier):
+                                item["search_hints"].append({"query": '"' + identifier[:6] + '" "' + identifier[6:] + '" bond issuer', "discovery_only": True})
+                                alternate = us_isin_discovery_hint(identifier)
+                                if alternate:
+                                    item["search_hints"].append({"query": '"' + alternate + '" bond issuer name', "discovery_only": True})
             except Exception as exc:
                 with self._lock:
                     self._failure(job, "job_failed", type(exc).__name__)

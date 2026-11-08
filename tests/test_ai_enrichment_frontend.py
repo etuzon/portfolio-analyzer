@@ -40,6 +40,41 @@ renderAIEnrichment();
     return command, evaluate
 
 
+@pytest.mark.parametrize("language,width", [("en", 1440), ("he", 390)])
+def test_three_bonds_remain_visible_when_only_two_use_ai(tmp_path, chromium, language, width):
+    command, evaluate = ready(tmp_path, chromium, language, width)
+    evaluate(r'''
+qa.bond=(symbol,owner,asset='BOND')=>({holding:{symbol,stock_market:'MANUAL',currency:'USD',
+ asset_class:asset,asset_sub_class:'BOND',quantity:1000,market_value:990,cost_basis:1000,
+ account:'Synthetic investment'},api_data_route:{owner},missing:['price history'],price_ranges:{}});
+state.allPortfolioItems=[qa.bond('88059ESH8','ai'),qa.bond('91282CKD2','api','FIXED_INCOME'),qa.bond('121899CH9','ai'),
+ {holding:{symbol:'1101534',stock_market:'TASE',currency:'ILS',asset_class:'EQUITY',quantity:1}}];
+qa.outcomes=state.allPortfolioItems.filter(item=>item.api_data_route?.owner==='ai').map(item=>({...item.holding,status:'not_attempted',code:'ai_bridge_missing'}));
+state.aiEnrichment.job={request_id:'bridge-offline',status:'failed',code:'ai_bridge_missing',
+ progress:{stage:'failed',completed:0,total:2},summary:{not_attempted:2},outcomes:qa.outcomes};
+renderAIEnrichment();openModal('aiEnrichmentModal');
+''')
+    scope = evaluate("$('aiEnrichmentBondScope').textContent")
+    assert "3" in scope and "91282CKD2" in scope
+    assert ("not the full holdings list" if language == "en" else "אינן רשימת ההחזקות המלאה") in scope
+    assert ("remain in Holdings" if language == "en" else "מופיעות בהחזקות") in scope
+    assert evaluate("$('aiEnrichmentResults').querySelectorAll('li').length") == 2
+    assert "91282CKD2" not in evaluate("$('aiEnrichmentResults').textContent")
+    assert evaluate("state.allPortfolioItems.filter(item=>isBondHolding(item.holding)).length") == 3
+    assert evaluate("bondsByCurrencyData(state.allPortfolioItems)[0].positions") == 3
+    assert evaluate("$('aiEnrichmentStatus').textContent") == (
+        "The host AI bridge is not running. An administrator must start it, then start a new request." if language == "en"
+        else "שירות ה־AI המארח אינו פועל. מנהל מערכת צריך להפעיל אותו, ואז יש להתחיל בקשה חדשה.")
+    assert ("while research continues" if language == "en" else "בזמן האיתור") not in evaluate("$('aiEnrichmentFooterNote').textContent")
+    # Separate accounts do not inflate the popup's unique-security count.
+    evaluate("state.allPortfolioItems.push({...state.allPortfolioItems[0],holding:{...state.allPortfolioItems[0].holding,account:'Other synthetic account'}});renderAIEnrichment();")
+    assert "3" in evaluate("$('aiEnrichmentBondScope').textContent")
+    assert evaluate("bondsByCurrencyData(state.allPortfolioItems)[0].positions") == 4
+    assert evaluate("document.documentElement.scrollWidth-innerWidth") <= 1
+    (tmp_path / f"three-bonds-ai-scope-{language}.png").write_bytes(base64.b64decode(command("Page.captureScreenshot", {"format": "png"})["data"]))
+    assert evaluate("qa.errors") == []
+
+
 @pytest.mark.parametrize("language", ["en", "he"])
 def test_access_denied_route_and_source_failure_need_explicit_new_request(tmp_path, chromium, language):
     _, evaluate = ready(tmp_path, chromium, language)

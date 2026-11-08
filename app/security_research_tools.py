@@ -51,7 +51,7 @@ class WebRequestBudget:
 
     @property
     def remaining_seconds(self):
-        return max(0, self.timeout_seconds - (time.monotonic() - self._started))
+        return max(0, self._started + self.timeout_seconds - time.monotonic())
 
     def consume(self):
         if not self.remaining:
@@ -239,6 +239,42 @@ class ResearchSession:
         market = re.sub(r"\s+", "", str(candidate.get("stock_market") or "").upper())
         symbol = str(candidate.get("symbol") or "").strip()
         asset = str(candidate.get("asset_class") or "").upper()
+        if market == "PRIVATE":
+            return []
+        if asset == "BOND" or str(candidate.get("asset_sub_class") or "").upper() == "BOND":
+            from .security_identifiers import valid_cusip, valid_isin
+            cusips = set()
+            for field in ("symbol", "secondary_symbol", "cusip", "isin"):
+                identifier = str(candidate.get(field) or "").strip().upper()
+                if valid_cusip(identifier):
+                    cusips.add(identifier)
+                elif identifier.startswith("US") and valid_isin(identifier) and valid_cusip(identifier[2:11]):
+                    cusips.add(identifier[2:11])
+            # Maintained issuer-document catalog, analogous to the official
+            # TASE namespace below. This offering circular lists many stripped
+            # components; prefix membership never asserts exact coverage.
+            if len(cusips) != 1:
+                return []
+            cusip = next(iter(cusips))
+            hints = []
+            if cusip.startswith("88059E"):
+                url = "https://s205.q4cdn.com/318912997/files/doc_downloads/irw/tva_bonds/2000-g.pdf"
+                title = "TVA 2000 Series G issuer offering document; component identifiers"
+                source_id = self._add(key, url, title)
+                hints.append({"source_id": source_id, "url": url, "title": title, "discovery_only": True})
+            # Public publishes bond pages in an exact-CUSIP namespace. A hint
+            # says nothing about this page's existence or evidence quality;
+            # only an actual read and exact primary header can supply a name.
+            location = re.sub(r"[\W_]+", "", str(candidate.get("location") or "").casefold())
+            us_scope = (location in {"us", "usa", "unitedstates", "unitedstatesofamerica"}
+                        or market in {"BOND", "MANUAL", "US", "USA", "NYSE", "NASDAQ", "FINRA", "TREASURY"}
+                        and str(candidate.get("currency") or "").upper() == "USD")
+            if us_scope and cusip.isalnum():
+                url = "https://public.com/stocks/" + cusip.lower() + "-bond"
+                title = "Public exact-CUSIP bond page; unverified discovery lead"
+                source_id = self._add(key, url, title)
+                hints.append({"source_id": source_id, "url": url, "title": title, "discovery_only": True})
+            return hints
         if market not in {"TASE", "TLV", "TELAVIV"} or asset not in {"EQUITY", "STOCK", "SHARE"} or not re.fullmatch(r"[0-9]{5,8}", symbol) or int(symbol) <= 0:
             return []
         url = "https://market.tase.co.il/he/market_data/security/" + str(int(symbol)) + "/major_data"
@@ -252,7 +288,14 @@ class ResearchSession:
         if not isinstance(query, str) or not 1 <= len(query.strip()) <= 500:
             raise ResearchFailure("invalid_request", "A research query must contain 1 to 500 characters.")
         identifiers = identity[:3]
-        if not any(value and value.casefold() in query.casefold() for value in identifiers):
+        from .security_identifiers import valid_cusip
+        # Issuer offering tables commonly print the six-character issuer and
+        # three-character issue/check portion separately. That exact formatted
+        # identifier is the same discovery identity, not a broader query.
+        formatted_cusip = any(valid_cusip(value.upper()) and re.search(
+            r"(?<!\w)[\"']?" + re.escape(value[:6]) + r"[\"']?\s+[\"']?" + re.escape(value[6:]) + r"[\"']?(?!\w)", query, re.I)
+            for value in identifiers)
+        if not any(value and value.casefold() in query.casefold() for value in identifiers) and not formatted_cusip:
             raise ResearchFailure("invalid_request", "Keep the security identifier or name in the search query.")
         if provider not in {"auto", "brave", "duckduckgo", "yahoo"}:
             raise ResearchFailure("invalid_request", "Choose an allowed search provider.")

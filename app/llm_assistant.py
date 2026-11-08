@@ -18,6 +18,10 @@ from urllib import error, request
 class AssistantError(ValueError):
     """A safe error that can be shown to an authenticated user."""
 
+    def __init__(self, message: str, *, code: str | None = None):
+        self.code = code
+        super().__init__(message)
+
 
 ANSWER_SCHEMA = {
     "type": "object", "additionalProperties": False,
@@ -80,6 +84,9 @@ class PortfolioAssistant:
         configured = Path(self.settings["codex_socket"]).is_socket() if local else bool(self.settings["base_url"] and self.settings["api_key"] and self.settings["model"])
         return {
             "enabled": self.settings["enabled"] and configured,
+            "unavailable_code": ("ai_disabled" if not self.settings["enabled"] else
+                                 "ai_bridge_missing" if local and not configured else
+                                 "ai_unavailable" if not configured else None),
             "provider": self.settings.get("provider", "openai"),
             "model": self.settings["model"] if self.settings["enabled"] else "",
             "max_tool_loops": self.settings["max_tool_loops"],
@@ -88,8 +95,13 @@ class PortfolioAssistant:
         }
 
     def ask(self, prompt: str, language: str, run_tool: Callable[[str, dict[str, Any]], Any], history: list[dict[str, Any]] | None = None, *, audit=None, cache_read_results: bool = False) -> dict[str, Any]:
-        if not self.status()["enabled"]:
-            raise AssistantError("The portfolio assistant is not configured. Ask an administrator to enable the llm section in config.yaml.")
+        availability = self.status()
+        if not availability["enabled"]:
+            code = availability["unavailable_code"]
+            message = ("The local AI bridge is not running. Start the host bridge and retry."
+                       if code == "ai_bridge_missing" else
+                       "The portfolio assistant is not configured. Ask an administrator to enable the llm section in config.yaml.")
+            raise AssistantError(message, code=code)
         prompt = str(prompt or "").strip()
         if not prompt or len(prompt) > 8_000:
             raise AssistantError("Ask a question between 1 and 8000 characters.")
@@ -238,12 +250,12 @@ class PortfolioAssistant:
                     if response.status_code != 200:
                         detail = response.json().get("error", {})
                         cause = detail.get("message", "") if isinstance(detail, dict) else ""
-                        raise AssistantError("The local AI service is unavailable. " + cause)
+                        raise AssistantError("The local AI service is unavailable. " + cause, code="ai_provider_unavailable")
                     return response.json()
             except (httpx.HTTPError, ValueError) as exc:
                 if isinstance(exc, AssistantError):
                     raise
-                raise AssistantError("The local AI service is unavailable. Check that the bridge is running and the configured CLI is signed in.") from exc
+                raise AssistantError("The local AI bridge cannot be reached. Restart the host bridge and retry.", code="ai_bridge_unavailable") from exc
         payload = {
             "model": self.settings["model"],
             "messages": messages,

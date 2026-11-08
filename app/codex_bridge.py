@@ -9,10 +9,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import select
 import signal
 import shutil
+import shlex
 import socketserver
+import socket
 import subprocess
 import tempfile
 import time
@@ -28,6 +31,43 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 class CodexBridgeError(ValueError):
     pass
+
+
+def bridge_runtime_directory(repo: Path) -> Path:
+    """Match Compose's explicit socket-directory override without sourcing .env."""
+    value = os.environ.get("PORTFOLIO_CODEX_DIR")
+    if value is None:
+        try:
+            lines = (repo / ".env").read_text().splitlines()
+        except FileNotFoundError:
+            lines = []
+        for line in lines:
+            match = re.match(r"^\s*(?:export\s+)?PORTFOLIO_CODEX_DIR\s*=\s*(.*)$", line)
+            if match:
+                try:
+                    values = shlex.split(match[1], comments=True)
+                except ValueError:
+                    raise CodexBridgeError("Invalid bridge directory override; export PORTFOLIO_CODEX_DIR explicitly.") from None
+                if len(values) > 1:
+                    raise CodexBridgeError("Quote the bridge directory override when it contains spaces.")
+                value = values[0] if values else ""
+        if value and "$" in value:
+            # Do not silently disagree with Compose's interpolation semantics.
+            raise CodexBridgeError("Export the resolved PORTFOLIO_CODEX_DIR before starting the bridge.")
+    path = Path(value) if value else repo / ".runtime" / "portfolio-codex"
+    return path if path.is_absolute() else repo / path
+
+
+def process_owns_bridge_socket(pid: int, socket_path: str) -> bool:
+    """Identify only this bridge/socket before migrating its user service."""
+    if pid <= 1:
+        return False
+    try:
+        command = Path(f"/proc/{pid}/cmdline").read_bytes().decode().split("\0")
+        return ("app.codex_bridge" in command and "--socket" in command
+                and command[command.index("--socket") + 1] == socket_path)
+    except (OSError, ValueError, IndexError):
+        return False
 
 
 SECURITY_RESEARCH_PLANNER_POLICY = (
@@ -298,6 +338,17 @@ class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass  # Never log prompts, portfolio data or credentials.
 
+    def do_GET(self):
+        if self.path != "/health":
+            self.send_error(404)
+            return
+        body = b'{"status":"ok"}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_POST(self):
         if self.path != "/completion":
             self.send_error(404)
@@ -353,7 +404,18 @@ def main():
     path = Path(args.socket).absolute()
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if path.exists():
-        raise SystemExit("Socket already exists. Stop the existing bridge or remove its stale socket first.")
+        if not path.is_socket():
+            raise SystemExit("Refusing to replace a non-socket file.")
+        # A killed process can leave its socket behind. Supervised restarts
+        # must recover it without ever replacing another live bridge.
+        with socket.socket(socket.AF_UNIX) as client:
+            client.settimeout(1)
+            try:
+                client.connect(str(path))
+            except ConnectionRefusedError:
+                path.unlink()
+            else:
+                raise SystemExit("Local AI bridge is already running.")
     with _Server(str(path), _Handler) as server:
         path.chmod(0o600)
         print("Local Codex planner bridge ready (Unix socket only).", flush=True)

@@ -231,7 +231,7 @@ def _profile_proposal(item: dict[str, Any], candidate: dict[str, Any], sources: 
     excerpt = " ".join(excerpt.split())
     if excerpt not in " ".join(source["text"].split()) or value not in excerpt or re.search(r"[<>\r\n]", value):
         raise ValueError("The profile value is not literal source evidence")
-    from .security_source_context import validate_contextual_profile, supports_context
+    from .security_source_context import validate_contextual_profile, supports_context, bond_profile_identity
     context = validate_contextual_profile(source, candidate, item)
     if context is not None:
         return {**item, "value": value.strip(), "retrieved_at": source["retrieved_at"], "source_context": context}
@@ -242,11 +242,17 @@ def _profile_proposal(item: dict[str, Any], candidate: dict[str, Any], sources: 
                "TASE": ("TASE", "Tel Aviv Stock Exchange", "הבורסה לניירות ערך בתל אביב")}.get(market.upper(), (market,))
     labels = r"(?:industry|ענף|תעשייה)" if field == "industry" else r"(?:company(?:\s+name)?|issuer|name|שם(?:\s+החברה)?|מנפיק)"
     next_field = r"(?:industry|company(?:\s+name)?|issuer|name|ענף|תעשייה|שם(?:\s+החברה)?|מנפיק)\s*[:=]"
+    bond = "BOND" in {str(candidate.get(key) or "").upper() for key in ("asset_class", "asset_sub_class")}
+    if bond:
+        next_field = "(?:" + next_field + r"|\b(?:CUSIP|ISIN|maturity|coupon|currency)\b)"
     field_end = r"(?=\s*(?:$|[;|]|[.!?](?:\s|$)|" + next_field + r"))"
     for record in _source_records(excerpt):
         def token(term):
             return bool(term) and bool(re.search(r"(?<!\w)" + re.escape(str(term)) + r"(?!\w)", record, re.I))
-        if not any(token(candidate.get(key)) for key in ("symbol", "secondary_symbol")) or not any(token(alias) for alias in aliases):
+        bond_identity = bond_profile_identity(candidate, record)
+        if bond and not bond_identity:
+            continue
+        if not bond and (not any(token(candidate.get(key)) for key in ("symbol", "secondary_symbol")) or not any(token(alias) for alias in aliases)):
             continue
         if len(re.findall(r"(?<!\w)(?:NASDAQ|NYSE(?:\s+ARCA)?|TASE|LSE|AMEX)(?!\w)", record, re.I)) > 1:
             continue

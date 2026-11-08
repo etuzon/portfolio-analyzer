@@ -2527,7 +2527,7 @@ def _serialized_portfolio_payload(analyses, cache_status: str) -> dict[str, Any]
         ) if symbol else {}
         if not item.get("exchange"):
             item["exchange"] = str(cached_profile.get("exchange") or "").strip()
-        if cached_profile.get("name") and (not holding.get("name") or str(holding.get("name")).upper() == symbol):
+        if cached_profile.get("name") and _enrichment_name_missing(holding):
             holding["name"] = str(cached_profile["name"])
         if cached_profile.get("sector") and not holding.get("sector"):
             holding["sector"] = str(cached_profile["sector"])
@@ -2571,18 +2571,18 @@ def _serialized_portfolio_payload(analyses, cache_status: str) -> dict[str, Any]
         if reference:
             item["market_data"] = reference
             reference_name = str((reference.get("security") or {}).get("name") or "").strip()
-            if reference_name and (not holding.get("name") or str(holding["name"]).upper() == symbol):
+            if reference_name and _enrichment_name_missing(holding):
                 holding["name"] = reference_name
         fund_id = _israeli_fund_identifier(holding)
         if fund_id:
             fund = _israeli_fund_data(fund_id, cache_only=True)
             fund_name = str(((fund or {}).get("security") or {}).get("name") or "").strip()
-            if fund_name and (not holding.get("name") or str(holding["name"]).upper() == symbol):
+            if fund_name and _enrichment_name_missing(holding):
                 holding["name"] = fund_name
         if _us_fund_lookup(holding):
             fund = _us_fund_market_data(holding, cache_only=True)
             fund_name = str(((fund or {}).get("security") or {}).get("name") or "").strip()
-            if fund_name and (not holding.get("name") or str(holding["name"]).upper() == symbol):
+            if fund_name and _enrichment_name_missing(holding):
                 holding["name"] = fund_name
         serialized_items.append(item)
     return {
@@ -4462,6 +4462,20 @@ app.include_router(price_router(lambda: local_store, lambda: hub(), lambda: clea
 app.include_router(security_market_router(lambda: SecurityMarketData(config.market_data, hub().cache), lambda: clear_portfolio_cache()))
 
 
+def _enrichment_name_missing(holding: dict[str, Any]) -> bool:
+    """Identifier-only registration labels do not establish a sourced name."""
+    from .security_identifiers import valid_cusip, valid_isin
+    name = str(holding.get("name") or "").strip().upper()
+    symbol = str(holding.get("symbol") or "").strip().upper()
+    if not name or name == symbol:
+        return True
+    if not any(str(holding.get(field) or "").upper() == "BOND" for field in ("asset_class", "asset_sub_class")):
+        return False
+    secondary = str(holding.get("secondary_symbol") or "").strip().upper()
+    return ((valid_cusip(symbol) and name == "US_" + symbol)
+            or (name == secondary and (valid_cusip(secondary) or valid_isin(secondary))))
+
+
 def _enrichment_missing_fields(item: dict[str, Any]) -> list[str]:
     holding = item.get("holding") or {}
     missing = set(item.get("missing") or [])
@@ -4475,7 +4489,7 @@ def _enrichment_missing_fields(item: dict[str, Any]) -> list[str]:
         for values in (item.get("price_ranges") or {}).values()
     ):
         fields.append("prices")
-    if not holding.get("industry") or not holding.get("name") or str(holding.get("name")).upper() == str(holding.get("symbol")).upper():
+    if not holding.get("industry") or _enrichment_name_missing(holding):
         fields.append("profile")
     if asset == "EQUITY" and missing & {"income", "profit", "profit/market cap"}:
         fields.append("fundamentals")
@@ -4696,7 +4710,7 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
         # classification and cached profile fields on manual-only holdings.
         market_hub = hub()
         cached = market_hub.cached_profile(symbol, secondary_symbol=holding.get("secondary_symbol") or "", stock_market=market) if hasattr(market_hub, "cached_profile") else {}
-        if cached.get("name") and (not holding.get("name") or str(holding["name"]).upper() == symbol):
+        if cached.get("name") and _enrichment_name_missing(holding):
             holding["name"] = cached["name"]
         reference = _bond_market_data(holding, cache_only=True)
         fund_id = _israeli_fund_identifier(holding)
@@ -4705,7 +4719,7 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
         elif _us_fund_lookup(holding):
             reference = _us_fund_market_data(holding, cache_only=True)
         reference_name = str(((reference or {}).get("security") or {}).get("name") or "").strip()
-        if reference_name and (not holding.get("name") or str(holding["name"]).upper() == symbol):
+        if reference_name and _enrichment_name_missing(holding):
             holding["name"] = reference_name
         override = overrides.get((symbol, market)) or overrides.get((symbol, ""))
         industry = ("Bonds" if str(holding.get("asset_class") or "").upper() == "BOND" or str(holding.get("asset_sub_class") or "").upper() == "BOND" else
@@ -4730,7 +4744,7 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
             "location": holding.get("location", ""),
             "quote_unit": quote_unit({"location": holding.get("location", ""), "asset_class": holding.get("asset_class", ""), "currency": holding.get("currency", "")}),
             "asset_class": holding.get("asset_class", ""), "asset_sub_class": holding.get("asset_sub_class", ""), "name": holding.get("name", ""),
-            "needs_name": not holding.get("name") or str(holding.get("name")).upper() == symbol,
+            "needs_name": _enrichment_name_missing(holding),
             "needs_industry": not bool(industry),
             "missing_fields": missing, "available_fields": [],
         }
@@ -4996,9 +5010,9 @@ def _apply_enrichment_proposals(proposal, evidence_by_key, candidates, *, recove
                         continue
                     local_store.save_security_industry_override({"symbol": candidate["symbol"], "stock_market": candidate["stock_market"], "industry": profile["value"]})
                     found.append("profile")
-                elif latest.get("needs_name", not latest.get("name") or str(latest["name"]).upper() == str(latest["symbol"]).upper()):
+                elif latest.get("needs_name", _enrichment_name_missing(latest)):
                     metadata = local_store.manual_security(candidate["symbol"], candidate["stock_market"])
-                    if not metadata or (metadata.get("name") and str(metadata["name"]).upper() != str(metadata["symbol"]).upper()):
+                    if not metadata or not _enrichment_name_missing(metadata):
                         continue
                     local_store.save_manual_security({**metadata, "name": profile["value"]})
                     found.append("profile")
@@ -5109,6 +5123,9 @@ def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, requ
         if outcome["security_key"] in applied:
             verified = applied[outcome["security_key"]]
             available = sorted(set(outcome.get("available_fields") or []) | set(verified.get("available_fields") or []))
+            # Candidate metadata contains the prior attempt time. Keep this
+            # request's real timestamp when applying freshly verified facts.
+            verified = {key: value for key, value in verified.items() if key != "last_attempted_at"}
             outcome = {**outcome, **verified, "available_fields": available}
             if available and outcome.get("status") == "unavailable":
                 outcome["status"] = "partial"

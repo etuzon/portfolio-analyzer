@@ -13,6 +13,55 @@ from app.us_market_providers import ProviderFailure, RequestBudget
 CANDIDATE = {"security_key": "one", "symbol": "EXAMPLE", "name": "Example Company"}
 
 
+@pytest.mark.parametrize("query", ['"88059E" "SH8" issuer', '88059E SH8 bond', '"88059E SH8" offering'])
+def test_formatted_checksum_valid_cusip_remains_an_exact_discovery_query(query):
+    candidate = {"security_key": "strip", "symbol": "88059ESH8", "name": "US_88059ESH8", "asset_class": "BOND"}
+    research = session()
+    assert research.search(candidate, query)["discovery_only"]
+    assert research.budget.used == 1
+    assert research.evidence(candidate) == []
+
+
+@pytest.mark.parametrize("query", ['"88059E" "SH9" issuer', '88059E another issuer SH8', 'X88059E SH8Z'])
+def test_formatting_does_not_allow_a_different_or_disjoint_identifier(query):
+    candidate = {"security_key": "strip", "symbol": "88059ESH8", "asset_class": "BOND"}
+    research = session()
+    with pytest.raises(ResearchFailure, match="identifier"):
+        research.search(candidate, query)
+    assert research.budget.used == 0
+
+
+@pytest.mark.parametrize("changes,expected", [
+    ({}, 1), ({"asset_class": "EQUITY", "asset_sub_class": "BOND"}, 1),
+    ({"stock_market": "PRIVATE"}, 0), ({"asset_class": "EQUITY"}, 0),
+    ({"symbol": "88059ESH9"}, 0), ({"symbol": "121899CH9"}, 0),
+])
+def test_issuer_document_catalog_supplies_only_unverified_scoped_leads(changes, expected):
+    candidate = {"security_key": "strip", "symbol": "88059ESH8", "stock_market": "MANUAL", "asset_class": "BOND", **changes}
+    research = session()
+    hints = research.discover(candidate)
+    assert sum("2000-g.pdf" in hint["url"] for hint in hints) == expected
+    assert all(hint["discovery_only"] is True for hint in hints)
+    assert research.budget.used == 0 and research.evidence(candidate) == []
+
+
+@pytest.mark.parametrize("changes,expected", [
+    ({}, 1), ({"asset_class": "EQUITY", "asset_sub_class": "BOND"}, 1),
+    ({"stock_market": "PRIVATE"}, 0), ({"asset_class": "EQUITY"}, 0),
+    ({"symbol": "121899CH0"}, 0), ({"currency": "EUR", "location": "Germany"}, 0),
+])
+def test_public_bond_namespace_is_a_scoped_discovery_lead_not_a_verified_profile(changes, expected):
+    candidate = {"security_key": "bond", "symbol": "121899CH9", "stock_market": "MANUAL", "currency": "USD", "asset_class": "BOND", **changes}
+    research = session()
+    hints = research.discover(candidate)
+    assert len(hints) == expected
+    if expected:
+        assert hints[0]["url"] == "https://public.com/stocks/121899ch9-bond"
+        assert hints[0]["discovery_only"] is True
+        assert not any(field in hints[0] for field in ("name", "price", "verified", "coverage"))
+    assert research.budget.used == 0 and research.evidence(candidate) == []
+
+
 def resolver(host, port, **kwargs):
     return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
 

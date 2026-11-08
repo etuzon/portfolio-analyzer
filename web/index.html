@@ -1182,6 +1182,12 @@
                 <p>The AI returns structured proposals for validation before saving. If its final reply is malformed or research stops at its call or time limit, the app may still save unambiguous facts from pages already read, after the usual evidence and missing-field checks. Authorization must remain valid; a valid empty proposal is respected. The request error stays visible; saved results and unchecked securities remain separate.</p>
                 <p>The app records a bounded, redacted research trace of model responses and tool choices and results, correlated with the request. This helps diagnose a failed lookup; a successful page read alone does not prove that data was verified or saved.</p>
                 <p>Checked counts include securities actually researched. Securities left untouched by a connection failure or an exhausted research budget remain Not checked. Each researched security keeps its own result and reason even if the request later fails.</p>
+                <p>Partial results retain the actual check time. New requests prioritize eligible securities with older checks or no previous check.</p>
+                <p>The AI popup is not the full holdings list. It shows the number of open bond securities and identifies bonds excluded because they use API updates. Those bonds remain in Holdings and the dashboard bond count, including positions with missing prices or past maturity. Separate account positions in the same bond count once in the popup's security count.</p>
+                <p>Identifier-only imported bond labels such as US_ followed by a valid CUSIP count as missing names. A verified source name can replace that label. Descriptive names you enter are preserved, including edits made while research is running. A name update does not change the bond's quantity, prices, maturity or cash.</p>
+                <p>Bond discovery accepts the complete CUSIP printed together or as issuer and issue groups, and may use its equivalent checked U.S. ISIN. Identity and source-context checks still apply; a search result alone cannot supply a name or price.</p>
+                <p>Official issuer-document hints cover only a subset of an issuer's bonds and do not establish coverage. A fetched document can establish a name when its exact bond or STRIP identifier matches. The parent bond's coupon or maturity cannot establish the STRIP's terms or a current price; remaining gaps stay visible.</p>
+                <p>AI research runs through a host bridge to the selected Codex or Claude Code model. The model chooses searches and public pages through bounded application tools; the app verifies identity, source dates and units before saving. A missing bridge means no securities were checked. An administrator can restore bridge startup or connectivity, or check the selected model and sign-in when the bridge reports a provider failure; then use Start new request. Existing results remain visible.</p>
                 <p>Administrators choose Codex or Claude Code, the model and effort for missing-data research in price_agent in config.yaml. Codex is the default. The missing-data button and price-update skill share this choice; portfolio chat has its separate llm model setting. Enable AI and configure the shared host bridge in llm.</p>
                 <p>For Docker, configure optional search and provider keys in the private host environment or .env file, then recreate the container. The supported environment names are BRAVE_SEARCH_API_KEY, FINNHUB_API_KEY and EODHD_API_KEY. Never put credentials in chat or source evidence.</p>
                 <p>Market values and unrealized P/L are recalculated from each account's recorded quantity and cost basis using the latest available dated quote in the security's currency. Use Refresh to retry unavailable quotes; saved values remain visible when no valid quote is available. Quote dates can differ from live broker prices. Locally registered securities can use a supported API route; otherwise their saved prices remain until an authorized price update. Refreshing current valuations does not change cash, transactions or recorded historical account values.</p>
@@ -1921,6 +1927,7 @@
       <section class="modal-card ai-enrichment-card" role="dialog" aria-modal="true" aria-labelledby="aiEnrichmentTitle" aria-describedby="aiEnrichmentScope">
         <div class="modal-header"><h2 id="aiEnrichmentTitle" tabindex="-1">Find missing data with AI</h2><button class="icon-button" type="button" data-close="aiEnrichmentModal" aria-label="Close">×</button></div>
         <p id="aiEnrichmentScope" class="section-note">For open holdings without usable API access. Working API feeds update through the normal dashboard flow.</p>
+        <p id="aiEnrichmentBondScope" class="section-note" hidden></p>
         <div class="ai-enrichment-progress-panel" role="status" aria-live="polite" aria-atomic="true">
           <div><h3 id="aiEnrichmentPhase">Ready to research</h3><p id="aiEnrichmentStatus"></p></div>
           <progress id="aiEnrichmentProgress" aria-labelledby="aiEnrichmentPhase" hidden></progress>
@@ -1930,7 +1937,7 @@
         <div id="aiEnrichmentSummary" class="ai-enrichment-summary" hidden></div>
         <section id="aiEnrichmentDetails" class="ai-enrichment-details" aria-labelledby="aiEnrichmentResultsTitle" hidden><h3 id="aiEnrichmentResultsTitle">Results by security</h3><ul id="aiEnrichmentResults" tabindex="0" aria-labelledby="aiEnrichmentResultsTitle"></ul></section>
         <p id="aiEnrichmentEmpty" class="section-note">No AI research results yet.</p>
-        <div class="ai-enrichment-footer"><p class="section-note">You can close this window while research continues. Reopen it from Portfolio to see progress.</p><span id="aiEnrichmentAction" class="ai-enrichment-action"><button id="aiEnrichmentStart" type="button" aria-describedby="aiEnrichmentStatus">Start research</button></span></div>
+        <div class="ai-enrichment-footer"><p id="aiEnrichmentFooterNote" class="section-note">You can close this window. Reopen it from Portfolio to view results or start a new request.</p><span id="aiEnrichmentAction" class="ai-enrichment-action"><button id="aiEnrichmentStart" type="button" aria-describedby="aiEnrichmentStatus">Start research</button></span></div>
       </section>
     </div>
 
@@ -2922,7 +2929,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <div id="riskBadgeExplanation" class="risk-badge-explanation" role="tooltip" hidden></div>
-  <script src="/i18n.js?v=20261108-research-budget-eight"></script>
+  <script src="/i18n.js?v=20261108-us-bond-research"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
   <script src="/trade-planner.js?v=3"></script>
@@ -2942,6 +2949,6 @@
   <script src="/alarm-priority-ui.js?v=3"></script>
   <script src="/account-cash-ui.js?v=3"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=20261108-research-budget-eight"></script>
+  <script src="/app.js?v=20261108-us-bond-research"></script>
   </body>
 </html>
