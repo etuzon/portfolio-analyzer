@@ -40,7 +40,7 @@ assert.ok(html.includes('₪ 10000.00'));
 assert.ok(html.includes('Long and short exposure'));
 assert.ok(html.includes('Holdings not shown on the map'));
 assert.ok(html.includes('Weights cover known gross holdings only'));
-assert.ok(html.includes('No change'));
+assert.ok(html.includes('Small change'));
 assert.ok(html.includes('Unavailable'));
 assert.ok(html.includes('data-heatmap-asset="0"'));
 assert.ok(html.includes('All listings and values'));
@@ -69,7 +69,8 @@ for(const language of ['en','he']){
  assert.ok(legend>html.indexOf('id="heatmapMethod"'));
  assert.ok(legend>html.indexOf('class="heatmap-all-list"'));
  assert.ok(html.slice(legend).endsWith('</small></div>'));
- for(const label of ['Fall','No change','Unavailable','Rise'])assert.ok(html.slice(legend).includes(heatmapText(label)));
+ for(const label of ['Fall','Small change','Unavailable','Rise'])assert.ok(html.slice(legend).includes(heatmapText(label)));
+ assert.ok(html.slice(legend).includes(heatmapText('Muted blue: −0.1% to below 0%. Brighter blue: 0% to +0.2%, inclusive.')));
  assert.ok(heatmapTooltipHtml(heatmapScope()[0]).includes(heatmapText('Stale')));
 }
 ''')
@@ -270,24 +271,30 @@ assert.ok(heatmapTypeIcon(bond).includes('<title>אג״ח</title>'));
 ''')
 
 
-def test_no_change_and_unavailable_are_distinct_grays_without_inventing_zero():
+def test_small_changes_are_blue_and_unavailable_stays_gray_without_inventing_zero():
     run_ui(r'''
 seed();
-assert.equal(heatmapColor(0),'#4a5362');
-assert.equal(heatmapColor(-0),'#4a5362');
+assert.equal(heatmapColor(0),'#245F91');
+assert.equal(heatmapColor(-0),'#245F91');
+for(const value of [-.1,-.09999,-.01])assert.equal(heatmapColor(value),'#3B5278');
+for(const value of [0,.1,.19999,.2])assert.equal(heatmapColor(value),'#245F91');
+assert.equal(heatmapColor(-.100001),'#a12e43');
+assert.equal(heatmapColor(.200001),'#207158');
+assert.equal(heatmapColor((100.2 / 100 - 1) * 100),'#245F91');
+assert.equal(heatmapColor((99.9 / 100 - 1) * 100),'#3B5278');
 for(const value of [null,undefined,NaN,Infinity,'0'])assert.equal(heatmapColor(value),'#353942');
-assert.notEqual(heatmapColor(0.01),heatmapColor(0));
+assert.equal(heatmapColor(0.01),heatmapColor(0));
 assert.notEqual(heatmapColor(-0.01),heatmapColor(0));
 const unchanged={...a,change_percent:0};
 const missing={...b,change_percent:null};
 const unchangedTile=heatmapTileMap([unchanged]);
 const missingTile=heatmapTileMap([missing]);
-assert.ok(unchangedTile.includes('background:#4a5362'));
+assert.ok(unchangedTile.includes('background:#245F91'));
 assert.ok(unchangedTile.includes('>0.00%</bdi>'));
 assert.ok(missingTile.includes('background:#353942'));
 assert.ok(!missingTile.includes('>0.00%</bdi>'));
 state.language='he';renderHeatmap();
-assert.ok(target.innerHTML.includes('ללא שינוי'));
+assert.ok(target.innerHTML.includes('שינוי קטן'));
 assert.ok(target.innerHTML.includes('לא זמין'));
 ''')
 
@@ -298,8 +305,8 @@ const positive=['#207158','#216452','#24463f'];
 const negative=['#a12e43','#7b2737','#542b35'];
 for(const sign of [-1,1]){
  const palette=sign>0?positive:negative;
- for(const [value,index] of [[.00001,0],[.999999,0],[1,1],[2.999999,1],[3,2],[1000,2]])assert.equal(heatmapColor(sign*value),palette[index]);
- assert.equal(new Set([.01,.99,1,2.99,3,100].map(value=>heatmapColor(sign*value))).size,3);
+ for(const [value,index] of [[.3,0],[.999999,0],[1,1],[2.999999,1],[3,2],[1000,2]])assert.equal(heatmapColor(sign*value),palette[index]);
+ assert.equal(new Set([.3,.99,1,2.99,3,100].map(value=>heatmapColor(sign*value))).size,3);
 }
 const luminance=hex=>hex.slice(1).match(/../g).map(x=>parseInt(x,16)/255).map(x=>x<=.04045?x/12.92:((x+.055)/1.055)**2.4).reduce((s,x,i)=>s+x*[.2126,.7152,.0722][i],0);
 for(const color of [...positive,...negative,heatmapColor(0),heatmapColor(null)])assert.ok(1.05/(luminance(color)+.05)>=4.5,color);

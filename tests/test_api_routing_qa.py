@@ -600,17 +600,19 @@ def test_fresh_current_cache_crossing_maturity_becomes_historical_without_refetc
 def test_heatmap_has_exact_three_signed_bands_and_white_text_contrast():
     from test_heatmap_frontend import run_ui
     run_ui(r'''
-const positive=[heatmapColor(0.001),heatmapColor(1),heatmapColor(3)];
-const negative=[heatmapColor(-0.001),heatmapColor(-1),heatmapColor(-3)];
+const positive=[heatmapColor(0.3),heatmapColor(1),heatmapColor(3)];
+const negative=[heatmapColor(-0.3),heatmapColor(-1),heatmapColor(-3)];
 assert.equal(new Set([...positive,...negative]).size,6);
 for(const sign of [1,-1]){
  const colors=sign>0?positive:negative;
- for(const value of [Number.MIN_VALUE,0.01,0.999999999])assert.equal(heatmapColor(sign*value),colors[0]);
+ for(const value of [0.3,0.5,0.999999999])assert.equal(heatmapColor(sign*value),colors[0]);
  for(const value of [1,1.000000001,2,2.999999999])assert.equal(heatmapColor(sign*value),colors[1]);
  for(const value of [3,3.000000001,10,1e100])assert.equal(heatmapColor(sign*value),colors[2]);
 }
-const all=[...positive,...negative,heatmapColor(0),heatmapColor(null)];
-assert.equal(new Set(all).size,8);
+for(const value of [-0.1,-0.01,-Number.MIN_VALUE])assert.equal(heatmapColor(value),'#3B5278');
+for(const value of [0,Number.MIN_VALUE,0.01,0.2])assert.equal(heatmapColor(value),'#245F91');
+const all=[...positive,...negative,heatmapColor(-0.1),heatmapColor(0),heatmapColor(null)];
+assert.equal(new Set(all).size,9);
 for(const color of all){
  assert.match(color,/^#[0-9a-f]{6}$/i);
  const channels=[1,3,5].map(i=>parseInt(color.slice(i,i+2),16)/255);

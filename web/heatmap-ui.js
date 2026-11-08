@@ -25,7 +25,7 @@ const HEATMAP_HE = {
   "Previous saved result shown; the latest reload failed.": "מוצגת התוצאה השמורה הקודמת; הטעינה האחרונה נכשלה.",
   "Map area = gross value of the selected securities in ILS. Color = latest observed price change in the security's currency.": "שטח המלבן = שווי ברוטו של ניירות הערך שנבחרו בשקלים. הצבע = שינוי המחיר האחרון שנצפה במטבע הנייר.",
   "Three levels in either direction: under 1%, 1% to under 3%, and 3% or more.": "שלוש דרגות בכל כיוון: פחות מ־1%, מ־1% עד פחות מ־3%, ו־3% ומעלה.",
-  "Fall": "ירידה", "Rise": "עלייה", "No change": "ללא שינוי", "Colors saturate at ±3%.": "עוצמת הצבע מגיעה לשיאה ב־±3%.",
+  "Fall": "ירידה", "Rise": "עלייה", "Small change": "שינוי קטן", "Muted blue: −0.1% to below 0%. Brighter blue: 0% to +0.2%, inclusive.": "כחול מעומעם: מ־‎−0.1%‎ עד מתחת ל־0%. כחול בהיר יותר: מ־0% עד ‎+0.2%‎, כולל הקצוות.", "Colors saturate at ±3%.": "עוצמת הצבע מגיעה לשיאה ב־±3%.",
   "Asset types": "סוגי נכסים", "Stocks": "מניות", "Bonds": "אג״ח", "Funds": "קרנות", "Bond": "אג״ח", "Company": "חברה", "Accounts": "חשבונות", "Gross quantity": "כמות ברוטו", "Unrealized profit / loss": "רווח / הפסד לא ממומש", "Converted to ILS": "המרה לשקלים", "Observed price change": "שינוי המחיר שנצפה", "Choose Stocks, Bonds or Funds to display holdings.": "בחרו מניות, אג״ח או קרנות כדי להציג החזקות.", "No holdings match the selected asset types in this account scope.": "אין החזקות מסוגי הנכסים שנבחרו בחשבונות אלה.", "The recorded cost basis is unavailable or invalid.": "בסיס העלות הרשום חסר או אינו תקין.", "ILS profit is the native-currency unrealized profit converted at the current saved FX rate; it does not measure historical FX profit.": "הרווח בשקלים הוא הרווח הלא ממומש במטבע הנייר, לפי שער המט״ח השמור הנוכחי; הוא אינו מודד רווח היסטורי משינויי מט״ח.", "Priced gross exposure": "חשיפה ברוטו עם שווי זמין", "Sized listings": "ניירות עם שטח מחושב", "Known price moves": "שינויי מחיר זמינים", "As of": "נכון ל־", "Unavailable": "לא זמין",
   "Each account panel is scaled independently. Compare the ILS amounts to compare account sizes.": "השטח בכל לוח חשבון מחושב בנפרד. להשוואת גודל החשבונות יש להשוות את הסכומים בשקלים.",
   "Select a security in the map or list for prices, dates and account holdings.": "בחרו נייר ערך במפה או ברשימה להצגת מחירים, תאריכים והחזקות לפי חשבון.",
@@ -81,7 +81,9 @@ function heatmapDirection(asset) {
 function heatmapExcluded() { return (heatmapView.data?.excluded || []).filter(row => !heatmapView.account_id || row.account_id === heatmapView.account_id); }
 function heatmapColor(value) {
   if (!heatmapKnown(value)) return "#353942";
-  if (value === 0) return "#4a5362";
+  // Price ratios can leave machine rounding noise at the inclusive boundaries.
+  const tolerance = Number.EPSILON * 100;
+  if (value >= -0.1 - tolerance && value <= 0.2 + tolerance) return value < 0 ? "#3B5278" : "#245F91";
   const band = Math.abs(value) < 1 ? 0 : Math.abs(value) < 3 ? 1 : 2;
   return (value > 0 ? ["#207158", "#216452", "#24463f"] : ["#a12e43", "#7b2737", "#542b35"])[band];
 }
@@ -125,7 +127,15 @@ function heatmapFact(label,value) { return `<div><dt>${heatmapEsc(label)}</dt><d
 function heatmapQuantity(value) { return heatmapKnown(value)?esc(fmt(value,4)):heatmapEsc("Unavailable"); }
 function heatmapNativePnl(asset) { return `<bdi>${esc(heatmapMoney(heatmapPnlValue(asset,"unrealized_pnl_native"),asset.currency))}</bdi>`; }
 function heatmapPrice(asset) { return `<bdi>${esc(heatmapMoney(asset.price,asset.currency))}</bdi>${asset.price_date?` · <bdi>${esc(formatDate(asset.price_date))}</bdi>`:""}`; }
-function heatmapAccountBreakdown(asset) { return `<ul class="heatmap-account-list">${asset.accounts.map(row=>`<li><bdi>${esc(heatmapAccount(row.account_id))}</bdi> · ${heatmapEsc("Quantity")}: <bdi>${heatmapQuantity(row.quantity)}</bdi> · ${heatmapEsc("Unrealized profit / loss")}: <bdi>${esc(heatmapMoney(heatmapPnlValue(row,"unrealized_pnl_native"),asset.currency))}</bdi> · ${heatmapEsc("Gross value")}: <bdi>${esc(heatmapMoney(row.gross_value_ils))}</bdi> · ${heatmapEsc("Valuation basis")}: ${heatmapEsc(heatmapValuationBasis(row))} · ${heatmapEsc("Valuation status")}: ${heatmapEsc(heatmapValuationStatus(row))}</li>`).join("")}</ul>`; }
+function heatmapAccountBreakdown(asset) {
+  return `<ul class="heatmap-account-list">${asset.accounts.map(row=>`<li><strong><bdi>${esc(heatmapAccount(row.account_id))}</bdi></strong><dl class="heatmap-tooltip-facts heatmap-account-facts">
+    ${heatmapFact("Quantity",`<bdi>${heatmapQuantity(row.quantity)}</bdi>`)}
+    ${heatmapFact("Unrealized profit / loss",`<bdi>${esc(heatmapMoney(heatmapPnlValue(row,"unrealized_pnl_native"),asset.currency))}</bdi>`)}
+    ${heatmapFact("Gross value",`<bdi>${esc(heatmapMoney(row.gross_value_ils))}</bdi>`)}
+    ${heatmapFact("Valuation basis",heatmapEsc(heatmapValuationBasis(row)))}
+    ${heatmapFact("Valuation status",heatmapEsc(heatmapValuationStatus(row)))}
+  </dl></li>`).join("")}</ul>`;
+}
 function heatmapTooltipHtml(asset,assets=heatmapScope()) {
   return `<h3><bdi>${esc(heatmapLabel(asset))}</bdi></h3><p class="heatmap-tooltip-company">${esc(asset.name || asset.symbol)} · ${heatmapEsc(heatmapClass(asset))}${heatmapDirection(asset)?` · ${heatmapEsc(heatmapDirection(asset))}`:""}</p><dl class="heatmap-tooltip-facts">${heatmapFact("Weight of known gross holdings",`<bdi>${esc(heatmapWeight(asset,assets))}</bdi>`)}${heatmapValuationFacts(asset)}${heatmapFact("Gross value",`<bdi>${esc(heatmapMoney(asset.gross_value_ils))}</bdi>`)}${heatmapFact("Net quantity",`<bdi>${heatmapQuantity(asset.quantity)}</bdi>`)}${heatmapDirection(asset)==="Long and short exposure"?heatmapFact("Gross quantity",`<bdi>${heatmapQuantity(asset.gross_quantity)}</bdi>`):""}${heatmapFact("Latest price",heatmapPrice(asset))}${heatmapFact("Unrealized profit / loss",heatmapNativePnl(asset))}${asset.currency!=="ILS"?heatmapFact("Converted to ILS",`<bdi>${esc(heatmapMoney(heatmapPnlValue(asset,"unrealized_pnl_ils")))}</bdi>`):""}${heatmapFact("Observed price change",`<bdi>${esc(heatmapPercent(asset.change_percent))}</bdi>`)}</dl><h4>${heatmapEsc("Accounts")}</h4>${heatmapAccountBreakdown(asset)}`;
 }
@@ -165,7 +175,7 @@ function renderHeatmap() {
     if(excluded.length)html+=`<details class="heatmap-excluded"><summary>${heatmapEsc("Excluded holdings")} (${excluded.length})</summary><ul>${excluded.map(row=>`<li><bdi>${esc([row.symbol,row.stock_market,row.account_id?heatmapAccount(row.account_id):""].filter(Boolean).join(" · "))}</bdi> · ${heatmapEsc(heatmapReason(row.reason || "unsupported_asset"))}</li>`).join("")}</ul></details>`;
     if(d.fx?.length)html+=`<details class="heatmap-fx"><summary>${heatmapEsc("Saved exchange rates")}</summary><ul>${d.fx.map(row=>`<li><bdi>${esc(currencyDisplayLabel(row.currency))}</bdi> · ${heatmapEsc("ILS per unit")}: <bdi>${heatmapKnown(row.rate)?esc(fmt(row.rate,6)):heatmapEsc("Unavailable")}</bdi>${row.date?` · <bdi>${esc(formatDate(row.date))}</bdi>`:""}${row.source?` · ${heatmapEsc("Source")}: ${esc(heatmapFxSource(row.source))}`:""}${row.status&&row.status!=="ok"?` · ${heatmapEsc(heatmapReason(row.status))}`:""}</li>`).join("")}</ul></details>`;
     html+=`<p class="section-note">${heatmapEsc("Observed prices may span more than one trading session. Dates can differ between markets. Raw price changes can reflect splits or dividends; they exclude FX and are not position profit or total return.")}</p><p class="section-note">${heatmapEsc("Long and short positions are added by absolute value for rectangle sizes; they are not netted across accounts.")}</p><p class="section-note">${heatmapEsc("Recorded holdings only; no trades or external writes.")}</p><p class="section-note">${heatmapEsc("ILS profit is the native-currency unrealized profit converted at the current saved FX rate; it does not measure historical FX profit.")}</p></details>`;
-    html+=`<div class="heatmap-legend" title="${heatmapEsc("Three levels in either direction: under 1%, 1% to under 3%, and 3% or more.")}"><span class="heatmap-loss">${heatmapEsc("Fall")}</span><span class="heatmap-neutral">${heatmapEsc("No change")}</span><span class="heatmap-unavailable">${heatmapEsc("Unavailable")}</span><span class="heatmap-gain">${heatmapEsc("Rise")}</span><small>${heatmapEsc("Colors saturate at ±3%.")}</small></div>`;
+    html+=`<div class="heatmap-legend" title="${heatmapEsc("Three levels in either direction: under 1%, 1% to under 3%, and 3% or more.")}"><span class="heatmap-loss">${heatmapEsc("Fall")}</span><span class="heatmap-neutral" title="${heatmapEsc("Muted blue: −0.1% to below 0%. Brighter blue: 0% to +0.2%, inclusive.")}">${heatmapEsc("Small change")}</span><span class="heatmap-unavailable">${heatmapEsc("Unavailable")}</span><span class="heatmap-gain">${heatmapEsc("Rise")}</span><small>${heatmapEsc("Colors saturate at ±3%.")}</small></div>`;
   }
   target.innerHTML=html;renderHeatmapSelection();restoreInteraction();heatmapObserveLabels(target);
 }

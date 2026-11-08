@@ -11,7 +11,7 @@
 .heatmap-legend { display:flex; flex-wrap:wrap; align-items:center; gap:6px 14px; margin-block: auto 0; padding-block-start:12px; font-size:12px; }
 .heatmap-legend span::before { content:""; display:inline-block; width:12px; height:12px; margin-inline-end:6px; vertical-align:middle; border:1px solid #8795ab; border-radius:3px; }
 .heatmap-loss::before { width:30px; background:linear-gradient(to right,#a12e43 0 33.333%,#7b2737 33.333% 66.667%,#542b35 66.667%); }
-.heatmap-neutral::before { background:#4a5362; }
+.heatmap-neutral::before { background:linear-gradient(90deg, #3B5278 50%, #245F91 50%); }
 .heatmap-unavailable::before { background:#353942; }
 .heatmap-gain::before { width:30px; background:linear-gradient(to right,#207158 0 33.333%,#216452 33.333% 66.667%,#24463f 66.667%); }
 .heatmap-legend small { color:var(--ux-muted); }
@@ -81,6 +81,8 @@
 .heatmap-tooltip h4 { font-size:12px; margin:10px 0 4px; }
 .heatmap-tooltip-company { font-size:12px; margin:5px 0 12px; color:var(--ux-muted); }
 .heatmap-tooltip-facts { display:grid; grid-template-columns:minmax(0,1fr); gap:7px; margin:0; }
+.heatmap-account-facts { margin-block:6px 0; gap:4px; }
+.heatmap-account-list > li + li { margin-top:12px; }
 .heatmap-tooltip-facts>div { display:grid; grid-template-columns:minmax(90px,1fr) minmax(0,1fr); gap:10px; align-items:start; }
 .heatmap-tooltip-facts dt { color:var(--ux-muted); font-size:12px; }
 .heatmap-tooltip-facts dd { font-size:12px; margin:0; font-variant-numeric:tabular-nums; }
