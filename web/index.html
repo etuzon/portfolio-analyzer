@@ -648,15 +648,19 @@
         <p id="tradeSimulatorAccountNotice" class="signal-missing" role="status" hidden>Create an investment account in Accounts before adding simulated trades.</p>
         <p id="tradeSimulatorStatus" class="status-line" role="status"></p>
         <form id="tradeSimulatorForm" class="trade-simulator-form">
-          <label class="management-field"><span>Account</span><select id="tradeSimulatorAccount" required></select></label>
-          <label class="management-field"><span>Security symbol</span><input id="tradeSimulatorSymbol" maxlength="80" required placeholder="Ticker" autocomplete="off" spellcheck="false" dir="ltr" /></label>
-          <label class="management-field"><span>Stock market (optional)</span><input id="tradeSimulatorMarket" list="marketOptions" placeholder="NASDAQ, NYSE, TASE…" autocomplete="off" /></label>
-          <label class="management-field"><span>Action</span><select id="tradeSimulatorAction"><option value="BUY">Buy</option><option value="SELL">Sell</option><option value="SHORT">Short</option></select></label>
-          <label class="management-field"><span>Quantity</span><input id="tradeSimulatorQuantity" type="number" min="0.00000001" step="any" inputmode="decimal" required /></label>
-          <label class="management-field"><span>Execution price (optional)</span><input id="tradeSimulatorPrice" type="number" min="0.00000001" step="any" inputmode="decimal" placeholder="Saved quote" /></label>
-          <div class="trade-simulator-entry-actions">
-            <label class="management-field"><span>Fee in account currency</span><input id="tradeSimulatorFee" type="number" min="0" step="any" inputmode="decimal" value="0" required /></label>
-            <button id="addTradeSimulatorRow" type="submit">Add trade</button>
+          <div class="trade-simulator-security-fields">
+            <label class="management-field"><span>Account</span><select id="tradeSimulatorAccount" required></select></label>
+            <label class="management-field"><span>Security symbol</span><input id="tradeSimulatorSymbol" maxlength="80" required placeholder="Ticker" autocomplete="off" spellcheck="false" dir="ltr" /></label>
+            <label class="management-field"><span>Stock market (optional)</span><input id="tradeSimulatorMarket" list="marketOptions" placeholder="NASDAQ, NYSE, TASE…" autocomplete="off" /></label>
+          </div>
+          <div class="trade-simulator-order-fields">
+            <label class="management-field"><span>Action</span><select id="tradeSimulatorAction"><option value="BUY">Buy</option><option value="SELL">Sell</option><option value="SHORT">Short</option></select></label>
+            <label class="management-field"><span>Quantity</span><input id="tradeSimulatorQuantity" dir="ltr" type="number" min="0.00000001" step="any" inputmode="decimal" required /></label>
+            <label class="management-field"><span>Execution price (optional)</span><input id="tradeSimulatorPrice" dir="ltr" type="number" min="0.00000001" step="any" inputmode="decimal" placeholder="Saved quote" /></label>
+            <div class="trade-simulator-entry-actions">
+              <label class="management-field"><span>Fee in account currency</span><input id="tradeSimulatorFee" dir="ltr" type="number" min="0" step="any" inputmode="decimal" value="0" required /></label>
+              <button id="addTradeSimulatorRow" type="submit">Add trade</button>
+            </div>
           </div>
         </form>
         <p class="section-note">Price units: US shares in dollars, US bonds in cents, Israeli securities in agorot. Leave execution price empty to use the latest saved quote. Buy covers an existing short first; Sell only reduces a long holding.</p>

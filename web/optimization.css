@@ -1,18 +1,24 @@
 .optimization-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
-.optimization-controls > .field:first-child { flex:1 1 280px; }
-.optimization-controls > .field:nth-child(2) { flex:0 1 180px; }
-.optimization-controls > .field:nth-child(3) { flex:0 1 150px; }
+.optimization-controls > .field:first-child { flex:0 1 300px; }
+.optimization-controls > .field:nth-child(2) { flex:0 0 180px; }
+.optimization-controls > .field:nth-child(3) { flex:0 0 150px; }
 .optimization-controls > button { width:max-content; max-width:100%; flex:0 1 auto; }
 .optimization-controls .field,.optimization-parameters .field { min-width:0; }
 .optimization-controls select,.optimization-parameters input,.optimization-parameters select { width:100%; min-width:145px; box-sizing:border-box; }
 .optimization-parameters { display:flex; flex-wrap:wrap; gap:12px; align-items:end; margin-block:16px; }
-.optimization-parameters > .field { flex:0 1 180px; }
-.optimization-parameters > .field:first-child { flex-basis:240px; }
+.optimization-parameters > .field { flex:0 0 200px; }
+.optimization-parameters > .field:first-child { flex-basis:260px; }
 .optimization-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-block:12px; }
 .optimization-actions button { width:auto; }
 .optimization-notice { border-inline-start:3px solid var(--ux-blue); padding-inline-start:12px; line-height:1.6; }
 .optimization-warning { border-inline-start-color:var(--ux-orange); }
 .optimization-status { min-height:1.5em; overflow-wrap:anywhere; }
+.optimization-status:empty { display:none; }
+.optimization-parameters input { direction:ltr; font-variant-numeric:tabular-nums; }
+#optimizationContent { container:optimization-entry / inline-size; }
+@container optimization-entry (max-width:480px) {
+ .optimization-controls > .field:nth-child(n), .optimization-parameters > .field:nth-child(n) { flex:1 1 100%; }
+}
 .optimization-assets { margin-block:18px; border-top:1px solid var(--ux-stroke); padding-block-start:14px; }
 .optimization-assets summary,.optimization-frontier-table summary,.optimization-coverage summary { cursor:pointer; font-weight:650; }
 .optimization-table { width:100%; min-width:980px; table-layout:fixed; }

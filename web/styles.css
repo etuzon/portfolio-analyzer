@@ -9050,15 +9050,24 @@ html[dir="rtl"] .signal-condition-help::after {
   align-items: end;
 }
 
-.trade-simulator-form { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
-.trade-simulator-form > .management-field { flex:0 1 170px; }
-.trade-simulator-form > .management-field:first-child { flex:0 1 300px; }
-.trade-simulator-form > .management-field:nth-child(2) { flex:0 1 170px; }
-.trade-simulator-form > .management-field:nth-child(4) { flex-basis:110px; }
-.trade-simulator-form > .management-field:nth-child(5) { flex-basis:160px; }
+.trade-simulator-form { display:grid; gap:16px; container:trade-entry / inline-size; }
+.trade-simulator-security-fields { display:grid; grid-template-columns:minmax(220px,300px) minmax(150px,180px) minmax(180px,220px); gap:12px; align-items:end; }
+.trade-simulator-order-fields { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+.trade-simulator-order-fields > .management-field { flex:0 0 200px; }
+.trade-simulator-order-fields > .management-field:first-child { flex-basis:120px; }
 .trade-simulator-entry-actions { display:flex; flex:0 1 auto; flex-wrap:wrap; align-items:end; gap:12px; max-width:100%; }
-.trade-simulator-entry-actions > .management-field { flex:0 1 160px; }
+.trade-simulator-entry-actions > .management-field { flex:0 0 180px; }
 .trade-simulator-entry-actions > button { flex:0 0 auto; width:max-content; min-height:38px; white-space:nowrap; }
+@container trade-entry (max-width:740px) {
+  .trade-simulator-security-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .trade-simulator-security-fields > .management-field:first-child { grid-column:1 / -1; }
+}
+@container trade-entry (max-width:480px) {
+  .trade-simulator-security-fields { grid-template-columns:minmax(0,1fr); }
+  .trade-simulator-order-fields > .management-field,
+  .trade-simulator-entry-actions,
+  .trade-simulator-entry-actions > .management-field { flex:1 1 100%; }
+}
 .trade-simulator-row-fields { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
 .trade-simulator-row-fields > .management-field { flex:0 1 170px; max-width:100%; }
 .trade-simulator-row-fields > .management-field:first-child { flex-basis:300px; }
@@ -9068,9 +9077,6 @@ html[dir="rtl"] .signal-condition-help::after {
 .trade-simulator-form .management-field, .trade-simulator-row-fields .management-field { min-width: 0; }
 .trade-simulator-form input, .trade-simulator-form select, .trade-simulator-row-fields input, .trade-simulator-row-fields select { width: 100%; min-width: 0; box-sizing: border-box; }
 .trade-simulator-form input[type="number"], .trade-simulator-row-fields input[type="number"] { min-width: 140px; font-variant-numeric: tabular-nums; }
-@media (max-width: 600px) {
-  .trade-simulator-entry-actions { flex-basis:100%; }
-}
 .trade-simulator-basket-heading, .trade-simulator-row-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
 .trade-simulator-basket-heading { margin: 20px 0 12px; }
 .trade-simulator-rows, .trade-simulator-results { display: grid; gap: 14px; min-width: 0; }
