@@ -20,7 +20,7 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/assets/portfolio-vault/icon-48.png?v=1" />
     <link rel="shortcut icon" href="/assets/portfolio-vault/favicon.ico?v=1" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=20261109-numeric-filter-font-widths" />
+  <link rel="stylesheet" href="/styles.css?v=20261109-transaction-popup" />
   <link rel="stylesheet" href="/benchmark.css?v=3" />
   <link rel="stylesheet" href="/trading-journal.css?v=1" />
   <link rel="stylesheet" href="/optimization.css?v=3" />
@@ -767,7 +767,7 @@
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="instrumentCatalogTitle">
         <div class="section-head"><h2 id="instrumentCatalogTitle" tabindex="-1">Securities</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
         <div id="definedInstrumentsSection" class="management-section">
-          <div class="instrument-list-heading"><p id="definedInstrumentsLabel" class="form-caption">Defined instruments</p><button id="newManualSecurity" type="button">New</button></div>
+          <div class="instrument-list-heading"><p id="definedInstrumentsLabel" class="form-caption">Defined instruments</p><button id="newManualSecurity" type="button">Add security manually</button></div>
           <div class="instrument-list-controls">
             <label class="management-field"><span>Search instruments</span><input id="manualSecurityQuery" type="search" placeholder="Name, symbol or grant ID" /></label>
             <label class="management-field"><span>Instrument type</span><select id="manualSecurityTypeFilter"><option value="">All types</option></select></label>
@@ -939,8 +939,20 @@
           <p id="employeeOptionListStatus" class="status-line" role="status" aria-live="polite"></p>
           <div id="employeeOptionGrantsList" class="employee-grants-list"></div>
         </section>
+        <div class="section-head"><button id="newSecurityTransaction" type="button">New transaction</button></div>
+        <p id="securitiesListStatus" class="status-line" role="status" aria-live="polite"></p>
+        <p id="savedTransactionsLabel" class="form-caption list-head">Saved transactions</p>
+        <div id="securitiesList" class="stack management-list"></div>
+      </section>
+    </div>
+
+    <div id="transactionEntryModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card transaction-entry-card" role="dialog" aria-modal="true" aria-labelledby="transactionEntryTitle" aria-describedby="transactionEntryHint">
+        <div class="section-head"><h2 id="transactionEntryTitle" tabindex="-1">New transaction</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <p id="transactionEntryHint" class="section-note">Choose an account and record the security movement.</p>
         <div id="accountTransactionSection" class="management-section">
-          <div class="workflow-section-heading">
+          <div class="workflow-section-heading" hidden>
             <span id="accountTransactionBadge" class="workflow-step-badge" hidden>Step 2</span>
             <span>
               <b id="accountTransactionTitle">Account transaction</b>
@@ -1030,14 +1042,12 @@
               <label class="check transaction-manual-option" data-general-transaction-field><input id="securityAllowManual" type="checkbox" /><span>Save manually if market data is unavailable</span></label>
               <div class="transaction-actions">
                 <button id="saveSecurity" type="button">Save transaction</button>
-                <button id="cancelSecurityEdit" class="secondary" type="button" hidden>Cancel edit</button>
+                <button id="cancelSecurityEdit" class="secondary" type="button" data-close>Cancel</button>
               </div>
             </div>
           </div>
         </div>
         <p id="securityStatus" class="status-line" role="status" aria-live="polite"></p>
-        <p id="savedTransactionsLabel" class="form-caption list-head">Saved transactions</p>
-        <div id="securitiesList" class="stack management-list"></div>
       </section>
     </div>
 
@@ -1273,11 +1283,11 @@
               </article>
               <article class="help-feature">
                 <h3>Securities</h3>
-                <p>Open Portfolio → Securities to browse defined instruments. Use New to create an instrument in a separate window, or Edit beside an existing instrument to update it. Save closes the editor after refreshing the list; Cancel closes without saving. Search by name, symbol or grant ID, filter by instrument type, and sort by name, symbol or type in either direction. Reset filters shows the full list again. Filtering and sorting use the loaded list without a server request; reopen Securities to retry a failed load. Use selects the instrument and opens Transactions; employee option grants open their dedicated workflow. Viewers can browse and filter but cannot create, edit or use instruments to record transactions.</p>
+                <p>Open Portfolio → Securities to browse defined instruments. Use Add security manually to enter the security details in a separate window, or Edit beside an existing instrument to update it. Save closes the editor after refreshing the list; Cancel closes without saving. Search by name, symbol or grant ID, filter by instrument type, and sort by name, symbol or type in either direction. Reset filters shows the full list again. Filtering and sorting use the loaded list without a server request; reopen Securities to retry a failed load. Use selects the instrument and opens a New transaction window; employee option grants open their dedicated workflow. Viewers can browse and filter but cannot create, edit or use instruments to record transactions.</p>
               </article>
               <article class="help-feature">
                 <h3>Transactions</h3>
-                <p>Select the account, symbol, market, asset class, and action. Buy, sell, and short transactions affect account cash; adding or removing a security does not. Enter US equity prices in dollars, US bond prices in cents, and Israeli security prices in agorot.</p>
+                <p>Open Portfolio → Transactions and choose New transaction to enter a local transaction in a separate window. New starts with Buy and today’s date; Edit opens the saved transaction in the same window. Choose the account, instrument or symbol, market, asset class, quantity, price and date in dd/mm/yyyy. Buy, sell and short affect account cash; adding or removing a security does not. Enter US equity prices in dollars, US bond prices in cents and Israeli security prices in agorot. Save prevents duplicate submissions and closes the entry window only after the transaction is saved. A rejected save keeps entered values for correction and retry. If the save result is unknown, saving is disabled; close the entry and check saved transactions before entering it again. Cancel, Escape or Close discards unsaved entries without changing data. If the list or dashboard cannot refresh after saving, the saved transaction remains recorded; reopen Transactions or use dashboard Refresh. Viewers may inspect saved activity but cannot create or edit transactions.</p>
                 <p>Open a security for its price chart, moving averages, and support/resistance; use Retry after a chart-loading failure. Exposure edits maintain a local economic-currency profile, distinct from the trading currency. Correct recorded transactions through Positions.</p>
                 <p>Currency exposure source: choose Reported holdings for allocations from a published fund report, or Manual estimate for your own assessment. Both use the same calculation; reports are not downloaded or verified automatically. Unknown leaves the currency exposure unclassified, even when a named currency is selected. Hover over or focus the help icon beside the field for this explanation.</p>
               </article>
@@ -2967,6 +2977,6 @@
   <script src="/alarm-priority-ui.js?v=20261109-alert-group-label"></script>
   <script src="/account-cash-ui.js?v=20261109-cash-save-label"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=20261109-securities-catalog"></script>
+  <script src="/app.js?v=20261109-transaction-popup"></script>
   </body>
 </html>

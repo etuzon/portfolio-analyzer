@@ -11898,3 +11898,17 @@ html[dir="rtl"] .settings-menu-button.active {
 .holdings-table-wrap .holdings-table thead th { text-align:center; }
 .holdings-table-wrap .holdings-table td.holding-risk-cell { text-align:center; padding-inline:6px; }
 .holdings-table-wrap .holding-risk-cell .risk-badge { padding:4px 6px; gap:5px; white-space:nowrap; }
+
+#transactionEntryModal > .modal-card { width:min(960px,100%); }
+#transactionEntryModal > .modal-card > .section-head { flex-direction:row; align-items:flex-start; }
+#transactionEntryModal #accountTransactionSection { margin:0; padding:0; border:0; background:transparent; }
+#transactionEntryModal #accountTransactionSection .transaction-identity-fields { grid-template-columns:minmax(0,1.4fr) minmax(0,1.1fr) 132px 180px; }
+#transactionEntryModal #accountTransactionSection .transaction-value-fields { grid-template-columns:repeat(auto-fit,minmax(min(150px,100%),1fr)); }
+#transactionEntryModal .transaction-footer { flex-wrap:wrap; }
+@media (max-width:1050px) {
+  #transactionEntryModal #accountTransactionSection .transaction-identity-fields { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media (max-width:700px) {
+  #transactionEntryModal #accountTransactionSection .transaction-identity-fields,
+  #transactionEntryModal #accountTransactionSection .transaction-value-fields { grid-template-columns:minmax(0,1fr); }
+}

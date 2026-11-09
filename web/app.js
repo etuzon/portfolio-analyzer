@@ -1176,7 +1176,7 @@ const WRITE_CONTROL_IDS = new Set([
   "saveAlert", "saveApiAccessSettings", "saveBackupSettings", "saveBroker", "saveDetailPrice", "saveDisplaySettings", "saveEditAccount",
   "saveEditFund", "saveEmployeeExercise", "saveEmployeeListing", "saveEmployeeOptionGrant", "saveFamilyMember",
   "saveFund", "saveFundHistory", "saveHistorySnapshot", "saveLocalAccount", "saveManualSecurity",
-  "saveIndustryClassification", "removeIndustryClassification", "savePositionTransaction", "savePrice", "saveSecurity", "saveTableSettings", "saveUser", "showFundCreate",
+  "newSecurityTransaction", "saveIndustryClassification", "removeIndustryClassification", "savePositionTransaction", "savePrice", "saveSecurity", "saveTableSettings", "saveUser", "showFundCreate",
   "addSecurityExposureCurrency", "saveSecurityExposure", "removeSecurityExposure", "newFamilyMember", "newBroker", "newManualSecurity",
   "showPensionPeriodEntry", "showPensionRateEntry", "saveAlertDismissalSettings",
 ]);
@@ -1562,6 +1562,7 @@ function renderCurrentUser() {
 function setAuthenticatedSession(payload) {
   if (state.auth.user?.id !== payload?.user?.id) {
     resetPriceEntry();
+    if (typeof resetTransactionEntry === "function") resetTransactionEntry();
     resetAIEnrichment();
     state.alarmClearPending = false;
     state.alarmClearMessage = null;
@@ -1601,6 +1602,7 @@ function showLogin(message = "") {
   resetCompanyOutlookHistoryUi();
   if (typeof resetTradePlannerViews === "function") resetTradePlannerViews();
   if (typeof resetTradeSimulator === "function") resetTradeSimulator();
+  if (typeof resetTransactionEntry === "function") resetTransactionEntry();
   state.portfolioRefreshPending = false;
   state.alarmClearPending = false;
   state.alarmClearMessage = null;
@@ -6934,7 +6936,7 @@ function refreshManualSecuritySelects() {
   const transactionInstruments = employeeOptionsWorkflowActive()
     ? state.manualSecurities.filter((item) => item.instrument_type === "EMPLOYEE_STOCK_OPTION")
     : state.manualSecurities;
-  const options = `<option value="">${employeeOptionsWorkflowActive() ? "Choose a saved employee option grant" : "Free symbol / not defined"}</option>` + transactionInstruments
+  const options = `<option value="">${esc(t(employeeOptionsWorkflowActive() ? "Choose a saved employee option grant" : "Free symbol / not defined"))}</option>` + transactionInstruments
     .map((item) => `<option value="${esc(item.id)}">${esc(instrumentLabel(item))}</option>`)
     .join("");
   const securitySelect = $("securityKnownInstrument");
@@ -6983,7 +6985,7 @@ function setSecurityEditMode(tx = null) {
   if (saveButton) saveButton.textContent = tx
     ? (employeeOptionsWorkflowActive() ? "Update employee option grant" : "Update transaction")
     : (employeeOptionsWorkflowActive() ? "Save employee option grant" : "Save transaction");
-  if (cancelButton) cancelButton.hidden = !tx;
+  if (cancelButton) cancelButton.hidden = false;
   updateEmployeeOptionsAccountNotice();
 }
 
@@ -7003,6 +7005,10 @@ function clearSecurityForm() {
 }
 
 function editSecurityTransaction(transactionId) {
+  return openTransactionEntry({ transactionId });
+}
+
+function fillSecurityTransaction(transactionId) {
   const tx = state.localTransactions.find((item) => item.id === transactionId);
   if (!tx) return;
   $("securityAccount").value = tx.account_db_id || "";
@@ -7012,7 +7018,7 @@ function editSecurityTransaction(transactionId) {
   $("securityMarket").value = tx.stock_market || "";
   $("securityAssetClass").value = tx.asset_class || "EQUITY";
   $("securityQuantity").value = tx.quantity || "";
-  $("securityPrice").value = tx.price_input || "";
+  $("securityPrice").value = tx.price_input ?? "";
   setDateField("securityDate", tx.trade_date || "");
   setDateField("securityVestDate", tx.vest_date || "");
   const schedule = tx.vesting_schedule || {};
@@ -8834,7 +8840,8 @@ function setSecuritiesWorkflow(workflow = "general") {
   $("employeeOptionSavedSection").hidden = !employeeOptions;
   $("instrumentDefinitionSection").hidden = employeeOptions;
   if ($("definedInstrumentsSection")) $("definedInstrumentsSection").hidden = employeeOptions;
-  $("accountTransactionSection").hidden = employeeOptions;
+  $("accountTransactionSection").hidden = false;
+  if ($("newSecurityTransaction")) $("newSecurityTransaction").hidden = employeeOptions;
   $("savedTransactionsLabel").hidden = employeeOptions;
   $("securitiesList").hidden = employeeOptions;
   $("instrumentDefinitionBadge").hidden = true;
@@ -8856,8 +8863,8 @@ function setSecuritiesWorkflow(workflow = "general") {
   $("savedTransactionsLabel").textContent = employeeOptions ? "Saved employee option activity" : "Saved transactions";
   $("saveManualSecurity").textContent = employeeOptions ? "Continue to options and vesting" : "Save instrument";
   $("saveSecurity").textContent = employeeOptions ? "Save employee option grant" : "Save transaction";
-  $("securityQuantityLabel").textContent = employeeOptions ? "Total Options Granted *" : "Quantity *";
-  $("securityDateLabel").textContent = employeeOptions ? "Grant Added Date *" : "Transaction Date *";
+  $("securityQuantityLabel").textContent = t(employeeOptions ? "Total Options Granted *" : "Quantity *");
+  $("securityDateLabel").textContent = t(employeeOptions ? "Grant Added Date *" : "Transaction Date *");
   document.querySelectorAll("[data-general-security-field], [data-general-transaction-field]").forEach((node) => {
     node.hidden = employeeOptions;
   });
@@ -8923,11 +8930,13 @@ function toggleManualInstrumentFields() {
 }
 
 async function loadManualSecurities() {
+  const ownerId = currentUser()?.id;
   if ($("manualSecurityListStatus")) $("manualSecurityListStatus").textContent = optionLabel("Loading instruments…");
   const data = await api("/api/local/manual-securities").catch(error => {
     if ($("manualSecurityListStatus")) $("manualSecurityListStatus").textContent = optionLabel("Could not load instruments. Reopen Securities to retry.");
     throw error;
   });
+  if (currentUser()?.id !== ownerId) return;
   state.manualSecurities = data.items || [];
   const companyOptions = $("employeeCompanyOptions");
   if (companyOptions) {
@@ -9048,7 +9057,7 @@ function newManualSecurity() {
   if (!canWrite()) return;
   clearManualSecurityForm();
   $("instrumentDefinitionSection").hidden = false;
-  $("instrumentDefinitionTitle").textContent = optionLabel("New instrument");
+  $("instrumentDefinitionTitle").textContent = optionLabel("Add security manually");
   $("manualSecurityStatus").textContent = "";
   openModal("instrumentEditorModal");
 }
@@ -9256,8 +9265,11 @@ function transactionVestingSummary(tx) {
 }
 
 async function loadLocalSecurities() {
+  const ownerId = currentUser()?.id;
   await loadManualSecurities();
+  if (currentUser()?.id !== ownerId) return;
   const data = await api("/api/local/securities");
+  if (currentUser()?.id !== ownerId) return;
   state.localTransactions = data.items || [];
   refreshMarketOptions();
   if (state.items?.length) renderAnalytics(state.items);
@@ -9279,7 +9291,81 @@ async function loadLocalSecurities() {
   loadEquityCompQuotes().catch(reportBackgroundError);
 }
 
+function resetTransactionEntry() {
+  if (state.transactionEntry) state.transactionEntry.version += 1;
+  state.transactionEntry = null;
+  const modal = $("transactionEntryModal"), parent = $(modal?.dataset.parentModalId);
+  if (parent) { parent.inert = false; parent.removeAttribute("aria-hidden"); }
+  if (modal) { modal.hidden = true; delete modal.dataset.parentModalId; }
+  clearSecurityForm();
+}
+
+function renderTransactionEntry() {
+  const ui = state.transactionEntry || {};
+  const busy = Boolean(ui.loading || ui.saving);
+  $("accountTransactionSection").querySelectorAll("input, select, button").forEach((node) => { node.disabled = busy || !canWrite(); });
+  $("transactionEntryModal").querySelectorAll("button[data-close]").forEach((node) => { node.disabled = Boolean(ui.saving); });
+  $("accountTransactionSection").setAttribute("aria-busy", String(busy));
+  $("saveSecurity").disabled = busy || ui.unknownSave || ui.ready === false || !canWrite();
+  $("saveSecurity").textContent = t(ui.saving ? "Saving transaction…" : state.editingTransactionId ? "Update transaction" : "Save transaction");
+  $("cancelSecurityEdit").textContent = t("Cancel");
+}
+
+async function openTransactionEntry({ transactionId = "", instrumentId = "", returnFocus = document.activeElement } = {}) {
+  if (!canWrite() || state.auth.forcedPasswordChange || currentUser()?.must_change_password || state.transactionEntry?.saving) return;
+  const transaction = transactionId ? state.localTransactions.find((item) => item.id === transactionId) : null;
+  setSecuritiesWorkflow(transaction?.instrument_type === "EMPLOYEE_STOCK_OPTION" ? "employee-options" : "general");
+  const ui = state.transactionEntry ||= { version: 0 };
+  const version = ++ui.version;
+  ui.loading = true; ui.saving = false; ui.ready = false; ui.unknownSave = false;
+  clearSecurityForm();
+  $("securityAction").value = "BUY";
+  setDateField("securityDate", todayString());
+  $("securityAssetClass").value = "EQUITY";
+  $("securityStatus").textContent = t("Loading transaction details…");
+  $("transactionEntryTitle").textContent = t(transactionId ? "Edit transaction" : "New transaction");
+  openModal("transactionEntryModal", returnFocus);
+  renderTransactionEntry();
+  try {
+    await Promise.all([loadLocalAccounts(), loadManualSecurities()]);
+    if (state.transactionEntry !== ui || ui.version !== version || $("transactionEntryModal").hidden) return;
+    if (transactionId && !state.localTransactions.some((item) => item.id === transactionId)) {
+      ui.loading = false;
+      $("securityStatus").textContent = t("This transaction is no longer available. Close the entry window and reload Transactions.");
+      renderTransactionEntry();
+      return;
+    }
+    if (instrumentId && !instrumentById(instrumentId)) {
+      ui.loading = false;
+      $("securityStatus").textContent = t("This instrument is no longer available. Close the entry window and reload Securities.");
+      renderTransactionEntry();
+      return;
+    }
+    if (transactionId) fillSecurityTransaction(transactionId);
+    else if (instrumentId) {
+      const item = instrumentById(instrumentId);
+      applyInstrumentToForm(item, "security");
+      $("securityKnownInstrument").value = item?.id || "";
+    }
+    $("securityStatus").textContent = "";
+    ui.loading = false;
+    ui.ready = true;
+    renderTransactionEntry();
+    requestAnimationFrame(() => {
+      if (ui.version === version && !$("transactionEntryModal").hidden) $(instrumentId || transactionId ? "securityQuantity" : "securityAccount").focus({ preventScroll: true });
+    });
+  } catch {
+    if (state.transactionEntry !== ui || ui.version !== version || $("transactionEntryModal").hidden) return;
+    ui.loading = false;
+    $("securityStatus").textContent = t("Could not load transaction details. Close and reopen the entry window to retry.");
+    renderTransactionEntry();
+    $("saveSecurity").disabled = true;
+  }
+}
+
 async function saveSecurity() {
+  const ui = state.transactionEntry ||= { version: 0 };
+  if (ui.saving || ui.loading || ui.ready === false || ui.unknownSave || !canWrite() || state.auth.forcedPasswordChange || currentUser()?.must_change_password || $("transactionEntryModal").hidden) return;
   const instrumentType = selectedTransactionInstrumentType();
   const usesSchedule = instrumentType === "EMPLOYEE_STOCK_OPTION" && valueOf("securityAction") === "ADD" && valueOf("securityVestingStyle") === "SCHEDULE";
   const payload = {
@@ -9299,21 +9385,31 @@ async function saveSecurity() {
     allow_manual: $("securityAllowManual").checked,
     comments: valueOf("securityComments"),
   };
+  ui.saving = true;
+  renderTransactionEntry();
+  const editingId = state.editingTransactionId, ownerId = currentUser()?.id;
   try {
-    const editingId = state.editingTransactionId;
     const path = editingId ? `/api/local/securities/${encodeURIComponent(editingId)}` : "/api/local/securities";
     await api(path, { method: editingId ? "PUT" : "POST", body: JSON.stringify(payload) });
-    $("securityStatus").textContent = employeeOptionsWorkflowActive()
-      ? (editingId ? "Employee option grant updated" : "Employee option grant saved with its vesting schedule")
-      : (editingId ? "Security transaction updated" : "Security transaction saved");
-    clearSecurityForm();
-    await loadLocalSecurities();
-    await loadPortfolio();
-    if (employeeOptionsWorkflowActive()) setEmployeeOptionGuideStep(2, { complete: true });
   } catch (error) {
-    $("securityStatus").textContent = employeeOptionsWorkflowActive()
-      ? `Could not save the options and vesting schedule: ${error.message}. Your grant definition is still available above, so you can correct this step and retry.`
-      : `Error: ${error.message}. Check "Save manually if market data is unavailable" to save a symbol without provider validation.`;
+    if (state.transactionEntry !== ui || currentUser()?.id !== ownerId) return;
+    ui.saving = false;
+    ui.unknownSave = !Number.isFinite(error.status) || error.status >= 500;
+    $("securityStatus").textContent = t(ui.unknownSave
+      ? "The save result is unknown. Close this window and check saved transactions before entering it again."
+      : "Could not save transaction. Review the fields and try again.");
+    renderTransactionEntry();
+    return;
+  }
+  if (state.transactionEntry !== ui || currentUser()?.id !== ownerId) return;
+  ui.saving = false;
+  closeModal($("transactionEntryModal"));
+  $("securitiesListStatus").textContent = t(editingId ? "Security transaction updated" : "Security transaction saved");
+  try {
+    await Promise.all([loadLocalSecurities(), loadPortfolio()]);
+  } catch {
+    if (state.transactionEntry !== ui || currentUser()?.id !== ownerId) return;
+    $("securitiesListStatus").textContent = t("Transaction saved. Reopen Transactions or use Refresh to reload the displayed data.");
   }
 }
 
@@ -14408,7 +14504,7 @@ function returnToDashboard() {
 window.addEventListener("resize", positionModalHomeLinks);
 
 function openModal(id, returnFocus = document.activeElement, destination = {}) {
-  if (id === "priceEntryModal" && !canWrite()) return;
+  if (["priceEntryModal", "transactionEntryModal"].includes(id) && !canWrite()) return;
   if (id === "dividendCalendarModal") {
     id = "eventsModal";
     destination = { ...destination, dividendsSection: "calendar" };
@@ -14425,14 +14521,14 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
   if (id === "optimizationModal") loadOptimization();
   if (id === "varModal") loadVar();
   if (id === "riskHistoryModal") loadRiskHistory();
-  if (["brokerEditorModal", "instrumentEditorModal"].includes(id)) {
-    const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : $(id === "instrumentEditorModal" ? (!$("instrumentCatalogModal").hidden ? "instrumentCatalogModal" : "securitiesModal") : "brokersModal");
+  if (["brokerEditorModal", "instrumentEditorModal", "transactionEntryModal"].includes(id)) {
+    const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : $(id === "instrumentEditorModal" ? (!$("instrumentCatalogModal").hidden ? "instrumentCatalogModal" : "securitiesModal") : id === "transactionEntryModal" ? "securitiesModal" : "brokersModal");
     if (parentModal && parentModal !== modal && !parentModal.hidden) {
       modal.dataset.parentModalId = parentModal.id;
       parentModal.inert = true;
       parentModal.setAttribute("aria-hidden", "true");
     }
-    requestAnimationFrame(() => { if (!modal.hidden) $(id === "instrumentEditorModal" ? (state.editingManualSecurityId ? "manualSecurityName" : "manualSecuritySymbol") : "brokerName").focus({ preventScroll: true }); });
+    requestAnimationFrame(() => { if (!modal.hidden) $(id === "transactionEntryModal" ? "transactionEntryTitle" : id === "instrumentEditorModal" ? (state.editingManualSecurityId ? "manualSecurityName" : "manualSecuritySymbol") : "brokerName").focus({ preventScroll: true }); });
   }
   if (id === "tradingJournalModal") {
     const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : null;
@@ -14490,6 +14586,7 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
     requestAnimationFrame(() => { if (!modal.hidden) $("instrumentCatalogTitle").focus({ preventScroll: true }); });
   }
   if (id === "securitiesModal") {
+    const entryGeneration = state.transactionEntry?.version || 0;
     const opening = String((Number(modal.dataset.openGeneration) || 0) + 1);
     modal.dataset.openGeneration = opening;
     const isCurrentOpening = () => !modal.hidden && modal.dataset.openGeneration === opening;
@@ -14498,12 +14595,9 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
       loadLocalSecurities(),
       employeeOptionsWorkflowActive() ? loadEmployeeOptionGrants() : Promise.resolve(),
     ]).then(() => {
-      if (!isCurrentOpening()) return;
+      if (!isCurrentOpening() || (state.transactionEntry?.version || 0) !== entryGeneration) return;
       if (destination.instrumentId && !employeeOptionsWorkflowActive()) {
-        const item = instrumentById(destination.instrumentId);
-        applyInstrumentToForm(item, "security");
-        $("securityKnownInstrument").value = item?.id || "";
-        requestAnimationFrame(() => { if (isCurrentOpening()) $("securityQuantity").focus({ preventScroll: true }); });
+        openTransactionEntry({ instrumentId: destination.instrumentId, returnFocus: $("newSecurityTransaction") });
       }
       if (!employeeOptionsWorkflowActive()) return;
       if (destination.employeeOptionSecurityId) {
@@ -14514,7 +14608,7 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
       requestAnimationFrame(() => { if (isCurrentOpening()) focusTarget?.focus(); });
     }).catch((error) => {
       if (!isCurrentOpening()) return;
-      const status = employeeOptionsWorkflowActive() ? $("employeeOptionListStatus") : $("securityStatus");
+      const status = employeeOptionsWorkflowActive() ? $("employeeOptionListStatus") : $("securitiesListStatus");
       if (status) status.textContent = t(employeeOptionsWorkflowActive()
         ? "Could not load employee option grants. Reopen Employee Stock Options to retry."
         : "Could not load transactions. Reopen Transactions to retry.");
@@ -14586,6 +14680,7 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
 function closeModal(modal) {
   if (!modal) return;
   if (modal.id === "priceEntryModal" && state.priceEntry?.saving) return;
+  if (modal.id === "transactionEntryModal" && state.transactionEntry?.saving) return;
   if (modal.id === "accountCashModal" && accountCashSaving()) return;
   if (modal.id === "accountCashModal") modalReturnFocus.set(modal.id, accountCashReturnFocus());
   if (modal.id === "dataGapsModal" && !modalReturnFocus.get(modal.id)?.isConnected) {
@@ -14594,7 +14689,7 @@ function closeModal(modal) {
   if (modal.id === "brokerEditorModal" && state.brokerSaving) return;
   if (modal.id === "instrumentEditorModal" && state.manualSecuritySaving && !state.manualSecuritySaved) return;
   if (modal.id === "assistantModal") saveAssistantDraft();
-  if (["securityDetailModal", "tradingJournalModal", "brokerEditorModal", "instrumentEditorModal", "alarmRiskModal", "accountCashModal", "priceEntryModal"].includes(modal.id) && modal.dataset.parentModalId) {
+  if (["securityDetailModal", "tradingJournalModal", "brokerEditorModal", "instrumentEditorModal", "alarmRiskModal", "accountCashModal", "priceEntryModal", "transactionEntryModal"].includes(modal.id) && modal.dataset.parentModalId) {
     const parentModal = $(modal.dataset.parentModalId);
     if (parentModal) {
       parentModal.inert = false;
@@ -14619,6 +14714,10 @@ function closeModal(modal) {
       modalReturnFocus.set(modal.id, editButton || $("newBroker"));
     }
     clearBrokerForm();
+  }
+  if (modal.id === "transactionEntryModal") {
+    if (state.transactionEntry) state.transactionEntry.version += 1;
+    clearSecurityForm();
   }
   if (modal.id === "familyMemberModal") {
     if (state.familyMemberSaving) return;
@@ -14645,7 +14744,7 @@ function closeModal(modal) {
   modalReturnFocus.delete(modal.id);
   const fallbackSelector = modal.id === "securitiesModal" && employeeOptionsWorkflowActive()
     ? '[data-modal="securitiesModal"][data-securities-workflow="employee-options"]'
-    : `[data-modal="${modal.id}"]`;
+    : modal.id === "transactionEntryModal" ? "#newSecurityTransaction" : `[data-modal="${modal.id}"]`;
   requestAnimationFrame(() => {
     const focusTarget = returnFocus?.isConnected ? returnFocus : document.querySelector(fallbackSelector);
     if (focusTarget instanceof HTMLElement) {
@@ -15054,22 +15153,9 @@ document.addEventListener("click", (event) => {
       .catch((error) => { $("securityStatus").textContent = `Error: ${error.message}`; });
   }
 
+  if (event.target.closest("#newSecurityTransaction")) openTransactionEntry();
   const editSecurityId = event.target.closest("[data-edit-security]")?.dataset.editSecurity;
-  if (editSecurityId) {
-    if ($("securitiesModal")?.hidden) {
-      const transaction = state.localTransactions.find((item) => item.id === editSecurityId);
-      setSecuritiesWorkflow(transaction?.instrument_type === "EMPLOYEE_STOCK_OPTION" ? "employee-options" : "general");
-      openModal("securitiesModal");
-      Promise.resolve(loadLocalSecurities()).then(() => editSecurityTransaction(editSecurityId));
-    } else {
-      editSecurityTransaction(editSecurityId);
-    }
-  }
-
-  if (event.target.id === "cancelSecurityEdit") {
-    clearSecurityForm();
-    $("securityStatus").textContent = "Transaction edit cancelled";
-  }
+  if (editSecurityId) openTransactionEntry({ transactionId: editSecurityId, returnFocus: event.target.closest("[data-edit-security]") });
 
   const editAccountId = event.target.closest("[data-edit-account]")?.dataset.editAccount;
   if (editAccountId) {
@@ -15104,9 +15190,12 @@ document.addEventListener("click", (event) => {
       setSecuritiesWorkflow("general");
       openModal("securitiesModal", document.querySelector('[data-modal="securitiesModal"]'), { instrumentId: useManualSecurityId });
     } else {
-      applyInstrumentToForm(item, "security");
-      $("securityKnownInstrument").value = useManualSecurityId;
-      $("securityStatus").textContent = `Using ${item?.company_name || item?.symbol || "instrument"} for the next transaction`;
+      if (item?.instrument_type !== "EMPLOYEE_STOCK_OPTION") {
+        openTransactionEntry({ instrumentId: useManualSecurityId, returnFocus: event.target.closest("[data-use-manual-security]") });
+      } else {
+        applyInstrumentToForm(item, "security");
+        $("securityKnownInstrument").value = useManualSecurityId;
+      }
       if (item?.instrument_type === "EMPLOYEE_STOCK_OPTION") {
         setEmployeeOptionGuideStep(2);
         requestAnimationFrame(() => {

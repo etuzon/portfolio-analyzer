@@ -21,6 +21,7 @@ const assert=require('node:assert/strict');
 class HTMLElement {constructor(id){this.id=id;this.value='';this.hidden=false;this.disabled=false;this.dataset={};this.isConnected=true;this.attributes={};this.parentElement={append(){}};this.classList={};} closest(){return this.parentModal||null} setAttribute(k,v){this.attributes[k]=v} removeAttribute(k){delete this.attributes[k]} querySelector(){return null} focus(){document.activeElement=this}}
 const nodes=new Proxy({}, {get(target,key){return target[key] ||= new HTMLElement(key)}});const $=id=>nodes[id];
 const document={activeElement:null,querySelectorAll(){return []},querySelector(){return null}};
+const currentUser=()=>state.auth.user;const entryCalls=[];const openTransactionEntry=options=>entryCalls.push(options);
 const state={language:'en',manualSecurities:[],localAccounts:[],editingManualSecurityId:'',auth:{user:{role:'Operator'}}};
 const canWrite=()=>state.auth.user.role==='Operator';const modalReturnFocus=new Map();const requestAnimationFrame=fn=>fn();const mountModalHomeLink=()=>{};const focusModalDestination=()=>{};
 const SUPPORTED_MANAGEMENT_CURRENCIES=['USD','ILS','EUR'];const optionLabel=x=>x;const t=x=>x;const esc=x=>String(x??'').replaceAll('<','&lt;').replaceAll('"','&quot;');const fmt=(x,d)=>Number(x).toFixed(d);const money=fmt;const formatDate=x=>x;const currencyDisplayLabel=x=>x;
@@ -84,7 +85,7 @@ $('securityKnownInstrument').value='';
 openModal('securitiesModal',null,{instrumentId:'a'});
 assert.equal($('securityKnownInstrument').value,'');
 finishLoad();await new Promise(resolve=>setImmediate(resolve));
-assert.equal($('securityKnownInstrument').value,'a');assert.equal($('securitySymbol').value,'ZZZ');assert.equal($('securityMarket').value,'NYSE');assert.equal($('securityAssetClass').value,'EQUITY');assert.equal(document.activeElement.id,'securityQuantity');
+assert.equal(entryCalls.length,1);assert.equal(entryCalls[0].instrumentId,'a');assert.equal(entryCalls[0].returnFocus.id,'newSecurityTransaction');
 })();
 ''')
 
@@ -98,16 +99,16 @@ openModal('securitiesModal',null,{instrumentId:'a'});
 closeModal($('securitiesModal'));
 openModal('securitiesModal',null,{instrumentId:'b'});
 loads[1].resolve();await new Promise(resolve=>setImmediate(resolve));
-assert.equal($('securityKnownInstrument').value,'b');assert.equal($('securitySymbol').value,'AAA');
+assert.equal(entryCalls.at(-1).instrumentId,'b');assert.equal(entryCalls.length,1);
 loads[0].resolve();await new Promise(resolve=>setImmediate(resolve));
-assert.equal($('securityKnownInstrument').value,'b');assert.equal($('securitySymbol').value,'AAA');
+assert.equal(entryCalls.at(-1).instrumentId,'b');assert.equal(entryCalls.length,1);
 // A superseded request failure must not publish an error in a fresh dialog.
 openModal('securitiesModal',null,{instrumentId:'a'});
 closeModal($('securitiesModal'));
 openModal('securitiesModal',null,{instrumentId:'b'});
 loads[3].resolve();await new Promise(resolve=>setImmediate(resolve));
-$('securityStatus').textContent='newer request';loads[2].reject(Error('superseded'));await new Promise(resolve=>setImmediate(resolve));
-assert.equal($('securityStatus').textContent,'newer request');assert.equal($('securityKnownInstrument').value,'b');
+$('securitiesListStatus').textContent='newer request';loads[2].reject(Error('superseded'));await new Promise(resolve=>setImmediate(resolve));
+assert.equal($('securitiesListStatus').textContent,'newer request');assert.equal(entryCalls.at(-1).instrumentId,'b');
 })();
 ''')
 
@@ -131,7 +132,7 @@ def test_transaction_and_employee_loading_failures_use_actionable_summaries():
 (async()=>{
 seed();loadLocalSecurities=async()=>{throw Error('raw provider or account details');};
 openModal('securitiesModal');await new Promise(resolve=>setImmediate(resolve));
-assert.equal($('securityStatus').textContent,'Could not load transactions. Reopen Transactions to retry.');
+assert.equal($('securitiesListStatus').textContent,'Could not load transactions. Reopen Transactions to retry.');
 state.employeeMode=true;
 openModal('securitiesModal');await new Promise(resolve=>setImmediate(resolve));
 assert.equal($('employeeOptionListStatus').textContent,'Could not load employee option grants. Reopen Employee Stock Options to retry.');
