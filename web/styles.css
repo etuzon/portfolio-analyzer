@@ -4345,15 +4345,25 @@ textarea.muted-control {
 .market-filter-grid {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-end;
   gap: 8px;
 }
 
 .market-filter-grid > label {
-  flex: 0 1 auto;
-  width: max-content;
-  min-width: min(100%, 140px);
+  /* Reserve value digits, decimals/signs, padding and number controls.
+     Labels wrap independently instead of stretching short numeric inputs. */
+  --filter-width: 6rem;
+  flex: 0 0 var(--filter-width);
+  width: var(--filter-width);
+  min-width: 0;
   max-width: 100%;
 }
+
+.market-filter-grid > .market-filter-price { --filter-width: 7rem; }
+.market-filter-grid > .market-filter-amount { --filter-width: 7rem; }
+.market-filter-grid > .market-filter-ratio { --filter-width: 5.5rem; }
+.market-filter-grid > .market-filter-volume { --filter-width: 8rem; }
+.market-filter-grid > .market-filter-count { --filter-width: 4.5rem; }
 
 .market-filter-grid > label > input:not([type="checkbox"]),
 .market-filter-grid > label > select {
@@ -4363,6 +4373,8 @@ textarea.muted-control {
 
 .market-filter-grid .market-missing-toggle {
   display: flex;
+  flex: 0 1 auto;
+  width: auto;
   align-items: center;
   align-self: end;
   min-height: 37px;
@@ -4371,8 +4383,6 @@ textarea.muted-control {
   border-radius: 6px;
   background: #171c24;
   text-transform: none;
-  grid-column: 1 / -1;
-  justify-self: start;
 }
 
 .market-missing-toggle input {
