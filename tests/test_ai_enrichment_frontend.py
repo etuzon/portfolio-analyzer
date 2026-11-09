@@ -13,7 +13,7 @@ def ready(tmp_path, chromium, language="en", width=1440):
     command("Page.navigate", {"url": cash_browser_document(tmp_path, language).as_uri()})
     browser_wait(evaluate, "window.qa?.ready===true")
     evaluate(r'''
-qa.aiPosts=0;qa.aiGets=0;qa.logs=[];qa.apiMode='ok';qa.jobStatus='running';
+qa.aiPosts=0;qa.aiBodies=[];qa.aiGets=0;qa.logs=[];qa.apiMode='ok';qa.jobStatus='running';
 qa.progress={stage:'checking_apis',completed:0,total:0,current_security:null};
 qa.item={holding:{symbol:'91282CKD2',stock_market:'NYSE',currency:'USD'},missing:['price history'],price_ranges:{}};
 qa.other={holding:{symbol:'91282CKD2',stock_market:'TASE',currency:'ILS'},missing:['price history'],price_ranges:{}};
@@ -24,7 +24,7 @@ qa.nativeTimeout=window.setTimeout;
 window.setTimeout=(callback,delay,...args)=>delay===3000?(qa.poll=callback,999999):qa.nativeTimeout.call(window,callback,delay,...args);
 api=async(path,options={})=>{
  if(options.method==='POST'){
-  qa.aiPosts++;if(qa.apiMode==='lost'){qa.apiMode='ok';throw new Error('synthetic raw provider secret');}
+  qa.aiPosts++;qa.aiBodies.push(JSON.parse(options.body));if(qa.apiMode==='lost'){qa.apiMode='ok';throw new Error('synthetic raw provider secret');}
   if(qa.apiMode==='hold')return await new Promise(resolve=>qa.resolve=resolve);
   return qa.job();
  }
@@ -182,7 +182,11 @@ def test_ai_single_request_partial_results_tooltips_permissions_and_narrow_layou
     command("Input.dispatchKeyEvent", {"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
     command("Input.dispatchKeyEvent", {"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13})
     evaluate("$('enrichMissingData').click();")
+    assert evaluate("qa.aiPosts") == 0
+    assert evaluate("!$('aiEnrichmentStartAll').disabled&&!$('aiEnrichmentStart').disabled")
+    evaluate("$('aiEnrichmentStart').click();")
     browser_wait(evaluate, "state.aiEnrichment.pending===true&&qa.aiPosts===1&&!!qa.poll")
+    assert evaluate("qa.aiBodies") == [{"position_scope": "open"}]
     assert evaluate("$('refresh').disabled") is False
     assert evaluate("$('loadingOverlay').hidden") is True
     assert evaluate("$('aiEnrichmentModal').hidden") is False
@@ -251,19 +255,19 @@ def test_ai_single_request_partial_results_tooltips_permissions_and_narrow_layou
 
 def test_poll_interruption_and_limit_resume_same_job_without_another_post(tmp_path, chromium):
     _, evaluate = ready(tmp_path, chromium)
-    evaluate("$('enrichMissingData').click();")
+    evaluate("$('enrichMissingData').click();$('aiEnrichmentStart').click();")
     browser_wait(evaluate, "qa.aiPosts===1&&!!qa.poll")
     evaluate("qa.apiMode='poll-failure';qa.poll();")
     browser_wait(evaluate, "state.aiEnrichment.resume===true")
     assert "synthetic raw" not in evaluate("$('aiEnrichmentStatus').textContent")
-    assert evaluate("$('aiEnrichmentStart').textContent") == "Check AI progress"
-    evaluate("$('aiEnrichmentStart').click();")
+    assert evaluate("$('aiEnrichmentResume').textContent") == "Check AI progress"
+    evaluate("$('aiEnrichmentResume').click();")
     browser_wait(evaluate, "state.aiEnrichment.pending===true&&!state.aiEnrichment.resume")
     assert evaluate("qa.aiPosts") == 1
     evaluate("state.aiEnrichment.polls=120;scheduleAIEnrichmentPoll();")
     assert evaluate("state.aiEnrichment.resume&&!state.aiEnrichment.pending")
     assert "taking longer" in evaluate("$('aiEnrichmentStatus').textContent")
-    evaluate("qa.jobStatus='completed';$('aiEnrichmentStart').click();")
+    evaluate("qa.jobStatus='completed';$('aiEnrichmentResume').click();")
     browser_wait(evaluate, "!state.aiEnrichment.pending&&!state.aiEnrichment.resume")
     assert evaluate("qa.aiPosts") == 1
     assert evaluate("qa.refreshes") == 1
@@ -272,13 +276,13 @@ def test_poll_interruption_and_limit_resume_same_job_without_another_post(tmp_pa
 
 def test_lost_post_response_checks_active_job_and_late_session_result_is_discarded(tmp_path, chromium):
     _, evaluate = ready(tmp_path, chromium)
-    evaluate("qa.apiMode='lost';$('enrichMissingData').click();")
+    evaluate("qa.apiMode='lost';$('enrichMissingData').click();$('aiEnrichmentStartAll').click();")
     browser_wait(evaluate, "state.aiEnrichment.resume===true")
-    evaluate("qa.active=true;$('aiEnrichmentStart').click();")
+    evaluate("qa.active=true;$('aiEnrichmentResume').click();")
     browser_wait(evaluate, "state.aiEnrichment.pending===true&&!state.aiEnrichment.resume")
     assert evaluate("qa.aiPosts") == 1
     assert evaluate("state.aiEnrichment.job.request_id") == "synthetic-job"
-    evaluate("resetAIEnrichment();qa.apiMode='hold';$('enrichMissingData').click();")
+    evaluate("resetAIEnrichment();qa.apiMode='hold';$('enrichMissingData').click();$('aiEnrichmentStart').click();")
     browser_wait(evaluate, "typeof qa.resolve==='function'")
     evaluate("resetAIEnrichment();qa.resolve(qa.job());")
     browser_wait(evaluate, "state.aiEnrichment.job===null&&!state.aiEnrichment.pending")
@@ -293,7 +297,7 @@ def test_language_rebuild_retains_opener_focus_and_expired_session_clears_popup(
     assert evaluate("document.querySelectorAll('#enrichMissingData').length") == 1
     assert evaluate("document.activeElement.id") == "enrichMissingData"
     assert evaluate("$('enrichMissingData').textContent") == "איתור נתונים חסרים בעזרת AI"
-    evaluate("$('enrichMissingData').click();")
+    evaluate("$('enrichMissingData').click();$('aiEnrichmentStart').click();")
     browser_wait(evaluate, "qa.aiPosts===1&&!!qa.poll")
     evaluate("qa.apiMode='expired';qa.poll();")
     browser_wait(evaluate, "currentUser()===null&&$('aiEnrichmentModal').hidden")
@@ -339,4 +343,26 @@ renderAIEnrichment();
     assert evaluate("$('aiEnrichmentSummary').hidden&&$('aiEnrichmentEmpty').hidden&&$('aiEnrichmentProgress').hidden")
     assert evaluate("$('aiEnrichmentPhase').textContent") == ("No AI research needed" if language == "en" else "אין צורך בחיפוש AI")
     assert ("normal dashboard update flow" if language == "en" else "בעדכוני לוח הבקרה הרגילים") in evaluate("$('aiEnrichmentStatus').textContent")
+    assert evaluate("qa.errors") == []
+
+
+@pytest.mark.parametrize("language,width", [("en",1440),("he",1440),("en",390),("he",390)])
+def test_opening_is_inert_and_both_explicit_scopes_are_available(tmp_path, chromium, language, width):
+    _, evaluate = ready(tmp_path, chromium, language, width)
+    evaluate("$('enrichMissingData').click();closeModal($('aiEnrichmentModal'));$('enrichMissingData').click();")
+    assert evaluate("qa.aiPosts") == 0
+    assert evaluate("$('aiEnrichmentResume').hidden") is True
+    expected = ["חיפוש בפוזיציות פתוחות", "חיפוש בפוזיציות פתוחות וסגורות"] if language == "he" else ["Search open positions", "Search open and closed positions"]
+    assert evaluate("[$('aiEnrichmentStart').textContent,$('aiEnrichmentStartAll').textContent]") == expected
+    evaluate("$('aiEnrichmentStartAll').click();$('aiEnrichmentStart').click();")
+    browser_wait(evaluate, "state.aiEnrichment.pending===true")
+    assert evaluate("qa.aiBodies") == [{"position_scope": "all"}]
+    assert evaluate("$('aiEnrichmentStartAll').disabled&&$('aiEnrichmentStart').disabled") is True
+    evaluate("qa.jobStatus='completed';qa.poll();")
+    browser_wait(evaluate, "!state.aiEnrichment.pending")
+    evaluate("closeModal($('aiEnrichmentModal'));$('enrichMissingData').click();")
+    assert evaluate("qa.aiPosts") == 1
+    evaluate("state.auth.user.role='Viewer';renderCurrentUser();renderAIEnrichment();$('aiEnrichmentStartAll').click();")
+    assert evaluate("$('aiEnrichmentStartAll').disabled") is True
+    assert evaluate("qa.aiPosts") == 1
     assert evaluate("qa.errors") == []

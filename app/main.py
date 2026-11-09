@@ -2458,8 +2458,8 @@ def analyze_all():
     return enriched_local_holdings()
 
 
-def enriched_local_holdings(*, cached_only: bool = False, on_progress=None, timeout_seconds: float = 120, cancelled=lambda: False):
-    analyses = local_store.holdings()
+def enriched_local_holdings(*, cached_only: bool = False, on_progress=None, timeout_seconds: float = 120, cancelled=lambda: False, include_closed: bool = False):
+    analyses = local_store.holdings(include_closed=True) if include_closed else local_store.holdings()
     enriched = []
     market_hub = hub().cached_view() if cached_only else hub()
     # These instruments have dedicated identifier-based feeds. Their normalized
@@ -4649,11 +4649,27 @@ def _refresh_automatic_security_prices(*, cancelled=lambda: False):
         cancelled=cancelled, timeout_seconds=25)
 
 
-def _ai_enrichment_candidates():
-    """The AI inventory contains no API-owned or private/closed securities."""
+def _enrichment_holdings(position_scope: str = "open"):
+    if position_scope not in {"open", "all"}:
+        raise ValueError("invalid_position_scope")
+    return (enriched_local_holdings(cached_only=True, include_closed=True) if position_scope == "all"
+            else enriched_local_holdings(cached_only=True))
+
+
+def _enrichment_scope_keys(position_scope: str = "open") -> set[str]:
+    return {enrichment_security_key(holding) for analysis in _enrichment_holdings(position_scope)
+            if (holding := to_dict(analysis).get("holding") or {})
+            and (quantity := _number_or_none(holding.get("quantity"))) is not None
+            and (quantity != 0 or position_scope == "all")
+            and str(holding.get("stock_market") or "").upper() != "PRIVATE"
+            and str(holding.get("asset_class") or "").upper() not in {"CASH", "CURRENCY", "PRIVATE_STOCK", "EMPLOYEE_STOCK_OPTION", "STOCK_OPTION"}}
+
+
+def _ai_enrichment_candidates(position_scope: str = "open"):
+    """The selected AI inventory excludes API-owned and private securities."""
     from .price_agent import price_agent_settings, PriceAgentError
     from .security_search import search_is_configured
-    inventory = _enrichment_candidates(limit=None)
+    inventory = _enrichment_candidates(limit=None, position_scope=position_scope)
     items = []
     excluded = 0
     for candidate in inventory["items"]:
@@ -4678,17 +4694,17 @@ def _ai_enrichment_candidates():
             "configured_search_providers": search_providers}
 
 
-def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) -> dict[str, Any]:
+def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200, position_scope: str = "open") -> dict[str, Any]:
     """Application-owned inventory route; the AI coordinator never calls this directly."""
     from .security_prices import quote_unit
     by_key = {}
-    open_scope = {}
+    position_inventory = {}
     overrides = None
-    for analysis in enriched_local_holdings(cached_only=True):
+    for analysis in _enrichment_holdings(position_scope):
         item = to_dict(analysis)
         holding = item.get("holding") or {}
         quantity = _number_or_none(holding.get("quantity"))
-        if quantity is None or quantity == 0:
+        if quantity is None or (quantity == 0 and position_scope != "all"):
             continue
         if str(holding.get("asset_class") or "").upper() in {"CASH", "CURRENCY"}:
             continue
@@ -4700,7 +4716,7 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
         # research. Never send their internal identifiers to an internet search.
         if market == "PRIVATE" or str(holding.get("asset_class") or "").upper() in {"PRIVATE_STOCK", "EMPLOYEE_STOCK_OPTION", "STOCK_OPTION"}:
             continue
-        scope = open_scope.setdefault(enrichment_security_key(holding), {"quantity": 0, "sources": set()})
+        scope = position_inventory.setdefault(enrichment_security_key(holding), {"quantity": 0, "sources": set()})
         scope["quantity"] += quantity
         scope["sources"].add(holding.get("data_source", ""))
         if overrides is None:
@@ -4753,7 +4769,7 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
             by_key[key]["needs_name"] |= previous_candidate["needs_name"]
             by_key[key]["needs_industry"] |= previous_candidate["needs_industry"]
     for key, candidate in by_key.items():
-        scope = open_scope[key]
+        scope = position_inventory[key]
         candidate["quantity"] = scope["quantity"]
         if len(scope["sources"]) > 1:
             candidate["data_source"] = "LOCAL" if scope["sources"] <= {"LOCAL", "MANUAL"} else "MIXED"
@@ -4765,7 +4781,7 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200) 
     result = {"items": visible, "total_count": len(items), "truncated": len(visible) < len(items)}
     if preflight:
         # Application-owned API refresh runs before any model work, only for the
-        # bounded open-held selection. The original inventory remains truthful.
+        # bounded selected inventory. The original inventory remains truthful.
         from .price_agent import price_agent_settings, PriceAgentError
         from .security_search import search_is_configured
         try:
@@ -4882,7 +4898,7 @@ def _enrichment_research_tool(candidate: dict[str, Any], action: str, arguments:
     from .security_research_tools import ResearchSession, ResearchFailure, WebRequestBudget
     from .security_search import SearchFailure
     from .us_market_providers import ProviderFailure
-    current = next((item for item in _enrichment_candidates(limit=None)["items"] if item["security_key"] == candidate["security_key"]), None)
+    current = next((item for item in _enrichment_candidates(limit=None, position_scope=candidate.get("_position_scope", "open"))["items"] if item["security_key"] == candidate["security_key"]), None)
     if not current:
         return {"evidence": [], "source_status": "not_open"}
     if _security_api_route(current)["owner"] != "ai":
@@ -4931,7 +4947,7 @@ def _enrichment_research_security(candidate: dict[str, Any], field: str) -> dict
     """Application source route: the AI sees only this authenticated REST result."""
     from .price_agent import price_agent_settings
     from .security_research_tools import WebRequestBudget
-    current = next((item for item in _enrichment_candidates(limit=None)["items"] if item["security_key"] == candidate["security_key"]), None)
+    current = next((item for item in _enrichment_candidates(limit=None, position_scope=candidate.get("_position_scope", "open"))["items"] if item["security_key"] == candidate["security_key"]), None)
     if not current:
         return {"evidence": [], "status": "not_attempted", "source_status": "not_open", "code": "not_open"}
     if candidate.get("api_data_route") and _security_api_route(current)["owner"] != "ai":
@@ -4945,14 +4961,14 @@ def _enrichment_research_security(candidate: dict[str, Any], field: str) -> dict
     return research_sources(current, price_agent_settings(config.raw), budget)
 
 
-def _apply_enrichment_proposals(proposal, evidence_by_key, candidates, *, recovery_reason=None) -> dict[str, dict[str, Any]]:
+def _apply_enrichment_proposals(proposal, evidence_by_key, candidates, *, recovery_reason=None, position_scope: str = "open") -> dict[str, dict[str, Any]]:
     """Application-owned finalization; no model may access this storage directly."""
     from .security_prices import PriceObservation, quote_unit
-    current = {item["security_key"]: item for item in _enrichment_candidates(limit=None)["items"]}
+    current = {item["security_key"]: item for item in _enrichment_candidates(limit=None, position_scope=position_scope)["items"]}
     prepared = {}
     for key, candidate in (candidates or {}).items():
         if key not in current:
-            continue  # Closed or already completed: no model value is applied.
+            continue  # Outside the selected scope or already completed.
         if candidate.get("api_data_route") and _security_api_route(current[key])["owner"] != "ai":
             continue
         metadata = local_store.manual_security(candidate["symbol"], candidate["stock_market"])
@@ -4969,8 +4985,8 @@ def _apply_enrichment_proposals(proposal, evidence_by_key, candidates, *, recove
     results = {}
     def still_missing(key, field):
         # Re-read immediately before each application-owned write. Positions may
-        # have closed or the missing value may have been supplied during research.
-        return next((item for item in _enrichment_candidates(limit=None)["items"]
+        # have left the selected scope or another update may have supplied the value.
+        return next((item for item in _enrichment_candidates(limit=None, position_scope=position_scope)["items"]
                      if item["security_key"] == key and field in item["missing_fields"]
                      and (not prepared[key].get("api_data_route") or _security_api_route(item)["owner"] == "ai")), None)
 
@@ -5026,7 +5042,7 @@ def _apply_enrichment_proposals(proposal, evidence_by_key, candidates, *, recove
                 local_store.set_preference("security_enrichment_sources_v1", provenance)
             except ValueError:
                 rejected = True
-        after = next((item for item in _enrichment_candidates(limit=None)["items"] if item["security_key"] == key), None)
+        after = next((item for item in _enrichment_candidates(limit=None, position_scope=position_scope)["items"] if item["security_key"] == key), None)
         remaining = after["missing_fields"] if after else []
         status = "updated" if found and not remaining else "partial" if found else "unavailable"
         results[key] = {**(after or current[key]), "status": status, "code": "data_found" if status == "updated" else "partial_data" if found else "evidence_rejected",
@@ -5041,24 +5057,23 @@ def _enrichment_outcomes() -> list[dict[str, Any]]:
     return list(saved.values()) if isinstance(saved, dict) else []
 
 
-def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, request_id: str, *, proposal=None, evidence_by_key=None, candidates=None, context_recovery_reason=None):
+def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, request_id: str, *, proposal=None, evidence_by_key=None, candidates=None, context_recovery_reason=None, position_scope: str = "open"):
     saved = {item["security_key"]: item for item in _enrichment_outcomes() if isinstance(item, dict) and item.get("security_key")}
-    open_keys = {enrichment_security_key(to_dict(item).get("holding") or {}) for item in enriched_local_holdings(cached_only=True)
-                 if (quantity := _number_or_none((to_dict(item).get("holding") or {}).get("quantity"))) is not None and quantity != 0}
+    scope_keys = _enrichment_scope_keys(position_scope)
     # The agent submits only proposals and request-bound fetched evidence through
     # REST. Validation and any supported local save belong to this application.
     recover_interrupted = context_recovery_reason in {"request_limit", "planner_timeout"} and bool(evidence_by_key)
     applied = _apply_enrichment_proposals(proposal, evidence_by_key or {},
-                                          {key: item for key, item in (candidates or {}).items() if key in open_keys},
-                                          **({"recovery_reason": context_recovery_reason} if context_recovery_reason else {})) if proposal or recover_interrupted else {}
+                                          {key: item for key, item in (candidates or {}).items() if key in scope_keys},
+                                          **({"recovery_reason": context_recovery_reason} if context_recovery_reason else {}),
+                                          **({"position_scope": position_scope} if position_scope != "open" else {})) if proposal or recover_interrupted else {}
     if proposal or recover_interrupted:
-        open_keys = {enrichment_security_key(to_dict(item).get("holding") or {}) for item in enriched_local_holdings(cached_only=True)
-                     if (quantity := _number_or_none((to_dict(item).get("holding") or {}).get("quantity"))) is not None and quantity != 0}
+        scope_keys = _enrichment_scope_keys(position_scope)
     # API-only results also reach this authenticated, authorized POST. Recheck
-    # open/missing eligibility and the local quantity convention before writing.
+    # selected-scope/missing eligibility and the local quantity convention before writing.
     from .api_price_updates import bond_price_records, fund_price_records
     api_applied = {}
-    current_candidates = {item["security_key"]: item for item in _enrichment_candidates(limit=None)["items"]}
+    current_candidates = {item["security_key"]: item for item in _enrichment_candidates(limit=None, position_scope=position_scope)["items"]}
     for outcome in outcomes:
         key = outcome["security_key"]
         candidate = current_candidates.get(key)
@@ -5069,9 +5084,9 @@ def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, requ
         fund_id = _israeli_fund_identifier(candidate)
         snapshot = _israeli_fund_data(fund_id, cache_only=True) if fund_id else _bond_market_data(candidate, cache_only=True)
         records = (fund_price_records if fund_id else bond_price_records)(candidate, metadata, snapshot, existing, HISTORY_START_DATE)
-        still_open_missing = next((item for item in _enrichment_candidates(limit=None)["items"]
+        still_in_scope_missing = next((item for item in _enrichment_candidates(limit=None, position_scope=position_scope)["items"]
                                    if item["security_key"] == key and "prices" in item.get("missing_fields", [])), None)
-        if not still_open_missing:
+        if not still_in_scope_missing:
             continue
         if records:
             accepted = local_store.save_prices(records, only_missing=True)
@@ -5087,11 +5102,7 @@ def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, requ
                                 "available_fields": sorted(set(outcome.get("available_fields", [])) | {"prices", "reference"})}
         else:
             api_applied[key] = {**outcome, "code": "bond_reference_only", "status": "partial"}
-    open_keys = {enrichment_security_key(holding) for item in enriched_local_holdings(cached_only=True)
-                 if (holding := to_dict(item).get("holding") or {})
-                 and (quantity := _number_or_none(holding.get("quantity"))) is not None and quantity != 0
-                 and str(holding.get("stock_market") or "").upper() != "PRIVATE"
-                 and str(holding.get("asset_class") or "").upper() not in {"PRIVATE_STOCK", "EMPLOYEE_STOCK_OPTION", "STOCK_OPTION"}}
+    scope_keys = _enrichment_scope_keys(position_scope)
     finalized = []
     messages = {
         "data_found": "Missing information was retrieved.", "partial_data": "Some information was retrieved; the remaining fields are unavailable.",
@@ -5129,7 +5140,7 @@ def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, requ
             outcome = {**outcome, **verified, "available_fields": available}
             if available and outcome.get("status") == "unavailable":
                 outcome["status"] = "partial"
-        if outcome["security_key"] not in open_keys:
+        if outcome["security_key"] not in scope_keys:
             finalized.append({**outcome, "status": "not_attempted", "code": "not_open", "attempted": False, "available_fields": [], "missing_fields": []})
             continue
         finalized.append(outcome)
@@ -5166,7 +5177,7 @@ def _enrichment_assistant_settings():
 
 
 security_enrichment = EnrichmentJobs(app, lambda: _enrichment_assistant_settings(),
-                                    candidate_reader=lambda: _ai_enrichment_candidates(),
+                                    candidate_reader=lambda position_scope="open": _ai_enrichment_candidates(position_scope),
                                     security_fetcher=lambda candidate, field: _enrichment_research_security(candidate, field),
                                     research_tool_fetcher=lambda candidate, action, arguments: _enrichment_research_tool(candidate, action, arguments),
                                     source_hint_reader=lambda candidate: _enrichment_research_tool(candidate, "discover", {}).get("sources", []),

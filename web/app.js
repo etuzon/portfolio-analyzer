@@ -1166,7 +1166,7 @@ async function saveLoggingSettings() {
 
 const WRITE_CONTROL_IDS = new Set([
   "addHistoricalPrice",
-  "aiEnrichmentStart",
+  "aiEnrichmentStart", "aiEnrichmentStartAll", "aiEnrichmentResume",
   "saveXrayReport", "fetchXrayIssuer", "chooseXrayReportFile",
   "addAlertCondition", "newAlertRule", "addBannerItem", "addPensionPeriod", "addPensionRate", "addPensionScenario",
   "applyBackupSchedule", "attachAccountToMember", "attachEditAccountPerson", "attachLocalAccountPerson",
@@ -1245,10 +1245,10 @@ function aiOutcomeMessage(outcome) {
     invalid_request: "The research request could not be completed. Saved data is retained.",
     search_failed: "The search service could not complete this search. Try again later.",
     not_processed: "This security was not checked in this request.",
-    not_open: "This security no longer has an open holding.",
+    not_open: "This security is no longer eligible for this request.",
     authentication_expired: "Sign in again before continuing AI research.",
     job_failed: "AI research could not finish. Saved data is retained.",
-    nothing_missing: "No open holdings are eligible for AI research. API-supported securities use the normal dashboard update flow.",
+    nothing_missing: "No securities in the selected scope are eligible for AI research. API-supported securities use the normal dashboard update flow.",
   };
   return t(messages[outcome?.code] || (outcome?.status === "updated" ? messages.data_found : outcome?.status === "partial" ? messages.partial_data : messages.data_unavailable));
 }
@@ -1301,10 +1301,19 @@ function renderAIEnrichment() {
   opener.textContent = t("Find missing data with AI");
   opener.classList.toggle("is-running", ui.pending);
   opener.title = t(ui.pending ? "AI research is running. Open to see progress." : "Open AI research and saved results.");
-  button.disabled = !canWrite() || ui.pending || state.auth.forcedPasswordChange || Boolean(currentUser()?.must_change_password);
-  button.textContent = t(ui.pending ? "Research in progress…" : ui.resume ? "Check AI progress" : ui.job ? "Start new request" : "Start research");
+  const disabled = !canWrite() || ui.pending || state.auth.forcedPasswordChange || Boolean(currentUser()?.must_change_password);
+  for (const [id, label] of [["aiEnrichmentStart", "Search open positions"], ["aiEnrichmentStartAll", "Search open and closed positions"]]) {
+    const control = $(id);
+    control.disabled = disabled || ui.resume;
+    control.textContent = t(label);
+  }
+  const resumeButton = $("aiEnrichmentResume");
+  resumeButton.hidden = !ui.resume;
+  resumeButton.disabled = disabled;
+  resumeButton.textContent = t("Check AI progress");
   const permission = t("AI data updates require Admin or Operator permission.");
-  button.title = canWrite() ? t("Research missing data for open holdings without an API route and save verified results.") : permission;
+  button.title = canWrite() ? t("Choose open positions or open and closed positions. Only securities without usable API access are researched.") : permission;
+  $("aiEnrichmentStartAll").title = button.title;
   $("aiEnrichmentAction").title = button.title;
   $("aiEnrichmentAction").tabIndex = canWrite() ? -1 : 0;
   $("aiEnrichmentAction").setAttribute("aria-label", button.title);
@@ -1372,12 +1381,7 @@ function openAIEnrichment() {
   openModal("aiEnrichmentModal", mobile ? $("navigationToggle") : $("enrichMissingData"), { focusId: "aiEnrichmentTitle" });
   document.querySelectorAll(".nav-menu[open]").forEach((menu) => { menu.open = false; });
   setMobileNavigation(false);
-  const ui = state.aiEnrichment;
   renderAIEnrichment();
-  if (!ui.opened && !ui.job && !ui.pending && !ui.resume && canWrite()) {
-    ui.opened = true;
-    requestAIEnrichment();
-  }
 }
 
 function acceptAIEnrichmentJob(job) {
@@ -1449,7 +1453,7 @@ async function loadAIEnrichmentStatus() {
   } else renderAIEnrichment();
 }
 
-async function requestAIEnrichment() {
+async function requestAIEnrichment(positionScope = "open") {
   const ui = state.aiEnrichment;
   if (!canWrite() || ui.pending || state.auth.forcedPasswordChange || currentUser()?.must_change_password) return;
   ui.version = (ui.version || 0) + 1;
@@ -1476,7 +1480,7 @@ async function requestAIEnrichment() {
       }
     } else {
       ui.job = null;
-      const job = await api("/api/securities/enrichment/ai", { method: "POST", body: "{}" });
+      const job = await api("/api/securities/enrichment/ai", { method: "POST", body: JSON.stringify({ position_scope: positionScope }) });
       if (state.aiEnrichment !== ui) return;
       acceptAIEnrichmentJob(job);
     }
@@ -15552,7 +15556,9 @@ $("refresh").addEventListener("click", () => {
   loadBanner().catch(() => {});
 });
 $("enrichMissingData").addEventListener("click", openAIEnrichment);
-$("aiEnrichmentStart").addEventListener("click", requestAIEnrichment);
+$("aiEnrichmentStart").addEventListener("click", () => requestAIEnrichment("open"));
+$("aiEnrichmentStartAll").addEventListener("click", () => requestAIEnrichment("all"));
+$("aiEnrichmentResume").addEventListener("click", () => requestAIEnrichment());
 $("assistantComposer").addEventListener("submit", (event) => {
   event.preventDefault();
   askPortfolioAssistant();

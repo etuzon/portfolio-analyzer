@@ -464,6 +464,19 @@ h2 {
   box-shadow: 0 0 18px rgba(155, 77, 255, 0.26);
 }
 
+.sidebar > .brand {
+  width: 56px;
+  min-height: 56px;
+  padding: 4px;
+}
+
+.sidebar > .brand .brand-mark {
+  flex: 0 0 48px;
+  width: 48px;
+  height: 48px;
+  background-image: url("/assets/portfolio-vault/icon-96.png?v=1");
+}
+
 .nav {
   display: flex;
   align-items: center;
@@ -853,7 +866,7 @@ html[dir="rtl"] .assistant-table-wrap table { direction: rtl; }
 .header-status #status { font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
 .dashboard-notice { color: #ffb7a3; font-size: 12px; }
 
-.ai-enrichment-action { display: inline-flex; max-width: 100%; }
+.ai-enrichment-action { display: inline-flex; flex-wrap: wrap; gap: 8px; max-width: 100%; }
 .ai-enrichment-action button { white-space: normal; text-align: start; }
 #enrichMissingData.is-running::after { content: ""; display: inline-block; width: 7px; height: 7px; margin-inline-start: 8px; border-radius: 50%; background: var(--ux-blue); }
 .modal-card.ai-enrichment-card { width: min(760px, 100%); display: grid; gap: 16px; }
@@ -2741,7 +2754,11 @@ textarea.muted-control {
 .analytics-board > .comparison-card {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  max-width: 470px;
 }
+
+.analytics-board[data-layout="wide"] > .comparison-card { grid-column: span 5; }
 
 .analytics-board > .industry-split-card .industry-split-list {
   /* Contents scroll within the allocated row instead of sizing the row. */
@@ -4326,9 +4343,22 @@ textarea.muted-control {
 }
 
 .market-filter-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.market-filter-grid > label {
+  flex: 0 1 auto;
+  width: max-content;
+  min-width: min(100%, 140px);
+  max-width: 100%;
+}
+
+.market-filter-grid > label > input:not([type="checkbox"]),
+.market-filter-grid > label > select {
+  width: 0;
+  min-width: 100%;
 }
 
 .market-filter-grid .market-missing-toggle {
@@ -9230,6 +9260,9 @@ html[dir="rtl"] .signal-condition-help::after {
 .compact-report-table td {
   min-width: 118px;
 }
+
+.report-holdings-table th { text-align: center; }
+.report-holdings-table td:nth-child(n + 3) { text-align: center; }
 
 .report-chart svg {
   height: auto;

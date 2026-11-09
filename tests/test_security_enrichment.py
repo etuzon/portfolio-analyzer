@@ -375,7 +375,7 @@ def test_application_finalizer_validates_source_saves_and_logs_real_outcome(envi
             return deepcopy(notes.get(key, default))
         def set_preference(self, key, value):
             notes[key] = deepcopy(value)
-    def inventory(*, preflight=False, limit=200):
+    def inventory(*, preflight=False, limit=200, position_scope="open"):
         items = [] if saved_prices or manual_prices else [deepcopy(item)]
         payload = {"items": items, "total_count": len(items), "truncated": False}
         if preflight:
@@ -695,3 +695,98 @@ def test_failed_inventory_reports_application_phase_and_safe_type_without_blame_
     assert "synthetic-private" not in str(result)
     other = env.client.get(PREFIX + "/ai/" + identifier, headers={"Authorization": "Bearer other"})
     assert other.status_code == 404
+
+
+@pytest.mark.parametrize("position_scope", ["open", "all"])
+def test_explicit_scope_is_bound_to_job_discovery_research_and_finalization(environment, position_scope):
+    env = environment
+    scopes, fetched_scopes, finalized = [], [], []
+    def inventory(position_scope="open"):
+        scopes.append(position_scope)
+        return {"items": deepcopy(env.state.items), "total_count": 4, "truncated": False}
+    original_fetch = env.manager._security_fetcher
+    def fetch(item, field):
+        fetched_scopes.append(item["_position_scope"])
+        return original_fetch(item, field)
+    env.manager._candidate_reader = inventory
+    env.manager._security_fetcher = fetch
+    env.manager._outcome_writer = lambda outcomes, user_id, request_id, **kwargs: finalized.append(kwargs.get("position_scope", "open"))
+    response = env.client.post(PREFIX + "/ai", headers=env.headers, json={"position_scope": position_scope})
+    assert response.status_code == 202
+    identifier = response.json()["request_id"]
+    assert response.json()["position_scope"] == position_scope
+    env.run()
+    result = job(env, identifier)
+    assert result["status"] == "completed", result
+    assert scopes == [position_scope]
+    assert fetched_scopes == [position_scope] * 3
+    assert finalized == [position_scope]
+    assert result["summary"]["selected"] == 3
+    assert result["counts"]["rest_requests"] <= 8
+    # The second launch must resume the existing active request rather than
+    # silently replacing its scope or increasing concurrent work.
+    active = env.client.post(PREFIX + "/ai", headers=env.headers, json={"position_scope": "open"})
+    opposite = env.client.post(PREFIX + "/ai", headers=env.headers, json={"position_scope": "all"})
+    assert active.json()["request_id"] == opposite.json()["request_id"]
+    assert opposite.json()["position_scope"] == "open"
+
+
+@pytest.mark.parametrize("payload", [{"position_scope": "closed"}, {"position_scope": ""}, {"position_scope": None}, {"position_scope": ["all"]}])
+def test_invalid_position_scope_creates_no_job(environment, payload):
+    env = environment
+    response = env.client.post(PREFIX + "/ai", headers=env.headers, json=payload)
+    assert response.status_code == 422
+    assert not env.manager._jobs and not DeferredThread.workers
+
+
+@pytest.mark.parametrize("position_scope,expected", [("open", False), ("all", True)])
+def test_closed_security_verified_profile_saves_only_in_requested_scope(monkeypatch, position_scope, expected):
+    main, state = metadata_application(monkeypatch, quantity=0)
+    seen = []
+    def holdings(**kwargs):
+        seen.append(kwargs.get("include_closed", False))
+        return [{"holding": deepcopy(state.holding), "missing": ["industry"],
+                 "price_ranges": {"1y": {"current": 1, "current_date": date.today().isoformat()}}}]
+    monkeypatch.setattr(main, "enriched_local_holdings", holdings)
+    monkeypatch.setattr(main, "_record_log", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "clear_portfolio_cache", lambda: None)
+    candidate = main._enrichment_candidates(position_scope="all")["items"][0]
+    seen.clear()
+    excerpt = "A NASDAQ Company name: Example Incorporated Industry: Software"
+    source = {"url": "https://example.invalid/profile", "text": excerpt, "retrieved_at": datetime.now(timezone.utc).isoformat()}
+    proposal = {"profiles": [{"security_key": candidate["security_key"], "field": field, "value": value,
+        "source_url": source["url"], "evidence_quote": excerpt} for field, value in (("name", "Example Incorporated"), ("industry", "Software"))]}
+    outcome = {**candidate, "status": "unavailable", "code": "data_unavailable"}
+    result = main._save_enrichment_outcomes([outcome], "operator", "scope-test", proposal=proposal,
+        candidates={candidate["security_key"]: candidate}, evidence_by_key={candidate["security_key"]: [source]}, position_scope=position_scope)
+    assert bool(state.profiles) is expected
+    assert all(included is expected for included in seen)
+    assert result[0]["code"] == ("data_found" if expected else "not_open")
+    assert bool(main._enrichment_outcomes()) is expected
+
+
+def test_closed_positions_inventory_uses_actual_ledger_and_excludes_unheld_registration(tmp_path, monkeypatch):
+    from app import main
+    from app.local_portfolio import LocalPortfolioStore
+    from test_native_account_history_qa import account, transaction
+    store = LocalPortfolioStore(tmp_path / "scope.sqlite")
+    owner = account(store)
+    for symbol in ["CLOSED", "OPEN"]:
+        transaction(store, owner, symbol=symbol, quantity=2)
+    transaction(store, owner, action="SELL", symbol="CLOSED", quantity=2, day="2026-01-02")
+    transaction(store, owner, action="SHORT", symbol="SHORT", quantity=3, day="2026-01-02")
+    store.save_manual_security({"symbol": "UNHELD", "stock_market": "NYSE", "name": "UNHELD", "asset_class": "EQUITY", "currency": "USD", "location": "USA"})
+    monkeypatch.setattr(main, "local_store", store)
+    # Exercise the ledger-backed inventory while using only the existing cached
+    # local analyses, with no provider network operations.
+    def holdings(*, cached_only=False, include_closed=False):
+        assert cached_only
+        return store.holdings(include_closed=include_closed)
+    monkeypatch.setattr(main, "enriched_local_holdings", holdings)
+    monkeypatch.setattr(main, "hub", lambda: SimpleNamespace(cached_profile=lambda *args, **kwargs: {}))
+    monkeypatch.setattr(main, "_security_api_route", lambda _: {"owner": "ai"})
+    assert {item["symbol"] for item in main._ai_enrichment_candidates()["items"]} == {"OPEN", "SHORT"}
+    all_items = main._ai_enrichment_candidates("all")["items"]
+    assert {item["symbol"] for item in all_items} == {"CLOSED", "OPEN", "SHORT"}
+    assert next(item for item in all_items if item["symbol"] == "CLOSED")["quantity"] == 0
+    assert {item.holding.symbol for item in store.holdings()} == {"OPEN", "SHORT"}

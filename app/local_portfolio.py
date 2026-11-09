@@ -3658,7 +3658,7 @@ class LocalPortfolioStore:
             conn.execute("delete from funds where id = ?", (fund_id,))
         return bool(before)
 
-    def holdings(self, include_imported: bool = True) -> list[SymbolAnalysis]:
+    def holdings(self, include_imported: bool = True, *, include_closed: bool = False) -> list[SymbolAnalysis]:
         accounts = {row["id"]: row for row in self.list_accounts()}
         transactions = self.list_transactions()
         if not include_imported:
@@ -3694,7 +3694,7 @@ class LocalPortfolioStore:
             self._apply_tx(position, tx)
         analyses = []
         for position in positions.values():
-            if abs(position["quantity"]) <= 1e-9:
+            if abs(position["quantity"]) <= 1e-9 and not include_closed:
                 continue
             analyses.append(self._analysis(position))
         return analyses
