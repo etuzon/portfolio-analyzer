@@ -80,6 +80,7 @@
             <summary><span class="nav-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 7h18v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12h18M10 12v2h4v-2"/></svg></span><span class="nav-menu-label">Portfolio</span></summary>
             <div class="nav-children">
               <button class="nav-item" type="button" data-modal="positionsModal">Positions</button>
+              <button class="nav-item" type="button" data-modal="instrumentCatalogModal">Securities</button>
               <button class="nav-item" type="button" data-modal="securitiesModal">Transactions</button>
               <button class="nav-item" type="button" data-modal="tradingJournalModal">Trading Journal</button>
               <button class="nav-item" type="button" data-modal="eventsModal" data-dividends-section="calendar">Dividends &amp; Events</button>
@@ -445,10 +446,10 @@
           <p id="accountCashHint" class="section-note">Enter the balance in this account's currency. Zero and negative cash are allowed; only the difference is recorded locally.</p>
           <div class="account-cash-feedback">
             <p id="accountCashDifference" class="account-cash-difference" aria-live="polite"></p>
-            <button id="accountCashReload" class="secondary compact-button" type="button">Reload current cash</button>
+            <button id="accountCashReload" class="secondary compact-button" type="button" title="Reloads this account's locally recorded cash and recalculates the adjustment. Keeps your entered amount without saving changes or importing broker data.">Reload current cash</button>
           </div>
           <p id="accountCashStatus" class="status-line" role="status" aria-live="polite" tabindex="-1"></p>
-          <div class="account-cash-actions"><button id="accountCashSave" type="submit">Save current cash</button><button class="secondary" type="button" data-close>Cancel</button></div>
+          <div class="account-cash-actions"><button id="accountCashSave" type="submit">Save</button><button class="secondary" type="button" data-close>Cancel</button></div>
         </form>
       </section>
     </div>
@@ -761,6 +762,25 @@
       </section>
     </div>
 
+    <div id="instrumentCatalogModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="instrumentCatalogTitle">
+        <div class="section-head"><h2 id="instrumentCatalogTitle" tabindex="-1">Securities</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <div id="definedInstrumentsSection" class="management-section">
+          <div class="instrument-list-heading"><p id="definedInstrumentsLabel" class="form-caption">Defined instruments</p><button id="newManualSecurity" type="button">New</button></div>
+          <div class="instrument-list-controls">
+            <label class="management-field"><span>Search instruments</span><input id="manualSecurityQuery" type="search" placeholder="Name, symbol or grant ID" /></label>
+            <label class="management-field"><span>Instrument type</span><select id="manualSecurityTypeFilter"><option value="">All types</option></select></label>
+            <label class="management-field"><span>Sort by</span><select id="manualSecuritySort"><option value="name">Name</option><option value="symbol">Symbol</option><option value="type">Instrument type</option></select></label>
+            <label class="management-field"><span>Sort direction</span><select id="manualSecurityDirection"><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
+            <button id="resetManualSecurityFilters" class="secondary" type="button">Reset filters</button>
+          </div>
+          <p id="manualSecurityListStatus" class="status-line" role="status" aria-live="polite"></p>
+          <div id="manualSecuritiesList" class="stack management-list compact-list"></div>
+        </div>
+      </section>
+    </div>
+
     <div id="securitiesModal" class="modal" hidden>
       <div class="modal-backdrop" data-close></div>
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="securitiesTitle">
@@ -768,7 +788,7 @@
           <div>
             <p id="securitiesEyebrow" class="eyebrow">Manual transactions</p>
             <h2 id="securitiesTitle">Transactions</h2>
-            <p id="securitiesSubtitle" class="section-note">Define an instrument, then record it in an account.</p>
+            <p id="securitiesSubtitle" class="section-note">Choose a defined instrument and record its transaction in an account.</p>
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
@@ -919,18 +939,6 @@
           <p id="employeeOptionListStatus" class="status-line" role="status" aria-live="polite"></p>
           <div id="employeeOptionGrantsList" class="employee-grants-list"></div>
         </section>
-        <div id="definedInstrumentsSection" class="management-section">
-          <div class="instrument-list-heading"><p id="definedInstrumentsLabel" class="form-caption">Defined instruments</p><button id="newManualSecurity" type="button">New</button></div>
-          <div class="instrument-list-controls">
-            <label class="management-field"><span>Search instruments</span><input id="manualSecurityQuery" type="search" placeholder="Name, symbol or grant ID" /></label>
-            <label class="management-field"><span>Instrument type</span><select id="manualSecurityTypeFilter"><option value="">All types</option></select></label>
-            <label class="management-field"><span>Sort by</span><select id="manualSecuritySort"><option value="name">Name</option><option value="symbol">Symbol</option><option value="type">Instrument type</option></select></label>
-            <label class="management-field"><span>Sort direction</span><select id="manualSecurityDirection"><option value="asc">Ascending</option><option value="desc">Descending</option></select></label>
-            <button id="resetManualSecurityFilters" class="secondary" type="button">Reset filters</button>
-          </div>
-          <p id="manualSecurityListStatus" class="status-line" role="status" aria-live="polite"></p>
-          <div id="manualSecuritiesList" class="stack management-list compact-list"></div>
-        </div>
         <div id="accountTransactionSection" class="management-section">
           <div class="workflow-section-heading">
             <span id="accountTransactionBadge" class="workflow-step-badge" hidden>Step 2</span>
@@ -1264,8 +1272,11 @@
                 <p>Annualized monetary profit is total profit divided by calendar days held, multiplied by 365. It is an amount in the position currency, not a percentage return; missing opening dates or zero elapsed days leave it unavailable.</p>
               </article>
               <article class="help-feature">
+                <h3>Securities</h3>
+                <p>Open Portfolio → Securities to browse defined instruments. Use New to create an instrument in a separate window, or Edit beside an existing instrument to update it. Save closes the editor after refreshing the list; Cancel closes without saving. Search by name, symbol or grant ID, filter by instrument type, and sort by name, symbol or type in either direction. Reset filters shows the full list again. Filtering and sorting use the loaded list without a server request; reopen Securities to retry a failed load. Use selects the instrument and opens Transactions; employee option grants open their dedicated workflow. Viewers can browse and filter but cannot create, edit or use instruments to record transactions.</p>
+              </article>
+              <article class="help-feature">
                 <h3>Transactions</h3>
-                <p>In Transactions, use New above Defined instruments to create an instrument in a separate window, or Edit beside an existing instrument to update it. Save closes the window after refreshing the list; Cancel closes without saving. Search by name, symbol or grant ID, filter by instrument type, and sort by name, symbol or type in either direction. Reset filters shows the full list again. Filtering and sorting use the loaded list without a server request; reload Transactions to retry a failed load. Viewers can browse and filter but cannot create or edit instruments.</p>
                 <p>Select the account, symbol, market, asset class, and action. Buy, sell, and short transactions affect account cash; adding or removing a security does not. Enter US equity prices in dollars, US bond prices in cents, and Israeli security prices in agorot.</p>
                 <p>Open a security for its price chart, moving averages, and support/resistance; use Retry after a chart-loading failure. Exposure edits maintain a local economic-currency profile, distinct from the trading currency. Correct recorded transactions through Positions.</p>
                 <p>Currency exposure source: choose Reported holdings for allocations from a published fund report, or Manual estimate for your own assessment. Both use the same calculation; reports are not downloaded or verified automatically. Unknown leaves the currency exposure unclassified, even when a named currency is selected. Hover over or focus the help icon beside the field for this explanation.</p>
@@ -1449,9 +1460,9 @@
               <article class="help-feature">
                 <h3>Accounts</h3>
                 <p>Create Investment, Bank, Long-Term Savings, or ESOP accounts. Choose the broker and attach existing family members before saving. Every account requires a person; Long-Term Savings and ESOP require exactly one.</p>
-                <p>Current cash appears beside each account in Accounts and on Investment account cards, in the account's own currency. Positive cash is green, zero is blue and negative cash is red; unavailable cash stays neutral. Select the cash line there or in Edit account to set today's actual balance. Tap the cash line on touch screens; hover or focus it for Update cash. You can also open it with Enter or Space. Viewers see the balance without an edit action. The dialog reads current local cash, shows its currency and today's date in Israel, and starts with that balance. Enter the new balance, including zero or a negative balance for borrowing, review the adjustment and Save current cash. Opening cash in Edit account changes the starting balance; it is not the current-balance target. Fields are sized for their contents, and Save changes and Cancel stay together.</p>
+                <p>Current cash appears beside each account in Accounts and on Investment account cards, in the account's own currency. Positive cash is green, zero is blue and negative cash is red; unavailable cash stays neutral. Select the cash line there or in Edit account to set today's actual balance. Tap the cash line on touch screens; hover or focus it for Update cash. You can also open it with Enter or Space. Viewers see the balance without an edit action. The dialog reads current local cash, shows its currency and today's date in Israel, and starts with that balance. Enter the new balance, including zero or a negative balance for borrowing, review the adjustment and select Save. Opening cash in Edit account changes the starting balance; it is not the current-balance target. Fields are sized for their contents, and Save and Cancel stay together.</p>
                 <p>Administrators and Operators can update cash; Viewers can inspect balances. The update records only the difference as a local cash adjustment, without changing holdings, opening cash or an external source. Future activity can change the balance again. Unknown opening cash, missing currency, mixed-currency cash entries, invalid entries or future cash-affecting dates block an update until corrected. After a local cash adjustment, Sync import retains that adjustment and preserves the account's opening cash; newly imported activity can still affect current cash. Accounts with cash updates cannot change currency; create another account for a different currency.</p>
-                <p>Saving keeps the dialog open and prevents duplicate submissions and cancellation until the result arrives. A changed balance requires Reload current cash and a new review before saving. An interrupted save retains the entered amount and retries the same update without duplication; reload current cash before choosing another target. A failed save retains the draft. Success refreshes the account list and dashboard once; if that refresh fails, the cash remains saved and Refresh retries the displayed totals. Cancel before saving makes no change. The cash update and its dated cash increase or decrease persist locally and in backups; they are not security trades.</p>
+                <p>Saving keeps the dialog open and prevents duplicate submissions and cancellation until the result arrives. Reload current cash rereads the locally recorded balance and recalculates the adjustment while keeping your entered amount; it does not save changes or import broker data. A changed balance requires reloading and a new review before saving. An interrupted save retains the entered amount and retries the same update without duplication; reload current cash before choosing another target. A failed save retains the draft. Success refreshes the account list and dashboard once; if that refresh fails, the cash remains saved and Refresh retries the displayed totals. Cancel before saving makes no change. The cash update and its dated cash increase or decrease persist locally and in backups; they are not security trades.</p>
               </article>
               <article class="help-feature">
                 <h3>Brokers</h3>
@@ -2954,8 +2965,8 @@
   <script src="/risk-data-gaps-ui.js?v=1"></script>
   <script src="/risk-history-ui.js?v=1"></script>
   <script src="/alarm-priority-ui.js?v=20261109-alert-group-label"></script>
-  <script src="/account-cash-ui.js?v=3"></script>
+  <script src="/account-cash-ui.js?v=20261109-cash-save-label"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=20261109-ai-position-scope"></script>
+  <script src="/app.js?v=20261109-securities-catalog"></script>
   </body>
 </html>

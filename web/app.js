@@ -1951,6 +1951,7 @@ function ensureHierarchicalNav() {
       ${navMenuSummary("portfolio", t("Portfolio"))}
       <div class="nav-children">
         <button class="nav-item" type="button" data-modal="positionsModal">${esc(t("positions"))}</button>
+        <button class="nav-item" type="button" data-modal="instrumentCatalogModal">${esc(t("Securities"))}</button>
         <button class="nav-item" type="button" data-modal="securitiesModal">${esc(t("Transactions"))}</button>
         <button class="nav-item" type="button" data-modal="tradingJournalModal">${esc(t("Trading Journal"))}</button>
         <button class="nav-item" type="button" data-modal="eventsModal">${esc(t("Dividends & Events"))}</button>
@@ -8792,7 +8793,10 @@ function editEmployeeOptionGrant(securityId) {
   setEmployeeOptionGuideStep(1);
   $("employeeOptionListStatus").textContent = `Editing ${security.company_name || security.name}.`;
   $("employeeOptionWizard")?.scrollIntoView({ block: "start", behavior: "smooth" });
-  requestAnimationFrame(() => $("employeeWizardCompany")?.focus({ preventScroll: true }));
+  const modal = $("securitiesModal"), opening = modal.dataset.openGeneration;
+  requestAnimationFrame(() => {
+    if (!modal.hidden && modal.dataset.openGeneration === opening) $("employeeWizardCompany")?.focus({ preventScroll: true });
+  });
 }
 
 async function deleteEmployeeOptionGrant(securityId) {
@@ -8839,7 +8843,7 @@ function setSecuritiesWorkflow(workflow = "general") {
   $("securitiesTitle").textContent = t(employeeOptions ? "Employee Stock Options" : "Transactions");
   $("securitiesSubtitle").textContent = employeeOptions
     ? "Add, review, edit, or delete a grant and its complete vesting schedule."
-    : "Define an instrument, then record it in an account.";
+    : "Choose a defined instrument and record its transaction in an account.";
   $("instrumentDefinitionTitle").textContent = employeeOptions ? "Enter grant details" : "Instrument definition";
   $("instrumentDefinitionHint").textContent = employeeOptions
     ? "Use the dates and strike price shown in your company grant agreement."
@@ -8921,7 +8925,7 @@ function toggleManualInstrumentFields() {
 async function loadManualSecurities() {
   if ($("manualSecurityListStatus")) $("manualSecurityListStatus").textContent = optionLabel("Loading instruments…");
   const data = await api("/api/local/manual-securities").catch(error => {
-    if ($("manualSecurityListStatus")) $("manualSecurityListStatus").textContent = optionLabel("Could not load instruments. Reopen Transactions to retry.");
+    if ($("manualSecurityListStatus")) $("manualSecurityListStatus").textContent = optionLabel("Could not load instruments. Reopen Securities to retry.");
     throw error;
   });
   state.manualSecurities = data.items || [];
@@ -9054,8 +9058,9 @@ function editManualSecurity(securityId) {
   const item = instrumentById(securityId);
   if (!item) return;
   if (item.instrument_type === "EMPLOYEE_STOCK_OPTION") {
+    if (!$("instrumentCatalogModal").hidden) closeModal($("instrumentCatalogModal"));
     setSecuritiesWorkflow("employee-options");
-    editEmployeeOptionGrant(securityId);
+    openModal("securitiesModal", document.querySelector('[data-securities-workflow="employee-options"]'), { employeeOptionSecurityId: securityId });
     return;
   }
   state.editingManualSecurityId = item.id;
@@ -14421,7 +14426,7 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
   if (id === "varModal") loadVar();
   if (id === "riskHistoryModal") loadRiskHistory();
   if (["brokerEditorModal", "instrumentEditorModal"].includes(id)) {
-    const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : $(id === "instrumentEditorModal" ? "securitiesModal" : "brokersModal");
+    const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : $(id === "instrumentEditorModal" ? (!$("instrumentCatalogModal").hidden ? "instrumentCatalogModal" : "securitiesModal") : "brokersModal");
     if (parentModal && parentModal !== modal && !parentModal.hidden) {
       modal.dataset.parentModalId = parentModal.id;
       parentModal.inert = true;
@@ -14477,18 +14482,42 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
       .then(() => setFamilyStatus())
       .catch(() => setFamilyStatus("Could not load people. Close and reopen People to retry."));
   }
+  if (id === "instrumentCatalogModal") {
+    setSecuritiesWorkflow("general");
+    Promise.all([loadLocalAccounts(), loadManualSecurities()]).catch(() => {
+      $("manualSecurityListStatus").textContent = t("Could not load instruments. Reopen Securities to retry.");
+    });
+    requestAnimationFrame(() => { if (!modal.hidden) $("instrumentCatalogTitle").focus({ preventScroll: true }); });
+  }
   if (id === "securitiesModal") {
+    const opening = String((Number(modal.dataset.openGeneration) || 0) + 1);
+    modal.dataset.openGeneration = opening;
+    const isCurrentOpening = () => !modal.hidden && modal.dataset.openGeneration === opening;
     Promise.all([
       loadLocalAccounts(),
       loadLocalSecurities(),
       employeeOptionsWorkflowActive() ? loadEmployeeOptionGrants() : Promise.resolve(),
     ]).then(() => {
+      if (!isCurrentOpening()) return;
+      if (destination.instrumentId && !employeeOptionsWorkflowActive()) {
+        const item = instrumentById(destination.instrumentId);
+        applyInstrumentToForm(item, "security");
+        $("securityKnownInstrument").value = item?.id || "";
+        requestAnimationFrame(() => { if (isCurrentOpening()) $("securityQuantity").focus({ preventScroll: true }); });
+      }
       if (!employeeOptionsWorkflowActive()) return;
+      if (destination.employeeOptionSecurityId) {
+        editEmployeeOptionGrant(destination.employeeOptionSecurityId);
+        return;
+      }
       const focusTarget = state.employeeOptionWizardMode === "browse" ? $("newEmployeeOptionGrant") : employeeWizardFirstField(1);
-      requestAnimationFrame(() => focusTarget?.focus());
+      requestAnimationFrame(() => { if (isCurrentOpening()) focusTarget?.focus(); });
     }).catch((error) => {
+      if (!isCurrentOpening()) return;
       const status = employeeOptionsWorkflowActive() ? $("employeeOptionListStatus") : $("securityStatus");
-      if (status) status.textContent = `Error: ${error.message}`;
+      if (status) status.textContent = t(employeeOptionsWorkflowActive()
+        ? "Could not load employee option grants. Reopen Employee Stock Options to retry."
+        : "Could not load transactions. Reopen Transactions to retry.");
     });
   }
   if (id === "pricesModal") {
@@ -15066,17 +15095,25 @@ document.addEventListener("click", (event) => {
   }
 
   const useManualSecurityId = event.target.closest("[data-use-manual-security]")?.dataset.useManualSecurity;
-  if (useManualSecurityId) {
+  if (useManualSecurityId && canWrite()) {
     const item = instrumentById(useManualSecurityId);
-    applyInstrumentToForm(item, "security");
-    $("securityKnownInstrument").value = useManualSecurityId;
-    $("securityStatus").textContent = `Using ${item?.company_name || item?.symbol || "instrument"} for the next transaction`;
-    if (item?.instrument_type === "EMPLOYEE_STOCK_OPTION") {
-      setEmployeeOptionGuideStep(2);
-      requestAnimationFrame(() => {
-        $("accountTransactionSection")?.scrollIntoView({ block: "start", behavior: "smooth" });
-        $("securityQuantity")?.focus({ preventScroll: true });
-      });
+    if (item?.instrument_type === "EMPLOYEE_STOCK_OPTION" && !$("instrumentCatalogModal").hidden) {
+      editManualSecurity(useManualSecurityId);
+    } else if (!$("instrumentCatalogModal").hidden) {
+      closeModal($("instrumentCatalogModal"));
+      setSecuritiesWorkflow("general");
+      openModal("securitiesModal", document.querySelector('[data-modal="securitiesModal"]'), { instrumentId: useManualSecurityId });
+    } else {
+      applyInstrumentToForm(item, "security");
+      $("securityKnownInstrument").value = useManualSecurityId;
+      $("securityStatus").textContent = `Using ${item?.company_name || item?.symbol || "instrument"} for the next transaction`;
+      if (item?.instrument_type === "EMPLOYEE_STOCK_OPTION") {
+        setEmployeeOptionGuideStep(2);
+        requestAnimationFrame(() => {
+          $("accountTransactionSection")?.scrollIntoView({ block: "start", behavior: "smooth" });
+          $("securityQuantity")?.focus({ preventScroll: true });
+        });
+      }
     }
   }
 

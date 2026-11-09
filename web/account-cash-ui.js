@@ -77,7 +77,7 @@ function renderAccountCash() {
   $("accountCashDifference").textContent = available && valid
     ? t("Adjustment: {amount}").replace("{amount}", `${difference > 0 ? "+" : ""}${money(difference, context.currency, 2)}`) : t("Enter the current balance you want to record.");
   $("accountCashSave").disabled = !available || !valid || busy || !canWrite() || ui.needsReview || ui.saved;
-  $("accountCashSave").textContent = t(ui.saving ? "Saving cash…" : ui.pendingRequest ? "Retry cash update" : "Save current cash");
+  $("accountCashSave").textContent = t(ui.saving ? "Saving cash…" : ui.pendingRequest ? "Retry cash update" : "Save");
   $("accountCashReload").disabled = busy;
   $("accountCashModal").querySelectorAll("button[data-close]").forEach((button) => { button.disabled = ui.saving; });
   const message = ui.loading ? t("Loading current cash…") : ui.message ? typeof ui.message === "object"
