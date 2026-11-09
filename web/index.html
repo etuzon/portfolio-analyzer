@@ -1221,7 +1221,7 @@
                 <p>Open Alarms to review existing Buy, Sell and Watch signals, current portfolio and account risk warnings, and vesting and dividend notices. The header count combines displayed items; repeated matches for the same symbol and signal type count once. Its color reflects the highest attention level present; open the popup for labeled counts and details.</p>
                 <p>Red marks Sell signals and existing High or Extreme risk scores (61–100); amber marks Watch, Elevated risk (41–60), modeled borrowing, incomplete risk inputs and unconfirmed dividend payments. Green marks complete Buy signals and locally recorded dividend payments; it does not mean an investment is safe. Buy or Watch signals with missing rule or provider inputs are amber; Sell remains red. Blue marks scheduled dividends and purple marks vesting. Text and symbols explain each color.</p>
                 <p>Risk alarms use the existing dashboard model and full non-employee-equity scope, independent of holdings filters. Missing valuations, quantities, opening cash balances or conversion FX, unfinished or failed analytics updates prevent a complete risk assessment. Limited model inputs retain their existing data-quality penalty. Select a risk row for its current score, contributing factors and missing data; a score is not a probability of loss or a trading instruction.</p>
-                <p>Select an alarm to review its evidence. Use × to clear one alarm, choose Color or Type and Clear matching to clear that group, or Clear all alarms. Color and Type apply together when both are selected. Clearing hides notices without changing holdings, transactions or risk scores. Risk warnings stay hidden for the unchanged assessment and return when its financial inputs change. Signals use the existing dismissal expiry setting; failed dismissals stay visible and can be retried. Clearing requires editing permission; viewers may inspect alarms.</p>
+                <p>Select an alarm to review its evidence. Use × to clear one alarm, choose Alert group or Type and Clear matching to clear that group, or Clear all alarms. Alert group filters by the displayed color; group and type apply together when both are selected. Clearing hides notices without changing holdings, transactions or risk scores. Risk warnings stay hidden for the unchanged assessment and return when its financial inputs change. Signals use the existing dismissal expiry setting; failed dismissals stay visible and can be retried. Clearing requires editing permission; viewers may inspect alarms.</p>
                 <p>After clearing alarms, keyboard focus stays in the dialog on an available control or the result message.</p>
                 <p>Dividend payment recorded means a local event was processed, not that external broker settlement was verified. Cash posting is shown only with a positive net amount and a recorded transaction. Past pending dates, failed or skipped records and invalid dates remain amber for review; they do not prove nonpayment. Use Portfolio → Dividends &amp; Events → Events to inspect or scan dividend records.</p>
                 <p>Opening Alarms rereads events and saved rule results without placing trades or fetching market quotes. Loading is nonblocking. Source failures retain available results and identify what could not be updated. Reopen Alarms to retry events or signals; use dashboard Refresh to retry portfolio inputs. New portfolio assessments and signal updates refresh the colors and counts while preserving the popup reading position. Expand Vesting notice settings to adjust the existing lead-time window, then Save notice.</p>
@@ -1788,7 +1788,7 @@
         </div>
         <div id="alarmPrioritySummary" class="alarm-priority-summary" aria-label="Alarm types"></div>
         <div class="alarm-clear-controls">
-          <label class="field"><span>Color</span><select id="alarmClearColor"><option value="">Any color</option></select></label>
+          <label class="field"><span>Alert group</span><select id="alarmClearColor"><option value="">All groups</option></select></label>
           <label class="field"><span>Type</span><select id="alarmClearType"><option value="">All types</option></select></label>
           <button id="clearMatchingAlarms" class="secondary compact-button" type="button">Clear matching</button>
         </div>
@@ -2953,7 +2953,7 @@
   <script src="/heatmap-ui.js?v=20261107-darker-large-moves"></script>
   <script src="/risk-data-gaps-ui.js?v=1"></script>
   <script src="/risk-history-ui.js?v=1"></script>
-  <script src="/alarm-priority-ui.js?v=3"></script>
+  <script src="/alarm-priority-ui.js?v=20261109-alert-group-label"></script>
   <script src="/account-cash-ui.js?v=3"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
   <script src="/app.js?v=20261109-ai-position-scope"></script>

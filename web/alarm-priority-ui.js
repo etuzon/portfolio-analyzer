@@ -205,7 +205,7 @@ function alarmMatchesClearSelection(alarm) {
 
 function renderAlarmClearControls(alarms) {
   const colors = { red: "Red", amber: "Amber", green: "Green", blue: "Blue", purple: "Purple", neutral: "Gray" };
-  for (const [id, field, emptyLabel] of [["alarmClearColor", "tone", "Any color"], ["alarmClearType", "label", "All types"]]) {
+  for (const [id, field, emptyLabel] of [["alarmClearColor", "tone", "All groups"], ["alarmClearType", "label", "All types"]]) {
     const select = $(id);
     if (!select) continue;
     const previous = select.value;
