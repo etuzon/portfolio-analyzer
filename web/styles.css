@@ -4352,17 +4352,17 @@ textarea.muted-control {
 .market-filter-grid > label {
   /* Reserve value digits, decimals/signs, padding and number controls.
      Labels wrap independently instead of stretching short numeric inputs. */
-  --filter-width: 6rem;
+  --filter-width: 6.5rem;
   flex: 0 0 var(--filter-width);
   width: var(--filter-width);
   min-width: 0;
   max-width: 100%;
 }
 
-.market-filter-grid > .market-filter-price { --filter-width: 7rem; }
-.market-filter-grid > .market-filter-amount { --filter-width: 7rem; }
+.market-filter-grid > .market-filter-price { --filter-width: 7.5rem; }
+.market-filter-grid > .market-filter-amount { --filter-width: 7.5rem; }
 .market-filter-grid > .market-filter-ratio { --filter-width: 5.5rem; }
-.market-filter-grid > .market-filter-volume { --filter-width: 8rem; }
+.market-filter-grid > .market-filter-volume { --filter-width: 9rem; }
 .market-filter-grid > .market-filter-count { --filter-width: 4.5rem; }
 
 .market-filter-grid > label > input:not([type="checkbox"]),
