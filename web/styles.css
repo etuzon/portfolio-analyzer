@@ -798,17 +798,6 @@ html[dir="rtl"] .assistant-table-wrap table { direction: rtl; }
 .assistant-status-row { min-height: 20px; flex: 0 0 auto; }
 .assistant-status-row .status-line { flex: 1 1 0; min-width: 0; margin: 0; font-size: 10px; overflow-wrap: anywhere; }
 .assistant-status-row button { flex: 0 0 auto; }
-#assistantMaxChats { min-width: 120px; width: 140px; }
-#assistantSettingsForm { grid-template-columns: minmax(140px, 220px) auto; justify-content: start; align-items: end; }
-#assistantSettingsForm button { width: auto; }
-#loggingSettingsForm { grid-template-columns: repeat(2, minmax(160px, 220px)) auto; justify-content: start; align-items: end; }
-#loggingSettingsForm input { min-width: 140px; width: 160px; }
-#loggingSettingsForm button { width: auto; }
-
-@media (max-width: 1000px) {
-  #loggingSettingsForm { grid-template-columns: minmax(0, 1fr); }
-  #loggingSettingsForm button { justify-self: start; }
-}
 
 @media (max-width: 700px) {
   .assistant-launcher { flex-basis: 100%; max-width: none; margin-inline-start: 0; }
@@ -868,6 +857,7 @@ html[dir="rtl"] .assistant-table-wrap table { direction: rtl; }
 
 .ai-enrichment-action { display: inline-flex; flex-wrap: wrap; gap: 8px; max-width: 100%; }
 .ai-enrichment-action button { white-space: normal; text-align: start; }
+#enrichMissingData { white-space: nowrap; }
 #enrichMissingData.is-running::after { content: ""; display: inline-block; width: 7px; height: 7px; margin-inline-start: 8px; border-radius: 50%; background: var(--ux-blue); }
 .modal-card.ai-enrichment-card { width: min(760px, 100%); display: grid; gap: 16px; }
 .ai-enrichment-card .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 0; }
@@ -9072,11 +9062,6 @@ html[dir="rtl"] .signal-condition-help::after {
   width: auto;
 }
 
-#alertDismissalDays {
-  width: 140px;
-  min-width: 140px;
-}
-
 .signal-card-actions button.danger {
   border-color: rgba(255, 104, 117, 0.35);
   background: rgba(255, 104, 117, 0.08);
@@ -10040,6 +10025,62 @@ html[dir="rtl"] .settings-menu-button.active {
 
 .settings-form {
   margin-top: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.settings-form > .field {
+  --settings-control-width: 88px;
+  flex: 0 1 auto;
+  width: max-content;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.settings-form > .field > span { max-width: 180px; }
+.settings-form > .field > :is(input, select) {
+  width: var(--settings-control-width);
+  max-width: 100%;
+  min-height: 38px;
+  height: 38px;
+  font-size: 13px;
+}
+
+.settings-form > .field:has(#appLanguage),
+.settings-form > .field:has(#backupEnabled) { --settings-control-width: 112px; }
+.settings-form > .field:has(#tableMaPeriod) { --settings-control-width: 96px; }
+.settings-form > .field:has(#backupTimezone) { --settings-control-width: 256px; }
+.settings-form > .field:has(#backupKeep) { --settings-control-width: 104px; }
+
+.settings-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.settings-form > button,
+.settings-form-actions > button {
+  flex: 0 0 auto;
+  width: max-content;
+  max-width: 100%;
+  min-height: 38px;
+  height: 38px;
+  padding: 0 10px;
+  font-size: 13px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.settings-form > .schedule-summary { flex: 0 1 170px; max-width: 100%; }
+
+@media (max-width: 760px) {
+  .settings-form > .field > :is(input, select),
+  .settings-form > button,
+  .settings-form-actions > button { min-height: 44px; height: 44px; }
 }
 
 .api-access-options {
@@ -11834,8 +11875,7 @@ html[dir="rtl"] .settings-menu-button.active {
   min-width: 0;
   box-sizing: border-box;
 }
-.instrument-list-heading { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; }
-.instrument-list-heading .form-caption { margin:0; }
+.instrument-list-heading { display:flex; justify-content:flex-end; align-items:center; gap:12px; margin-bottom:12px; }
 .instrument-list-controls { display:grid; grid-template-columns:minmax(220px,2fr) repeat(3,minmax(140px,1fr)) auto; gap:10px; align-items:end; }
 .instrument-list-controls .management-field { min-width:0; }
 .instrument-list-controls input,.instrument-list-controls select { width:100%; min-width:0; box-sizing:border-box; }

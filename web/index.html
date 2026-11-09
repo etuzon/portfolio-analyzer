@@ -333,7 +333,6 @@
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="accountsTitle">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Local portfolio DB</p>
             <h2 id="accountsTitle">Accounts</h2>
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
@@ -488,7 +487,6 @@
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="familyTitle">
         <div class="section-head">
           <div>
-            <p class="eyebrow">People</p>
             <h2 id="familyTitle">People and account ownership</h2>
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
@@ -496,7 +494,6 @@
         <section id="familyMembersSection" class="management-section" aria-labelledby="familyMembersSectionTitle">
           <div class="section-head compact-head">
             <div>
-              <p class="eyebrow">People</p>
               <h3 id="familyMembersSectionTitle">Family members</h3>
             </div>
             <button id="newFamilyMember" type="button">Add person</button>
@@ -507,7 +504,6 @@
         <section id="accountOwnershipSection" class="management-section" aria-labelledby="accountOwnershipTitle">
           <div class="section-head compact-head">
             <div>
-              <p class="eyebrow">Ownership</p>
               <h3 id="accountOwnershipTitle">Account ownership</h3>
             </div>
           </div>
@@ -767,7 +763,7 @@
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="instrumentCatalogTitle">
         <div class="section-head"><h2 id="instrumentCatalogTitle" tabindex="-1">Securities</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
         <div id="definedInstrumentsSection" class="management-section">
-          <div class="instrument-list-heading"><p id="definedInstrumentsLabel" class="form-caption">Defined instruments</p><button id="newManualSecurity" type="button">Add security manually</button></div>
+          <div class="instrument-list-heading"><button id="newManualSecurity" type="button">Add security manually</button></div>
           <div class="instrument-list-controls">
             <label class="management-field"><span>Search instruments</span><input id="manualSecurityQuery" type="search" placeholder="Name, symbol or grant ID" /></label>
             <label class="management-field"><span>Instrument type</span><select id="manualSecurityTypeFilter"><option value="">All types</option></select></label>
@@ -786,7 +782,6 @@
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="securitiesTitle">
         <div class="section-head">
           <div>
-            <p id="securitiesEyebrow" class="eyebrow">Manual transactions</p>
             <h2 id="securitiesTitle">Transactions</h2>
             <p id="securitiesSubtitle" class="section-note">Choose a defined instrument and record its transaction in an account.</p>
           </div>
@@ -931,7 +926,6 @@
         <section id="employeeOptionSavedSection" class="management-section employee-option-saved" aria-labelledby="employeeOptionSavedTitle" hidden>
           <div class="employee-saved-heading">
             <div>
-              <p class="eyebrow">Saved grants</p>
               <h3 id="employeeOptionSavedTitle">Your employee option grants</h3>
             </div>
             <button id="newEmployeeOptionGrant" class="secondary compact-button" type="button">Add grant</button>
@@ -1871,7 +1865,6 @@
       <section class="modal-card wide account-reports-card" role="dialog" aria-modal="true" aria-labelledby="reportsTitle">
         <div class="section-head report-screen-only">
           <div>
-            <p class="eyebrow">Household reporting</p>
             <h2 id="reportsTitle">Portfolio reports</h2>
             <p class="section-note">See current balances, explore account history, and inspect the holdings behind each total.</p>
           </div>
@@ -2137,7 +2130,6 @@
           <div class="section-head compact-head signals-heading">
             <div>
               <p class="eyebrow">Daily portfolio research</p>
-              <h3>Portfolio Signals</h3>
               <p class="section-note">Create financial rules for stocks already in your portfolio. Matches appear here after the daily background check.</p>
             </div>
             <button id="runAlerts" class="secondary" type="button">Run rules now</button>
@@ -2157,7 +2149,7 @@
 
           <section class="signal-rule-builder" aria-labelledby="signalRuleBuilderTitle">
             <div class="section-head compact-head">
-              <div><p class="eyebrow">Rule builder</p><h4 id="signalRuleBuilderTitle">Create a research rule</h4><p class="section-note">A rule can have several conditions. Save it, then start another rule for a different investment question.</p></div>
+              <div><h4 id="signalRuleBuilderTitle">Create a research rule</h4><p class="section-note">A rule can have several conditions. Save it, then start another rule for a different investment question.</p></div>
               <button id="newAlertRule" class="secondary compact-button" type="button">+ New rule</button>
             </div>
             <div class="signal-rule-grid">
@@ -2208,7 +2200,6 @@
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="fundsTitle">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Retirement calculator</p>
             <h2 id="fundsTitle">Pension, provident, and savings funds</h2>
           </div>
           <div class="settings-actions">
@@ -2798,8 +2789,10 @@
               <p id="alertDismissalDaysHelp" class="settings-section-description">Dismissed signals stay hidden for this many days across all rules for the same stock and signal type. The default is 60 days. Changes apply to new dismissals; existing dismissals keep their original expiry.</p>
               <div id="alertDismissalSettingsForm" class="management-form settings-form">
                 <label class="field" for="alertDismissalDays"><span>Signal dismissal period (days)</span><input id="alertDismissalDays" type="number" min="1" max="3650" step="1" value="60" inputmode="numeric" aria-describedby="alertDismissalDaysHelp" disabled /></label>
-                <button id="saveAlertDismissalSettings" type="button" disabled>Save signal settings</button>
-                <button id="reloadAlertDismissalSettings" class="secondary compact-button" type="button">Reload signal settings</button>
+                <div class="settings-form-actions">
+                  <button id="saveAlertDismissalSettings" type="button" disabled>Save signal settings</button>
+                  <button id="reloadAlertDismissalSettings" class="secondary compact-button" type="button">Reload signal settings</button>
+                </div>
               </div>
               <p id="alertDismissalSettingsStatus" class="status-line" role="status" aria-live="polite"></p>
             </section>
@@ -2913,8 +2906,10 @@
                   <label class="field"><span>Timezone</span><input id="backupTimezone" placeholder="Asia/Jerusalem" /></label>
                   <label class="field"><span>Keep files</span><input id="backupKeep" type="number" min="1" step="1" placeholder="100" /></label>
                   <div id="backupScheduleSummary" class="schedule-summary"></div>
-                  <button id="editBackupSchedule" class="secondary" type="button" data-modal="backupScheduleModal">Edit schedule</button>
-                  <button id="saveBackupSettings" type="button">Save backup schedule</button>
+                  <div class="settings-form-actions">
+                    <button id="editBackupSchedule" class="secondary" type="button" data-modal="backupScheduleModal">Edit schedule</button>
+                    <button id="saveBackupSettings" type="button">Save backup schedule</button>
+                  </div>
                 </div>
               </div>
               <div id="backupStatus" class="settings-grid"></div>

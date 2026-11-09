@@ -8846,7 +8846,6 @@ function setSecuritiesWorkflow(workflow = "general") {
   $("securitiesList").hidden = employeeOptions;
   $("instrumentDefinitionBadge").hidden = true;
   $("accountTransactionBadge").hidden = true;
-  $("securitiesEyebrow").textContent = employeeOptions ? "Equity compensation" : "Manual transactions";
   $("securitiesTitle").textContent = t(employeeOptions ? "Employee Stock Options" : "Transactions");
   $("securitiesSubtitle").textContent = employeeOptions
     ? "Add, review, edit, or delete a grant and its complete vesting schedule."
@@ -8859,7 +8858,6 @@ function setSecuritiesWorkflow(workflow = "general") {
   $("accountTransactionHint").textContent = employeeOptions
     ? "Choose the ESOP account, enter the total options granted, and review the calculated vesting dates."
     : "Choose an account and record the security movement.";
-  $("definedInstrumentsLabel").textContent = employeeOptions ? "Your employee option grants" : "Defined instruments";
   $("savedTransactionsLabel").textContent = employeeOptions ? "Saved employee option activity" : "Saved transactions";
   $("saveManualSecurity").textContent = employeeOptions ? "Continue to options and vesting" : "Save instrument";
   $("saveSecurity").textContent = employeeOptions ? "Save employee option grant" : "Save transaction";
