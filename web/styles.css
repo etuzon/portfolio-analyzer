@@ -11952,3 +11952,93 @@ html[dir="rtl"] .settings-menu-button.active {
   #transactionEntryModal #accountTransactionSection .transaction-identity-fields,
   #transactionEntryModal #accountTransactionSection .transaction-value-fields { grid-template-columns:minmax(0,1fr); }
 }
+
+/* Phone layout stays below the existing desktop/navigation breakpoint. */
+@media (max-width: 760px) {
+  .sidebar > .nav {
+    grid-column: 1 / -1;
+    min-width: 0;
+    max-height: 45vh;
+    max-height: 45dvh;
+    overflow: auto;
+    overscroll-behavior: contain;
+    align-content: start;
+  }
+
+  .sidebar > .nav.is-expanded {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .nav .nav-menu,
+  .nav .nav-item,
+  .nav .assistant-launcher {
+    min-width: 0;
+    max-width: 100%;
+    width: 100%;
+  }
+
+  .nav .nav-item { white-space: normal; text-align: start; }
+  .nav .assistant-launcher { margin-inline-start: 0; }
+
+  .modal,
+  #assistantModal {
+    /* Keep the existing fixed return-to-dashboard control above the card. */
+    padding: 64px 12px 12px;
+    padding-top: max(64px, calc(env(safe-area-inset-top) + 52px));
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+
+  .modal > .modal-card {
+    min-width: 0;
+    max-width: 100%;
+    max-height: calc(100vh - 88px);
+    max-height: calc(100dvh - max(64px, calc(env(safe-area-inset-top) + 52px)) - max(12px, env(safe-area-inset-bottom)));
+    overscroll-behavior: contain;
+  }
+
+  #assistantModal > .assistant-card {
+    width: 100%;
+    max-width: 100%;
+    overflow-y: auto;
+    max-height: calc(100vh - 88px);
+    max-height: calc(100dvh - max(64px, calc(env(safe-area-inset-top) + 52px)) - max(12px, env(safe-area-inset-bottom)));
+  }
+
+  .modal-card > .section-head {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .modal-card > .section-head > div { min-width: 0; overflow-wrap: anywhere; }
+  .modal-card > .section-head > button { flex-shrink: 0; }
+
+  .detail-price-form,
+  .detail-columns,
+  .history-form { grid-template-columns: minmax(0, 1fr); }
+
+  .connected-field { min-width: 0; }
+  .connected-control { min-width: 0; }
+  .connected-control select { min-width: 0; }
+
+  .account-risk-allocations-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(245px, 100%), 1fr));
+  }
+
+  .modal-card .table-wrap { min-width: 0; max-width: 100%; }
+
+  /* 16px prevents focus zoom on phone browsers; retain checkbox sizing. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+  select,
+  textarea { font-size: 16px; }
+}
+
+@media (max-width: 480px) {
+  .workspace { padding: 12px 8px; }
+  .ticker-panel { flex-wrap: wrap; gap: 10px; }
+  .ticker-panel .ticker-row { flex-basis: 100%; }
+  .connected-control { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .connected-control select,
+  .connected-control button { border-radius: 7px; }
+  .connected-control button { border-inline-start: 1px solid; min-width: 0; white-space: normal; }
+}

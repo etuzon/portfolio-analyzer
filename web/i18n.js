@@ -1480,6 +1480,7 @@
 
     "Return to dashboard": "חזרה לתיק ההשקעות",
     "Select the portfolio icon to return to the dashboard.": "לחזרה לתיק ההשקעות, יש ללחוץ על סמל התיק.",
+    "On a phone, select Menu to open the navigation groups and scroll within the menu to reach all features. Selecting a feature closes the menu. Forms stack to fit the screen; scroll inside dialogs for additional fields and swipe wide tables horizontally to see all columns. Use the close button to return to your previous view.": "בטלפון, בחרו בתפריט לפתיחת קבוצות הניווט וגללו בתוך התפריט כדי להגיע לכל האפשרויות. בחירת אפשרות סוגרת את התפריט. שדות הטפסים מסתדרים בהתאם לרוחב המסך; גללו בתוך חלונות כדי להגיע לשדות נוספים והחליקו טבלאות רחבות לרוחב כדי לראות את כל העמודות. השתמשו בכפתור הסגירה כדי לחזור לתצוגה הקודמת.",
     "Enter a total value before saving history. Blank values do not replace existing records.": "יש להזין שווי כולל לפני שמירת ההיסטוריה. ערכים ריקים אינם מחליפים רשומות קיימות.",
     "History total value must be a finite number; blank values cannot overwrite existing history.": "השווי הכולל בהיסטוריה חייב להיות מספר תקין; ערכים ריקים אינם יכולים לדרוס היסטוריה קיימת.",
     "Asset class": "סוג נכס",
