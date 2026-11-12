@@ -63,6 +63,19 @@ def ids(evaluate):
     return evaluate("[...$('securitiesList').querySelectorAll('[data-transaction-id]')].map(n=>n.dataset.transactionId)")
 
 
+def sort(evaluate, key, direction=None):
+    """Exercise visible header controls; never set the view model directly."""
+    import json
+    selector = f'[data-transaction-sort="{key}"]'
+    evaluate(f'document.querySelector({json.dumps(selector)}).click()')
+    if direction:
+        desired = 'ascending' if direction == 'asc' else 'descending'
+        current = evaluate(f'document.querySelector({json.dumps(selector)}).closest("th").getAttribute("aria-sort")')
+        if current != desired:
+            evaluate(f'document.querySelector({json.dumps(selector)}).click()')
+        assert evaluate(f'document.querySelector({json.dumps(selector)}).closest("th").getAttribute("aria-sort")') == desired
+
+
 @pytest.mark.parametrize('language,width', [('en',1440),('he',1440),('en',390),('he',390)])
 def test_filters_dates_effective_import_actions_and_responsive_keyboard(tmp_path, chromium, language, width):
     command, evaluate = ready(tmp_path, chromium, language, width)
@@ -73,7 +86,7 @@ def test_filters_dates_effective_import_actions_and_responsive_keyboard(tmp_path
     assert len(baseline) == 11
     assert '${' not in evaluate("$('securitiesList').innerText")
     assert '02/11/2026' in evaluate("$('securitiesList').innerText")
-    bond_text = evaluate("document.querySelector('[data-edit-security=bond]').closest('.stack-item').innerText")
+    bond_text = evaluate("document.querySelector('[data-edit-security=bond]').closest('tr').innerText")
     assert ('Sell' if language == 'en' else 'מכירה') in bond_text
     assert '8000' in bond_text.replace(',', '')
     assert '0.98' in bond_text
@@ -124,9 +137,9 @@ def test_filters_dates_effective_import_actions_and_responsive_keyboard(tmp_path
     assert all(b['left']>=0 and b['right']<=width and b['width']>=80 and b['height']>=24 for b in bounds), bounds
     assert evaluate('innerWidth') == width
     assert evaluate("document.documentElement.scrollWidth<=innerWidth")
-    row_bounds=evaluate("[...$('securitiesList').querySelectorAll('[data-transaction-id] > b,[data-transaction-id] > span')].map(n=>({text:n.textContent,width:n.clientWidth,scroll:n.scrollWidth})).filter(n=>n.width<80||n.scroll>n.width+1)")
+    row_bounds=evaluate("[...$('securitiesList').querySelectorAll('[data-transaction-id] > td')].map(n=>({text:n.textContent,width:n.clientWidth,scroll:n.scrollWidth})).filter(n=>n.scroll>n.width+1)")
     assert row_bounds==[], row_bounds
-    overlap=evaluate("[...$('securitiesList').querySelectorAll('[data-transaction-id]')].flatMap(row=>{const nodes=[...row.children].filter(n=>n.tagName==='B'||n.tagName==='SPAN');return nodes.flatMap((a,i)=>nodes.slice(i+1).flatMap(b=>{const x=a.getBoundingClientRect(),y=b.getBoundingClientRect();return x.left<y.right-1&&x.right>y.left+1&&x.top<y.bottom-1&&x.bottom>y.top+1?[row.dataset.transactionId]:[]}));})")
+    overlap=evaluate("[...$('securitiesList').querySelectorAll('[data-transaction-id]')].flatMap(row=>{const nodes=[...row.children].filter(n=>n.tagName==='TD');return nodes.flatMap((a,i)=>nodes.slice(i+1).flatMap(b=>{const x=a.getBoundingClientRect(),y=b.getBoundingClientRect();return x.left<y.right-1&&x.right>y.left+1&&x.top<y.bottom-1&&x.bottom>y.top+1?[row.dataset.transactionId]:[]}));})")
     assert overlap==[], overlap
     if language == 'he':
         visible = evaluate("$('securitiesSubtitle').innerText+' '+$('savedTransactionsLabel').innerText+' '+$('transactionListFilters').innerText+' '+$('transactionFilterStatus').innerText+' '+$('securitiesList').innerText")
@@ -140,19 +153,17 @@ def test_filters_dates_effective_import_actions_and_responsive_keyboard(tmp_path
 @pytest.mark.parametrize('language',['en','he'])
 def test_sort_raw_numeric_text_dates_stable_missing_last_and_persistent_state(tmp_path, chromium, language):
     _, evaluate = ready(tmp_path, chromium, language)
-    change(evaluate,'transactionSortBy','quantity')
-    change(evaluate,'transactionSortDirection','asc')
+    sort(evaluate,'quantity','asc')
     order=ids(evaluate)
     assert order == ['zero','two','ten','option','unb','sar-b','sar-a','bsm','bond','tase','missing']
-    change(evaluate,'transactionSortDirection','desc')
+    sort(evaluate,'quantity','desc')
     assert ids(evaluate) == ['tase','bond','bsm','sar-a','sar-b','unb','option','ten','two','zero','missing']
-    change(evaluate,'transactionSortBy','date')
-    change(evaluate,'transactionSortDirection','asc')
+    sort(evaluate,'date','asc')
     order=ids(evaluate)
     assert order.index('two')<order.index('ten')<order.index('unb')<order.index('tase')<order.index('bond')<order.index('bsm')
     assert order[-1]=='missing'
     # Sorting text uses a natural comparison, stable equal date/creation rows.
-    change(evaluate,'transactionSortBy','security')
+    sort(evaluate,'security','asc')
     order=ids(evaluate)
     assert order.index('bsm')<order.index('sar-a')<order.index('ten')<order.index('two')
     evaluate('renderLocalTransactions();renderLocalTransactions();')
@@ -189,7 +200,7 @@ def test_viewer_filters_and_employee_workflow_isolation_and_session_reset(tmp_pa
     assert ids(evaluate)==[]
     evaluate("state.auth.user.role='Viewer';applyRolePermissions();$('resetTransactionFilters').click();")
     assert evaluate("$('transactionFilterQuery').disabled") is False
-    assert evaluate("$('transactionSortBy').disabled") is False
+    assert evaluate("document.querySelector('[data-transaction-sort=quantity]').disabled") is False
     assert evaluate("$('resetTransactionFilters').disabled") is False
     assert evaluate("[...$('securitiesList').querySelectorAll('[data-edit-security],[data-delete-security]')].every(n=>n.disabled)")
     change(evaluate,'transactionFilterQuery','88059ESH8','input')
@@ -206,8 +217,7 @@ def test_viewer_filters_and_employee_workflow_isolation_and_session_reset(tmp_pa
 def test_actual_save_and_delete_handlers_preserve_filter_sort_and_invalid_date_draft(tmp_path, chromium):
     _,evaluate=ready(tmp_path,chromium)
     change(evaluate,'transactionFilterQuery','SAR','input')
-    change(evaluate,'transactionSortBy','quantity')
-    change(evaluate,'transactionSortDirection','asc')
+    sort(evaluate,'quantity','asc')
     change(evaluate,'transactionFilterTo','31/02/2026')
     assert ids(evaluate)==['sar-b','sar-a']
     # Exercise the production delegated delete handler against the synthetic transport.
@@ -219,7 +229,7 @@ def test_actual_save_and_delete_handlers_preserve_filter_sort_and_invalid_date_d
     assert evaluate("document.activeElement.dataset.editSecurity")=='sar-b'
     assert evaluate("$('transactionFilterQuery').value")=='SAR'
     assert evaluate("$('transactionFilterTo').value")=='31/02/2026'
-    assert evaluate("$('transactionSortDirection').value")=='asc'
+    assert evaluate("document.querySelector('[data-transaction-sort=quantity]').closest('th').getAttribute('aria-sort')")=='ascending'
     # A confirmed save refreshes the same saved-list renderer without discarding criteria.
     evaluate("state.transactionEntry={version:1,loading:false,saving:false,ready:true};openModal('transactionEntryModal',$('newSecurityTransaction'));state.editingTransactionId='';$('securitySymbol').value='SAR';$('securityQuantity').value='7';$('securityPrice').value='.1875';$('securityAction').value='DIVIDEND';")
     evaluate('saveSecurity()')
@@ -228,7 +238,7 @@ def test_actual_save_and_delete_handlers_preserve_filter_sort_and_invalid_date_d
     browser_wait(evaluate,"document.activeElement.id==='newSecurityTransaction'")
     assert evaluate("$('transactionFilterQuery').value")=='SAR'
     assert evaluate("$('transactionFilterTo').value")=='31/02/2026'
-    assert evaluate("$('transactionSortBy').value")=='quantity'
+    assert evaluate("document.querySelector('[data-transaction-sort=quantity]').closest('th').getAttribute('aria-sort')")=='ascending'
     assert evaluate("qa.writes.map(r=>r.method)")==['DELETE','POST']
     assert evaluate('qa.errors')==[]
 
@@ -257,7 +267,8 @@ def test_display_preserves_native_normalized_units_and_unknown_amounts(tmp_path,
     assert ('Not available' if language=='en' else 'לא זמין') in missing
     assert ('Cash movement unavailable' if language=='en' else 'לא זמין') in missing
     zero=evaluate("document.querySelector('[data-transaction-id=zero]').innerText")
-    assert '0 @ 0' in zero
+    assert evaluate("document.querySelector('[data-transaction-id=zero]').cells[4].textContent.trim()")=='0'
+    assert '0' in evaluate("document.querySelector('[data-transaction-id=zero]').cells[5].innerText")
     assert ('Not available' if language=='en' else 'לא זמין') not in zero
     for tx,quantity,price in [('bsm',615,.2625),('sar-a',101,.1875),('sar-b',57,.1875),('unb',52,.27)]:
         text=evaluate(f"document.querySelector('[data-transaction-id={tx}]').innerText")

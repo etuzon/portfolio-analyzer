@@ -20,9 +20,9 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/assets/portfolio-vault/icon-48.png?v=1" />
     <link rel="shortcut icon" href="/assets/portfolio-vault/favicon.ico?v=1" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=20261112-scope-schedules" />
+  <link rel="stylesheet" href="/styles.css?v=20261112-transaction-table" />
   <link rel="stylesheet" href="/holdings-sort.css?v=1" />
-  <link rel="stylesheet" href="/transaction-list.css?v=1" />
+  <link rel="stylesheet" href="/transaction-list.css?v=2" />
   <link rel="stylesheet" href="/price-input-units.css?v=1" />
   <link rel="stylesheet" href="/benchmark.css?v=3" />
   <link rel="stylesheet" href="/trading-journal.css?v=1" />
@@ -972,13 +972,12 @@
           <div class="transaction-list-secondary">
             <label class="field transaction-list-date"><span>From date</span><input id="transactionFilterFrom" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-describedby="transactionFilterStatus" /></label>
             <label class="field transaction-list-date"><span>To date</span><input id="transactionFilterTo" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-describedby="transactionFilterStatus" /></label>
-            <label class="field transaction-list-sort"><span>Sort by</span><select id="transactionSortBy"><option value="date">Date</option><option value="security">Security</option><option value="account">Account</option><option value="action">Action</option><option value="quantity">Quantity</option></select></label>
-            <label class="field transaction-list-direction"><span>Direction</span><select id="transactionSortDirection"><option value="desc">Descending</option><option value="asc">Ascending</option></select></label>
             <button id="resetTransactionFilters" class="secondary transaction-list-reset" type="button">Reset filters</button>
           </div>
           <p id="transactionFilterStatus" class="section-note" role="status" aria-live="polite"></p>
         </section>
-        <div id="securitiesList" class="stack management-list"></div>
+        <p id="transactionTableHint" class="section-note">Select a column heading to sort; select it again to reverse the order. Scroll the table horizontally to see all columns.</p>
+        <div id="securitiesList" class="transaction-table-wrap" role="region" tabindex="0" aria-labelledby="savedTransactionsLabel" aria-describedby="transactionTableHint"></div>
       </section>
     </div>
 
@@ -1343,7 +1342,7 @@
               <article class="help-feature">
                 <h3>Transactions</h3>
                 <p>Price fields show their input unit beside the label. Hover over or focus the question mark for an example. U.S. stock prices use dollars: 1 means $1. U.S. bond trade prices use cents: 100 means $1 per recorded unit, so 8,000 units at 100 produce $8,000 before fees. Israeli entries use agorot when the currency is ILS. Dividends, interest and fees use the selected currency directly, including for bonds. The unit follows the selected instrument and account; changing the selection never converts an entered number. Review the unit before saving. The same guidance appears in holding Buy/Sell history and Add historical price.</p>
-                <p>Use the controls above Saved transactions to filter by account, action, security symbol or name, comments and an inclusive date range. Enter dates as dd/mm/yyyy: 02/11/2026 means 2 November 2026. Sort by date, security, account, action or quantity in either direction; the default is newest date first. Quantities remain the recorded security units. Missing sort values stay last. Filters and sorting use the loaded list without another request or any change to the ledger.</p>
+                <p>Use the controls above Saved transactions to filter by account, action, security symbol or name, comments and an inclusive date range. Enter dates as dd/mm/yyyy: 02/11/2026 means 2 November 2026. Saved transactions appear in a table. Select the Date, Security, Account, Action or Quantity column heading to sort; select it again to reverse direction. The arrow and column status show the active sort. New text sorts start ascending; dates and quantities start descending. The default is newest date first. Quantities remain the recorded security units. Missing sort values stay last. Filters and sorting use the loaded list without another request or any change to the ledger. Filters use compact account and action choices, a wider search field and fixed-width dates. On small screens, focus or swipe the table region to scroll horizontally and reach every column and row action. Expand Details under a security to read its saved metadata and comments. Unit price uses the normalized recorded currency value; Entered price preserves the original input number. Sorting does not change those values. Invalid date drafts retain the last valid filter results while table sorting remains available.</p>
                 <p>Filters stay selected when the list reloads after saving, editing or deleting, when reopening Transactions, and when changing language. Reset filters restores the full saved list and newest-first order. Invalid or reversed date ranges retain the entered draft and previous results with a correction message. No matches is different from no saved transactions. Signing out or switching user clears the selection.</p>
                 <p>The Sell filter also finds imported sales stored internally as Remove; the Remove filter can find those same quantity adjustments. This does not add sale proceeds again to an imported cash balance. All actions is useful when checking a redemption such as 88059ESH8. The list can show only records already saved in the app; a broker statement alone does not prove the activity was imported. Account cash adjustments and the dedicated employee-option workflow keep their existing separate scope. Viewers can filter and sort; editing and deleting still require editing permission.</p>
                 <p>Open Portfolio → Transactions and choose New transaction to enter a local transaction in a separate window. New starts with Buy and today’s date; Edit opens the saved transaction in the same window. Choose the account, security or symbol, market, asset class, quantity, price and date in dd/mm/yyyy. Buy, sell and short affect account cash; adding or removing a security does not. Enter US equity prices in dollars, US bond prices in cents and Israeli security prices in agorot. Save prevents duplicate submissions and closes the entry window only after the transaction is saved. A rejected save keeps entered values for correction and retry. If the save result is unknown, saving is disabled; close the entry and check saved transactions before entering it again. Cancel, Escape or Close discards unsaved entries without changing data. If the list or dashboard cannot refresh after saving, the saved transaction remains recorded; reopen Transactions or use dashboard Refresh. Viewers may inspect saved activity but cannot create or edit transactions.</p>
@@ -3046,7 +3045,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <div id="riskBadgeExplanation" class="risk-badge-explanation" role="tooltip" hidden></div>
-  <script src="/i18n.js?v=20261112-scope-schedules"></script>
+  <script src="/i18n.js?v=20261112-transaction-table"></script>
   <script src="/scheduler.js?v=2"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
@@ -3069,9 +3068,9 @@
   <script src="/holdings-sort.js?v=1"></script>
   <script src="/transaction-list.js?v=1"></script>
   <script src="/price-input-units.js?v=1"></script>
-  <script src="/alarm-priority-ui.js?v=20261112-scope-schedules"></script>
+  <script src="/alarm-priority-ui.js?v=20261112-transaction-table"></script>
   <script src="/account-cash-ui.js?v=20261109-cash-save-label"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=20261112-scope-schedules"></script>
+  <script src="/app.js?v=20261112-transaction-table"></script>
   </body>
 </html>

@@ -9476,10 +9476,79 @@ function transactionListCashText(tx) {
   return Number.isFinite(impact) ? impact ? `${t("Cash")} ${signedMoney(impact, tx.currency)}` : t("No cash movement") : t("Cash movement unavailable");
 }
 
+function transactionTableHeader(key, label) {
+  const sort = transactionListView.applied;
+  const active = sort.sort === key;
+  const next = active ? (sort.direction === "asc" ? "desc" : "asc") : (["date", "quantity"].includes(key) ? "desc" : "asc");
+  const accessible = t(next === "asc" ? "Sort {column} ascending" : "Sort {column} descending").replace("{column}", t(label));
+  return `<th scope="col" data-transaction-sort-column="${key}"${active ? ` aria-sort="${sort.direction === "asc" ? "ascending" : "descending"}"` : ""}><button id="transactionSort-${key}" class="transaction-table-sort" type="button" data-transaction-sort="${key}" aria-label="${esc(accessible)}"><span>${esc(t(label))}</span><span aria-hidden="true">${active ? sort.direction === "asc" ? "↑" : "↓" : "↕"}</span></button></th>`;
+}
+
+function transactionTableDetails(tx) {
+  const metadata = [
+    ["Stock market", tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? tx.listing_status === "PUBLIC" ? `${tx.public_symbol || ""} · ${tx.public_market || ""}` : t("Private company") : tx.stock_market],
+    ["Asset class", tx.asset_class ? optionLabel(tx.asset_class) : ""],
+    ["Instrument type", tx.instrument_type ? optionLabel(tx.instrument_type) : ""],
+    ["Option type", tx.instrument_type !== "EMPLOYEE_STOCK_OPTION" && tx.option_type ? optionLabel(tx.option_type) : ""],
+    ["Currency", tx.currency],
+    ["Grant", tx.grant_id],
+    ["Expiration", tx.expiration_date ? formatDate(tx.expiration_date) : ""],
+    ["Bond maturity date", tx.maturity_date ? formatDate(tx.maturity_date) : ""],
+    ["Vesting", transactionVestingSummary(tx).replace(/^ · /, "")],
+    ["Strike price", tx.strike_price ? transactionListNumber(tx.strike_price) : ""],
+    ["Purchase price", tx.purchase_price ? transactionListNumber(tx.purchase_price) : ""],
+    ["Comments", tx.comments],
+  ].filter(([, value]) => value !== null && value !== undefined && String(value).trim() !== "");
+  if (!metadata.length) return "";
+  const id = esc(encodeURIComponent(String(tx.id)));
+  return `<details class="transaction-table-details" id="transactionDetails-${id}"><summary id="transactionDetailsToggle-${id}">${esc(t("Details"))}</summary><dl>${metadata.map(([label, value]) => `<div><dt>${esc(t(label))}</dt><dd>${esc(value)}</dd></div>`).join("")}</dl></details>`;
+}
+
+function transactionTableEnteredPrice(tx) {
+  let unit = "", hint = t("Original recorded input. The unit price above is in the recorded currency per unit.");
+  // Imported activity can preserve provider-specific raw inputs. Only apply the
+  // manual-entry convention to records explicitly saved through that workflow.
+  if (tx.source === "manual" && tx.location && window.PriceInputUnits) {
+    const info = PriceInputUnits.describe({ location: tx.location, currency: tx.currency, assetClass: tx.asset_class, action: tx.action });
+    unit = t(info.unitKey).replaceAll("{currency}", info.currency);
+    hint = t(info.hintKey).replaceAll("{currency}", info.currency);
+  }
+  return `<small title="${esc(hint)}">${esc(t("Entered price"))}${unit ? ` (${esc(unit)})` : ""}: <bdi>${esc(transactionListNumber(tx.price_input))}</bdi></small>`;
+}
+
+function transactionTableRows(rows) {
+  return rows.map(tx => {
+    const employee = tx.instrument_type === "EMPLOYEE_STOCK_OPTION";
+    const symbol = tx.symbol || tx.company_name || tx.security_name || t("Not available");
+    const name = employee ? tx.company_name || tx.security_name || "" : tx.security_name || tx.company_name || "";
+    const knownPrice = ["number", "string"].includes(typeof tx.price) && String(tx.price).trim() !== "" && Number.isFinite(Number(tx.price));
+    const price = knownPrice ? money(tx.price, tx.currency, 4) : t("Not available");
+    return `<tr data-transaction-id="${esc(tx.id)}">
+      <td class="transaction-date"><bdi>${esc(TransactionList.dateKey(tx.trade_date) ? formatDate(tx.trade_date) : t("Not available"))}</bdi></td>
+      <td class="transaction-action-cell">${esc(transactionListActionLabel(TransactionList.displayAction(tx)))}</td>
+      <td class="transaction-security"><bdi class="transaction-security-symbol">${esc(symbol)}</bdi>${tx.secondary_symbol ? `<small><bdi>${esc(tx.secondary_symbol)}</bdi></small>` : ""}${name && name !== symbol ? `<small>${esc(name)}</small>` : ""}${transactionTableDetails(tx)}</td>
+      <td class="transaction-account"><span>${esc(tx.management_company || "")}</span>${tx.account_id ? `<bdi>${esc(tx.account_id)}</bdi>` : ""}${!tx.management_company && !tx.account_id ? esc(t("Not available")) : ""}</td>
+      <td class="transaction-quantity"><bdi>${esc(transactionListNumber(tx.quantity))}</bdi></td>
+      <td class="transaction-unit-price"><bdi>${esc(price)}</bdi>${transactionTableEnteredPrice(tx)}</td>
+      <td class="transaction-cash">${esc(transactionListCashText(tx))}</td>
+      <td class="transaction-actions">${tx.transition_id
+        ? `<span class="badge ok" title="${esc(t("Created by an audited employee-option lifecycle action"))}">${esc(t("Lifecycle transaction · read-only"))}</span>`
+        : `<div class="transaction-row-actions"><button class="secondary compact-button" type="button"${canWrite() ? "" : " disabled"} data-edit-security="${esc(tx.id)}">${esc(t("Edit"))}</button><button class="secondary compact-button" type="button"${canWrite() ? "" : " disabled"} data-delete-security="${esc(tx.id)}">${esc(t("Delete"))}</button></div>`}</td>
+    </tr>`;
+  }).join("");
+}
+
+function transactionTableHtml(rows, emptyMessage) {
+  return `<table id="savedTransactionsTable" class="saved-transactions-table"><caption class="sr-only">${esc(t("Saved transactions"))}</caption><colgroup><col class="transaction-col-date"><col class="transaction-col-action"><col class="transaction-col-security"><col class="transaction-col-account"><col class="transaction-col-quantity"><col class="transaction-col-price"><col class="transaction-col-cash"><col class="transaction-col-actions"></colgroup><thead><tr>
+    ${transactionTableHeader("date", "Date")}${transactionTableHeader("action", "Action")}${transactionTableHeader("security", "Security")}${transactionTableHeader("account", "Account")}${transactionTableHeader("quantity", "Quantity")}<th scope="col">${esc(t("Unit price"))}</th><th scope="col">${esc(t("Cash movement"))}</th><th scope="col">${esc(t("Actions"))}</th>
+    </tr></thead><tbody>${rows.length ? transactionTableRows(rows) : `<tr><td colspan="8" class="empty-cell">${esc(t(emptyMessage))}</td></tr>`}</tbody></table>`;
+}
+
 function renderLocalTransactions() {
   const list = $("securitiesList");
   if (!list) return;
   const previousFocus = list.contains(document.activeElement) ? document.activeElement : null;
+  const scrollTop = list.scrollTop, scrollLeft = list.scrollLeft;
   const restore = preserveRenderedInteraction(list);
   const employeeOptions = employeeOptionsWorkflowActive();
   const all = employeeOptions
@@ -9488,12 +9557,13 @@ function renderLocalTransactions() {
   const view = transactionListView, criteria = view.criteria;
   const toolbar = $("transactionListFilters");
   if (toolbar) toolbar.hidden = employeeOptions;
+  if ($("transactionTableHint")) $("transactionTableHint").hidden = employeeOptions;
   const options = TransactionList.accountOptions(all, state.language);
   options.forEach(row => view.accountLabels.set(row.value, row.label));
   if (criteria.account && !options.some(row => row.value === criteria.account)) options.push({ value: criteria.account, label: view.accountLabels.get(criteria.account) || t("Selected account is unavailable") });
   const accountSelect = $("transactionFilterAccount");
   if (accountSelect) accountSelect.innerHTML = `<option value="">${esc(t("All accounts"))}</option>${options.map(row => `<option value="${esc(row.value)}">${esc(row.label || t("Account"))}</option>`).join("")}`;
-  const fields = { account:"transactionFilterAccount", action:"transactionFilterAction", query:"transactionFilterQuery", from:"transactionFilterFrom", to:"transactionFilterTo", sort:"transactionSortBy", direction:"transactionSortDirection" };
+  const fields = { account:"transactionFilterAccount", action:"transactionFilterAction", query:"transactionFilterQuery", from:"transactionFilterFrom", to:"transactionFilterTo" };
   Object.entries(fields).forEach(([key, id]) => { if ($(id) && $(id).value !== criteria[key]) $(id).value = criteria[key]; });
   const from = TransactionList.dateKey(criteria.from), to = TransactionList.dateKey(criteria.to);
   let validation = "";
@@ -9504,24 +9574,19 @@ function renderLocalTransactions() {
     if (field) field.setAttribute("aria-invalid", String(Boolean(raw.trim() && !value) || Boolean(from && to && from > to)));
   }
   if (!validation) view.applied = { ...criteria, from, to };
+  // Sorting is independent of date validation; retain the last valid membership.
+  view.applied.sort = criteria.sort;
+  view.applied.direction = criteria.direction;
   const visibleTransactions = employeeOptions ? all : TransactionList.filterAndSort(all, view.applied, state.language, { actionLabel: transactionListActionLabel });
   const status = $("transactionFilterStatus");
   if (status) status.hidden = employeeOptions;
   if (status) status.textContent = validation && !employeeOptions ? t(validation)
     : t("Showing {shown} of {total} saved transactions.").replace("{shown}", fmt(visibleTransactions.length, 0)).replace("{total}", fmt(all.length, 0));
-  list.innerHTML = visibleTransactions.length ? visibleTransactions.map((tx) => `
-    <div class="stack-item management-item" data-transaction-id="${esc(tx.id)}">
-      <b>${esc(transactionListActionLabel(TransactionList.displayAction(tx)))} ${esc(tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (tx.company_name || tx.security_name || t("Employee option")) : `${tx.symbol}${tx.secondary_symbol ? ` · ${tx.secondary_symbol}` : ""}`)}</b>
-      <span>${esc(transactionListNumber(tx.quantity))} @ ${esc(transactionListNumber(tx.price_input))} (${esc(currencyDisplayLabel(tx.currency))} ${esc(transactionListNumber(tx.price))})${tx.instrument_type ? ` · ${esc(optionLabel(tx.instrument_type))}` : ""}</span>
-      ${tx.transition_id
-        ? `<span class="badge ok" title="${esc(t("Created by an audited employee-option lifecycle action"))}">${esc(t("Lifecycle transaction · read-only"))}</span>`
-        : `<button class="secondary compact-button" type="button"${canWrite() ? "" : " disabled"} data-edit-security="${esc(tx.id)}">${esc(t("Edit"))}</button>
-           <button class="secondary compact-button" type="button"${canWrite() ? "" : " disabled"} data-delete-security="${esc(tx.id)}">${esc(t("Delete"))}</button>`}
-      <div class="sub">${esc(tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (tx.listing_status === "PUBLIC" ? `${tx.public_symbol} · ${tx.public_market}` : t("Private company")) : tx.stock_market)} · ${esc(optionLabel(tx.asset_class))}${tx.grant_id ? ` · ${esc(t("Grant"))} ${esc(tx.grant_id)}` : ""}${tx.option_type && tx.instrument_type !== "EMPLOYEE_STOCK_OPTION" ? ` · ${esc(optionLabel(tx.option_type))}` : ""}${tx.expiration_date ? ` · ${esc(t("Expiration"))} ${esc(formatDate(tx.expiration_date))}` : ""}${tx.maturity_date ? ` · ${esc(t("Bond maturity date"))} ${esc(formatDate(tx.maturity_date))}` : ""}${transactionVestingSummary(tx)}${tx.strike_price ? ` · ${esc(t("Strike price"))} ${fmt(tx.strike_price, 4)}` : ""}${tx.purchase_price ? ` · ${esc(t("Purchase price"))} ${fmt(tx.purchase_price, 4)}` : ""} · ${esc(formatDate(tx.trade_date))} · ${esc(transactionListCashText(tx))} · ${esc(tx.management_company || "")} ${esc(tx.account_id || "")}</div>
-    </div>
-`).join("")
-    : `<div class="empty">${esc(t(employeeOptions ? "No employee option activity saved yet" : all.length ? "No transactions match these filters. Reset filters to see all saved activity." : "No saved transactions."))}</div>`;
+  const emptyMessage = employeeOptions ? "No employee option activity saved yet" : all.length ? "No transactions match these filters. Reset filters to see all saved activity." : "No saved transactions.";
+  list.innerHTML = transactionTableHtml(visibleTransactions, emptyMessage);
   restore();
+  list.scrollTop = scrollTop;
+  list.scrollLeft = scrollLeft;
   if (previousFocus && !previousFocus.isConnected && !list.contains(document.activeElement)) $("resetTransactionFilters")?.focus({ preventScroll: true });
 }
 
@@ -9532,13 +9597,21 @@ document.addEventListener("input", event => {
   renderLocalTransactions();
 });
 document.addEventListener("change", event => {
-  const key = { transactionFilterAccount:"account", transactionFilterAction:"action", transactionFilterFrom:"from", transactionFilterTo:"to", transactionSortBy:"sort", transactionSortDirection:"direction" }[event.target.id];
+  const key = { transactionFilterAccount:"account", transactionFilterAction:"action", transactionFilterFrom:"from", transactionFilterTo:"to" }[event.target.id];
   if (!key) return;
   transactionListView.criteria[key] = event.target.value;
   renderLocalTransactions();
 });
 document.addEventListener("click", event => {
   if (event.target.closest?.("#resetTransactionFilters")) resetTransactionFilters();
+  const header = event.target.closest?.("[data-transaction-sort]");
+  if (!header) return;
+  const key = header.dataset.transactionSort;
+  if (!["date", "action", "security", "account", "quantity"].includes(key)) return;
+  const criteria = transactionListView.criteria;
+  criteria.direction = criteria.sort === key ? criteria.direction === "asc" ? "desc" : "asc" : ["date", "quantity"].includes(key) ? "desc" : "asc";
+  criteria.sort = key;
+  renderLocalTransactions();
 });
 
 async function loadLocalSecurities() {

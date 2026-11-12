@@ -1,63 +1,51 @@
-.transaction-list-toolbar {
-  display: grid;
-  gap: 0.65rem;
-  margin-block: 0.75rem;
-}
+/* Size each filter for its content; short fields never grow across the dialog. */
+#securitiesModal:not(.employee-options-mode) > .modal-card { width: min(1480px, 100%); }
+.transaction-list-toolbar { display: grid; gap: 10px; margin-block: 12px; min-width: 0; }
+.transaction-list-primary, .transaction-list-secondary { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; min-width: 0; }
+.transaction-list-toolbar label { display: grid; gap: 4px; margin: 0; min-width: 0; }
+.transaction-list-toolbar input, .transaction-list-toolbar select { box-sizing: border-box; width: 100%; min-width: 0; min-height: 40px; }
+.transaction-list-primary .transaction-list-account { flex: 0 1 240px; min-width: 190px; }
+.transaction-list-primary .transaction-list-action { flex: 0 0 160px; }
+.transaction-list-primary .transaction-list-search { flex: 1 1 300px; max-width: 600px; min-width: 230px; }
+.transaction-list-secondary .transaction-list-date { flex: 0 0 140px; width: 140px; }
+.transaction-list-secondary .transaction-list-reset { flex: 0 0 auto; width: auto; min-height: 40px; white-space: nowrap; }
+.transaction-list-toolbar .section-note { margin: 0; }
 
-.transaction-list-primary,
-.transaction-list-secondary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 0.65rem;
-}
-
-.transaction-list-toolbar label {
-  display: grid;
-  gap: 0.25rem;
-  min-width: 0;
-  margin: 0;
-}
-
-.transaction-list-toolbar input,
-.transaction-list-toolbar select {
-  box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-}
-
-.transaction-list-account { flex: 1.2 1 12rem; }
-.transaction-list-action { flex: 0.7 1 8rem; }
-.transaction-list-search { flex: 2.5 1 18rem; }
-.transaction-list-date { flex: 0 1 10.5rem; }
-.transaction-list-sort { flex: 1 1 10rem; }
-.transaction-list-direction { flex: 0.75 1 9rem; }
-.transaction-list-reset { flex: 0 0 auto; }
-
-@media (max-width: 600px) {
-  .transaction-list-search { flex-basis: 100%; }
-  .transaction-list-date { flex: 1 1 10.5rem; }
-
-  #securitiesList [data-transaction-id] {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
-  }
-
-  #securitiesList [data-transaction-id] > * {
-    min-width: 0;
-    max-width: 100%;
-  }
-
-  #securitiesList [data-transaction-id] > b,
-  #securitiesList [data-transaction-id] > span,
-  #securitiesList [data-transaction-id] > .sub {
-    grid-column: 1 / -1;
-    white-space: normal;
-    overflow-wrap: anywhere;
-  }
-
-  #securitiesList [data-transaction-id] > button {
-    width: auto;
-    white-space: normal;
-  }
+/* This remains a table at every viewport; only this region scrolls horizontally. */
+#securitiesList.transaction-table-wrap { display: block; min-width: 0; max-width: 100%; max-height: 54vh; overflow: auto; border: 1px solid #394354; border-radius: 8px; }
+#securitiesList:focus-visible { outline: 2px solid #8bd1ff; outline-offset: 3px; }
+.saved-transactions-table { table-layout: fixed; border-collapse: separate; border-spacing: 0; width: 100%; min-width: 1340px; }
+.saved-transactions-table .transaction-col-date { width: 110px; }
+.saved-transactions-table .transaction-col-action { width: 110px; }
+.saved-transactions-table .transaction-col-security { width: 230px; }
+.saved-transactions-table .transaction-col-account { width: 190px; }
+.saved-transactions-table .transaction-col-quantity { width: 135px; }
+.saved-transactions-table .transaction-col-price { width: 155px; }
+.saved-transactions-table .transaction-col-cash { width: 175px; }
+.saved-transactions-table .transaction-col-actions { width: 175px; }
+.saved-transactions-table th, .saved-transactions-table td { text-align: start; padding: 8px; vertical-align: top; }
+.saved-transactions-table th { position: sticky; top: 0; z-index: 2; background: #161b23; height: 44px; vertical-align: middle; white-space: nowrap; }
+.saved-transactions-table td { line-height: 1.5; }
+.saved-transactions-table .transaction-table-sort { display: inline-flex; align-items: center; justify-content: space-between; gap: 7px; width: 100%; min-height: 44px; padding: 4px 6px; background: transparent; border: 1px solid transparent; color: inherit; font: inherit; text-transform: none; white-space: nowrap; }
+.saved-transactions-table th[aria-sort] .transaction-table-sort, .saved-transactions-table .transaction-table-sort:hover { color: #e1edff; background: #222c3b; border-color: #71839d; }
+.saved-transactions-table .transaction-table-sort:focus-visible, .transaction-table-details > summary:focus-visible { outline: 2px solid #8bd1ff; outline-offset: 2px; }
+.saved-transactions-table .transaction-date, .saved-transactions-table .transaction-quantity { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.saved-transactions-table .transaction-unit-price, .saved-transactions-table .transaction-cash { font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.saved-transactions-table .transaction-security-symbol { display: block; font-weight: 700; overflow-wrap: anywhere; }
+.saved-transactions-table small, .saved-transactions-table .transaction-account > * { display: block; }
+.saved-transactions-table small { color: #b7c4d8; margin-block-start: 4px; }
+.transaction-table-details { margin-block-start: 6px; }
+.transaction-table-details > summary { cursor: pointer; min-height: 32px; width: fit-content; color: #b8d9ff; }
+.transaction-table-details dl { margin: 6px 0 0; font-size: 12px; }
+.transaction-table-details dl > div { margin-block-end: 7px; }
+.transaction-table-details dt { color: #a7b5c9; }
+.transaction-table-details dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.transaction-row-actions { display: flex; gap: 6px; }
+.transaction-row-actions > button { min-height: 44px; min-width: 60px; width: auto; padding-inline: 9px; white-space: nowrap; }
+.saved-transactions-table .transaction-actions .badge { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 650px) {
+  .transaction-list-primary .transaction-list-account, .transaction-list-primary .transaction-list-search { flex: 1 1 100%; max-width: none; min-width: 0; }
+  .transaction-list-primary .transaction-list-action { flex: 0 0 160px; }
+  .transaction-list-toolbar input, .transaction-list-toolbar select, .transaction-list-secondary .transaction-list-reset { min-height: 44px; }
+  .transaction-list-secondary { gap: 8px; }
 }
