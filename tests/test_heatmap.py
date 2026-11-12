@@ -314,6 +314,8 @@ def test_authenticated_viewer_can_read_and_filter_without_mutating_portfolio(mon
     user=auth.create_user({"username":"heatqa","first_name":"Synthetic","last_name":"Viewer","role":"Viewer","password":"Heat-Fixture123!"})
     with auth._connect() as conn: conn.execute('update app_users set must_change_password=0 where id=?',(user['id'],))
     monkeypatch.setattr(main,'local_store',store);monkeypatch.setattr(main,'auth_store',auth);monkeypatch.setattr(main,'hub',lambda:Hub([]))
+    # The HTTP route uses the same fixed observation date as this fixture.
+    monkeypatch.setattr(main, 'stock_heatmap', lambda *args, **kwargs: stock_heatmap(*args, today=TODAY, **kwargs))
     client=TestClient(main.app,base_url='https://localhost:6443')
     assert client.get('/api/portfolio/heatmap').status_code==401
     assert client.post('/api/auth/login',json={"username":"heatqa","password":"Heat-Fixture123!"}).status_code==200

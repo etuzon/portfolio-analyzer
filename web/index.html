@@ -20,7 +20,7 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/assets/portfolio-vault/icon-48.png?v=1" />
     <link rel="shortcut icon" href="/assets/portfolio-vault/favicon.ico?v=1" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=20261110-mobile-layout" />
+  <link rel="stylesheet" href="/styles.css?v=20261112-shared-scheduler" />
   <link rel="stylesheet" href="/benchmark.css?v=3" />
   <link rel="stylesheet" href="/trading-journal.css?v=1" />
   <link rel="stylesheet" href="/optimization.css?v=3" />
@@ -1187,9 +1187,11 @@
                 <p>On a phone, select Menu to open the navigation groups and scroll within the menu to reach all features. Selecting a feature closes the menu. Forms stack to fit the screen; scroll inside dialogs for additional fields and swipe wide tables horizontally to see all columns. Use the close button to return to your previous view.</p>
                 <p>Use Area to choose investments, long-term savings, employee equity, or all areas. View switches between Glance and Full; Edit lets you arrange or hide cards. Compact summaries use narrower cards and fill available gaps beside taller charts. Card widths follow the dashboard’s available space. Edit keeps your saved arrangement; the display can place later cards in earlier gaps, while keyboard and single-column reading order follow the saved sequence.</p>
                 <p>Analytics refresh in the background while preserving your reading position, keyboard focus and expanded card details. In Portfolio stats or Portfolio snapshot, hover over Data gaps for a multiline breakdown by field, security and account. Select the count, or use Enter or Space, to open the complete scrollable details on desktop or touch screens. Each confirmed gap is one missing field in one position; the same field in two accounts counts twice. Updating and failed checks are shown separately and do not count as confirmed missing data. Details follow the displayed portfolio scope and update from loaded results without extra provider requests. All users can inspect them; close the dialog or press Escape to return to the count. Use Refresh to retry unavailable data. Unavailable dividend history does not confirm zero dividends. Currency tooltips use symbols and retain the converted base-currency value.</p>
-                <p>API-supported securities update through normal background updates and dashboard Refresh, outside the AI popup. Missing provider credentials require API configuration. Confirmed API access denial allows AI research when no other usable API remains; temporary network failures and rate limits stay on the API route. Each security's information tooltip shows its route and any setup or retry needed. Open Portfolio → Find missing data with AI and choose Search open positions or Search open and closed positions to research missing prices, names and industry classifications for securities without usable API access. The first option includes open long and short holdings; the second also includes securities from closed positions. Both ignore dashboard and Holdings filters. Admin and Operator users can start a request; Viewers can read saved results. Internet research needs an available search service. When no holdings are eligible, no AI model is called. Each explicit request selects up to three securities and shares configured limits of up to eight AI interactions, eight application data operations and eight Internet requests; some selected securities may remain unchecked. Opening the popup never starts research; select one of the two search buttons to start a request. Phase and checked counts describe work checked, not updates saved. Close and reopen it to view the same background request. Check AI progress resumes that request; reopening never starts another batch. After completion, select either search scope for another batch. Verified, partial and unavailable results appear by security; other gaps, including fundamentals or dividends, may remain. Unavailable values are never guessed. Saved results reload the portfolio once; use Refresh if that reload fails.</p>
+                <p>AI automation starts disabled. Admin and Operator users can save AI schedules; only Admin users can change backup schedules. Scheduled research uses the saving user’s permissions and skips runs if that user is disabled, deleted or no longer has editing access. The configured AI service must be available. Reopen the research window to load saved results and any active request.</p>
+                <p>Use Automatic schedule in Find missing data with AI or Edit schedule in backup settings. Both use the same controls: enable automation, choose minutes, hours, daily, selected weekdays or selected month dates, then set the timezone. Minute and hour intervals restart at the next hour or day. Dates absent from a month are skipped. AI schedules let you choose open or all positions; Save schedule persists without starting research. Reload schedule discards the draft and retries loading. Saving requires editing permission; a failed save retains the draft. Scheduled research uses the same AI settings and limits as manual research, skips overlapping work, and runs only while the app is running. Missed AI runs are skipped. Backup Apply schedule updates the draft; save Application Settings to persist it. Backup passed-time handling remains configurable.</p>
+                <p>API-supported securities update through normal background updates and dashboard Refresh, outside the AI popup. Missing provider credentials require API configuration. Confirmed API access denial allows AI research when no other usable API remains; temporary network failures and rate limits stay on the API route. Each security's information tooltip shows its route and any setup or retry needed. Open Portfolio → Find missing data with AI and choose Search open positions or Search open and closed positions to research missing prices, names and industry classifications for securities without usable API access. The first option includes open long and short holdings; the second also includes securities from closed positions. Both ignore dashboard and Holdings filters. Admin and Operator users can start a request; Viewers can read saved results. Internet research needs an available search service. When no holdings are eligible, no AI model is called. Each manual or scheduled request selects up to three securities and shares configured limits of up to eight AI interactions, eight application data operations and eight Internet requests; some selected securities may remain unchecked. Opening the popup never starts research; select one of the two search buttons to start a request. Phase and checked counts describe work checked, not updates saved. Close and reopen it to view the same background request. Check AI progress resumes that request; reopening never starts another batch. After completion, select either search scope for another batch. Verified, partial and unavailable results appear by security; other gaps, including fundamentals or dividends, may remain. Unavailable values are never guessed. Saved results reload the portfolio once; use Refresh if that reload fails.</p>
                 <p>When a bond API quote cannot be matched to the recorded quantity and face-value convention, it remains reference-only. Normal updates do not invent a conversion or use AI to fill that valuation gap.</p>
-                <p>For eligible holdings without an API route, Internet price updates require a supported last or closing price dated within the last seven days. Unsupported fund NAV or percent-of-par units are not guessed or saved as stock prices. Additional eligible securities wait for another explicit request.</p>
+                <p>For eligible holdings without an API route, Internet price updates require a supported last or closing price dated within the last seven days. Unsupported fund NAV or percent-of-par units are not guessed or saved as stock prices. Additional eligible securities wait for another manual or scheduled request.</p>
                 <p>Israeli price research uses the instrument type: stock searches use share-price terms, fund searches use redemption terms, and unknown instruments use neutral price terms. A source-page read failure is different from missing or mismatched evidence; neither means a price is unavailable everywhere. Actual source dates and quote units are still required, and failed reads count toward the shared request limits.</p>
                 <p>If a source returns only a loading page, research can try another source within the shared Internet budget of up to eight requests. Failed search and reader requests count too. A source found online does not count as an update until its supported facts are verified and saved.</p>
                 <p>AI research can choose queries, read discovered public pages and follow returned links. Israeli and U.S. securities may include optional source or search hints. Hints are starting points, not guarantees of availability or correctness; other sources can be used. Research targets the missing field, so an industry-only gap does not require another price lookup. With the default eight-operation limit, up to six research operations are shared across the selected securities after reserving candidate reading and finalization. The model and Internet limits are also eight; lower configured limits still apply. Some securities may remain unchecked.</p>
@@ -1959,6 +1961,12 @@
         <div id="aiEnrichmentSummary" class="ai-enrichment-summary" hidden></div>
         <section id="aiEnrichmentDetails" class="ai-enrichment-details" aria-labelledby="aiEnrichmentResultsTitle" hidden><h3 id="aiEnrichmentResultsTitle">Results by security</h3><ul id="aiEnrichmentResults" tabindex="0" aria-labelledby="aiEnrichmentResultsTitle"></ul></section>
         <p id="aiEnrichmentEmpty" class="section-note">No AI research results yet.</p>
+        <details class="automatic-schedule-panel"><summary>Automatic schedule</summary>
+          <div id="aiScheduleEditor"></div>
+          <label class="field"><span>Search scope</span><select id="aiScheduleScope"><option value="open">Open positions</option><option value="all">Open and closed positions</option></select></label>
+          <div class="modal-toolbar"><button id="saveAISchedule" type="button" disabled>Save schedule</button><button id="reloadAISchedule" class="secondary" type="button">Reload schedule</button></div>
+          <p id="aiScheduleStatus" class="section-note" role="status" aria-live="polite"></p>
+        </details>
         <div class="ai-enrichment-footer"><p id="aiEnrichmentFooterNote" class="section-note">You can close this window. Reopen it from Portfolio to view results or start a new request.</p><span id="aiEnrichmentAction" class="ai-enrichment-action"><button id="aiEnrichmentStart" type="button" aria-describedby="aiEnrichmentStatus">Search open positions</button><button id="aiEnrichmentStartAll" type="button" aria-describedby="aiEnrichmentStatus">Search open and closed positions</button><button id="aiEnrichmentResume" type="button" aria-describedby="aiEnrichmentStatus" hidden>Check AI progress</button></span></div>
       </section>
     </div>
@@ -2936,14 +2944,9 @@
           </div>
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
-        <div class="schedule-form">
-          <label class="field"><span>Frequency</span><select id="backupScheduleFrequency"><option value="weekly">Days each week</option><option value="monthly">Days each month</option><option value="daily">Every day</option><option value="none">No automatic backup</option></select></label>
-          <label class="field"><span>Hour</span><input id="backupScheduleHour" type="number" min="0" max="23" step="1" /></label>
-          <label class="field"><span>Minute</span><input id="backupScheduleMinute" type="number" min="0" max="59" step="1" /></label>
-          <label class="field"><span>Passed time</span><select id="backupMissedPolicy"><option value="wait">Wait for next time</option><option value="run">Backup now</option></select></label>
-        </div>
-        <div id="backupWeeklyPicker" class="schedule-picker"></div>
-        <div id="backupMonthlyPicker" class="schedule-picker"></div>
+        <div id="backupScheduleEditor"></div>
+        <label class="field"><span>Passed time</span><select id="backupMissedPolicy"><option value="wait">Wait for next time</option><option value="run">Backup now</option></select></label>
+        <p id="backupScheduleError" class="section-note" role="alert"></p>
         <div class="modal-toolbar">
           <button id="applyBackupSchedule" type="button">Apply schedule</button>
           <button class="secondary" type="button" data-close>Cancel</button>
@@ -2953,7 +2956,8 @@
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <div id="riskBadgeExplanation" class="risk-badge-explanation" role="tooltip" hidden></div>
-  <script src="/i18n.js?v=20261108-us-bond-research"></script>
+  <script src="/i18n.js?v=20261112-shared-scheduler"></script>
+  <script src="/scheduler.js?v=1"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
   <script src="/trade-planner.js?v=3"></script>
@@ -2973,6 +2977,6 @@
   <script src="/alarm-priority-ui.js?v=20261109-alert-group-label"></script>
   <script src="/account-cash-ui.js?v=20261109-cash-save-label"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=20261109-transaction-popup"></script>
+  <script src="/app.js?v=20261112-shared-scheduler"></script>
   </body>
 </html>

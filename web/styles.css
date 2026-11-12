@@ -12042,3 +12042,35 @@ html[dir="rtl"] .settings-menu-button.active {
   .connected-control button { border-radius: 7px; }
   .connected-control button { border-inline-start: 1px solid; min-width: 0; white-space: normal; }
 }
+
+/* Shared scheduler: used by task-specific scheduling forms. */
+.universal-scheduler { min-width: 0; margin-block: 12px; }
+.scheduler-enabled { display: inline-flex; align-items: center; gap: 9px; min-height: 40px; }
+.scheduler-enabled input, .scheduler-choice input { width: 17px; min-width: 17px; height: 17px; margin: 0; }
+.scheduler-fields { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-block: 10px; }
+.scheduler-fields .scheduler-field { flex: 0 1 110px; min-width: 100px; }
+.scheduler-fields .scheduler-frequency { flex: 1 1 190px; min-width: 170px; }
+.scheduler-fields .scheduler-field:has(input[type="text"]) { flex: 1 1 200px; min-width: 170px; }
+.scheduler-fields input, .scheduler-fields select { box-sizing: border-box; width: 100%; min-width: 0; }
+.scheduler-fields input[type="number"] { min-width: 100px; }
+.scheduler-picker { border: 0; padding: 0; margin-block: 14px; min-width: 0; }
+.scheduler-picker legend { padding: 0; margin-block-end: 8px; font-weight: 600; }
+.scheduler-choices { display: flex; flex-wrap: wrap; gap: 7px; }
+.scheduler-choice { display: inline-flex; align-items: center; gap: 7px; min-height: 40px; padding-inline: 9px; border: 1px solid #2b3340; border-radius: 7px; background: #171c24; cursor: pointer; }
+.scheduler-month_days .scheduler-choice { box-sizing: border-box; min-width: 65px; }
+.scheduler-choice:has(input:checked) { border-color: var(--accent, #778fff); }
+.scheduler-choice:has(input:focus-visible) { outline: 2px solid var(--accent, #778fff); outline-offset: 2px; }
+.scheduler-choice:has(input:disabled) { opacity: .65; cursor: default; }
+.scheduler-summary { overflow-wrap: anywhere; font-weight: 600; margin-block: 12px 6px; }
+.scheduler-error { color: #ff9caa; margin-block: 8px; }
+.universal-scheduler [hidden] { display: none !important; }
+@media (max-width: 480px) {
+  .scheduler-fields { gap: 9px; }
+  .scheduler-fields .scheduler-frequency { flex-basis: 100%; }
+  .scheduler-fields .scheduler-field:has(input[type="text"]) { flex-basis: 100%; }
+}
+
+.automatic-schedule-panel { min-width:0; border-block-start:1px solid #2b3340; padding-block:8px; }
+.automatic-schedule-panel > summary { cursor:pointer; min-height:44px; display:list-item; align-content:center; font-weight:600; }
+.automatic-schedule-panel > summary:focus-visible { outline:2px solid #8bd1ff; outline-offset:3px; }
+.automatic-schedule-panel .modal-toolbar { flex-wrap:wrap; }

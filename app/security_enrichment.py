@@ -153,7 +153,7 @@ class EnrichmentJobs:
         self._lock = RLock()
         self._jobs: dict[str, dict[str, Any]] = {}
 
-    def start(self, user_id: str, headers: dict[str, str], language: str, position_scope: str = "open") -> dict[str, Any]:
+    def start(self, user_id: str, headers: dict[str, str], language: str, position_scope: str = "open", *, scheduled_credentials=None) -> dict[str, Any]:
         if position_scope not in {"open", "all"}:
             raise HTTPException(422, "invalid_position_scope")
         configured = self.settings()
@@ -161,6 +161,8 @@ class EnrichmentJobs:
         rest_limit = min(MAX_REST_CALLS, max(1, int(configured.get("max_rest_calls", MAX_REST_CALLS))))
         web_limit = min(MAX_WEB_CALLS, max(1, int(configured.get("max_web_calls", MAX_WEB_CALLS))))
         with self._lock:
+            if scheduled_credentials is not None and any(job["status"] in {"queued", "running"} for job in self._jobs.values()):
+                raise HTTPException(409, "enrichment_busy")
             for job in self._jobs.values():
                 if job["_user_id"] == user_id and job["status"] in {"queued", "running"}:
                     return _public_job(job)
@@ -184,10 +186,25 @@ class EnrichmentJobs:
                 "_finalized": False, "_ready_to_finalize": False,
                 "_web_responses": {}, "_web_lock": RLock(), "_trace": [],
             }
+            cleanup = None
+            if scheduled_credentials is not None:
+                headers, cleanup = scheduled_credentials()
             self._jobs[identifier] = job
         forwarded = {key: value for key, value in headers.items() if key.lower() in {"authorization", "cookie", "x-csrf-token"}}
-        self._worker_factory(target=self.run, args=(identifier, forwarded, language), daemon=True,
-                             name="security-ai-enrichment").start()
+        def scheduled_run(identifier, forwarded, language):
+            try:
+                self.run(identifier, forwarded, language)
+            finally:
+                cleanup()
+        try:
+            self._worker_factory(target=scheduled_run if cleanup else self.run, args=(identifier, forwarded, language), daemon=True,
+                                 name="security-ai-enrichment").start()
+        except Exception:
+            with self._lock:
+                self._jobs.pop(identifier, None)
+            if cleanup:
+                cleanup()
+            raise
         return _public_job(job)
 
     def get(self, identifier: str, user_id: str) -> dict[str, Any]:

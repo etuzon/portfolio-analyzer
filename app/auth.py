@@ -337,6 +337,19 @@ class AuthStore:
     def _token_hash(token: str) -> str:
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
+    def scheduled_session(self, user_id: str) -> tuple[str, str]:
+        """Issue credentials only for a still-authorized automation owner.
+
+        Callers must revoke the returned session when their bounded job finishes.
+        No password or long-lived credential is stored in schedule configuration.
+        """
+        self._ensure_initialized()
+        with self._lock, self._connect() as connection:
+            row = connection.execute("select * from app_users where id = ?", (user_id,)).fetchone()
+            if not row or not row["enabled"] or row["must_change_password"] or row["role"] not in {"Admin", "Operator"}:
+                raise PermissionError("Schedule owner is no longer authorized")
+            return self._create_session(connection, user_id)
+
     def _create_session(self, connection: sqlite3.Connection, user_id: str, remember_me: bool = False) -> tuple[str, str]:
         token = secrets.token_urlsafe(32)
         csrf_token = secrets.token_urlsafe(24)

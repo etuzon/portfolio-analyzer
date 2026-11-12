@@ -23,6 +23,7 @@ qa.job=()=>({request_id:'synthetic-job',status:qa.jobStatus,progress:qa.progress
 qa.nativeTimeout=window.setTimeout;
 window.setTimeout=(callback,delay,...args)=>delay===3000?(qa.poll=callback,999999):qa.nativeTimeout.call(window,callback,delay,...args);
 api=async(path,options={})=>{
+ if(path==='/api/settings/ai-enrichment-schedule')return {enabled:false,timezone:'UTC',position_scope:'open',schedule_config:{frequency:'daily',hour:8,minute:0}};
  if(options.method==='POST'){
   qa.aiPosts++;qa.aiBodies.push(JSON.parse(options.body));if(qa.apiMode==='lost'){qa.apiMode='ok';throw new Error('synthetic raw provider secret');}
   if(qa.apiMode==='hold')return await new Promise(resolve=>qa.resolve=resolve);
@@ -208,7 +209,7 @@ def test_ai_single_request_partial_results_tooltips_permissions_and_narrow_layou
     (tmp_path / f"ai-enrichment-running-{language}-{width}.png").write_bytes(base64.b64decode(command("Page.captureScreenshot", {"format": "png"})["data"]))
     evaluate("qa.jobStatus='completed';qa.progress={stage:'completed',completed:1,total:1,current_security:null};qa.poll();")
     browser_wait(evaluate, "!state.aiEnrichment.pending&&qa.refreshes===1")
-    assert evaluate("qa.aiPosts") == 1 and evaluate("qa.aiGets") == 2
+    assert evaluate("qa.aiPosts") == 1 and evaluate("qa.aiGets") == 3
     assert evaluate("qa.logs.some(log=>log.code==='partial_data'&&log.symbol==='91282CKD2')")
     assert evaluate("$('aiEnrichmentDetails').hidden") is False
     assert "partial_data" not in evaluate("$('aiEnrichmentResults').textContent")

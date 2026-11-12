@@ -1169,7 +1169,7 @@ const WRITE_CONTROL_IDS = new Set([
   "aiEnrichmentStart", "aiEnrichmentStartAll", "aiEnrichmentResume",
   "saveXrayReport", "fetchXrayIssuer", "chooseXrayReportFile",
   "addAlertCondition", "newAlertRule", "addBannerItem", "addPensionPeriod", "addPensionRate", "addPensionScenario",
-  "applyBackupSchedule", "attachAccountToMember", "attachEditAccountPerson", "attachLocalAccountPerson",
+  "saveAISchedule", "applyBackupSchedule", "attachAccountToMember", "attachEditAccountPerson", "attachLocalAccountPerson",
   "captureHistorySnapshot", "chooseFullRestore", "chooseImportData", "clearAlarms", "clearMatchingAlarms", "accountCashSave", "dashboardEdit",
   "dashboardReset", "importSource", "newEmployeeOptionGrant", "newPensionScenario", "runAlerts",
   "runBackupNow", "runCompanyOutlook", "runCompanyOutlookBacktest", "runDividendEvents", "saveAlarmSettings",
@@ -1382,6 +1382,10 @@ function openAIEnrichment() {
   document.querySelectorAll(".nav-menu[open]").forEach((menu) => { menu.open = false; });
   setMobileNavigation(false);
   renderAIEnrichment();
+  if (window.ScheduleEditor) {
+    loadAISchedule();
+    if (!state.aiEnrichment.pending) loadAIEnrichmentStatus().catch(() => {});
+  }
 }
 
 function acceptAIEnrichmentJob(job) {
@@ -2454,6 +2458,8 @@ function applyLanguage() {
   applyAutoDirection();
   if ($("manualSecuritiesList")) renderManualSecuritiesList();
   if (typeof renderRiskHistory === "function" && $("riskHistoryModal")?.hidden === false) renderRiskHistory();
+  window.ScheduleEditor?.relocalize($("aiScheduleEditor"), t);
+  window.ScheduleEditor?.relocalize($("backupScheduleEditor"), t);
   window.PortfolioI18n?.applyToDocument(state.language);
   window.PortfolioI18n?.observe();
 }
@@ -13813,7 +13819,7 @@ async function loadCacheStatus() {
   const backupRows = [
     ["Backup directory", backup.directory || ""],
     ["Backup contents", backup.backup_type === "full" ? "Full application state · sensitive" : "Portfolio data only"],
-    ["Schedule", backup.enabled === false ? "Disabled" : backup.schedule_summary || backupScheduleSummary(backup.schedule_config)],
+    ["Schedule", backup.enabled === false ? "Disabled" : backupScheduleSummary(backup.schedule_config)],
     ["Next run", backup.next_run ? formatBackupDateTime(backup.next_run) : "Disabled"],
     ["Latest backup", backup.latest?.filename || "None"],
     ["Backup files", backup.backup_count ?? (backup.backups || []).length],
@@ -14145,13 +14151,14 @@ function defaultBackupScheduleConfig() {
 
 function normalizeBackupScheduleConfig(config = {}) {
   const base = defaultBackupScheduleConfig();
-  const frequency = ["daily", "weekly", "monthly"].includes(config.frequency) ? config.frequency : base.frequency;
+  const frequency = ["minutely", "hourly", "daily", "weekly", "monthly"].includes(config.frequency) ? config.frequency : base.frequency;
   const hour = Math.min(Math.max(Number(config.hour ?? base.hour), 0), 23);
   const minute = Math.min(Math.max(Number(config.minute ?? base.minute), 0), 59);
   const weekdays = Array.isArray(config.weekdays) ? config.weekdays.map(Number).filter((day) => day >= 0 && day <= 6) : base.weekdays;
   const monthDays = Array.isArray(config.month_days) ? config.month_days.map(Number).filter((day) => day >= 1 && day <= 31) : base.month_days;
   return {
     frequency,
+    interval: Number(config.interval || 1),
     weekdays: [...new Set(weekdays)].sort((a, b) => a - b),
     month_days: [...new Set(monthDays)].sort((a, b) => a - b),
     hour,
@@ -14162,25 +14169,11 @@ function normalizeBackupScheduleConfig(config = {}) {
 function backupScheduleSummary(config = defaultBackupScheduleConfig()) {
   const item = normalizeBackupScheduleConfig(config);
   const time = `${String(item.hour).padStart(2, "0")}:${String(item.minute).padStart(2, "0")}`;
+  if (window.ScheduleEditor) return ScheduleEditor.summary({ schedule_config: item, enabled: true, timezone: state.backupSettings?.timezone || "UTC" }, t);
   if (item.frequency === "daily") return `Every day at ${time}`;
   if (item.frequency === "monthly") return `Monthly on day ${item.month_days.join(", ")} at ${time}`;
   const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   return `${item.weekdays.map((day) => names[day]).join(", ")} at ${time}`;
-}
-
-function renderBackupSchedulePickers() {
-  const weekly = $("backupWeeklyPicker");
-  const monthly = $("backupMonthlyPicker");
-  if (weekly && !weekly.innerHTML) {
-    const names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-    weekly.innerHTML = names.map((name, index) => `<label class="schedule-option"><input type="checkbox" name="backupWeekday" value="${index}" /> <span>${name}</span></label>`).join("");
-  }
-  if (monthly && !monthly.innerHTML) {
-    monthly.innerHTML = Array.from({ length: 31 }, (_, index) => {
-      const day = index + 1;
-      return `<label class="schedule-option small"><input type="checkbox" name="backupMonthDay" value="${day}" /> <span>${day}</span></label>`;
-    }).join("");
-  }
 }
 
 function updateBackupScheduleSummary() {
@@ -14189,64 +14182,74 @@ function updateBackupScheduleSummary() {
     $("backupScheduleSummary").innerHTML = '<span>Schedule</span><b>Automatic backup disabled</b><small>Manual backups remain available</small>';
     return;
   }
-  const summary = backup.schedule_summary || backupScheduleSummary(backup.schedule_config);
+  const summary = backupScheduleSummary(backup.schedule_config);
   $("backupScheduleSummary").innerHTML = `<span>Schedule</span><b>${esc(summary)}</b><small>${backup.missed_policy === "run" ? "Backup now if the selected time already passed" : "Wait for the next selected time"}</small>`;
 }
 
 function populateBackupScheduleForm() {
-  renderBackupSchedulePickers();
   const backup = state.backupSettings || {};
-  const config = normalizeBackupScheduleConfig(backup.schedule_config);
-  $("backupScheduleFrequency").value = backup.enabled === false ? "none" : config.frequency;
-  $("backupScheduleHour").value = config.hour;
-  $("backupScheduleMinute").value = config.minute;
+  ScheduleEditor.mount($("backupScheduleEditor"), { ...backup, schedule_config: backup.schedule_config || defaultBackupScheduleConfig() }, { translate: t, editable: canAdmin() });
   $("backupMissedPolicy").value = backup.missed_policy === "run" ? "run" : "wait";
-  document.querySelectorAll("input[name='backupWeekday']").forEach((input) => { input.checked = config.weekdays.includes(Number(input.value)); });
-  document.querySelectorAll("input[name='backupMonthDay']").forEach((input) => { input.checked = config.month_days.includes(Number(input.value)); });
-  syncBackupSchedulePickers();
-}
-
-function syncBackupSchedulePickers() {
-  const frequency = valueOf("backupScheduleFrequency") || "weekly";
-  const enabled = frequency !== "none";
-  $("backupWeeklyPicker").hidden = frequency !== "weekly";
-  $("backupMonthlyPicker").hidden = frequency !== "monthly";
-  ["backupScheduleHour", "backupScheduleMinute", "backupMissedPolicy"].forEach((id) => {
-    const input = $(id);
-    if (input) input.disabled = !enabled;
-  });
-  document.querySelectorAll("#backupWeeklyPicker input, #backupMonthlyPicker input").forEach((input) => {
-    const picker = input.closest(".schedule-picker");
-    input.disabled = !enabled || picker?.hidden;
-  });
-}
-
-function backupScheduleFromForm() {
-  const frequency = valueOf("backupScheduleFrequency") || "weekly";
-  const weekdays = [...document.querySelectorAll("input[name='backupWeekday']:checked")].map((input) => Number(input.value));
-  const monthDays = [...document.querySelectorAll("input[name='backupMonthDay']:checked")].map((input) => Number(input.value));
-  return normalizeBackupScheduleConfig({
-    frequency,
-    weekdays: weekdays.length ? weekdays : [0],
-    month_days: monthDays.length ? monthDays : [1],
-    hour: numberValue("backupScheduleHour"),
-    minute: numberValue("backupScheduleMinute"),
-  });
+  $("backupScheduleError").textContent = "";
 }
 
 function applyBackupSchedule() {
-  const automaticBackup = valueOf("backupScheduleFrequency") !== "none";
-  state.backupSettings = {
-    ...(state.backupSettings || {}),
-    enabled: automaticBackup,
-    schedule_config: backupScheduleFromForm(),
-    missed_policy: valueOf("backupMissedPolicy") || "wait",
-  };
-  $("backupEnabled").value = String(automaticBackup);
-  state.backupSettings.schedule_summary = backupScheduleSummary(state.backupSettings.schedule_config);
-  updateBackupScheduleSummary();
-  syncBackupEnabledControls();
-  closeModal($("backupScheduleModal"));
+  try {
+    const settings = ScheduleEditor.read($("backupScheduleEditor"));
+    state.backupSettings = { ...(state.backupSettings || {}), ...settings, missed_policy: valueOf("backupMissedPolicy") || "wait" };
+    $("backupEnabled").value = String(settings.enabled);
+    $("backupTimezone").value = settings.timezone;
+    state.backupSettings.schedule_summary = backupScheduleSummary(settings.schedule_config);
+    updateBackupScheduleSummary();
+    syncBackupEnabledControls();
+    closeModal($("backupScheduleModal"));
+  } catch (error) {
+    $("backupScheduleError").textContent = t(error.message);
+  }
+}
+
+let aiScheduleLoading = false;
+async function loadAISchedule() {
+  if (aiScheduleLoading) return;
+  aiScheduleLoading = true;
+  $("saveAISchedule").disabled = true;
+  $("reloadAISchedule").disabled = true;
+  $("aiScheduleStatus").textContent = t("Loading schedule…");
+  try {
+    const saved = await api("/api/settings/ai-enrichment-schedule");
+    ScheduleEditor.mount($("aiScheduleEditor"), saved, { translate: t, editable: canWrite() });
+    $("aiScheduleScope").value = saved.position_scope || "open";
+    $("aiScheduleScope").disabled = !canWrite();
+    $("saveAISchedule").disabled = !canWrite();
+    $("aiScheduleStatus").textContent = saved.enabled && saved.next_run
+      ? `${t("Next run")}: ${formatDateTime(saved.next_run)}` : t("No automatic run scheduled");
+  } catch (error) {
+    $("aiScheduleStatus").textContent = t("Could not load schedule. Select Reload schedule to retry.");
+  } finally {
+    aiScheduleLoading = false;
+    $("reloadAISchedule").disabled = false;
+  }
+}
+
+async function saveAISchedule() {
+  if (!canWrite() || aiScheduleLoading) return;
+  let draft;
+  try { draft = ScheduleEditor.read($("aiScheduleEditor")); }
+  catch (error) { $("aiScheduleStatus").textContent = t(error.message); return; }
+  aiScheduleLoading = true;
+  $("saveAISchedule").disabled = true;
+  $("reloadAISchedule").disabled = true;
+  $("aiScheduleStatus").textContent = t("Saving schedule…");
+  try {
+    const saved = await api("/api/settings/ai-enrichment-schedule", { method: "PUT", body: JSON.stringify({ ...draft, position_scope: valueOf("aiScheduleScope"), language: state.language }) });
+    $("aiScheduleStatus").textContent = `${t("Schedule saved.")}${saved.enabled && saved.next_run ? ` ${t("Next run")}: ${formatDateTime(saved.next_run)}` : ` ${t("No automatic run scheduled")}`}`;
+  } catch (error) {
+    $("aiScheduleStatus").textContent = t("Could not save schedule. Review the fields and try again.");
+  } finally {
+    aiScheduleLoading = false;
+    $("saveAISchedule").disabled = !canWrite();
+    $("reloadAISchedule").disabled = false;
+  }
 }
 
 function syncBackupEnabledControls() {
@@ -14277,7 +14280,7 @@ async function saveBackupSettings() {
     }),
   });
   state.backupSettings = backup;
-  $("settingsStatus").textContent = backup.enabled ? `Backup scheduled: ${backup.schedule_summary || backupScheduleSummary(backup.schedule_config)}` : "Backup disabled";
+  $("settingsStatus").textContent = backup.enabled ? `${t("Schedule saved.")} ${backupScheduleSummary(backup.schedule_config)}` : t("Backup disabled");
   await loadCacheStatus();
 }
 
@@ -15565,9 +15568,6 @@ document.addEventListener("change", (event) => {
     updatePensionActionStates();
   }
 
-  if (event.target.id === "backupScheduleFrequency") {
-    syncBackupSchedulePickers();
-  }
 
   if (event.target.id === "backupEnabled") {
     syncBackupEnabledControls();
@@ -15680,6 +15680,8 @@ $("refresh").addEventListener("click", () => {
   loadBanner().catch(() => {});
 });
 $("enrichMissingData").addEventListener("click", openAIEnrichment);
+$("saveAISchedule").addEventListener("click", saveAISchedule);
+$("reloadAISchedule").addEventListener("click", loadAISchedule);
 $("aiEnrichmentStart").addEventListener("click", () => requestAIEnrichment("open"));
 $("aiEnrichmentStartAll").addEventListener("click", () => requestAIEnrichment("all"));
 $("aiEnrichmentResume").addEventListener("click", () => requestAIEnrichment());

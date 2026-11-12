@@ -26,6 +26,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from uuid import uuid4
 
 from apscheduler.triggers.cron import CronTrigger
+from .scheduling import normalize_schedule, schedule_cron, schedule_from_cron, schedule_trigger
 import anyio
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -92,6 +93,7 @@ async def application_lifespan(_app: FastAPI):
     configure_backup_job()
     configure_dividend_job()
     configure_portfolio_refresh_job()
+    configure_ai_enrichment_job()
     Thread(target=_refresh_portfolio_fx_history, name="portfolio-fx-history", daemon=True).start()
     if _mcp_session_context is None:
         _mcp_session_context = portfolio_mcp.session_manager.run()
@@ -1629,43 +1631,19 @@ def default_backup_settings() -> dict[str, Any]:
 
 def backup_schedule_config(raw: Any = None, schedule: str = "45 23 * * *") -> dict[str, Any]:
     if isinstance(raw, dict):
-        frequency = str(raw.get("frequency") or "weekly")
-        hour = _bounded_int(raw.get("hour"), 23, 0, 23)
-        minute = _bounded_int(raw.get("minute"), 45, 0, 59)
-        weekdays = _int_list(raw.get("weekdays"), 0, 6)
-        month_days = _int_list(raw.get("month_days"), 1, 31)
-        if frequency == "monthly":
-            return {"frequency": "monthly", "month_days": month_days or [1], "hour": hour, "minute": minute}
-        if frequency == "daily":
-            return {"frequency": "daily", "hour": hour, "minute": minute}
-        return {"frequency": "weekly", "weekdays": weekdays or [0, 2, 4], "hour": hour, "minute": minute}
+        return normalize_schedule({"frequency": "weekly", **raw})
     return backup_schedule_config_from_cron(schedule)
 
 
 def backup_schedule_config_from_cron(schedule: str) -> dict[str, Any]:
-    parts = str(schedule or "").split()
-    if len(parts) != 5:
+    try:
+        return schedule_from_cron(schedule)
+    except (ValueError, TypeError):
         return {"frequency": "weekly", "weekdays": [0, 2, 4], "hour": 23, "minute": 45}
-    minute, hour, day, _month, weekday = parts
-    config_out = {"hour": _bounded_int(hour, 23, 0, 23), "minute": _bounded_int(minute, 45, 0, 59)}
-    if day != "*" and weekday == "*":
-        return {**config_out, "frequency": "monthly", "month_days": _int_list(day.split(","), 1, 31) or [1]}
-    if weekday != "*":
-        return {**config_out, "frequency": "weekly", "weekdays": _weekday_list(weekday) or [0, 2, 4]}
-    return {**config_out, "frequency": "daily"}
 
 
 def backup_cron_from_config(schedule_config: dict[str, Any]) -> str:
-    config_out = backup_schedule_config(schedule_config)
-    minute = config_out["minute"]
-    hour = config_out["hour"]
-    if config_out["frequency"] == "monthly":
-        days = ",".join(str(day) for day in config_out["month_days"])
-        return f"{minute} {hour} {days} * *"
-    if config_out["frequency"] == "daily":
-        return f"{minute} {hour} * * *"
-    weekdays = ",".join(WEEKDAY_CRON[day] for day in config_out["weekdays"])
-    return f"{minute} {hour} * * {weekdays}"
+    return schedule_cron(schedule_config)
 
 
 def _bounded_int(value: Any, default: int, minimum: int, maximum: int) -> int:
@@ -1723,6 +1701,8 @@ def load_runtime_settings() -> dict[str, Any]:
     if path.exists():
         try:
             saved = json.loads(path.read_text())
+            if isinstance(saved.get("ai_enrichment_schedule"), dict):
+                settings["ai_enrichment_schedule"] = saved["ai_enrichment_schedule"]
             if isinstance(saved.get("backup"), dict):
                 settings["backup"].update(saved["backup"])
         except json.JSONDecodeError:
@@ -2146,6 +2126,7 @@ def restore_full_backup(payload: bytes) -> dict[str, Any]:
         auth_store.clear_sessions()
         restore_backup_settings_from_preferences()
         configure_dividend_job()
+        configure_ai_enrichment_job()
         return {
             "status": "restored",
             "restored_from": inspection,
@@ -2241,6 +2222,15 @@ def latest_due_backup_time(backup: dict[str, Any]) -> datetime | None:
         tz = ZoneInfo("UTC")
     now = datetime.now(tz)
     config_out = backup_schedule_config(backup.get("schedule_config"), backup.get("schedule") or "")
+    if config_out["frequency"] == "minutely":
+        interval = config_out["interval"]
+        return now.replace(minute=(now.minute // interval) * interval, second=0, microsecond=0)
+    if config_out["frequency"] == "hourly":
+        interval = config_out["interval"]
+        scheduled = now.replace(hour=(now.hour // interval) * interval, minute=config_out["minute"], second=0, microsecond=0)
+        if scheduled > now:
+            scheduled -= timedelta(hours=interval)
+        return scheduled if scheduled.date() == now.date() else None
     scheduled = datetime.combine(now.date(), clock_time(config_out["hour"], config_out["minute"]), tzinfo=tz)
     if scheduled > now:
         return None
@@ -2420,6 +2410,10 @@ def process_portfolio_dividends(force_refresh: bool = True) -> dict[str, Any]:
 def backup_schedule_summary(backup: dict[str, Any]) -> str:
     config_out = backup_schedule_config(backup.get("schedule_config"), backup.get("schedule") or "")
     time_label = f"{config_out['hour']:02d}:{config_out['minute']:02d}"
+    if config_out["frequency"] == "minutely":
+        return f"Every {config_out['interval']} minute(s)"
+    if config_out["frequency"] == "hourly":
+        return f"Every {config_out['interval']} hour(s) at minute {config_out['minute']:02d}"
     if config_out["frequency"] == "daily":
         return f"Daily at {time_label}"
     if config_out["frequency"] == "monthly":
@@ -5187,6 +5181,96 @@ security_enrichment = EnrichmentJobs(app, lambda: _enrichment_assistant_settings
 app.include_router(security_enrichment.router())
 
 
+AI_ENRICHMENT_JOB_ID = "ai-missing-data-enrichment"
+
+
+def ai_enrichment_schedule_settings() -> dict[str, Any]:
+    raw = load_runtime_settings().get("ai_enrichment_schedule", {})
+    return {"enabled": bool(raw.get("enabled", False)),
+            "schedule_config": normalize_schedule(raw.get("schedule_config") or {"frequency": "daily", "hour": 8, "minute": 0}),
+            "timezone": str(raw.get("timezone") or config.alerts.get("timezone") or "UTC"),
+            "position_scope": raw.get("position_scope", "open"), "language": raw.get("language", "en"),
+            "owner_id": raw.get("owner_id", "")}
+
+
+def ai_enrichment_schedule_status() -> dict[str, Any]:
+    settings = ai_enrichment_schedule_settings()
+    settings.pop("owner_id", None)
+    job = scheduler.get_job(AI_ENRICHMENT_JOB_ID) if scheduler else None
+    return {**settings, "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None}
+
+
+def run_scheduled_ai_enrichment() -> None:
+    settings = ai_enrichment_schedule_settings()
+    if not settings["enabled"]:
+        return
+
+    def credentials():
+        token, csrf = auth_store.scheduled_session(settings["owner_id"])
+        return ({"cookie": f"{SESSION_COOKIE_NAME}={token}", "x-csrf-token": csrf}, lambda: auth_store.logout(token))
+
+    try:
+        security_enrichment.start(settings["owner_id"], {}, settings["language"], settings["position_scope"],
+                                  scheduled_credentials=credentials)
+    except PermissionError:
+        _record_log("market-data", "security_ai_schedule_skipped", code="owner_not_authorized")
+    except HTTPException as exc:
+        _record_log("market-data", "security_ai_schedule_skipped", code="busy" if exc.status_code == 409 else "request_failed")
+
+
+def configure_ai_enrichment_job() -> None:
+    if scheduler is None:
+        return
+    try:
+        scheduler.remove_job(AI_ENRICHMENT_JOB_ID)
+    except Exception:
+        pass
+    settings = ai_enrichment_schedule_settings()
+    if settings["enabled"]:
+        scheduler.add_job(run_scheduled_ai_enrichment, schedule_trigger(settings["schedule_config"], settings["timezone"]),
+                          id=AI_ENRICHMENT_JOB_ID, replace_existing=True, max_instances=1, coalesce=True,
+                          misfire_grace_time=60)
+
+
+@app.get("/api/settings/ai-enrichment-schedule")
+def get_ai_enrichment_schedule():
+    return ai_enrichment_schedule_status()
+
+
+@app.put("/api/settings/ai-enrichment-schedule")
+def update_ai_enrichment_schedule(request: Request, payload: dict[str, Any]):
+    owner = getattr(request.state, "auth_user", None)
+    if not owner:
+        raise HTTPException(401, "authentication_required")
+    if owner.get("role") not in {"Admin", "Operator"}:
+        raise HTTPException(403, "read_only")
+    settings = ai_enrichment_schedule_settings()
+    previous_schedule, previous_timezone = settings["schedule_config"], settings["timezone"]
+    for key in ("enabled", "schedule_config", "timezone", "position_scope", "language"):
+        if key in payload:
+            settings[key] = payload[key]
+    try:
+        if not isinstance(settings["enabled"], bool):
+            raise ValueError("Invalid enabled flag")
+        try:
+            settings["schedule_config"] = normalize_schedule(settings["schedule_config"])
+            schedule_trigger(settings["schedule_config"], settings["timezone"])
+        except (ValueError, TypeError, ZoneInfoNotFoundError):
+            if settings["enabled"]:
+                raise
+            settings["schedule_config"], settings["timezone"] = previous_schedule, previous_timezone
+        if settings["position_scope"] not in {"open", "all"} or settings["language"] not in {"he", "en"}:
+            raise ValueError("Invalid schedule scope or language")
+    except (ValueError, TypeError, ZoneInfoNotFoundError) as exc:
+        raise HTTPException(400, "invalid_schedule") from exc
+    settings["owner_id"] = owner["id"]
+    runtime = load_runtime_settings()
+    runtime["ai_enrichment_schedule"] = settings
+    save_runtime_settings(runtime)
+    configure_ai_enrichment_job()
+    return ai_enrichment_schedule_status()
+
+
 def _with_local_valuation(reader):
     """One coherent dashboard valuation view for current reports and history.
 
@@ -5619,22 +5703,37 @@ def update_backup_settings(payload: dict[str, Any]):
     payload = payload or {}
     settings = load_runtime_settings()
     backup = {**default_backup_settings(), **settings.get("backup", {})}
+    previous_schedule = {key: backup[key] for key in ("schedule", "schedule_config", "timezone")}
     if "enabled" in payload:
-        backup["enabled"] = bool(payload.get("enabled"))
-    if "schedule_config" in payload:
-        backup["schedule_config"] = backup_schedule_config(payload.get("schedule_config"))
-        backup["schedule"] = backup_cron_from_config(backup["schedule_config"])
-    if "schedule" in payload:
-        schedule = str(payload.get("schedule") or "").strip()
-        if len(schedule.split()) != 5:
-            raise HTTPException(status_code=400, detail="Backup schedule must be a 5-field cron expression")
-        backup["schedule"] = schedule
-        backup["schedule_config"] = backup_schedule_config_from_cron(schedule)
+        if not isinstance(payload["enabled"], bool):
+            raise HTTPException(400, "invalid_schedule")
+        backup["enabled"] = payload["enabled"]
+    try:
+        if "schedule_config" in payload:
+            if not isinstance(payload["schedule_config"], dict):
+                raise ValueError("Invalid schedule configuration")
+            backup["schedule_config"] = backup_schedule_config(payload["schedule_config"])
+            backup["schedule"] = backup_cron_from_config(backup["schedule_config"])
+        if "schedule" in payload:
+            if not isinstance(payload["schedule"], str):
+                raise ValueError("Invalid cron expression")
+            backup["schedule"] = payload["schedule"].strip()
+            backup["schedule_config"] = backup_schedule_config_from_cron(backup["schedule"])
+        if "timezone" in payload:
+            backup["timezone"] = payload["timezone"]
+        # Validate the final candidate even for legacy cron or timezone-only
+        # requests, before either runtime settings or preferences are written.
+        ZoneInfo(backup["timezone"])
+        CronTrigger.from_crontab(backup["schedule"], timezone=backup["timezone"])
+    except (ValueError, TypeError, ZoneInfoNotFoundError) as exc:
+        if backup["enabled"]:
+            raise HTTPException(400, "invalid_schedule") from exc
+        # Disabling must work with an unfinished editor draft. Keep the last
+        # valid recurrence and timezone rather than persisting malformed input.
+        backup.update(previous_schedule)
     if "missed_policy" in payload:
         policy = str(payload.get("missed_policy") or "wait")
         backup["missed_policy"] = policy if policy in {"wait", "run"} else "wait"
-    if "timezone" in payload:
-        backup["timezone"] = str(payload.get("timezone") or "UTC").strip() or "UTC"
     if "keep" in payload:
         backup["keep"] = max(int(payload.get("keep") or 1), 1)
     settings["backup"] = backup
