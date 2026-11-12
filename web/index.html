@@ -20,8 +20,10 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/assets/portfolio-vault/icon-48.png?v=1" />
     <link rel="shortcut icon" href="/assets/portfolio-vault/favicon.ico?v=1" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=20261112-risk-scenarios-sort" />
+  <link rel="stylesheet" href="/styles.css?v=20261112-bond-maturity" />
   <link rel="stylesheet" href="/holdings-sort.css?v=1" />
+  <link rel="stylesheet" href="/transaction-list.css?v=1" />
+  <link rel="stylesheet" href="/price-input-units.css?v=1" />
   <link rel="stylesheet" href="/benchmark.css?v=3" />
   <link rel="stylesheet" href="/trading-journal.css?v=1" />
   <link rel="stylesheet" href="/optimization.css?v=3" />
@@ -744,6 +746,11 @@
               <span>Expiration Date *</span>
               <input id="manualExpirationDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-required="true" />
             </label>
+            <label class="management-field" data-bond-maturity-field hidden>
+              <span>Bond maturity date</span>
+              <input id="manualBondMaturityDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-describedby="manualBondMaturityHint" />
+              <small id="manualBondMaturityHint">Optional. A red alarm appears on this date while units remain held.</small>
+            </label>
             <label class="management-field" data-option-field>
               <span>Strike Price *</span>
               <input id="manualStrikePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Strike" aria-required="true" />
@@ -956,6 +963,21 @@
         <div class="section-head"><button id="newSecurityTransaction" type="button">New transaction</button></div>
         <p id="securitiesListStatus" class="status-line" role="status" aria-live="polite"></p>
         <p id="savedTransactionsLabel" class="form-caption list-head">Saved transactions</p>
+        <section id="transactionListFilters" class="transaction-list-toolbar" aria-label="Transaction filters and sorting">
+          <div class="transaction-list-primary">
+            <label class="field transaction-list-account"><span>Account</span><select id="transactionFilterAccount"><option value="">All accounts</option></select></label>
+            <label class="field transaction-list-action"><span>Action</span><select id="transactionFilterAction"><option value="">All actions</option><option value="BUY">Buy</option><option value="SELL">Sell</option><option value="SHORT">Short</option><option value="ADD">Add</option><option value="REMOVE">Remove</option><option value="DIVIDEND">Dividend</option><option value="INTEREST">Interest</option><option value="FEE">Fee</option></select></label>
+            <label class="field transaction-list-search"><span>Search transactions</span><input id="transactionFilterQuery" type="search" placeholder="Symbol, name or comments" autocomplete="off" /></label>
+          </div>
+          <div class="transaction-list-secondary">
+            <label class="field transaction-list-date"><span>From date</span><input id="transactionFilterFrom" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-describedby="transactionFilterStatus" /></label>
+            <label class="field transaction-list-date"><span>To date</span><input id="transactionFilterTo" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-describedby="transactionFilterStatus" /></label>
+            <label class="field transaction-list-sort"><span>Sort by</span><select id="transactionSortBy"><option value="date">Date</option><option value="security">Security</option><option value="account">Account</option><option value="action">Action</option><option value="quantity">Quantity</option></select></label>
+            <label class="field transaction-list-direction"><span>Direction</span><select id="transactionSortDirection"><option value="desc">Descending</option><option value="asc">Ascending</option></select></label>
+            <button id="resetTransactionFilters" class="secondary transaction-list-reset" type="button">Reset filters</button>
+          </div>
+          <p id="transactionFilterStatus" class="section-note" role="status" aria-live="polite"></p>
+        </section>
         <div id="securitiesList" class="stack management-list"></div>
       </section>
     </div>
@@ -996,9 +1018,14 @@
             <label class="management-field transaction-field-wide transaction-symbol" data-general-transaction-field><span>Symbol *</span><input id="securitySymbol" placeholder="Ticker or security ID" /></label>
             <label class="management-field transaction-field-compact" data-general-transaction-field><span>Stock Market *</span><input id="securityMarket" list="marketOptions" placeholder="Market" /></label>
             <label class="management-field transaction-field-compact"><span id="securityQuantityLabel">Quantity *</span><input id="securityQuantity" type="number" min="0.0001" step="0.0001" inputmode="decimal" placeholder="Number of units" /></label>
-            <label id="securityPriceField" class="management-field transaction-field-compact"><span>Entered Price *</span><input id="securityPrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Price" /></label>
+            <label id="securityPriceField" class="management-field transaction-field-compact"><span class="price-unit-label"><span>Entered Price *</span><small id="securityPriceUnit" class="price-unit-badge"></small><span id="securityPriceUnitInfo" class="ux-tooltip price-unit-info" tabindex="0" role="note">?</span></span><span id="securityPriceUnitHint" class="sr-only"></span><input id="securityPrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Price" /></label>
             <label class="management-field transaction-field-compact"><span id="securityDateLabel">Transaction Date *</span><input id="securityDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
             </div>
+            <label id="securityBondMaturityField" class="management-field transaction-field-compact" hidden>
+              <span>Bond maturity date</span>
+              <input id="securityBondMaturityDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-describedby="securityBondMaturityHint" />
+              <small id="securityBondMaturityHint">Optional. Shared by this bond in all accounts. A red alarm remains until the holding is closed or the date is corrected.</small>
+            </label>
             <label id="securityVestDateField" class="management-field transaction-field-wide" data-equity-comp-field hidden><span>Single Vest Date *</span><input id="securityVestDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
             <label class="management-field transaction-field-wide" data-option-grant-field data-employee-option-derived-field hidden><span>Strike Price *</span><input id="securityStrikePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Strike price" /></label>
             <label class="management-field transaction-field-wide" data-equity-comp-field data-employee-option-derived-field hidden><span>Exercise/Purchase Price</span><input id="securityPurchasePrice" type="number" min="0" step="0.0001" inputmode="decimal" placeholder="Optional" /></label>
@@ -1143,7 +1170,7 @@
           <label class="management-field price-asset-field"><span>Asset class</span><select id="priceAssetClass"></select></label>
           <label class="management-field price-location-field"><span>Location</span><input id="priceLocation" list="countryOptions" placeholder="Location" /></label>
           <div class="price-observation-fields">
-            <label class="management-field price-amount-field"><span>Historic price</span><input id="priceInput" type="number" step="0.0001" min="0" placeholder="Historic price" aria-describedby="priceEntryUnits" required /></label>
+            <label class="management-field price-amount-field"><span class="price-unit-label"><span>Historic price</span><small id="priceInputUnit" class="price-unit-badge"></small><span id="priceInputUnitInfo" class="ux-tooltip price-unit-info" tabindex="0" role="note">?</span></span><input id="priceInput" type="number" step="0.0001" min="0" placeholder="Historic price" aria-describedby="priceEntryUnits" required /></label>
             <label class="management-field price-currency-field"><span>Currency</span><select id="priceCurrency"></select></label>
             <label class="management-field price-date-field"><span>Date</span><input id="priceDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" required /></label>
           </div>
@@ -1254,8 +1281,12 @@
               </article>
               <article class="help-feature">
                 <h3>Portfolio alarms</h3>
+                <p>The Bond maturity date field is also available in a bond holding’s Buy / Sell history form when adding or editing a transaction. Changing this field saves the shared date with that transaction; opening the form alone changes nothing.</p>
+                <p>Set Bond maturity date when defining a bond in Securities or adding or editing its transaction. Use dd/mm/yyyy; past dates are allowed. The saved date is shared by that symbol and market across accounts. You can correct it in the instrument editor without entering a trade. A blank date creates no maturity alarm; researched reference dates are not copied automatically.</p>
+                <p>On and after the saved maturity date, using the Asia/Jerusalem calendar, every account still holding positive bond units has a red Action required alarm. It uses the full loaded portfolio regardless of table filters or missing prices. Open the alarm to review that account and record the redemption or sale after checking the broker statement. A partial sale keeps the alarm for the remaining units; a closed holding or corrected future date removes it. Maturity does not automatically sell units, credit cash or verify settlement. Viewers can inspect; recording requires editing permission.</p>
+                <p>Bond maturity alarms cannot be dismissed while action is required. Clear one, Clear matching and Clear all skip these alarms; update the holding or correct its maturity date instead. Date checks repeat every minute while the dashboard is open. Refresh reloads holdings after a change; failed loads keep the last available view and can be retried.</p>
                 <p>Open Alarms to review existing Buy, Sell and Watch signals, current portfolio and account risk warnings, and vesting and dividend notices. The header count combines displayed items; repeated matches for the same symbol and signal type count once. Its color reflects the highest attention level present; open the popup for labeled counts and details.</p>
-                <p>Red marks Sell signals and existing High or Extreme risk scores (61–100); amber marks Watch, Elevated risk (41–60), modeled borrowing, incomplete risk inputs and unconfirmed dividend payments. Green marks complete Buy signals and locally recorded dividend payments; it does not mean an investment is safe. Buy or Watch signals with missing rule or provider inputs are amber; Sell remains red. Blue marks scheduled dividends and purple marks vesting. Text and symbols explain each color.</p>
+                <p>Red marks due bond maturities, Sell signals and existing High or Extreme risk scores (61–100); amber marks Watch, Elevated risk (41–60), modeled borrowing, incomplete risk inputs and unconfirmed dividend payments. Green marks complete Buy signals and locally recorded dividend payments; it does not mean an investment is safe. Buy or Watch signals with missing rule or provider inputs are amber; Sell remains red. Blue marks scheduled dividends and purple marks vesting. Text and symbols explain each color.</p>
                 <p>Risk alarms use the existing dashboard model and full non-employee-equity scope, independent of holdings filters. Missing valuations, quantities, opening cash balances or conversion FX, unfinished or failed analytics updates prevent a complete risk assessment. Limited model inputs retain their existing data-quality penalty. Select a risk row for its current score, contributing factors and missing data; a score is not a probability of loss or a trading instruction.</p>
                 <p>Select an alarm to review its evidence. Use × to clear one alarm, choose Alert group or Type and Clear matching to clear that group, or Clear all alarms. Alert group filters by the displayed color; group and type apply together when both are selected. Clearing hides notices without changing holdings, transactions or risk scores. Risk warnings stay hidden for the unchanged assessment and return when its financial inputs change. Signals use the existing dismissal expiry setting; failed dismissals stay visible and can be retried. Clearing requires editing permission; viewers may inspect alarms.</p>
                 <p>After clearing alarms, keyboard focus stays in the dialog on an available control or the result message.</p>
@@ -1311,6 +1342,10 @@
               </article>
               <article class="help-feature">
                 <h3>Transactions</h3>
+                <p>Price fields show their input unit beside the label. Hover over or focus the question mark for an example. U.S. stock prices use dollars: 1 means $1. U.S. bond trade prices use cents: 100 means $1 per recorded unit, so 8,000 units at 100 produce $8,000 before fees. Israeli entries use agorot when the currency is ILS. Dividends, interest and fees use the selected currency directly, including for bonds. The unit follows the selected instrument and account; changing the selection never converts an entered number. Review the unit before saving. The same guidance appears in holding Buy/Sell history and Add historical price.</p>
+                <p>Use the controls above Saved transactions to filter by account, action, security symbol or name, comments and an inclusive date range. Enter dates as dd/mm/yyyy: 02/11/2026 means 2 November 2026. Sort by date, security, account, action or quantity in either direction; the default is newest date first. Quantities remain the recorded security units. Missing sort values stay last. Filters and sorting use the loaded list without another request or any change to the ledger.</p>
+                <p>Filters stay selected when the list reloads after saving, editing or deleting, when reopening Transactions, and when changing language. Reset filters restores the full saved list and newest-first order. Invalid or reversed date ranges retain the entered draft and previous results with a correction message. No matches is different from no saved transactions. Signing out or switching user clears the selection.</p>
+                <p>The Sell filter also finds imported sales stored internally as Remove; the Remove filter can find those same quantity adjustments. This does not add sale proceeds again to an imported cash balance. All actions is useful when checking a redemption such as 88059ESH8. The list can show only records already saved in the app; a broker statement alone does not prove the activity was imported. Account cash adjustments and the dedicated employee-option workflow keep their existing separate scope. Viewers can filter and sort; editing and deleting still require editing permission.</p>
                 <p>Open Portfolio → Transactions and choose New transaction to enter a local transaction in a separate window. New starts with Buy and today’s date; Edit opens the saved transaction in the same window. Choose the account, security or symbol, market, asset class, quantity, price and date in dd/mm/yyyy. Buy, sell and short affect account cash; adding or removing a security does not. Enter US equity prices in dollars, US bond prices in cents and Israeli security prices in agorot. Save prevents duplicate submissions and closes the entry window only after the transaction is saved. A rejected save keeps entered values for correction and retry. If the save result is unknown, saving is disabled; close the entry and check saved transactions before entering it again. Cancel, Escape or Close discards unsaved entries without changing data. If the list or dashboard cannot refresh after saving, the saved transaction remains recorded; reopen Transactions or use dashboard Refresh. Viewers may inspect saved activity but cannot create or edit transactions.</p>
                 <p>Open a security for its price chart, moving averages, and support/resistance; use Retry after a chart-loading failure. Exposure edits maintain a local economic-currency profile, distinct from the trading currency. Correct recorded transactions through Positions.</p>
                 <p>Currency exposure source: choose Reported holdings for allocations from a published fund report, or Manual estimate for your own assessment. Both use the same calculation; reports are not downloaded or verified automatically. Unknown leaves the currency exposure unclassified, even when a named currency is selected. Hover over or focus the help icon beside the field for this explanation.</p>
@@ -1758,11 +1793,15 @@
             <label>Units
               <input id="positionTransactionQuantity" type="number" min="0.00000001" step="any" placeholder="0" />
             </label>
-            <label>Unit price
+            <label><span class="price-unit-label"><span>Unit price</span><small id="positionTransactionPriceUnit" class="price-unit-badge"></small><span id="positionTransactionPriceUnitInfo" class="ux-tooltip price-unit-info" tabindex="0" role="note">?</span></span><span id="positionTransactionPriceUnitHint" class="sr-only"></span>
               <input id="positionTransactionPrice" type="number" min="0" step="any" placeholder="0.00" />
             </label>
             <label>Date
               <input id="positionTransactionDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" />
+            </label>
+            <label id="positionTransactionBondMaturityField" hidden><span>Bond maturity date</span>
+              <input id="positionTransactionBondMaturityDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" aria-describedby="positionTransactionBondMaturityHint" />
+              <small id="positionTransactionBondMaturityHint">Optional. Shared by this bond in all accounts.</small>
             </label>
             <label class="position-transaction-notes">Notes
               <input id="positionTransactionComments" placeholder="Optional" />
@@ -1829,6 +1868,7 @@
         </details>
         <div class="alarms-list-head">
           <p id="alarmsStatus" class="status-line" role="status" aria-live="polite">Vesting and dividend alarms</p>
+          <p class="sub">Bond maturity alarms stay visible until the holding is updated or the maturity date is corrected.</p>
           <button id="clearAlarms" class="secondary compact-button" type="button">Clear all alarms</button>
         </div>
         <div id="alarmPrioritySummary" class="alarm-priority-summary" aria-label="Alarm types"></div>
@@ -3002,7 +3042,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <div id="riskBadgeExplanation" class="risk-badge-explanation" role="tooltip" hidden></div>
-  <script src="/i18n.js?v=20261112-risk-scenarios-sort"></script>
+  <script src="/i18n.js?v=20261112-bond-maturity"></script>
   <script src="/scheduler.js?v=1"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
@@ -3023,9 +3063,11 @@
   <script src="/risk-scenarios.js?v=1"></script>
   <script src="/risk-scenarios-ui.js?v=1"></script>
   <script src="/holdings-sort.js?v=1"></script>
-  <script src="/alarm-priority-ui.js?v=20261109-alert-group-label"></script>
+  <script src="/transaction-list.js?v=1"></script>
+  <script src="/price-input-units.js?v=1"></script>
+  <script src="/alarm-priority-ui.js?v=20261112-bond-maturity"></script>
   <script src="/account-cash-ui.js?v=20261109-cash-save-label"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=20261112-risk-scenarios-sort"></script>
+  <script src="/app.js?v=20261112-bond-maturity"></script>
   </body>
 </html>

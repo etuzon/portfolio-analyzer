@@ -31,6 +31,7 @@ class Holding:
     country: str = ""
     sector: str = ""
     industry: str = ""
+    maturity_date: str = ""
 
 
 @dataclass

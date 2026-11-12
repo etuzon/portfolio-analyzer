@@ -1,0 +1,63 @@
+.transaction-list-toolbar {
+  display: grid;
+  gap: 0.65rem;
+  margin-block: 0.75rem;
+}
+
+.transaction-list-primary,
+.transaction-list-secondary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.65rem;
+}
+
+.transaction-list-toolbar label {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  margin: 0;
+}
+
+.transaction-list-toolbar input,
+.transaction-list-toolbar select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+.transaction-list-account { flex: 1.2 1 12rem; }
+.transaction-list-action { flex: 0.7 1 8rem; }
+.transaction-list-search { flex: 2.5 1 18rem; }
+.transaction-list-date { flex: 0 1 10.5rem; }
+.transaction-list-sort { flex: 1 1 10rem; }
+.transaction-list-direction { flex: 0.75 1 9rem; }
+.transaction-list-reset { flex: 0 0 auto; }
+
+@media (max-width: 600px) {
+  .transaction-list-search { flex-basis: 100%; }
+  .transaction-list-date { flex: 1 1 10.5rem; }
+
+  #securitiesList [data-transaction-id] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+  }
+
+  #securitiesList [data-transaction-id] > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  #securitiesList [data-transaction-id] > b,
+  #securitiesList [data-transaction-id] > span,
+  #securitiesList [data-transaction-id] > .sub {
+    grid-column: 1 / -1;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  #securitiesList [data-transaction-id] > button {
+    width: auto;
+    white-space: normal;
+  }
+}

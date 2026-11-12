@@ -1575,6 +1575,7 @@ function setAuthenticatedSession(payload) {
     if (typeof resetTradeSimulator === "function") resetTradeSimulator();
     if (typeof resetRiskScenarios === "function") resetRiskScenarios();
     if (typeof resetHoldingsSort === "function") resetHoldingsSort();
+    if (typeof resetTransactionFilters === "function") resetTransactionFilters();
     if (typeof resetCorrelation === "function") resetCorrelation();
     if (typeof resetBenchmarkComparison === "function") resetBenchmarkComparison();
     if (typeof resetTradingJournal === "function") resetTradingJournal();
@@ -1610,6 +1611,7 @@ function showLogin(message = "") {
   if (typeof resetTradeSimulator === "function") resetTradeSimulator();
   if (typeof resetRiskScenarios === "function") resetRiskScenarios();
   if (typeof resetHoldingsSort === "function") resetHoldingsSort();
+  if (typeof resetTransactionFilters === "function") resetTransactionFilters();
   if (typeof resetTransactionEntry === "function") resetTransactionEntry();
   state.portfolioRefreshPending = false;
   state.alarmClearPending = false;
@@ -2452,6 +2454,7 @@ function applyLanguage() {
   if (state.activeReportTrend) renderAccountTrend(state.activeReportTrend);
   if (state.tradeHistory || state.tradeHistoryLoading) { refreshPositionFilterOptions(); renderTradeHistory(); }
   if (state.tradeHistoryDetail) renderTradeHistoryDetails(state.tradeHistoryDetail);
+  if (typeof renderLocalTransactions === "function") renderLocalTransactions();
   if (state.items?.length) renderRows(state.items);
   if (state.positionTransactionsDetail) syncPositionTransactionLimit();
   if (state.securityDetail && $("securityDetailModal")?.hidden === false) renderSecurityDetail();
@@ -2465,6 +2468,7 @@ function applyLanguage() {
   if (typeof renderRiskScenarios === "function" && !$("riskScenariosModal")?.hidden) renderRiskScenarios();
   window.ScheduleEditor?.relocalize($("aiScheduleEditor"), t);
   window.ScheduleEditor?.relocalize($("backupScheduleEditor"), t);
+  if (typeof syncPriceUnitHints === "function") syncPriceUnitHints();
   window.PortfolioI18n?.applyToDocument(state.language);
   window.PortfolioI18n?.observe();
 }
@@ -4330,7 +4334,7 @@ function preserveRenderedInteraction(root) {
   const active = root.contains(document.activeElement) ? document.activeElement : null;
   const rowKey = active?.closest("[data-portfolio-position]")?.dataset.portfolioPosition;
   const accountKey = active?.closest("[data-account-summary]")?.dataset.accountSummary;
-  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-update-account-cash|data-cash-entry|data-risk-badge|data-open-risk-scenarios|data-open-(signal|risk|dividend|vesting)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
+  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-update-account-cash|data-cash-entry|data-risk-badge|data-edit-security|data-delete-security|data-open-risk-scenarios|data-open-(signal|risk|dividend|vesting|maturity)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
   const detailKey = (node) => JSON.stringify([node.closest?.("[data-account-summary]")?.dataset.accountSummary || "", node.id, node.className]);
   const detailStates = new Map();
   root.querySelectorAll("details").forEach((node) => {
@@ -6996,6 +7000,40 @@ function renderVestingSchedulePreview() {
   }
 }
 
+function syncPriceUnitHints() {
+  if (!window.PriceInputUnits) return;
+  const accountFor = (id) => (state.localAccounts || []).find((account) => String(account.id) === String(id)) || {};
+  const metadataFor = (id, symbol, market) => instrumentById(id) || (state.manualSecurities || []).find((item) =>
+    String(item.symbol || "").toUpperCase() === cleanSecuritySymbol(symbol).toUpperCase()
+    && String(item.stock_market || "").toUpperCase() === String(market || "").trim().toUpperCase()) || {};
+  const locationCurrency = (metadata, account, explicit = {}) => {
+    const location = explicit.location || metadata.location || account.location || "USA";
+    const currency = explicit.currency || metadata.currency || account.currency
+      || (["israel", "il", "state of israel"].includes(String(location).trim().toLowerCase()) ? "ILS" : "USD");
+    return { location, currency };
+  };
+  const bind = (prefix, context, hintId = `${prefix}UnitHint`) => window.PriceInputUnits.bind({
+    input: $(prefix), unit: $(`${prefix}Unit`), info: $(`${prefix}UnitInfo`), hint: $(hintId),
+  }, context, t);
+  const metadata = metadataFor(valueOf("securityKnownInstrument"), valueOf("securitySymbol"), valueOf("securityMarket"));
+  bind("securityPrice", {
+    ...locationCurrency(metadata, accountFor(valueOf("securityAccount"))),
+    assetClass: valueOf("securityAssetClass") || metadata.asset_class || "EQUITY", action: valueOf("securityAction"),
+  });
+  const detail = state.positionTransactionsDetail;
+  if (detail) {
+    const positionMetadata = metadataFor("", detail.symbol, detail.market);
+    bind("positionTransactionPrice", {
+      ...locationCurrency(positionMetadata, accountFor(detail.accountId), detail),
+      assetClass: detail.assetClass || "EQUITY", action: valueOf("positionTransactionAction"),
+    });
+  }
+  bind("priceInput", {
+    location: valueOf("priceLocation") || "USA", currency: valueOf("priceCurrency") || "USD",
+    assetClass: valueOf("priceAssetClass") || "EQUITY",
+  }, "priceEntryUnits");
+}
+
 function toggleTransactionCompFields() {
   const type = selectedTransactionInstrumentType();
   const isRsu = String(valueOf("securityAssetClass") || "").toUpperCase() === "RSU";
@@ -7003,6 +7041,7 @@ function toggleTransactionCompFields() {
   const isEmployeeGrantAdd = isEmployeeOption && valueOf("securityAction") === "ADD";
   const isOptionGrant = type === "STOCK_OPTION" || isEmployeeOption;
   const isEquityComp = isRsu || isOptionGrant;
+  if (typeof syncBondMaturityForm === "function") syncBondMaturityForm();
   document.querySelectorAll("[data-equity-comp-field]").forEach((node) => { node.hidden = !isEquityComp; });
   document.querySelectorAll("[data-option-grant-field]").forEach((node) => { node.hidden = !isOptionGrant; });
   document.querySelectorAll("[data-employee-option-derived-field]").forEach((node) => {
@@ -7019,6 +7058,7 @@ function toggleTransactionCompFields() {
     ["securityVestDate", "securityPurchasePrice", "securityStrikePrice"].forEach((id) => { $(id).value = ""; });
   }
   if (isEmployeeOption) renderVestingSchedulePreview();
+  if (typeof syncPriceUnitHints === "function") syncPriceUnitHints();
 }
 
 function refreshManualSecuritySelects() {
@@ -7079,6 +7119,7 @@ function setSecurityEditMode(tx = null) {
 }
 
 function clearSecurityForm() {
+  if ($("securityBondMaturityDate")) { setDateField("securityBondMaturityDate", ""); delete $("securityBondMaturityDate").dataset.securityKey; $("securityBondMaturityDate").setCustomValidity(""); }
   ["securitySymbol", "securityMarket", "securityQuantity", "securityPrice", "securityVestDate", "securityPurchasePrice", "securityStrikePrice", "securityVestingStartDate", "securityComments"].forEach((id) => { $(id).value = ""; });
   $("securityAllowManual").checked = false;
   $("securityKnownInstrument").value = "";
@@ -7127,6 +7168,7 @@ function fillSecurityTransaction(transactionId) {
   $("securityAllowManual").checked = true;
   setSecurityEditMode(tx);
   toggleTransactionCompFields();
+  if ($("securityBondMaturityDate")) setDateField("securityBondMaturityDate", tx.maturity_date || "");
   $("securityStatus").textContent = `Editing ${tx.action} ${tx.symbol}`;
 }
 
@@ -7159,13 +7201,7 @@ function renderPriceEntryState() {
   $("savePrice").disabled = saving || !canWrite();
   $("savePrice").textContent = t(saving ? "Saving historical price…" : "Save price");
   $("priceEntryModal").querySelectorAll("button[data-close]").forEach((button) => { button.disabled = saving; });
-  const location = valueOf("priceLocation").toLowerCase();
-  const unitText = ["israel", "ישראל"].includes(location)
-    ? "Israel entries use agorot; the app divides the entered price by 100."
-    : ["usa", "us", "united states", "united states of america", "ארצות הברית", "ארה״ב"].includes(location) && valueOf("priceAssetClass") === "BOND"
-      ? "For locally recorded U.S. bonds, enter the quote per 100 of face value; the app divides it by 100 once."
-      : "Enter the price in the selected currency per recorded unit.";
-  $("priceEntryUnits").textContent = t(unitText);
+  if (typeof syncPriceUnitHints === "function") syncPriceUnitHints();
 }
 
 function preparePriceEntry() {
@@ -7448,6 +7484,16 @@ function positionTransactionAvailableQuantity(action = valueOf("positionTransact
   return Infinity;
 }
 
+function syncPositionBondMaturity(reset = false) {
+  const input = $("positionTransactionBondMaturityDate"), field = $("positionTransactionBondMaturityField"), detail = state.positionTransactionsDetail;
+  if (!input || !field || !detail) return;
+  const isBond = detail.assetClass === "BOND";
+  field.hidden = !isBond;
+  input.disabled = !isBond || !canWrite();
+  if (reset) { input.dataset.maturityDirty = ""; input.setCustomValidity(""); }
+  if (input.dataset.maturityDirty !== "true") setDateField("positionTransactionBondMaturityDate", detail.maturityDate || "");
+}
+
 function syncPositionTransactionLimit() {
   const input = $("positionTransactionQuantity");
   const limit = $("positionTransactionLimit");
@@ -7466,29 +7512,32 @@ function syncPositionTransactionLimit() {
   input.removeAttribute("max");
   if (Number.isFinite(available)) input.max = String(available);
   if (state.editingPositionTransactionId) {
-    limit.textContent = "The full transaction history will be checked";
+    limit.textContent = t("The full transaction history will be checked");
   } else if (action === "SELL") {
-    limit.textContent = available > 0 ? `Available to sell: ${fmt(available, 4)} units` : "No long units available to sell";
+    limit.textContent = available > 0 ? t("Available to sell: {quantity} units").replace("{quantity}", fmt(available, 4)) : t("No long units available to sell");
   } else if (action === "BUY" && current < 0) {
-    limit.textContent = `Short cover limit: ${fmt(available, 4)} units`;
+    limit.textContent = t("Short cover limit: {quantity} units").replace("{quantity}", fmt(available, 4));
   } else if (action === "SHORT" && current > 0 && !state.editingPositionTransactionId) {
-    limit.textContent = "Sell the long position before opening a short";
+    limit.textContent = t("Sell the long position before opening a short");
   } else {
-    limit.textContent = current < 0 ? `${fmt(Math.abs(current), 4)} units short` : `${fmt(current, 4)} units held`;
+    limit.textContent = t(current < 0 ? "{quantity} units short" : "{quantity} units held").replace("{quantity}", fmt(Math.abs(current), 4));
   }
-  if ($("positionTransactionAction").disabled) limit.textContent = `${limit.textContent} · Imported action stays unchanged`;
+  if ($("positionTransactionAction").disabled) limit.textContent = `${limit.textContent} · ${t("Imported action stays unchanged")}`;
+  if (typeof syncPriceUnitHints === "function") syncPriceUnitHints();
+  if (typeof syncPositionBondMaturity === "function") syncPositionBondMaturity();
 }
 
 function clearPositionTransactionForm(message = "") {
   state.editingPositionTransactionId = "";
-  $("positionTransactionFormTitle").textContent = "Add transaction";
+  $("positionTransactionFormTitle").textContent = t("Add transaction");
   $("positionTransactionAction").disabled = false;
   $("positionTransactionAction").value = "BUY";
   $("positionTransactionQuantity").value = "";
   $("positionTransactionPrice").value = "";
   $("positionTransactionComments").value = "";
   setDateField("positionTransactionDate", todayString());
-  $("savePositionTransaction").textContent = "Save";
+  if (typeof syncPositionBondMaturity === "function") syncPositionBondMaturity(true);
+  $("savePositionTransaction").textContent = t("Save");
   $("cancelPositionTransactionEdit").hidden = true;
   $("positionTransactionStatus").textContent = t(message);
   syncPositionTransactionLimit();
@@ -7500,16 +7549,18 @@ function editPositionTransaction(transactionId) {
   state.editingPositionTransactionId = tx.id;
   const actualAction = String(tx.action || "").toUpperCase();
   const displayAction = positionTransactionDisplayAction(tx);
-  $("positionTransactionFormTitle").textContent = `Edit ${displayAction.toLowerCase()} transaction`;
+  $("positionTransactionFormTitle").textContent = t("Edit {action} transaction").replace("{action}", t({ BUY: "Buy", SELL: "Sell", SHORT: "Short", ADD: "Add", REMOVE: "Remove" }[displayAction] || displayAction).toLowerCase());
   $("positionTransactionAction").value = ["BUY", "SELL", "SHORT"].includes(displayAction) ? displayAction : "BUY";
   $("positionTransactionAction").disabled = !["BUY", "SELL", "SHORT"].includes(actualAction);
   $("positionTransactionQuantity").value = tx.quantity || "";
   $("positionTransactionPrice").value = tx.price_input ?? tx.price ?? "";
   setDateField("positionTransactionDate", tx.trade_date || "");
+  if (state.positionTransactionsDetail && Object.hasOwn(tx, "maturity_date")) state.positionTransactionsDetail.maturityDate = tx.maturity_date || "";
+  if (typeof syncPositionBondMaturity === "function") syncPositionBondMaturity(true);
   $("positionTransactionComments").value = tx.comments || "";
-  $("savePositionTransaction").textContent = "Update";
+  $("savePositionTransaction").textContent = t("Update");
   $("cancelPositionTransactionEdit").hidden = false;
-  $("positionTransactionStatus").textContent = `Editing ${displayAction} from ${formatDate(tx.trade_date)}`;
+  $("positionTransactionStatus").textContent = t("Editing {action} from {date}").replace("{action}", t({ BUY: "Buy", SELL: "Sell", SHORT: "Short", ADD: "Add", REMOVE: "Remove" }[displayAction] || displayAction)).replace("{date}", formatDate(tx.trade_date));
   syncPositionTransactionLimit();
   $("positionTransactionQuantity").focus();
 }
@@ -7560,7 +7611,10 @@ async function savePositionTransaction() {
   const action = editing && !["BUY", "SELL", "SHORT"].includes(String(editing.action || "").toUpperCase())
     ? editing.action
     : values.action;
+  const maturityDate = detail.assetClass === "BOND" && typeof bondMaturityDateInput === "function" ? bondMaturityDateInput("positionTransactionBondMaturityDate") : undefined;
+  if (maturityDate === null) return;
   const payload = {
+    maturity_date: maturityDate,
     account_db_id: detail.accountId,
     action,
     symbol: detail.symbol,
@@ -7594,6 +7648,7 @@ async function savePositionTransaction() {
   const message = t(editing ? "Transaction updated successfully." : "Transaction added successfully.")
     + (result.position_closed ? ` ${t("Position closed. No units remain.")}` : "");
   if (state.positionTransactionsDetail === detail) {
+    if (maturityDate !== undefined) detail.maturityDate = maturityDate;
     detail.quantity = Number(result.position_quantity);
     clearPositionTransactionForm(message);
     renderPositionTransactionHistory();
@@ -7659,6 +7714,9 @@ async function openPositionTransactionHistory(dataset, returnFocus) {
     assetClass: dataset.positionHistoryAsset || "EQUITY",
     location: dataset.positionHistoryLocation || "",
   };
+  const maturityHolding = (state.allPortfolioItems || state.items || []).find(item => transactionMatchesPosition({ account_db_id: item.holding?.account_id, symbol: item.holding?.symbol, stock_market: item.holding?.stock_market }, state.positionTransactionsDetail))?.holding;
+  state.positionTransactionsDetail.maturityDate = maturityHolding?.maturity_date || "";
+  const detail = state.positionTransactionsDetail;
   openModal("positionTransactionsModal", returnFocus);
   clearPositionTransactionForm();
   if (requestedAction) {
@@ -7668,7 +7726,11 @@ async function openPositionTransactionHistory(dataset, returnFocus) {
   }
   $("positionTransactionsRows").innerHTML = '<tr><td colspan="8" class="empty-cell">Loading transaction history…</td></tr>';
   const data = await api("/api/local/securities");
+  if (state.positionTransactionsDetail !== detail) return;
   state.localTransactions = data.items || [];
+  const maturityRow = state.localTransactions.find(tx => transactionMatchesPosition(tx, state.positionTransactionsDetail));
+  if (maturityRow && Object.hasOwn(maturityRow, "maturity_date")) state.positionTransactionsDetail.maturityDate = maturityRow.maturity_date || "";
+  if (typeof syncPositionBondMaturity === "function") syncPositionBondMaturity();
   renderPositionTransactionHistory();
 }
 
@@ -8933,12 +8995,13 @@ function setSecuritiesWorkflow(workflow = "general") {
   if ($("newSecurityTransaction")) $("newSecurityTransaction").hidden = employeeOptions;
   $("savedTransactionsLabel").hidden = employeeOptions;
   $("securitiesList").hidden = employeeOptions;
+  if ($("transactionListFilters")) $("transactionListFilters").hidden = employeeOptions;
   $("instrumentDefinitionBadge").hidden = true;
   $("accountTransactionBadge").hidden = true;
   $("securitiesTitle").textContent = t(employeeOptions ? "Employee Stock Options" : "Transactions");
-  $("securitiesSubtitle").textContent = employeeOptions
+  $("securitiesSubtitle").textContent = t(employeeOptions
     ? "Add, review, edit, or delete a grant and its complete vesting schedule."
-    : "Choose a defined instrument and record its transaction in an account.";
+    : "Choose a defined instrument and record its transaction in an account.");
   $("instrumentDefinitionTitle").textContent = employeeOptions ? "Enter grant details" : "Instrument definition";
   $("instrumentDefinitionHint").textContent = employeeOptions
     ? "Use the dates and strike price shown in your company grant agreement."
@@ -8947,7 +9010,7 @@ function setSecuritiesWorkflow(workflow = "general") {
   $("accountTransactionHint").textContent = employeeOptions
     ? "Choose the ESOP account, enter the total options granted, and review the calculated vesting dates."
     : "Choose an account and record the security movement.";
-  $("savedTransactionsLabel").textContent = employeeOptions ? "Saved employee option activity" : "Saved transactions";
+  $("savedTransactionsLabel").textContent = t(employeeOptions ? "Saved employee option activity" : "Saved transactions");
   $("saveManualSecurity").textContent = employeeOptions ? "Continue to options and vesting" : "Save instrument";
   $("saveSecurity").textContent = employeeOptions ? "Save employee option grant" : "Save transaction";
   $("securityQuantityLabel").textContent = t(employeeOptions ? "Total Options Granted *" : "Quantity *");
@@ -8978,6 +9041,36 @@ function setSecuritiesWorkflow(workflow = "general") {
   toggleManualInstrumentFields();
   toggleTransactionCompFields();
   updateEmployeeOptionsAccountNotice();
+  if (typeof renderLocalTransactions === "function") renderLocalTransactions();
+}
+
+function syncBondMaturityForm() {
+  const input = $("securityBondMaturityDate"), field = $("securityBondMaturityField");
+  if (!input || !field) return;
+  const isBond = valueOf("securityAssetClass") === "BOND";
+  field.hidden = !isBond;
+  input.disabled = !isBond;
+  const symbol = cleanSecuritySymbol(valueOf("securitySymbol"));
+  const market = String(valueOf("securityMarket")).toUpperCase();
+  const key = `${symbol}|${market}`;
+  if (input.dataset.securityKey !== key) {
+    const instrument = instrumentById(valueOf("securityKnownInstrument"));
+    const transaction = (state.localTransactions || []).find(tx => tx.symbol === symbol && tx.stock_market === market);
+    setDateField("securityBondMaturityDate", instrument?.maturity_date || transaction?.maturity_date || "");
+    input.dataset.securityKey = key;
+  }
+}
+
+function bondMaturityDateInput(id) {
+  const raw = valueOf(id), parsed = dateValue(id);
+  if (raw && !parsed) {
+    $(id).setCustomValidity(t("Enter a valid maturity date as dd/mm/yyyy."));
+    $(id).reportValidity();
+    $(id).focus();
+    return null;
+  }
+  $(id).setCustomValidity("");
+  return parsed;
 }
 
 function toggleManualInstrumentFields() {
@@ -8986,6 +9079,8 @@ function toggleManualInstrumentFields() {
   setCurrencyOptions("manualSecurityCurrency", SUPPORTED_MANAGEMENT_CURRENCIES);
   const isOption = type === "OPTION" || type === "STOCK_OPTION" || isEmployeeOption;
   const isDerivative = isOption || type === "FUTURE";
+  document.querySelectorAll("[data-bond-maturity-field]").forEach(node => { node.hidden = type !== "BOND"; });
+  if ($("manualBondMaturityDate")) $("manualBondMaturityDate").disabled = type !== "BOND";
   document.querySelectorAll("[data-derivative-field]").forEach((node) => { node.hidden = !isDerivative; });
   document.querySelectorAll("[data-option-field]").forEach((node) => { node.hidden = !isOption; });
   document.querySelectorAll("[data-non-employee-derivative-field]").forEach((node) => { node.hidden = !isDerivative || isEmployeeOption; });
@@ -9076,7 +9171,7 @@ function renderManualSecuritiesList() {
         <div class="security-management-main">
           <b>${esc(item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (item.company_name || item.name) : `${item.symbol}${item.secondary_symbol ? ` · ${item.secondary_symbol}` : ""}`)}</b>
           <span>${esc(item.name || item.symbol)} · ${esc(optionLabel(item.instrument_type))} · ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" ? `<span class="badge ${item.listing_status === "PUBLIC" ? "ok" : "warn"}">${esc(item.listing_status === "PUBLIC" ? `${item.public_symbol} · ${item.public_market}` : "Private Company")}</span>` : `${esc(item.stock_market)} · ${esc(currencyDisplayLabel(item.currency))}`}</span>
-          <div class="sub">${esc(optionLabel(item.asset_class))}${item.grant_id ? ` · Grant ID ${esc(item.grant_id)}` : ""}${item.grant_date ? ` · Grant Date ${esc(formatDate(item.grant_date))}` : ""}${item.vesting_start_date ? ` · Vesting Start ${esc(formatDate(item.vesting_start_date))}` : ""}${item.underlying_symbol ? ` · Underlying ${esc(item.underlying_symbol)}` : ""}${item.option_type && item.instrument_type !== "EMPLOYEE_STOCK_OPTION" ? ` · ${esc(item.option_type)} option` : ""}${item.expiration_date ? ` · Exp ${esc(formatDate(item.expiration_date))}` : ""}${item.strike_price ? ` · Strike ${fmt(item.strike_price, 4)}` : ""}${item.instrument_type !== "EMPLOYEE_STOCK_OPTION" && item.contract_multiplier ? ` · Multiplier ${fmt(item.contract_multiplier, 4)}` : ""}${item.manual_share_value ? ` · Valuation ${money(item.manual_share_value, item.currency, 4)} on ${esc(formatDate(item.valuation_date))}` : ""}${item.comments ? ` · ${esc(item.comments)}` : ""}</div>
+          <div class="sub">${esc(optionLabel(item.asset_class))}${item.grant_id ? ` · Grant ID ${esc(item.grant_id)}` : ""}${item.grant_date ? ` · Grant Date ${esc(formatDate(item.grant_date))}` : ""}${item.vesting_start_date ? ` · Vesting Start ${esc(formatDate(item.vesting_start_date))}` : ""}${item.underlying_symbol ? ` · Underlying ${esc(item.underlying_symbol)}` : ""}${item.option_type && item.instrument_type !== "EMPLOYEE_STOCK_OPTION" ? ` · ${esc(item.option_type)} option` : ""}${item.expiration_date ? ` · Exp ${esc(formatDate(item.expiration_date))}` : ""}${item.instrument_type === "BOND" ? ` · ${esc(t("Bond maturity date"))}: ${esc(item.maturity_date ? formatDate(item.maturity_date) : t("Not set"))}` : ""}${item.strike_price ? ` · Strike ${fmt(item.strike_price, 4)}` : ""}${item.instrument_type !== "EMPLOYEE_STOCK_OPTION" && item.contract_multiplier ? ` · Multiplier ${fmt(item.contract_multiplier, 4)}` : ""}${item.manual_share_value ? ` · Valuation ${money(item.manual_share_value, item.currency, 4)} on ${esc(formatDate(item.valuation_date))}` : ""}${item.comments ? ` · ${esc(item.comments)}` : ""}</div>
         </div>
         <div class="row-actions security-management-actions">
           <button class="secondary compact-button" type="button" data-use-manual-security="${esc(item.id)}">${employeeOptionsWorkflowActive() ? "Add to account" : "Use"}</button>
@@ -9126,7 +9221,7 @@ function clearManualSecurityForm() {
   state.editingManualSecurityId = "";
   [
     "manualSecuritySymbol", "manualSecondarySymbol", "manualSecurityName", "manualSecurityMarket", "manualCompanyName", "manualGrantId",
-    "manualGrantDate", "manualVestingStartDate", "manualUnderlyingSymbol", "manualExpirationDate", "manualStrikePrice",
+    "manualGrantDate", "manualVestingStartDate", "manualUnderlyingSymbol", "manualExpirationDate", "manualBondMaturityDate", "manualStrikePrice",
     "manualContractMultiplier", "manualTaxScheme", "manualShareValue", "manualValuationDate",
     "manualRestrictionEndDate", "manualSecurityComments",
   ].forEach((id) => { $(id).value = ""; });
@@ -9135,7 +9230,7 @@ function clearManualSecurityForm() {
   $("manualInstrumentType").value = "STOCK";
   $("manualSecuritySymbol").disabled = false;
   $("manualSecurityMarket").disabled = false;
-  $("saveManualSecurity").textContent = "Save instrument";
+  $("saveManualSecurity").textContent = t("Save instrument");
   $("cancelManualSecurityEdit").hidden = false;
   toggleManualInstrumentFields();
 }
@@ -9170,6 +9265,7 @@ function editManualSecurity(securityId) {
   $("manualUnderlyingSymbol").value = item.underlying_symbol || "";
   $("manualOptionType").value = item.option_type || "CALL";
   setDateField("manualExpirationDate", item.expiration_date || "");
+  setDateField("manualBondMaturityDate", item.maturity_date || "");
   $("manualStrikePrice").value = Number(item.strike_price || 0) || "";
   $("manualContractMultiplier").value = Number(item.contract_multiplier || 0) || "";
   $("manualSecurityComments").value = item.comments || "";
@@ -9177,11 +9273,11 @@ function editManualSecurity(securityId) {
   const identityLocked = item.can_delete === false;
   $("manualSecuritySymbol").disabled = identityLocked;
   $("manualSecurityMarket").disabled = identityLocked;
-  $("saveManualSecurity").textContent = "Update instrument";
+  $("saveManualSecurity").textContent = t("Update instrument");
   $("cancelManualSecurityEdit").hidden = false;
   $("manualSecurityStatus").textContent = identityLocked
-    ? "Editing instrument. Its symbol and stock market stay locked while attached data exists."
-    : "Editing instrument.";
+    ? t("Editing instrument. Its symbol and stock market stay locked while attached data exists.")
+    : t("Editing instrument.");
   $("instrumentDefinitionSection").hidden = false;
   $("instrumentDefinitionTitle").textContent = optionLabel("Edit instrument");
   openModal("instrumentEditorModal");
@@ -9216,7 +9312,10 @@ async function persistManualSecurity() {
     $("manualSecondarySymbol").focus();
     return;
   }
+  const maturityDate = valueOf("manualInstrumentType") === "BOND" ? bondMaturityDateInput("manualBondMaturityDate") : undefined;
+  if (maturityDate === null) return;
   const payload = {
+    maturity_date: maturityDate,
     id: state.editingManualSecurityId || undefined,
     symbol: primarySymbol,
     secondary_symbol: secondarySymbol,
@@ -9346,10 +9445,99 @@ function transactionVestingSummary(tx) {
   if (tranches.length) {
     const first = tranches[0];
     const last = tranches[tranches.length - 1];
-    return ` · ${tranches.length} vesting dates, ${formatDate(first.vest_date)}–${formatDate(last.vest_date)}`;
+    return " · " + t("{count} vesting dates, {first}–{last}").replace("{count}", fmt(tranches.length, 0)).replace("{first}", formatDate(first.vest_date)).replace("{last}", formatDate(last.vest_date));
   }
-  return tx.vest_date ? ` · Vests ${formatDate(tx.vest_date)}` : "";
+  return tx.vest_date ? " · " + t("Vests {date}").replace("{date}", formatDate(tx.vest_date)) : "";
 }
+
+let transactionListView = { criteria: TransactionList.defaults(), applied: TransactionList.defaults(), accountLabels: new Map() };
+
+function transactionListActionLabel(action) {
+  return t({ BUY:"Buy", SELL:"Sell", SHORT:"Short", ADD:"Add", REMOVE:"Remove", DIVIDEND:"Dividend", INTEREST:"Interest", FEE:"Fee", CASH_IN:"Cash in", CASH_OUT:"Cash out" }[action] || action);
+}
+
+function resetTransactionFilters() {
+  transactionListView = { criteria: TransactionList.defaults(), applied: TransactionList.defaults(), accountLabels: new Map() };
+  if ($("transactionListFilters")) renderLocalTransactions();
+}
+
+function transactionListNumber(value, digits = 4) {
+  return ["number", "string"].includes(typeof value) && String(value).trim() !== "" && Number.isFinite(Number(value))
+    ? fmt(value, digits) : t("Not available");
+}
+
+function transactionListCashText(tx) {
+  if (!["BUY", "SELL", "SHORT", "DIVIDEND", "INTEREST", "FEE", "CASH_IN", "CASH_OUT"].includes(tx.action)) return t("No cash movement");
+  const known = value => ["number", "string"].includes(typeof value) && String(value).trim() !== "" && Number.isFinite(Number(value));
+  if (!known(tx.quantity) || !known(tx.price)) return t("Cash movement unavailable");
+  const impact = transactionCashImpact(tx);
+  return Number.isFinite(impact) ? impact ? `${t("Cash")} ${signedMoney(impact, tx.currency)}` : t("No cash movement") : t("Cash movement unavailable");
+}
+
+function renderLocalTransactions() {
+  const list = $("securitiesList");
+  if (!list) return;
+  const previousFocus = list.contains(document.activeElement) ? document.activeElement : null;
+  const restore = preserveRenderedInteraction(list);
+  const employeeOptions = employeeOptionsWorkflowActive();
+  const all = employeeOptions
+    ? state.localTransactions.filter(tx => tx.instrument_type === "EMPLOYEE_STOCK_OPTION")
+    : state.localTransactions.filter(tx => !["CASH_IN", "CASH_OUT"].includes(tx.action));
+  const view = transactionListView, criteria = view.criteria;
+  const toolbar = $("transactionListFilters");
+  if (toolbar) toolbar.hidden = employeeOptions;
+  const options = TransactionList.accountOptions(all, state.language);
+  options.forEach(row => view.accountLabels.set(row.value, row.label));
+  if (criteria.account && !options.some(row => row.value === criteria.account)) options.push({ value: criteria.account, label: view.accountLabels.get(criteria.account) || t("Selected account is unavailable") });
+  const accountSelect = $("transactionFilterAccount");
+  if (accountSelect) accountSelect.innerHTML = `<option value="">${esc(t("All accounts"))}</option>${options.map(row => `<option value="${esc(row.value)}">${esc(row.label || t("Account"))}</option>`).join("")}`;
+  const fields = { account:"transactionFilterAccount", action:"transactionFilterAction", query:"transactionFilterQuery", from:"transactionFilterFrom", to:"transactionFilterTo", sort:"transactionSortBy", direction:"transactionSortDirection" };
+  Object.entries(fields).forEach(([key, id]) => { if ($(id) && $(id).value !== criteria[key]) $(id).value = criteria[key]; });
+  const from = TransactionList.dateKey(criteria.from), to = TransactionList.dateKey(criteria.to);
+  let validation = "";
+  if ((criteria.from.trim() && !from) || (criteria.to.trim() && !to)) validation = "Enter valid From and To dates as dd/mm/yyyy. Previous results remain displayed.";
+  else if (from && to && from > to) validation = "From date must be on or before To date. Previous results remain displayed.";
+  for (const [id, raw, value] of [["transactionFilterFrom", criteria.from, from], ["transactionFilterTo", criteria.to, to]]) {
+    const field = $(id);
+    if (field) field.setAttribute("aria-invalid", String(Boolean(raw.trim() && !value) || Boolean(from && to && from > to)));
+  }
+  if (!validation) view.applied = { ...criteria, from, to };
+  const visibleTransactions = employeeOptions ? all : TransactionList.filterAndSort(all, view.applied, state.language, { actionLabel: transactionListActionLabel });
+  const status = $("transactionFilterStatus");
+  if (status) status.hidden = employeeOptions;
+  if (status) status.textContent = validation && !employeeOptions ? t(validation)
+    : t("Showing {shown} of {total} saved transactions.").replace("{shown}", fmt(visibleTransactions.length, 0)).replace("{total}", fmt(all.length, 0));
+  list.innerHTML = visibleTransactions.length ? visibleTransactions.map((tx) => `
+    <div class="stack-item management-item" data-transaction-id="${esc(tx.id)}">
+      <b>${esc(transactionListActionLabel(TransactionList.displayAction(tx)))} ${esc(tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (tx.company_name || tx.security_name || t("Employee option")) : `${tx.symbol}${tx.secondary_symbol ? ` · ${tx.secondary_symbol}` : ""}`)}</b>
+      <span>${esc(transactionListNumber(tx.quantity))} @ ${esc(transactionListNumber(tx.price_input))} (${esc(currencyDisplayLabel(tx.currency))} ${esc(transactionListNumber(tx.price))})${tx.instrument_type ? ` · ${esc(optionLabel(tx.instrument_type))}` : ""}</span>
+      ${tx.transition_id
+        ? `<span class="badge ok" title="${esc(t("Created by an audited employee-option lifecycle action"))}">${esc(t("Lifecycle transaction · read-only"))}</span>`
+        : `<button class="secondary compact-button" type="button"${canWrite() ? "" : " disabled"} data-edit-security="${esc(tx.id)}">${esc(t("Edit"))}</button>
+           <button class="secondary compact-button" type="button"${canWrite() ? "" : " disabled"} data-delete-security="${esc(tx.id)}">${esc(t("Delete"))}</button>`}
+      <div class="sub">${esc(tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (tx.listing_status === "PUBLIC" ? `${tx.public_symbol} · ${tx.public_market}` : t("Private company")) : tx.stock_market)} · ${esc(optionLabel(tx.asset_class))}${tx.grant_id ? ` · ${esc(t("Grant"))} ${esc(tx.grant_id)}` : ""}${tx.option_type && tx.instrument_type !== "EMPLOYEE_STOCK_OPTION" ? ` · ${esc(optionLabel(tx.option_type))}` : ""}${tx.expiration_date ? ` · ${esc(t("Expiration"))} ${esc(formatDate(tx.expiration_date))}` : ""}${tx.maturity_date ? ` · ${esc(t("Bond maturity date"))} ${esc(formatDate(tx.maturity_date))}` : ""}${transactionVestingSummary(tx)}${tx.strike_price ? ` · ${esc(t("Strike price"))} ${fmt(tx.strike_price, 4)}` : ""}${tx.purchase_price ? ` · ${esc(t("Purchase price"))} ${fmt(tx.purchase_price, 4)}` : ""} · ${esc(formatDate(tx.trade_date))} · ${esc(transactionListCashText(tx))} · ${esc(tx.management_company || "")} ${esc(tx.account_id || "")}</div>
+    </div>
+`).join("")
+    : `<div class="empty">${esc(t(employeeOptions ? "No employee option activity saved yet" : all.length ? "No transactions match these filters. Reset filters to see all saved activity." : "No saved transactions."))}</div>`;
+  restore();
+  if (previousFocus && !previousFocus.isConnected && !list.contains(document.activeElement)) $("resetTransactionFilters")?.focus({ preventScroll: true });
+}
+
+document.addEventListener("input", event => {
+  const key = { transactionFilterQuery:"query", transactionFilterFrom:"from", transactionFilterTo:"to" }[event.target.id];
+  if (!key) return;
+  transactionListView.criteria[key] = event.target.value;
+  renderLocalTransactions();
+});
+document.addEventListener("change", event => {
+  const key = { transactionFilterAccount:"account", transactionFilterAction:"action", transactionFilterFrom:"from", transactionFilterTo:"to", transactionSortBy:"sort", transactionSortDirection:"direction" }[event.target.id];
+  if (!key) return;
+  transactionListView.criteria[key] = event.target.value;
+  renderLocalTransactions();
+});
+document.addEventListener("click", event => {
+  if (event.target.closest?.("#resetTransactionFilters")) resetTransactionFilters();
+});
 
 async function loadLocalSecurities() {
   const ownerId = currentUser()?.id;
@@ -9360,20 +9548,7 @@ async function loadLocalSecurities() {
   state.localTransactions = data.items || [];
   refreshMarketOptions();
   if (state.items?.length) renderAnalytics(state.items);
-  const visibleTransactions = employeeOptionsWorkflowActive()
-    ? state.localTransactions.filter((tx) => tx.instrument_type === "EMPLOYEE_STOCK_OPTION")
-    : state.localTransactions.filter((tx) => !["CASH_IN", "CASH_OUT"].includes(tx.action));
-  $("securitiesList").innerHTML = visibleTransactions.length ? visibleTransactions.map((tx) => `
-    <div class="stack-item management-item">
-      <b>${esc(tx.action)} ${esc(tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (tx.company_name || tx.security_name || "Employee option") : `${tx.symbol}${tx.secondary_symbol ? ` · ${tx.secondary_symbol}` : ""}`)}</b>
-      <span>${fmt(tx.quantity, 4)} @ ${fmt(tx.price_input, 4)} (${esc(currencyDisplayLabel(tx.currency))} ${fmt(tx.price, 4)})${tx.instrument_type ? ` · ${esc(tx.instrument_type)}` : ""}</span>
-      ${tx.transition_id
-        ? '<span class="badge ok" title="Created by an audited employee-option lifecycle action">Lifecycle transaction · read-only</span>'
-        : `<button class="secondary compact-button" type="button" data-edit-security="${esc(tx.id)}">Edit</button>
-           <button class="secondary compact-button" type="button" data-delete-security="${esc(tx.id)}">Delete</button>`}
-      <div class="sub">${esc(tx.instrument_type === "EMPLOYEE_STOCK_OPTION" ? (tx.listing_status === "PUBLIC" ? `${tx.public_symbol} · ${tx.public_market}` : "Private company") : tx.stock_market)} · ${esc(tx.asset_class)}${tx.grant_id ? ` · Grant ${esc(tx.grant_id)}` : ""}${tx.option_type && tx.instrument_type !== "EMPLOYEE_STOCK_OPTION" ? ` · ${esc(tx.option_type)}` : ""}${tx.expiration_date ? ` · Exp ${esc(formatDate(tx.expiration_date))}` : ""}${transactionVestingSummary(tx)}${tx.strike_price ? ` · Strike ${fmt(tx.strike_price, 4)}` : ""}${tx.purchase_price ? ` · Purchase ${fmt(tx.purchase_price, 4)}` : ""} · ${esc(formatDate(tx.trade_date))} · ${transactionCashImpact(tx) ? `Cash ${signedMoney(transactionCashImpact(tx), tx.currency)}` : "No cash movement"} · ${esc(tx.management_company || "")} ${esc(tx.account_id || "")}</div>
-    </div>
-  `).join("") : `<div class="empty">${employeeOptionsWorkflowActive() ? "No employee option activity saved yet" : "No manual securities yet"}</div>`;
+  renderLocalTransactions();
   renderAlarms();
   loadEquityCompQuotes().catch(reportBackgroundError);
 }
@@ -9455,7 +9630,10 @@ async function saveSecurity() {
   if (ui.saving || ui.loading || ui.ready === false || ui.unknownSave || !canWrite() || state.auth.forcedPasswordChange || currentUser()?.must_change_password || $("transactionEntryModal").hidden) return;
   const instrumentType = selectedTransactionInstrumentType();
   const usesSchedule = instrumentType === "EMPLOYEE_STOCK_OPTION" && valueOf("securityAction") === "ADD" && valueOf("securityVestingStyle") === "SCHEDULE";
+  const maturityDate = valueOf("securityAssetClass") === "BOND" ? bondMaturityDateInput("securityBondMaturityDate") : undefined;
+  if (maturityDate === null) return;
   const payload = {
+    maturity_date: maturityDate,
     account_db_id: valueOf("securityAccount"),
     security_id: valueOf("securityKnownInstrument"),
     action: valueOf("securityAction"),
@@ -9665,6 +9843,37 @@ function vestingAlarms() {
     .sort((a, b) => String(a.sortDate).localeCompare(String(b.sortDate)) || a.title.localeCompare(b.title));
 }
 
+function bondMaturityAlarms(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(now);
+  const part = type => parts.find(value => value.type === type)?.value;
+  const today = `${part("year")}-${part("month")}-${part("day")}`;
+  const unique = new Map();
+  for (const item of state.allPortfolioItems || state.items || []) {
+    const holding = item.holding || {};
+    const maturity = parseDateInput(holding.maturity_date);
+    if (String(holding.asset_class).toUpperCase() !== "BOND" || !Number.isFinite(holding.quantity) || holding.quantity <= 1e-9 || !maturity || maturity > today) continue;
+    const market = holdingMarketKey(holding);
+    const key = [holding.account_id, holding.symbol, market].join("|");
+    if (unique.has(key)) continue;
+    unique.set(key, { kind: "maturity", tone: "red", key, holding, maturityDate: maturity,
+      title: alarmText("{symbol} bond maturity requires action", { symbol: alarmValue(holding.symbol) }),
+      body: alarmText("{quantity} units are still recorded. Record the redemption or sale after checking the broker statement.", { quantity: alarmValue(fmt(holding.quantity, 4)) }),
+      meta: alarmText("Maturity: {date} · {account}", { date: alarmValue(formatDate(maturity)), account: alarmValue(holding.account || holding.account_id) }) });
+  }
+  return [...unique.values()].sort((a, b) => a.maturityDate.localeCompare(b.maturityDate) || a.key.localeCompare(b.key));
+}
+
+async function openBondMaturityAlarm(key, returnFocus = document.activeElement) {
+  const alarm = bondMaturityAlarms().find(item => item.key === key);
+  if (!alarm) { renderAlarms(); return; }
+  closeModal($("alarmsModal"));
+  const h = alarm.holding;
+  await openPositionTransactionHistory({ positionAction: canWrite() ? "SELL" : "", positionHistorySymbol: h.symbol,
+    positionHistoryMarket: holdingMarketKey(h), positionHistoryAccountId: h.account_id,
+    positionHistoryAccount: h.account, positionHistoryCurrency: h.currency,
+    positionHistoryQuantity: h.quantity, positionHistoryAsset: h.asset_class, positionHistoryLocation: h.country || h.location }, returnFocus);
+}
+
 function alarmDismissalId(alarm) {
   if (alarm.kind === "vesting") {
     return ["vesting", alarm.transactionId, alarm.trancheSequence || 1, alarm.sortDate].join(":");
@@ -9691,7 +9900,7 @@ function clearAlarms() {
 function renderAlarms() {
   const { dividends, vesting } = currentAlarms();
   const extras = typeof visiblePriorityAlarms === "function" ? visiblePriorityAlarms() : [];
-  const alarms = [...vesting, ...dividends, ...extras];
+  const alarms = [...vesting, ...dividends, ...extras, ...(typeof bondMaturityAlarms === "function" ? bondMaturityAlarms() : [])];
   if (typeof alarmAppearance === "function") alarms.sort((a, b) => ALARM_PRIORITY[alarmAppearance(a).tone] - ALARM_PRIORITY[alarmAppearance(b).tone]);
   const count = $("alarmsCount");
   if (count) count.textContent = String(alarms.length);
@@ -9699,7 +9908,7 @@ function renderAlarms() {
   if (button) button.classList.toggle("has-alarms", alarms.length > 0);
   const notes = typeof renderAlarmPriority === "function" ? renderAlarmPriority(alarms) : [];
   const clearButton = $("clearAlarms");
-  if (clearButton) clearButton.disabled = alarms.length === 0 || !canWrite() || Boolean(state.alarmClearPending);
+  if (clearButton) clearButton.disabled = !alarms.some(alarm => alarm.kind !== "maturity") || !canWrite() || Boolean(state.alarmClearPending);
   const status = $("alarmsStatus");
   if (status) {
     const summary = alarms.length ? alarmText("Alarms: {count}", { count: alarms.length }) : state.clearedAlarmCount
@@ -15094,6 +15303,9 @@ document.addEventListener("click", (event) => {
   const dividendAlarmId = event.target.closest("[data-open-dividend-alarm]")?.dataset.openDividendAlarm;
   if (dividendAlarmId) openDividendAlarm(dividendAlarmId);
 
+  const maturityAlarm = event.target.closest("[data-open-maturity-alarm]");
+  if (maturityAlarm) openBondMaturityAlarm(maturityAlarm.dataset.openMaturityAlarm, maturityAlarm).catch(() => { $("positionTransactionStatus").textContent = t("Could not load transaction history. Reopen the alarm to retry."); });
+
   const vestingAlarmId = event.target.closest("[data-open-vesting-alarm]")?.dataset.openVestingAlarm;
   if (vestingAlarmId) openVestingAlarm(vestingAlarmId);
 
@@ -15589,6 +15801,8 @@ document.addEventListener("change", (event) => {
     applyBrokerToAccount("editAccountBroker", "editAccountLocation", "editAccountCurrency");
   }
 
+  if (["securityAccount", "securitySymbol", "securityMarket"].includes(event.target.id)) syncPriceUnitHints();
+
   if (event.target.id === "securityKnownInstrument") {
     applyInstrumentToForm(instrumentById(event.target.value), "security");
     toggleTransactionCompFields();
@@ -15672,6 +15886,7 @@ document.addEventListener("change", (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  if (["securitySymbol", "securityMarket"].includes(event.target.id)) syncPriceUnitHints();
   const pensionIds = [
     "simName", "simBirthDate", "simCurrentAge", "simRetireAge", "simAmount", "simFactor",
     "simPeriodFrom", "simPeriodTo", "simPeriodIncome", "simPeriodContribution", "simPeriodDeposit",
@@ -16022,3 +16237,11 @@ async function initializeApp() {
 }
 
 initializeApp().catch(reportBackgroundError).finally(revealInitializedApp);
+
+// Re-evaluate date-driven notices while the dashboard remains open.
+setInterval(() => { if (state.auth?.user && typeof renderAlarms === "function") renderAlarms(); }, 60000);
+document.addEventListener("input", event => {
+  if (["securitySymbol", "securityMarket"].includes(event.target.id)) syncBondMaturityForm();
+  if (["securityBondMaturityDate", "manualBondMaturityDate", "positionTransactionBondMaturityDate"].includes(event.target.id)) event.target.setCustomValidity("");
+  if (event.target.id === "positionTransactionBondMaturityDate") event.target.dataset.maturityDirty = "true";
+});

@@ -19,6 +19,7 @@ function alarmAppearance(alarm) {
     unavailable: { tone: "amber", icon: "?", label: "Risk assessment unavailable" },
     updating: { tone: "amber", icon: "↻", label: "Risk assessment updating" },
   }[alarm.level];
+  if (alarm.kind === "maturity") return { tone: "red", icon: "!", label: "Bond maturity requires action" };
   if (alarm.kind === "vesting") return { tone: "purple", icon: "◷", label: "Upcoming vesting" };
   if (alarm.tone === "unconfirmed") return { tone: "amber", icon: "?", label: "Dividend payment unconfirmed" };
   return alarm.event?.status === "pending"
@@ -190,10 +191,11 @@ function visiblePriorityAlarms() {
 
 function displayedAlarms() {
   const { dividends, vesting } = currentAlarms();
-  return [...vesting, ...dividends, ...visiblePriorityAlarms()];
+  return [...vesting, ...dividends, ...visiblePriorityAlarms(), ...(typeof bondMaturityAlarms === "function" ? bondMaturityAlarms() : [])];
 }
 
 function alarmClearKey(alarm) {
+  if (alarm.kind === "maturity") return `maturity:${alarm.key}`;
   return alarm.kind === "signal" ? `signal:${alarm.key}` : alarm.kind === "risk" ? alarm.dismissalId : alarmDismissalId(alarm);
 }
 
@@ -220,8 +222,8 @@ function renderAlarmClearControls(alarms) {
     select.disabled = Boolean(state.alarmClearPending);
   }
   const disabled = !canWrite() || Boolean(state.alarmClearPending);
-  if ($("clearMatchingAlarms")) $("clearMatchingAlarms").disabled = disabled || !alarms.some(alarmMatchesClearSelection);
-  if ($("clearAlarms")) $("clearAlarms").disabled = disabled || !alarms.length;
+  if ($("clearMatchingAlarms")) $("clearMatchingAlarms").disabled = disabled || !alarms.some(alarm => alarm.kind !== "maturity" && alarmMatchesClearSelection(alarm));
+  if ($("clearAlarms")) $("clearAlarms").disabled = disabled || !alarms.some(alarm => alarm.kind !== "maturity");
   if ($("alarmClearStatus")) $("alarmClearStatus").textContent = state.alarmClearMessage
     ? alarmText(state.alarmClearMessage.template, state.alarmClearMessage.values) : "";
 }
@@ -230,12 +232,12 @@ function renderAlarmListItem(alarm) {
   const appearance = alarmAppearance(alarm);
   const incomplete = alarm.incomplete ? ` · ${t("Some rule data is unavailable")}` : "";
   const clearLabel = alarmText("Clear alarm: {title} · {type}", { title: alarm.title, type: t(appearance.label) });
-  return `<div class="alarm-entry" data-alarm-tone="${appearance.tone}">
+  return `<div class="alarm-entry${alarm.kind === "maturity" ? " alarm-entry-maturity" : ""}" data-alarm-tone="${appearance.tone}">
     <button class="alarm-item" data-alarm-tone="${appearance.tone}" type="button" ${alarmActionAttributes(alarm)}>
       <span class="alarm-heading"><b>${esc(alarm.title)}</b><span class="alarm-kind"><span aria-hidden="true">${esc(appearance.icon)}</span> ${esc(t(appearance.label))}</span></span>
       <span class="alarm-details"><span class="alarm-body">${esc(alarm.body)}${esc(incomplete)}</span><small class="alarm-meta">${esc(alarm.meta)}</small></span>
     </button>
-    <button class="icon-button alarm-clear-one" type="button" data-clear-alarm="${esc(alarmClearKey(alarm))}" aria-label="${esc(clearLabel)}" title="${esc(clearLabel)}"${!canWrite() || state.alarmClearPending ? " disabled" : ""}>×</button>
+    ${alarm.kind === "maturity" ? "" : `<button class="icon-button alarm-clear-one" type="button" data-clear-alarm="${esc(alarmClearKey(alarm))}" aria-label="${esc(clearLabel)}" title="${esc(clearLabel)}"${!canWrite() || state.alarmClearPending ? " disabled" : ""}>×</button>`}
   </div>`;
 }
 
@@ -244,7 +246,7 @@ async function clearSelectedAlarms({ all = false, key = "" } = {}) {
   const userId = state.auth?.user?.id;
   const csrfToken = state.auth?.csrfToken;
   const sameSession = () => state.auth?.user?.id === userId && state.auth?.csrfToken === csrfToken;
-  const selected = displayedAlarms().filter((alarm) => key ? alarmClearKey(alarm) === key : all || alarmMatchesClearSelection(alarm));
+  const selected = displayedAlarms().filter((alarm) => alarm.kind !== "maturity").filter((alarm) => key ? alarmClearKey(alarm) === key : all || alarmMatchesClearSelection(alarm));
   if (!selected.length) return;
   const focused = document.activeElement;
   const clearControls = [...($("alarmsList")?.querySelectorAll?.("[data-clear-alarm]") || [])];
@@ -310,6 +312,7 @@ if (typeof document !== "undefined") document.addEventListener("click", (event) 
 function alarmActionAttributes(alarm) {
   if (alarm.kind === "signal") return `data-open-signal-alarm="${esc(alarm.symbol)}" data-alarm-signal-type="${esc(alarm.signalType)}"`;
   if (alarm.kind === "risk") return `data-open-risk-alarm="${esc(alarm.key)}"`;
+  if (alarm.kind === "maturity") return `data-open-maturity-alarm="${esc(alarm.key)}"`;
   if (alarm.kind === "vesting") return `data-open-vesting-alarm="${esc(alarm.transactionId)}"`;
   return `data-open-dividend-alarm="${esc(alarm.event.id)}"`;
 }

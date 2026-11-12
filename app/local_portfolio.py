@@ -121,6 +121,7 @@ EXPORT_TABLES = {
         "created_at",
         "updated_at",
     ],
+    "bond_maturity_dates": ["symbol", "stock_market", "maturity_date"],
     "manual_securities": [
         "id",
         "symbol",
@@ -580,6 +581,9 @@ class LocalPortfolioStore:
                 self._ensure_column(conn, "transactions", "security_id", "text not null default ''")
                 self._ensure_column(conn, "transactions", "transition_id", "text not null default ''")
                 self._ensure_column(conn, "transactions", "vesting_schedule", "text not null default '{}'")
+                conn.execute("""create table if not exists bond_maturity_dates (
+                    symbol text not null, stock_market text not null,
+                    maturity_date text not null default '', primary key(symbol, stock_market))""")
                 self._ensure_column(conn, "manual_securities", "issuer_id", "text not null default ''")
                 self._ensure_column(conn, "manual_securities", "secondary_symbol", "text not null default ''")
                 self._ensure_column(conn, "manual_securities", "grant_id", "text not null default ''")
@@ -892,13 +896,14 @@ class LocalPortfolioStore:
                 conn.execute("delete from transactions")
                 conn.execute("delete from security_industry_overrides")
                 conn.execute("delete from security_exposure_profiles")
+                conn.execute("delete from bond_maturity_dates")
                 conn.execute("delete from manual_securities")
                 conn.execute("delete from issuers")
                 conn.execute("delete from accounts")
                 conn.execute("delete from family_members")
                 conn.execute("delete from brokers")
                 conn.execute("delete from app_preferences")
-                for table in ["app_preferences", "brokers", "family_members", "accounts", "issuers", "manual_securities", "security_industry_overrides", "security_exposure_profiles", "transactions", "equity_transitions", "price_history", "funds", "fund_amount_history", "account_snapshots", "events", "company_report_predictions"]:
+                for table in ["app_preferences", "brokers", "family_members", "accounts", "issuers", "manual_securities", "bond_maturity_dates", "security_industry_overrides", "security_exposure_profiles", "transactions", "equity_transitions", "price_history", "funds", "fund_amount_history", "account_snapshots", "events", "company_report_predictions"]:
                     columns = EXPORT_TABLES[table]
                     placeholders = ", ".join([":" + column for column in columns])
                     conn.executemany(
@@ -922,7 +927,7 @@ class LocalPortfolioStore:
                 "value": value if isinstance(value, str) else json.dumps(value if value is not None else {}, default=str),
                 "updated_at": str(record.get("updated_at") or _now()),
             }
-        for key in ["id", "key", "account_db_id", "fund_id", "issuer_id", "security_id", "transition_id", "source_security_id", "target_security_id", "symbol", "secondary_symbol", "stock_market", "asset_class", "instrument_type", "option_type", "underlying_symbol", "public_symbol", "public_market", "currency", "location", "trade_date", "price_date", "amount_date", "snapshot_date", "event_date", "effective_date", "expiration_date", "vest_date", "grant_id", "grant_date", "vesting_start_date", "tax_scheme", "listing_status", "listing_date", "restriction_end_date", "valuation_date", "transition_type", "source_key", "transaction_id", "status", "company_name", "industry", "horizon_date", "model_version", "label", "direction", "confidence", "actual_direction", "evaluation", "evaluated_at"]:
+        for key in ["id", "key", "account_db_id", "fund_id", "issuer_id", "security_id", "transition_id", "source_security_id", "target_security_id", "symbol", "secondary_symbol", "stock_market", "asset_class", "instrument_type", "option_type", "underlying_symbol", "public_symbol", "public_market", "currency", "location", "trade_date", "price_date", "amount_date", "snapshot_date", "event_date", "effective_date", "maturity_date", "expiration_date", "vest_date", "grant_id", "grant_date", "vesting_start_date", "tax_scheme", "listing_status", "listing_date", "restriction_end_date", "valuation_date", "transition_type", "source_key", "transaction_id", "status", "company_name", "industry", "horizon_date", "model_version", "label", "direction", "confidence", "actual_direction", "evaluation", "evaluated_at"]:
             if key in record and record[key] is not None:
                 record[key] = str(record[key])
         if "symbol" in record:
@@ -1601,7 +1606,7 @@ class LocalPortfolioStore:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                select s.*,
+                select s.*, m.maturity_date,
                        i.company_name,
                        i.listing_status,
                        i.public_symbol,
@@ -1612,6 +1617,7 @@ class LocalPortfolioStore:
                        i.valuation_date
                 from manual_securities s
                 left join issuers i on i.id = s.issuer_id
+                left join bond_maturity_dates m on m.symbol = s.symbol and m.stock_market = s.stock_market
                 order by coalesce(i.company_name, s.name), s.grant_date, s.symbol
                 """
             ).fetchall()
@@ -1851,6 +1857,7 @@ class LocalPortfolioStore:
             "STOCK",
         )
         asset_class = _asset_class_for_instrument(instrument_type, payload.get("asset_class"))
+        maturity_date = self._bond_maturity_input(payload, asset_class)
         location = str(payload.get("location") or "USA").strip()
         currency = str(payload.get("currency") or _currency_for_location(location)).upper().strip()
         option_type = str(payload.get("option_type") or "").upper().strip()
@@ -2125,9 +2132,11 @@ class LocalPortfolioStore:
                     """,
                     record,
                 )
+            self._save_bond_maturity(conn, record, maturity_date)
         if _conn is not None:
             return {
                 **record,
+                **({"maturity_date": maturity_date} if maturity_date is not None else {}),
                 **({
                     "company_name": issuer_record["company_name"],
                     "listing_status": issuer_record["listing_status"],
@@ -2340,10 +2349,11 @@ class LocalPortfolioStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                select s.*, i.company_name, i.listing_status, i.public_symbol, i.public_market,
+                select s.*, m.maturity_date, i.company_name, i.listing_status, i.public_symbol, i.public_market,
                        i.listing_date, i.restriction_end_date, i.manual_share_value, i.valuation_date
                 from manual_securities s
                 left join issuers i on i.id = s.issuer_id
+                left join bond_maturity_dates m on m.symbol = s.symbol and m.stock_market = s.stock_market
                 where (s.symbol = ? or s.secondary_symbol = ?) and s.stock_market = ?
                 order by case when s.symbol = ? then 0 else 1 end
                 limit 1
@@ -2359,10 +2369,11 @@ class LocalPortfolioStore:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                select s.*, i.company_name, i.listing_status, i.public_symbol, i.public_market,
+                select s.*, m.maturity_date, i.company_name, i.listing_status, i.public_symbol, i.public_market,
                        i.listing_date, i.restriction_end_date, i.manual_share_value, i.valuation_date
                 from manual_securities s
                 left join issuers i on i.id = s.issuer_id
+                left join bond_maturity_dates m on m.symbol = s.symbol and m.stock_market = s.stock_market
                 where s.id = ?
                 """,
                 (key,),
@@ -2383,6 +2394,7 @@ class LocalPortfolioStore:
                        s.option_type,
                        s.underlying_symbol,
                        s.expiration_date,
+                       m.maturity_date,
                        s.strike_price as instrument_strike_price,
                        s.contract_multiplier,
                        s.issuer_id,
@@ -2405,6 +2417,7 @@ class LocalPortfolioStore:
                   on s.id = t.security_id
                   or (trim(t.security_id) = '' and s.symbol = t.symbol and s.stock_market = t.stock_market)
                 left join issuers i on i.id = s.issuer_id
+                left join bond_maturity_dates m on m.symbol = coalesce(s.symbol, t.symbol) and m.stock_market = t.stock_market
                 order by t.trade_date desc, t.created_at desc
                 """
             ).fetchall()
@@ -2420,11 +2433,33 @@ class LocalPortfolioStore:
 
     def add_transaction(self, payload: dict[str, Any]) -> dict[str, Any]:
         record = self._transaction_record(payload)
+        maturity_date = self._bond_maturity_input(payload, record["asset_class"])
         with self._connect() as conn:
             position_quantity = self._validate_position_ledger(conn, record)
             self._insert_transaction(conn, record)
+            self._save_bond_maturity(conn, record, maturity_date)
             self._refresh_transaction_snapshots(conn, [record])
         return self._transaction_with_position_status(record, position_quantity)
+
+    @staticmethod
+    def _bond_maturity_input(payload: dict[str, Any], asset_class: str) -> str | None:
+        if "maturity_date" not in payload:
+            return None  # An older client must not erase an existing date.
+        if payload["maturity_date"] is not None and not isinstance(payload["maturity_date"], str):
+            raise ValueError("Maturity date must use DD/MM/YYYY")
+        if str(asset_class).upper() != "BOND":
+            if payload.get("maturity_date"):
+                raise ValueError("Maturity date is available for bonds only")
+            return None
+        return _optional_date_string(payload.get("maturity_date"))
+
+    @staticmethod
+    def _save_bond_maturity(conn: sqlite3.Connection, record: dict[str, Any], maturity_date: str | None) -> None:
+        if maturity_date is None:
+            return
+        conn.execute("""insert into bond_maturity_dates (symbol, stock_market, maturity_date)
+            values (?, ?, ?) on conflict(symbol, stock_market) do update set maturity_date = excluded.maturity_date""",
+            (record["symbol"], record["stock_market"], maturity_date))
 
     def _transaction_record(
         self,
@@ -2652,6 +2687,7 @@ class LocalPortfolioStore:
             raise ValueError("Lifecycle-generated transactions are read-only")
         merged = {**_dict(existing), **(payload or {}), "id": transaction_id, "created_at": existing["created_at"]}
         record = self._transaction_record(merged)
+        maturity_date = self._bond_maturity_input(payload, record["asset_class"])
         with self._connect() as conn:
             old_key = (existing["account_db_id"], existing["symbol"], existing["stock_market"])
             new_key = (record["account_db_id"], record["symbol"], record["stock_market"])
@@ -2665,6 +2701,7 @@ class LocalPortfolioStore:
                     exclude_id=transaction_id,
                 )
             self._update_transaction_record(conn, record)
+            self._save_bond_maturity(conn, record, maturity_date)
             self._refresh_transaction_snapshots(conn, [_dict(existing), record])
         return self._transaction_with_position_status(record, position_quantity)
 
@@ -3681,6 +3718,7 @@ class LocalPortfolioStore:
                     "option_type": tx.get("option_type") or "",
                     "underlying_symbol": tx.get("underlying_symbol") or "",
                     "expiration_date": tx.get("expiration_date") or "",
+                    "maturity_date": tx.get("maturity_date") or "",
                     "strike_price": tx.get("strike_price") or 0,
                     "contract_multiplier": tx.get("contract_multiplier") or 1,
                     "is_manual_security": bool(tx.get("instrument_type")),
@@ -4188,6 +4226,7 @@ class LocalPortfolioStore:
         holding = Holding(
             symbol=position["symbol"],
             secondary_symbol=position.get("secondary_symbol") or "",
+            maturity_date=position.get("maturity_date") or "",
             name=position.get("security_name") or position["symbol"],
             asset_class=position["asset_class"],
             asset_sub_class=position.get("instrument_type") or "",
