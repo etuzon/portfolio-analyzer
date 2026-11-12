@@ -20,7 +20,7 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/assets/portfolio-vault/icon-48.png?v=1" />
     <link rel="shortcut icon" href="/assets/portfolio-vault/favicon.ico?v=1" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=20261112-bond-maturity" />
+  <link rel="stylesheet" href="/styles.css?v=20261112-scope-schedules" />
   <link rel="stylesheet" href="/holdings-sort.css?v=1" />
   <link rel="stylesheet" href="/transaction-list.css?v=1" />
   <link rel="stylesheet" href="/price-input-units.css?v=1" />
@@ -1235,7 +1235,7 @@
                 <p>Use Area to choose investments, long-term savings, employee equity, or all areas. View switches between Glance and Full; Edit lets you arrange or hide cards. Compact summaries use narrower cards and fill available gaps beside taller charts. Card widths follow the dashboard’s available space. Edit keeps your saved arrangement; the display can place later cards in earlier gaps, while keyboard and single-column reading order follow the saved sequence.</p>
                 <p>Analytics refresh in the background while preserving your reading position, keyboard focus and expanded card details. In Portfolio stats or Portfolio snapshot, hover over Data gaps for a multiline breakdown by field, security and account. Select the count, or use Enter or Space, to open the complete scrollable details on desktop or touch screens. Each confirmed gap is one missing field in one position; the same field in two accounts counts twice. Updating and failed checks are shown separately and do not count as confirmed missing data. Details follow the displayed portfolio scope and update from loaded results without extra provider requests. All users can inspect them; close the dialog or press Escape to return to the count. Use Refresh to retry unavailable data. Unavailable dividend history does not confirm zero dividends. Currency tooltips use symbols and retain the converted base-currency value.</p>
                 <p>AI automation starts disabled. Admin and Operator users can save AI schedules; only Admin users can change backup schedules. Scheduled research uses the saving user’s permissions and skips runs if that user is disabled, deleted or no longer has editing access. The configured AI service must be available. Reopen the research window to load saved results and any active request.</p>
-                <p>Use Automatic schedule in Find missing data with AI or Edit schedule in backup settings. Both use the same controls: enable automation, choose minutes, hours, daily, selected weekdays or selected month dates, then set the timezone. Minute and hour intervals restart at the next hour or day. Dates absent from a month are skipped. AI schedules let you choose open or all positions; Save schedule persists without starting research. Reload schedule discards the draft and retries loading. Saving requires editing permission; a failed save retains the draft. Scheduled research uses the same AI settings and limits as manual research, skips overlapping work, and runs only while the app is running. Missed AI runs are skipped. Backup Apply schedule updates the draft; save Application Settings to persist it. Backup passed-time handling remains configurable.</p>
+                <p>Use Automatic schedules in Find missing data with AI or Edit schedule in backup settings. Both use the same controls: enable automation, choose minutes, hours, daily, selected weekdays or selected month dates, then set the timezone. Minute and hour intervals restart at the next hour or day. Dates absent from a month are skipped. AI research has separate schedules for Open positions and Open and closed positions, each with its own enabled state, cadence, timezone and next run. Search scope is the first field after the Automatic schedule checkbox. Choose it before editing. The overview shows saved schedules; Unsaved changes marks a draft that is not yet scheduled. Switching scopes, reopening the window and changing language keep each draft. Save schedule saves only the selected scope without starting research. Reload schedule discards only that scope’s draft and retries loading; a failed request retains drafts. Viewers can select scopes and inspect schedules; saving requires editing permission. Signing out or switching user clears drafts. Existing schedules keep their original scope; the other scope begins disabled. Scheduled research uses the same AI settings and limits as manual research, skips overlapping work, and runs only while the app is running. Next runs use the displayed schedule timezone; unavailable next-run times are labelled. Missed AI runs are skipped. Backup Apply schedule updates the draft; save Application Settings to persist it. Backup passed-time handling remains configurable.</p>
                 <p>API-supported securities update through normal background updates and dashboard Refresh, outside the AI popup. Missing provider credentials require API configuration. Confirmed API access denial allows AI research when no other usable API remains; temporary network failures and rate limits stay on the API route. Each security's information tooltip shows its route and any setup or retry needed. Open Portfolio → Find missing data with AI and choose Search open positions or Search open and closed positions to research missing prices, names and industry classifications for securities without usable API access. The first option includes open long and short holdings; the second also includes securities from closed positions. Both ignore dashboard and Holdings filters. Admin and Operator users can start a request; Viewers can read saved results. Internet research needs an available search service. When no holdings are eligible, no AI model is called. Each manual or scheduled request selects up to three securities and shares configured limits of up to eight AI interactions, eight application data operations and eight Internet requests; some selected securities may remain unchecked. Opening the popup never starts research; select one of the two search buttons to start a request. Phase and checked counts describe work checked, not updates saved. Close and reopen it to view the same background request. Check AI progress resumes that request; reopening never starts another batch. After completion, select either search scope for another batch. Verified, partial and unavailable results appear by security; other gaps, including fundamentals or dividends, may remain. Unavailable values are never guessed. Saved results reload the portfolio once; use Refresh if that reload fails.</p>
                 <p>When a bond API quote cannot be matched to the recorded quantity and face-value convention, it remains reference-only. Normal updates do not invent a conversion or use AI to fill that valuation gap.</p>
                 <p>For eligible holdings without an API route, Internet price updates require a supported last or closing price dated within the last seven days. Unsupported fund NAV or percent-of-par units are not guessed or saved as stock prices. Additional eligible securities wait for another manual or scheduled request.</p>
@@ -2047,9 +2047,13 @@
         <div id="aiEnrichmentSummary" class="ai-enrichment-summary" hidden></div>
         <section id="aiEnrichmentDetails" class="ai-enrichment-details" aria-labelledby="aiEnrichmentResultsTitle" hidden><h3 id="aiEnrichmentResultsTitle">Results by security</h3><ul id="aiEnrichmentResults" tabindex="0" aria-labelledby="aiEnrichmentResultsTitle"></ul></section>
         <p id="aiEnrichmentEmpty" class="section-note">No AI research results yet.</p>
-        <details class="automatic-schedule-panel"><summary>Automatic schedule</summary>
+        <details class="automatic-schedule-panel"><summary>Automatic schedules</summary>
           <div id="aiScheduleEditor"></div>
-          <label class="field"><span>Search scope</span><select id="aiScheduleScope"><option value="open">Open positions</option><option value="all">Open and closed positions</option></select></label>
+          <div id="aiScheduleScopeFields">
+            <label class="field ai-schedule-scope-picker"><span>Search scope</span><select id="aiScheduleScope" aria-describedby="aiScheduleScopeHint"><option value="open">Open positions</option><option value="all">Open and closed positions</option></select></label>
+            <p id="aiScheduleScopeHint" class="section-note">Each search scope has its own schedule. Save applies only to the selected scope.</p>
+          </div>
+          <ul id="aiScheduleOverview" class="ai-schedule-overview" aria-label="Saved schedules by search scope"></ul>
           <div class="modal-toolbar"><button id="saveAISchedule" type="button" disabled>Save schedule</button><button id="reloadAISchedule" class="secondary" type="button">Reload schedule</button></div>
           <p id="aiScheduleStatus" class="section-note" role="status" aria-live="polite"></p>
         </details>
@@ -3042,8 +3046,8 @@
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <div id="riskBadgeExplanation" class="risk-badge-explanation" role="tooltip" hidden></div>
-  <script src="/i18n.js?v=20261112-bond-maturity"></script>
-  <script src="/scheduler.js?v=1"></script>
+  <script src="/i18n.js?v=20261112-scope-schedules"></script>
+  <script src="/scheduler.js?v=2"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
   <script src="/trade-planner.js?v=3"></script>
@@ -3065,9 +3069,9 @@
   <script src="/holdings-sort.js?v=1"></script>
   <script src="/transaction-list.js?v=1"></script>
   <script src="/price-input-units.js?v=1"></script>
-  <script src="/alarm-priority-ui.js?v=20261112-bond-maturity"></script>
+  <script src="/alarm-priority-ui.js?v=20261112-scope-schedules"></script>
   <script src="/account-cash-ui.js?v=20261109-cash-save-label"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=20261112-bond-maturity"></script>
+  <script src="/app.js?v=20261112-scope-schedules"></script>
   </body>
 </html>

@@ -1383,7 +1383,7 @@ function openAIEnrichment() {
   setMobileNavigation(false);
   renderAIEnrichment();
   if (window.ScheduleEditor) {
-    loadAISchedule();
+    loadAISchedule({ preserveDraft: true });
     if (!state.aiEnrichment.pending) loadAIEnrichmentStatus().catch(() => {});
   }
 }
@@ -1576,6 +1576,7 @@ function setAuthenticatedSession(payload) {
     if (typeof resetRiskScenarios === "function") resetRiskScenarios();
     if (typeof resetHoldingsSort === "function") resetHoldingsSort();
     if (typeof resetTransactionFilters === "function") resetTransactionFilters();
+    if (typeof resetAISchedules === "function") resetAISchedules();
     if (typeof resetCorrelation === "function") resetCorrelation();
     if (typeof resetBenchmarkComparison === "function") resetBenchmarkComparison();
     if (typeof resetTradingJournal === "function") resetTradingJournal();
@@ -1612,6 +1613,7 @@ function showLogin(message = "") {
   if (typeof resetRiskScenarios === "function") resetRiskScenarios();
   if (typeof resetHoldingsSort === "function") resetHoldingsSort();
   if (typeof resetTransactionFilters === "function") resetTransactionFilters();
+    if (typeof resetAISchedules === "function") resetAISchedules();
   if (typeof resetTransactionEntry === "function") resetTransactionEntry();
   state.portfolioRefreshPending = false;
   state.alarmClearPending = false;
@@ -2466,7 +2468,7 @@ function applyLanguage() {
   if ($("manualSecuritiesList")) renderManualSecuritiesList();
   if (typeof renderRiskHistory === "function" && $("riskHistoryModal")?.hidden === false) renderRiskHistory();
   if (typeof renderRiskScenarios === "function" && !$("riskScenariosModal")?.hidden) renderRiskScenarios();
-  window.ScheduleEditor?.relocalize($("aiScheduleEditor"), t);
+  if (typeof relocalizeAISchedules === "function") relocalizeAISchedules();
   window.ScheduleEditor?.relocalize($("backupScheduleEditor"), t);
   if (typeof syncPriceUnitHints === "function") syncPriceUnitHints();
   window.PortfolioI18n?.applyToDocument(state.language);
@@ -14501,48 +14503,172 @@ function applyBackupSchedule() {
 }
 
 let aiScheduleLoading = false;
-async function loadAISchedule() {
+let aiSchedulesView = { userId: null, selected: "open", rows: {}, drafts: {}, dirty: new Set(), messages: {}, loaded: false };
+
+function resetAISchedules() {
+  aiScheduleLoading = false;
+  aiSchedulesView = { userId: null, selected: "open", rows: {}, drafts: {}, dirty: new Set(), messages: {}, loaded: false };
+  if ($("aiScheduleOverview")) $("aiScheduleOverview").replaceChildren();
+  if ($("aiScheduleEditor")) {
+    if ($("aiScheduleScopeFields") && $("aiScheduleEditor").contains($("aiScheduleScopeFields"))) $("aiScheduleEditor").after($("aiScheduleScopeFields"));
+    $("aiScheduleEditor").replaceChildren(); delete $("aiScheduleEditor").dataset.scope;
+  }
+  if ($("aiScheduleStatus")) $("aiScheduleStatus").textContent = "";
+  if ($("saveAISchedule")) $("saveAISchedule").disabled = true;
+}
+
+function aiScheduleScopeLabel(scope) {
+  return t(scope === "all" ? "Open and closed positions" : "Open positions");
+}
+
+function captureAIScheduleDraft() {
+  const editor = $("aiScheduleEditor");
+  if (!editor?.dataset.scope || !window.ScheduleEditor?.snapshot) return;
+  const draft = ScheduleEditor.snapshot(editor);
+  if (draft) aiSchedulesView.drafts[editor.dataset.scope] = draft;
+}
+
+function aiScheduleNextRun(row) {
+  if (!row.enabled) return t("No automatic run scheduled");
+  if (!row.next_run || !Number.isFinite(Date.parse(row.next_run))) return t("Next run unavailable");
+  try {
+    const parts = new Intl.DateTimeFormat(state.language === "he" ? "he-IL" : "en-GB", {
+      timeZone: row.timezone || "UTC", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+    }).formatToParts(new Date(row.next_run));
+    const get = name => parts.find(part => part.type === name)?.value;
+    return `${t("Next run")}: ${get("day")}/${get("month")}/${get("year")} ${get("hour")}:${get("minute")} · ${row.timezone || "UTC"}`;
+  } catch { return t("Next run unavailable"); }
+}
+
+function renderAIScheduleOverview() {
+  const view = aiSchedulesView, container = $("aiScheduleOverview");
+  if (!container) return;
+  container.innerHTML = ["open", "all"].map(scope => {
+    const row = view.rows[scope], selected = view.selected === scope;
+    return `<li class="ai-schedule-scope-row${selected ? " selected" : ""}"${selected ? ' aria-current="true"' : ""}>
+      <div class="ai-schedule-scope-heading"><b>${esc(aiScheduleScopeLabel(scope))}</b>${view.dirty.has(scope) ? `<span class="ai-schedule-draft">${esc(t("Unsaved changes"))}</span>` : ""}</div>
+      <span>${esc(row ? ScheduleEditor.summary(row, t) : t("Schedule not loaded"))}</span>
+      ${row ? `<small>${esc(aiScheduleNextRun(row))}</small>` : ""}
+    </li>`;
+  }).join("");
+}
+
+function renderAIScheduleControls({ mount = true } = {}) {
+  const view = aiSchedulesView, editor = $("aiScheduleEditor");
+  if (!editor || !window.ScheduleEditor) return;
+  const scopeFocused = document.activeElement === $("aiScheduleScope");
+  const active = editor.contains(document.activeElement) ? document.activeElement : null;
+  const focus = active?.dataset.scheduleField ? { field: active.dataset.scheduleField, value: active.value } : null;
+  if (mount) {
+    const draft = view.drafts[view.selected] || view.rows[view.selected] || { enabled: false, timezone: "UTC" };
+    ScheduleEditor.mount(editor, draft, { translate: t, editable: canWrite() && view.loaded && !aiScheduleLoading, afterEnabled: $("aiScheduleScopeFields") });
+    editor.dataset.scope = view.selected;
+  } else if (aiScheduleLoading) editor.querySelectorAll("input,select").forEach(control => { control.disabled = true; });
+  $("aiScheduleScope").value = view.selected;
+  $("aiScheduleScope").disabled = aiScheduleLoading;
+  $("saveAISchedule").disabled = !canWrite() || !view.loaded || aiScheduleLoading;
+  $("reloadAISchedule").disabled = aiScheduleLoading;
+  renderAIScheduleOverview();
+  const message = view.messages[view.selected];
+  $("aiScheduleStatus").textContent = aiScheduleLoading ? t(view.pendingMessage || "Loading schedule…")
+    : message ? `${t(message)}${message === "Schedule saved." ? ` ${aiScheduleNextRun(view.rows[view.selected] || {})}` : ""}`
+      : view.rows[view.selected] ? aiScheduleNextRun(view.rows[view.selected]) : t("Schedule not loaded");
+  if (mount && scopeFocused && !$("aiScheduleScope").disabled) $("aiScheduleScope").focus({ preventScroll: true });
+  if (mount && focus) {
+    [...editor.querySelectorAll("[data-schedule-field]")].find(control => control.dataset.scheduleField === focus.field
+      && (!["weekdays", "month_days"].includes(focus.field) || control.value === focus.value))?.focus({ preventScroll: true });
+  }
+}
+
+function acceptAIScheduleResponse(response) {
+  const view = aiSchedulesView;
+  const items = Array.isArray(response.items) ? response.items : [response];
+  for (const row of items) {
+    const scope = row.position_scope || "open";
+    if (!["open", "all"].includes(scope)) continue;
+    view.rows[scope] = { ...row, position_scope: scope };
+    if (!view.dirty.has(scope)) view.drafts[scope] = { ...row, schedule_config: { ...row.schedule_config } };
+  }
+  // Legacy responses describe only one scope. Other scopes begin disabled.
+  for (const scope of ["open", "all"]) if (!view.rows[scope]) {
+    view.rows[scope] = { enabled: false, position_scope: scope, timezone: response.timezone || "UTC", schedule_config: { frequency: "daily", hour: 8, minute: 0 }, next_run: null };
+    view.drafts[scope] = { ...view.rows[scope] };
+  }
+}
+
+function switchAIScheduleScope(scope) {
+  if (aiScheduleLoading || !["open", "all"].includes(scope)) return;
+  captureAIScheduleDraft();
+  aiSchedulesView.selected = scope;
+  renderAIScheduleControls();
+}
+
+async function loadAISchedule({ preserveDraft = false } = {}) {
   if (aiScheduleLoading) return;
+  const userId = currentUser()?.id;
+  if (aiSchedulesView.userId !== userId) { resetAISchedules(); aiSchedulesView.userId = userId; }
+  captureAIScheduleDraft();
+  const view = aiSchedulesView, scope = view.selected, first = !view.loaded;
   aiScheduleLoading = true;
-  $("saveAISchedule").disabled = true;
-  $("reloadAISchedule").disabled = true;
-  $("aiScheduleStatus").textContent = t("Loading schedule…");
+  view.pendingMessage = "Loading schedule…";
+  renderAIScheduleControls({ mount: false });
   try {
     const saved = await api("/api/settings/ai-enrichment-schedule");
-    ScheduleEditor.mount($("aiScheduleEditor"), saved, { translate: t, editable: canWrite() });
-    $("aiScheduleScope").value = saved.position_scope || "open";
-    $("aiScheduleScope").disabled = !canWrite();
-    $("saveAISchedule").disabled = !canWrite();
-    $("aiScheduleStatus").textContent = saved.enabled && saved.next_run
-      ? `${t("Next run")}: ${formatDateTime(saved.next_run)}` : t("No automatic run scheduled");
-  } catch (error) {
-    $("aiScheduleStatus").textContent = t("Could not load schedule. Select Reload schedule to retry.");
+    if (aiSchedulesView !== view || currentUser()?.id !== userId) return;
+    acceptAIScheduleResponse(saved);
+    if (first && ["open", "all"].includes(saved.position_scope)) view.selected = saved.position_scope;
+    if (!preserveDraft) {
+      view.dirty.delete(first ? view.selected : scope);
+      const selected = first ? view.selected : scope;
+      view.drafts[selected] = { ...view.rows[selected], schedule_config: { ...view.rows[selected].schedule_config } };
+    }
+    view.loaded = true;
+    delete view.messages[view.selected];
+  } catch {
+    if (aiSchedulesView === view && currentUser()?.id === userId) view.messages[scope] = "Could not load schedule. Select Reload schedule to retry.";
   } finally {
-    aiScheduleLoading = false;
-    $("reloadAISchedule").disabled = false;
+    if (aiSchedulesView === view && currentUser()?.id === userId) { aiScheduleLoading = false; renderAIScheduleControls(); }
   }
 }
 
 async function saveAISchedule() {
-  if (!canWrite() || aiScheduleLoading) return;
+  if (!canWrite() || aiScheduleLoading || !aiSchedulesView.loaded) return;
   let draft;
   try { draft = ScheduleEditor.read($("aiScheduleEditor")); }
-  catch (error) { $("aiScheduleStatus").textContent = t(error.message); return; }
+  catch (error) { $("aiScheduleStatus").textContent = error.message; return; }
+  captureAIScheduleDraft();
+  const view = aiSchedulesView, scope = view.selected, userId = currentUser()?.id;
   aiScheduleLoading = true;
-  $("saveAISchedule").disabled = true;
-  $("reloadAISchedule").disabled = true;
-  $("aiScheduleStatus").textContent = t("Saving schedule…");
+  view.pendingMessage = "Saving schedule…";
+  renderAIScheduleControls({ mount: false });
   try {
-    const saved = await api("/api/settings/ai-enrichment-schedule", { method: "PUT", body: JSON.stringify({ ...draft, position_scope: valueOf("aiScheduleScope"), language: state.language }) });
-    $("aiScheduleStatus").textContent = `${t("Schedule saved.")}${saved.enabled && saved.next_run ? ` ${t("Next run")}: ${formatDateTime(saved.next_run)}` : ` ${t("No automatic run scheduled")}`}`;
-  } catch (error) {
-    $("aiScheduleStatus").textContent = t("Could not save schedule. Review the fields and try again.");
+    const saved = await api("/api/settings/ai-enrichment-schedule", { method: "PUT", body: JSON.stringify({ ...draft, position_scope: scope, language: state.language }) });
+    if (aiSchedulesView !== view || currentUser()?.id !== userId) return;
+    view.dirty.delete(scope);
+    acceptAIScheduleResponse(saved);
+    view.messages[scope] = "Schedule saved.";
+  } catch {
+    if (aiSchedulesView === view && currentUser()?.id === userId) view.messages[scope] = "Could not save schedule. Review the fields and try again.";
   } finally {
-    aiScheduleLoading = false;
-    $("saveAISchedule").disabled = !canWrite();
-    $("reloadAISchedule").disabled = false;
+    if (aiSchedulesView === view && currentUser()?.id === userId) { aiScheduleLoading = false; renderAIScheduleControls(); }
   }
 }
+
+function relocalizeAISchedules() {
+  captureAIScheduleDraft();
+  renderAIScheduleControls();
+}
+
+document.addEventListener("change", event => {
+  if (event.target.id === "aiScheduleScope") switchAIScheduleScope(event.target.value);
+});
+for (const type of ["input", "change"]) document.addEventListener(type, event => {
+  if (!event.target.matches?.("[data-schedule-field]") || !$("aiScheduleEditor")?.contains(event.target) || aiScheduleLoading || !canWrite()) return;
+  captureAIScheduleDraft();
+  aiSchedulesView.dirty.add(aiSchedulesView.selected);
+  delete aiSchedulesView.messages[aiSchedulesView.selected];
+  renderAIScheduleOverview();
+});
 
 function syncBackupEnabledControls() {
   const enabled = $("backupEnabled").value === "true";

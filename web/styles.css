@@ -12125,3 +12125,14 @@ html[dir="rtl"] .settings-menu-button.active {
 }
 #positionTransactionBondMaturityDate { min-width:120px; }
 #positionTransactionBondMaturityField small { font-size:11px; line-height:1.5; letter-spacing:normal; text-transform:none; }
+
+/* Independent task schedules reuse the shared scheduler editor. */
+.ai-schedule-scope-picker { max-width: 360px; margin-block: 8px; }
+.ai-schedule-scope-picker select { width: 100%; min-width: 0; }
+.ai-schedule-overview { list-style: none; padding: 0; margin: 12px 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.ai-schedule-scope-row { display: flex; flex-direction: column; gap: 5px; border: 1px solid #394354; border-radius: 7px; padding: 10px; min-width: 0; overflow-wrap: anywhere; }
+.ai-schedule-scope-row.selected { border-color: #8bd1ff; background: #171f2a; }
+.ai-schedule-scope-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; }
+.ai-schedule-draft { color: #ffd17a; font-size: 12px; }
+.ai-schedule-scope-row small { color: #b9c7db; }
+@media (max-width: 600px) { .ai-schedule-overview { grid-template-columns: minmax(0, 1fr); } }

@@ -49,7 +49,7 @@ def test_all_five_ai_frequencies_save_reload_localization_and_layout(tmp_path, c
     command, evaluate = ready(tmp_path, chromium, language, width)
     assert evaluate("qa.field('enabled').checked") is False
     assert evaluate("qa.field('frequency').disabled") is True
-    evaluate("qa.field('enabled').click();qa.change('timezone','Asia/Jerusalem');$('aiScheduleScope').value='all';")
+    evaluate("$('aiScheduleScope').value='all';$('aiScheduleScope').dispatchEvent(new Event('change',{bubbles:true}));qa.field('enabled').click();qa.change('timezone','Asia/Jerusalem');")
     for frequency in ["minutely", "hourly", "daily", "weekly", "monthly"]:
         evaluate(f"qa.change('frequency',{json.dumps(frequency)});qa.change('interval','2');qa.change('hour','21');qa.change('minute','47');qa.check('weekdays',[0,6]);qa.check('month_days',[1,15,31]);$('saveAISchedule').click();")
         browser_wait(evaluate, "!$('saveAISchedule').disabled")
@@ -71,7 +71,7 @@ def test_all_five_ai_frequencies_save_reload_localization_and_layout(tmp_path, c
     assert evaluate("innerWidth") == width
     assert evaluate("document.documentElement.scrollWidth-innerWidth") <= 1
     evaluate("$('aiScheduleEditor').scrollIntoView({block:'start'});")
-    geometry = evaluate("Array.from($('aiScheduleEditor').querySelectorAll('input,select')).filter(e=>e.offsetWidth&&!e.closest('[hidden]')).map(e=>({field:e.dataset.scheduleField,width:e.getBoundingClientRect().width,left:e.getBoundingClientRect().left,right:e.getBoundingClientRect().right}))")
+    geometry = evaluate("Array.from($('aiScheduleEditor').querySelectorAll('input,select')).filter(e=>e.offsetWidth&&!e.closest('[hidden]')).map(e=>({field:e.dataset.scheduleField||e.id,width:e.getBoundingClientRect().width,left:e.getBoundingClientRect().left,right:e.getBoundingClientRect().right}))")
     assert all(item["left"] >= 0 and item["right"] <= width for item in geometry), geometry
     assert all(item["width"] >= 100 for item in geometry if item["field"] in ("hour", "minute", "timezone")), geometry
     text = evaluate("$('aiScheduleEditor').textContent")
@@ -110,8 +110,8 @@ def test_validation_network_recovery_disabled_draft_and_viewer_permissions(tmp_p
     evaluate("$('reloadAISchedule').click();")
     browser_wait(evaluate, "!$('reloadAISchedule').disabled")
     evaluate("state.auth.user.role='Viewer';loadAISchedule()")
-    assert evaluate("Array.from($('aiScheduleEditor').querySelectorAll('input,select')).every(e=>e.disabled)")
-    assert evaluate("$('aiScheduleScope').disabled&&$('saveAISchedule').disabled")
+    assert evaluate("Array.from($('aiScheduleEditor').querySelectorAll('[data-schedule-field]')).every(e=>e.disabled)")
+    assert evaluate("!$('aiScheduleScope').disabled&&$('saveAISchedule').disabled")
     evaluate("saveAISchedule()")
     assert evaluate("qa.scheduleWrites.length") == 1
     assert evaluate("qa.errors") == []

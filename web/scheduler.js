@@ -60,6 +60,7 @@
     enabled.dataset.scheduleField = "enabled";
     enabledLabel.append(enabled, node("span", "", "Automatic schedule"));
     container.append(enabledLabel);
+    if (options.afterEnabled) container.append(options.afterEnabled);
     const fields = node("div", "scheduler-fields");
     const frequencyLabel = node("label", "field scheduler-frequency");
     frequencyLabel.append(node("span", "", "Frequency"));
@@ -113,7 +114,7 @@
     container.append(preview, error);
     const intervalNote = node("p", "section-note", "Minute intervals restart each hour; hour intervals restart each day.");
     container.append(intervalNote);
-    const instance = { controls, enabled, translate, editable, error };
+    const instance = { controls, enabled, translate, editable, error, afterEnabled: options.afterEnabled };
     instances.set(container, instance);
     function update() {
       const f = frequency.value;
@@ -183,12 +184,18 @@
     instance.error.hidden = true;
     return result;
   }
+  function snapshot(container) {
+    const instance = instances.get(container);
+    if (!instance) return null;
+    const draft = values(instance);
+    for (const name of ["interval", "hour", "minute"]) draft.schedule_config[name] = instance.controls[name].value;
+    draft.timezone = instance.controls.timezone.value;
+    return draft;
+  }
   function relocalize(container, translate) {
     const instance = instances.get(container);
     if (!instance) return;
-    const draft = values(instance);
-    for (const name of ["interval", "hour", "minute"]) draft.schedule_config[name] = instance.controls[name].value;
-    mount(container, draft, { translate, editable: instance.editable });
+    mount(container, snapshot(container), { translate, editable: instance.editable, afterEnabled: instance.afterEnabled });
   }
-  global.ScheduleEditor = { mount, read, summary, relocalize };
+  global.ScheduleEditor = { mount, read, summary, snapshot, relocalize };
 })(window);

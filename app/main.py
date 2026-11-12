@@ -1703,6 +1703,8 @@ def load_runtime_settings() -> dict[str, Any]:
             saved = json.loads(path.read_text())
             if isinstance(saved.get("ai_enrichment_schedule"), dict):
                 settings["ai_enrichment_schedule"] = saved["ai_enrichment_schedule"]
+            if isinstance(saved.get("ai_enrichment_schedules"), dict):
+                settings["ai_enrichment_schedules"] = saved["ai_enrichment_schedules"]
             if isinstance(saved.get("backup"), dict):
                 settings["backup"].update(saved["backup"])
         except json.JSONDecodeError:
@@ -5201,27 +5203,61 @@ security_enrichment = EnrichmentJobs(app, lambda: _enrichment_assistant_settings
 app.include_router(security_enrichment.router())
 
 
-AI_ENRICHMENT_JOB_ID = "ai-missing-data-enrichment"
+AI_ENRICHMENT_JOB_ID = "ai-missing-data-enrichment"  # Legacy singleton, removed on reconciliation.
+AI_ENRICHMENT_SCOPES = ("open", "all")
+_ai_schedule_lock = RLock()
 
 
-def ai_enrichment_schedule_settings() -> dict[str, Any]:
-    raw = load_runtime_settings().get("ai_enrichment_schedule", {})
+def _ai_enrichment_scope(position_scope: Any) -> str:
+    if not isinstance(position_scope, str) or position_scope not in AI_ENRICHMENT_SCOPES:
+        raise HTTPException(400, "invalid_schedule")
+    return position_scope
+
+
+def ai_enrichment_job_id(position_scope: str) -> str:
+    return f"{AI_ENRICHMENT_JOB_ID}:{position_scope}"
+
+
+def ai_enrichment_schedule_settings(position_scope: str | None = None, *, runtime: dict[str, Any] | None = None) -> dict[str, Any]:
+    runtime = load_runtime_settings() if runtime is None else runtime
+    legacy = runtime.get("ai_enrichment_schedule", {})
+    legacy = legacy if isinstance(legacy, dict) else {}
+    if position_scope is None:
+        position_scope = legacy.get("position_scope", "open")
+        if position_scope not in AI_ENRICHMENT_SCOPES:
+            position_scope = "open"
+    position_scope = _ai_enrichment_scope(position_scope)
+    collection = runtime.get("ai_enrichment_schedules")
+    # A legacy singleton belongs only to its saved scope. Reading it must not
+    # turn on a second schedule, and an authoritative collection must not revive
+    # a stale singleton after restore or removal of a row.
+    if isinstance(collection, dict):
+        raw = collection.get(position_scope, {})
+    else:
+        raw = legacy if legacy.get("position_scope", "open") == position_scope else {}
+    raw = raw if isinstance(raw, dict) else {}
     return {"enabled": bool(raw.get("enabled", False)),
             "schedule_config": normalize_schedule(raw.get("schedule_config") or {"frequency": "daily", "hour": 8, "minute": 0}),
             "timezone": str(raw.get("timezone") or config.alerts.get("timezone") or "UTC"),
-            "position_scope": raw.get("position_scope", "open"), "language": raw.get("language", "en"),
+            "position_scope": position_scope, "language": raw.get("language", "en"),
             "owner_id": raw.get("owner_id", "")}
 
 
-def ai_enrichment_schedule_status() -> dict[str, Any]:
-    settings = ai_enrichment_schedule_settings()
-    settings.pop("owner_id", None)
-    job = scheduler.get_job(AI_ENRICHMENT_JOB_ID) if scheduler else None
-    return {**settings, "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None}
+def ai_enrichment_schedule_status(position_scope: str | None = None) -> dict[str, Any]:
+    runtime = load_runtime_settings()
+    selected_scope = ai_enrichment_schedule_settings(position_scope, runtime=runtime)["position_scope"]
+    items = []
+    for scope in AI_ENRICHMENT_SCOPES:
+        settings = ai_enrichment_schedule_settings(scope, runtime=runtime)
+        settings.pop("owner_id", None)
+        job = scheduler.get_job(ai_enrichment_job_id(scope)) if scheduler else None
+        items.append({**settings, "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None})
+    selected = next(item for item in items if item["position_scope"] == selected_scope)
+    return {**selected, "items": items}
 
 
-def run_scheduled_ai_enrichment() -> None:
-    settings = ai_enrichment_schedule_settings()
+def run_scheduled_ai_enrichment(position_scope: str | None = None) -> None:
+    settings = ai_enrichment_schedule_settings(position_scope)
     if not settings["enabled"]:
         return
 
@@ -5233,28 +5269,31 @@ def run_scheduled_ai_enrichment() -> None:
         security_enrichment.start(settings["owner_id"], {}, settings["language"], settings["position_scope"],
                                   scheduled_credentials=credentials)
     except PermissionError:
-        _record_log("market-data", "security_ai_schedule_skipped", code="owner_not_authorized")
+        _record_log("market-data", "security_ai_schedule_skipped", code="owner_not_authorized", position_scope=settings["position_scope"])
     except HTTPException as exc:
-        _record_log("market-data", "security_ai_schedule_skipped", code="busy" if exc.status_code == 409 else "request_failed")
+        _record_log("market-data", "security_ai_schedule_skipped", code="busy" if exc.status_code == 409 else "request_failed", position_scope=settings["position_scope"])
 
 
 def configure_ai_enrichment_job() -> None:
     if scheduler is None:
         return
-    try:
-        scheduler.remove_job(AI_ENRICHMENT_JOB_ID)
-    except Exception:
-        pass
-    settings = ai_enrichment_schedule_settings()
-    if settings["enabled"]:
-        scheduler.add_job(run_scheduled_ai_enrichment, schedule_trigger(settings["schedule_config"], settings["timezone"]),
-                          id=AI_ENRICHMENT_JOB_ID, replace_existing=True, max_instances=1, coalesce=True,
-                          misfire_grace_time=60)
+    runtime = load_runtime_settings()
+    for identifier in [AI_ENRICHMENT_JOB_ID, *(ai_enrichment_job_id(scope) for scope in AI_ENRICHMENT_SCOPES)]:
+        try:
+            scheduler.remove_job(identifier)
+        except Exception:
+            pass
+    for scope in AI_ENRICHMENT_SCOPES:
+        settings = ai_enrichment_schedule_settings(scope, runtime=runtime)
+        if settings["enabled"]:
+            scheduler.add_job(run_scheduled_ai_enrichment, schedule_trigger(settings["schedule_config"], settings["timezone"]),
+                              args=[scope], id=ai_enrichment_job_id(scope), replace_existing=True, max_instances=1,
+                              coalesce=True, misfire_grace_time=60)
 
 
 @app.get("/api/settings/ai-enrichment-schedule")
-def get_ai_enrichment_schedule():
-    return ai_enrichment_schedule_status()
+def get_ai_enrichment_schedule(position_scope: str | None = None):
+    return ai_enrichment_schedule_status(position_scope)
 
 
 @app.put("/api/settings/ai-enrichment-schedule")
@@ -5264,31 +5303,39 @@ def update_ai_enrichment_schedule(request: Request, payload: dict[str, Any]):
         raise HTTPException(401, "authentication_required")
     if owner.get("role") not in {"Admin", "Operator"}:
         raise HTTPException(403, "read_only")
-    settings = ai_enrichment_schedule_settings()
-    previous_schedule, previous_timezone = settings["schedule_config"], settings["timezone"]
-    for key in ("enabled", "schedule_config", "timezone", "position_scope", "language"):
-        if key in payload:
-            settings[key] = payload[key]
-    try:
-        if not isinstance(settings["enabled"], bool):
-            raise ValueError("Invalid enabled flag")
+    with _ai_schedule_lock:
+        runtime = load_runtime_settings()
+        selected_scope = payload.get("position_scope") if "position_scope" in payload else ai_enrichment_schedule_settings(runtime=runtime)["position_scope"]
+        selected_scope = _ai_enrichment_scope(selected_scope)
+        settings = ai_enrichment_schedule_settings(selected_scope, runtime=runtime)
+        previous_schedule, previous_timezone = settings["schedule_config"], settings["timezone"]
+        for key in ("enabled", "schedule_config", "timezone", "language"):
+            if key in payload:
+                settings[key] = payload[key]
         try:
-            settings["schedule_config"] = normalize_schedule(settings["schedule_config"])
-            schedule_trigger(settings["schedule_config"], settings["timezone"])
-        except (ValueError, TypeError, ZoneInfoNotFoundError):
-            if settings["enabled"]:
-                raise
-            settings["schedule_config"], settings["timezone"] = previous_schedule, previous_timezone
-        if settings["position_scope"] not in {"open", "all"} or settings["language"] not in {"he", "en"}:
-            raise ValueError("Invalid schedule scope or language")
-    except (ValueError, TypeError, ZoneInfoNotFoundError) as exc:
-        raise HTTPException(400, "invalid_schedule") from exc
-    settings["owner_id"] = owner["id"]
-    runtime = load_runtime_settings()
-    runtime["ai_enrichment_schedule"] = settings
-    save_runtime_settings(runtime)
-    configure_ai_enrichment_job()
-    return ai_enrichment_schedule_status()
+            if not isinstance(settings["enabled"], bool):
+                raise ValueError("Invalid enabled flag")
+            try:
+                settings["schedule_config"] = normalize_schedule(settings["schedule_config"])
+                schedule_trigger(settings["schedule_config"], settings["timezone"])
+            except (ValueError, TypeError, ZoneInfoNotFoundError):
+                if settings["enabled"]:
+                    raise
+                settings["schedule_config"], settings["timezone"] = previous_schedule, previous_timezone
+            if settings["language"] not in {"he", "en"}:
+                raise ValueError("Invalid schedule language")
+        except (ValueError, TypeError, ZoneInfoNotFoundError) as exc:
+            raise HTTPException(400, "invalid_schedule") from exc
+        settings["owner_id"] = owner["id"]
+        collection = {scope: ai_enrichment_schedule_settings(scope, runtime=runtime) for scope in AI_ENRICHMENT_SCOPES}
+        collection[selected_scope] = settings
+        runtime["ai_enrichment_schedules"] = collection
+        # Retain the selected row for singleton clients without making it the
+        # source of truth for another scope.
+        runtime["ai_enrichment_schedule"] = settings
+        save_runtime_settings(runtime)
+        configure_ai_enrichment_job()
+        return ai_enrichment_schedule_status(selected_scope)
 
 
 def _with_local_valuation(reader):

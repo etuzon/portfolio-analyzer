@@ -108,7 +108,8 @@ def test_schedule_job_reconfigures_and_disables(schedule_environment, monkeypatc
     assert calls[-1][0] == "add"
     assert calls[-1][3]["max_instances"] == 1
     assert client.put(endpoint, headers=headers, json={"enabled": False}).status_code == 200
-    assert calls[-1] == ("remove", main.AI_ENRICHMENT_JOB_ID)
+    assert calls[-1] == ("remove", main.ai_enrichment_job_id("all"))
+    assert ("remove", main.AI_ENRICHMENT_JOB_ID) in calls
 
 
 def test_scheduled_job_skips_active_job_without_minting_credentials_and_cleans_failure(monkeypatch):
@@ -238,8 +239,9 @@ def test_restore_reconfigures_ai_job_from_restored_runtime(schedule_environment,
     if restored_schedule is None:
         assert main.AI_ENRICHMENT_JOB_ID not in registered
     else:
-        assert str(registered[main.AI_ENRICHMENT_JOB_ID].timezone) == "UTC"
-        assert "hour='*/4'" in str(registered[main.AI_ENRICHMENT_JOB_ID])
+        assert main.AI_ENRICHMENT_JOB_ID not in registered
+        assert str(registered[main.ai_enrichment_job_id("open")].timezone) == "UTC"
+        assert "hour='*/4'" in str(registered[main.ai_enrichment_job_id("open")])
 
 
 def test_scheduled_session_rejects_viewer_and_disabled(schedule_environment):
