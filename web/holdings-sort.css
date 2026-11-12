@@ -1,0 +1,56 @@
+.holdings-table-wrap .holdings-sort-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 5px;
+  min-height: 32px;
+  padding: 4px 5px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.holdings-table-wrap .holdings-sort-button:hover,
+.holdings-table-wrap .holdings-sort-button[aria-pressed="true"] {
+  background: rgba(124, 92, 255, .15);
+  border-color: rgba(159, 140, 255, .65);
+}
+.holdings-table-wrap .holdings-sort-button:focus-visible {
+  outline: 2px solid #c4b5fd;
+  outline-offset: 2px;
+}
+.holdings-sort-group { display: flex; flex-wrap: nowrap; gap: 2px; }
+.holdings-sort-heading { display: block; margin-bottom: 2px; }
+.holdings-sort-detail { display: block; font-size: .8em; font-weight: normal; }
+.holdings-sort-arrow { opacity: .75; }
+.holdings-mobile-sort { display: none; }
+@media (min-width: 761px) {
+  /* Fixed-layout tables need real column widths. Keep labels readable before
+     cards start; the existing wrapper supplies horizontal scrolling. */
+  .holdings-table-wrap .holdings-table { min-width: 1650px; }
+  .holdings-table-wrap .holdings-table th[data-holdings-sort-column="security"] { width: 220px; }
+  .holdings-table-wrap .holdings-table th[data-holdings-sort-column="account"] { width: 145px; }
+  .holdings-table-wrap .holdings-table th[data-holdings-sort-column="risk"] { width: 88px; }
+  .holdings-table-wrap .holdings-table th[data-holdings-sort-column="value"] { width: 145px; }
+  .holdings-table-wrap .holdings-table th[data-holdings-sort-column="range"] { width: 145px; }
+  .holdings-table-wrap .holdings-table th[data-holdings-sort-column="income"] { width: 150px; }
+  .holdings-table-wrap .holdings-table th[data-holdings-sort-column="dividend"] { width: 145px; }
+  .holdings-table-wrap .holdings-table th[data-holdings-sort-column="technicals"] { width: 270px; }
+  .holdings-table-wrap .holdings-table th[data-holdings-sort-column="status"] { width: 140px; }
+}
+@media (max-width: 760px) {
+  .holdings-mobile-sort {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 8px;
+    margin-block: 12px;
+  }
+  .holdings-mobile-sort .field { min-width: 0; margin: 0; }
+  .holdings-mobile-sort select { width: 100%; min-width: 0; min-height: 44px; }
+  .holdings-mobile-sort button { min-height: 44px; white-space: nowrap; }
+}

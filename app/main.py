@@ -72,7 +72,7 @@ from .outlook_scoring import OUTLOOK_MODEL_VERSION, OUTLOOK_EVALUATION_VERSION, 
 from .providers import MarketDataHub, ProviderError
 from .portfolio_refresh import PRICE_ANALYSIS_FIELDS, attach_market_analysis, prefer_recorded_prices, refresh_positions, revalue_holding, security_key
 from .report_pdf import build_portfolio_report_pdf
-from . import risk_history
+from . import risk_history, risk_scenarios
 from .dividend_summary_pdf import build_dividend_summary_pdf
 from .trade_planner import planner_security
 
@@ -3396,12 +3396,23 @@ def _risk_history_saved_fx(base_currency: str, items: list, accounts: list):
     return {"quotes": quotes}
 
 
-def _risk_history_inputs(base_currency: str):
+def _risk_history_inputs(base_currency: str, *, saved_only: bool = False):
     # All three paths use the same lock order. Stored history is excluded from
     # financial change_token so recording never invalidates its own context.
     with _portfolio_cache_lock, local_store._sync_lock:
         before = _risk_history_guard()
-        payload = portfolio_payload(defer_enrichment=True)
+        if saved_only:
+            # Scenario reads must not let a stale/missing cache start a provider
+            # worker, which portfolio_payload normally does for dashboard reads.
+            cached = _portfolio_cache or read_portfolio_cache()
+            if (not cached or cached.get("signature") != before[0]
+                    or float(cached.get("expires_at") or 0) <= time.time()
+                    or _portfolio_refresh_in_progress
+                    or (_portfolio_refresh_failure and _portfolio_refresh_failure.get("signature") == before[0])):
+                raise risk_history.RiskHistoryError("risk_context_not_ready", 409)
+            payload = deepcopy(cached.get("payload") or {})
+        else:
+            payload = portfolio_payload(defer_enrichment=True)
         if (payload.get("refresh_pending") or payload.get("refresh_state", "ready") != "ready"
                 or any(item.get("analytics_state", "ready") != "ready" for item in payload.get("items", []))):
             raise risk_history.RiskHistoryError("risk_context_not_ready", 409)
@@ -3416,6 +3427,15 @@ def _risk_history_inputs(base_currency: str):
 
 def _risk_history_error(exc):
     return HTTPException(status_code=exc.status, detail={"code": str(exc), "message": str(exc)})
+
+
+@app.get("/api/portfolio/risk-scenarios/context")
+def risk_scenarios_context(base_currency: str = "ILS"):
+    try:
+        with _portfolio_cache_lock, local_store._sync_lock:
+            return risk_scenarios.create_context(base_currency, lambda currency: _risk_history_inputs(currency, saved_only=True))
+    except risk_history.RiskHistoryError as exc:
+        raise _risk_history_error(exc) from exc
 
 
 @app.get("/api/portfolio/risk-history/context")

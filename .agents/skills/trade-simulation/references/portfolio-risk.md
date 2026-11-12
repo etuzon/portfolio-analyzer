@@ -62,3 +62,28 @@ per Jerusalem day, with gaps for unobserved days and a dot for a single point.
 A missing-data score is weighted points, with serializable contributor details;
 it is not a count of absent records. See `tests/test_risk_history.py`, frontend
 history/independent QA and risk-data-gap tests.
+
+## Interactive risk-reduction alternatives
+
+The dashboard's Explore lower risk tool uses `web/risk-scenarios.js` and the
+read-only `/api/portfolio/risk-scenarios/context` capture. Unlike the separate
+Trade Simulation tool's Investment-only total, these comparisons retain the full
+canonical dashboard scope, including unchanged Bank and Long-Term Savings
+accounts and excluding employee equity. The account selector filters sale
+candidates, never the total denominator or cash.
+
+Each alternative independently projects one supported long sale from the same
+frozen source. Generate at most the user's configured 1–20 scenarios (default 5),
+choosing measured qualifying partial sales among 10%, 25%, 50%. Neither account nor
+total score may increase and at least one must decline for an initial suggestion.
+Interactive amounts may range 0–100% and must recalculate the exact model, retain
+nonqualifying edited cards, and never interpolate scores or combine alternatives.
+
+Use coherent saved prices/FX and the existing dashboard model through
+`riskHistoryCalculate`; disclose that captured saved-FX baselines can differ from
+live badges. Preserve unknown cash, valuations, classification and FX; reject
+future activity. Require quantity times dated saved unit price to match valuation.
+Sale proceeds enter the same account. Cross-currency proceeds require an explicit
+opt-in assumption to convert at the captured source/base divided by account/base
+rate, preserving base equity. Quotes stay fixed; fees, taxes, interest, slippage
+and reinvestment are excluded. This tool places no trades and changes no ledger.

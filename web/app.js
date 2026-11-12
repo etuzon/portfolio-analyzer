@@ -1573,6 +1573,8 @@ function setAuthenticatedSession(payload) {
     clearBrokerForm();
     if (typeof resetTradePlannerViews === "function") resetTradePlannerViews();
     if (typeof resetTradeSimulator === "function") resetTradeSimulator();
+    if (typeof resetRiskScenarios === "function") resetRiskScenarios();
+    if (typeof resetHoldingsSort === "function") resetHoldingsSort();
     if (typeof resetCorrelation === "function") resetCorrelation();
     if (typeof resetBenchmarkComparison === "function") resetBenchmarkComparison();
     if (typeof resetTradingJournal === "function") resetTradingJournal();
@@ -1606,6 +1608,8 @@ function showLogin(message = "") {
   resetCompanyOutlookHistoryUi();
   if (typeof resetTradePlannerViews === "function") resetTradePlannerViews();
   if (typeof resetTradeSimulator === "function") resetTradeSimulator();
+  if (typeof resetRiskScenarios === "function") resetRiskScenarios();
+  if (typeof resetHoldingsSort === "function") resetHoldingsSort();
   if (typeof resetTransactionEntry === "function") resetTransactionEntry();
   state.portfolioRefreshPending = false;
   state.alarmClearPending = false;
@@ -2458,6 +2462,7 @@ function applyLanguage() {
   applyAutoDirection();
   if ($("manualSecuritiesList")) renderManualSecuritiesList();
   if (typeof renderRiskHistory === "function" && $("riskHistoryModal")?.hidden === false) renderRiskHistory();
+  if (typeof renderRiskScenarios === "function" && !$("riskScenariosModal")?.hidden) renderRiskScenarios();
   window.ScheduleEditor?.relocalize($("aiScheduleEditor"), t);
   window.ScheduleEditor?.relocalize($("backupScheduleEditor"), t);
   window.PortfolioI18n?.applyToDocument(state.language);
@@ -4114,7 +4119,7 @@ function renderPortfolioValueDashboard(items) {
           <div class="account-risk-allocation-bar" role="img" aria-label="${esc(`${optionLabel("Account risk allocation")}: ${allocation.bands.map((band) => `${optionLabel(band.label)} ${fmt(band.percent, 1)}%`).join(", ")}`)}">${segments}</div>
           <div class="account-risk-allocation-labels">${labels}</div>
         ` : ""}</div>
-        <div class="account-summary-footer">${accountRisk && typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(accountRisk) : ""}</div>
+        <div class="account-summary-footer">${accountRisk && typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(accountRisk) : ""}<button class="secondary compact-button" type="button" data-open-risk-scenarios="${esc(accountKey)}">${esc(t("Explore lower risk"))}</button></div>
       </article>`;
     })
     .join("");
@@ -4150,6 +4155,7 @@ function renderPortfolioValueDashboard(items) {
           <div class="portfolio-risk-summary">
             <span>${esc(optionLabel("Total portfolio risk"))}</span>
             ${riskBadge(state.riskSnapshot.total)}
+            <button class="secondary compact-button" type="button" data-open-risk-scenarios="">${esc(t("Explore lower risk"))}</button>
             ${typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(state.riskSnapshot.total) : ""}
           </div>
         </div>
@@ -4324,7 +4330,7 @@ function preserveRenderedInteraction(root) {
   const active = root.contains(document.activeElement) ? document.activeElement : null;
   const rowKey = active?.closest("[data-portfolio-position]")?.dataset.portfolioPosition;
   const accountKey = active?.closest("[data-account-summary]")?.dataset.accountSummary;
-  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-update-account-cash|data-cash-entry|data-risk-badge|data-open-(signal|risk|dividend|vesting)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
+  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-update-account-cash|data-cash-entry|data-risk-badge|data-open-risk-scenarios|data-open-(signal|risk|dividend|vesting)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
   const detailKey = (node) => JSON.stringify([node.closest?.("[data-account-summary]")?.dataset.accountSummary || "", node.id, node.className]);
   const detailStates = new Map();
   root.querySelectorAll("details").forEach((node) => {
@@ -4351,7 +4357,84 @@ function preserveRenderedInteraction(root) {
   };
 }
 
+let holdingsTableSort = { key: null, direction: "asc" };
+let holdingsTableRows = [];
+
+function resetHoldingsSort() {
+  holdingsTableSort = { key: null, direction: "asc" };
+  holdingsTableRows = [];
+  updateHoldingsSortHeaders();
+}
+
+function holdingsStatusSortLabel(item) {
+  if (["queued", "updating"].includes(item.analytics_state)) {
+    const saved = [item.income_trend, item.profit_trend, item.dividend_trend].some((metric) => ["ok", "partial", "stale"].includes(metric?.state));
+    return t(item.analytics_state === "queued" ? (saved ? "Saved data · awaiting update" : "Awaiting update") : (saved ? "Saved data · updating" : "Updating analytics"));
+  }
+  if (["refreshing", "failed"].includes(item.analytics_state)) return t(item.analytics_state === "failed" ? "Update failed" : "Updating analytics");
+  if (!item.missing?.length) return t("All displayed data available");
+  const details = dataGapDetails(item), confirmed = details.filter((entry) => entry.status === "missing").length;
+  return [confirmed ? t(`${confirmed} data gaps`) : "", details.some((entry) => entry.status === "updating") ? t("Updating analytics") : "",
+    details.some((entry) => entry.status === "failed") ? t("Update failed") : ""].filter(Boolean).join(" · ");
+}
+
+function sortHoldingsRows(items) {
+  if (typeof HoldingsSort === "undefined") return [...items];
+  return HoldingsSort.sortRows(items, holdingsTableSort, { language: state.language, maPeriod: state.tableMaPeriod,
+    account: (holding) => cleanSourceLabel(holding.account), status: holdingsStatusSortLabel,
+    risk: (item) => state.riskSnapshot?.total?.position_risks?.get(item)?.score,
+    amount: (value, currency) => reportAmount(value, currency, state.baseCurrency) });
+}
+
+function updateHoldingsSortHeaders() {
+  document.querySelectorAll(".holdings-table-wrap th[data-holdings-sort-column]").forEach((heading) => heading.removeAttribute("aria-sort"));
+  document.querySelectorAll("[data-holdings-sort]").forEach((button) => {
+    const key = button.dataset.holdingsSort, selected = key === holdingsTableSort.key;
+    const next = selected ? holdingsTableSort.direction === "asc" ? "Descending" : "Ascending" : HoldingsSort.isText(key) ? "Ascending" : "Descending";
+    const label = t(button.dataset.sortLabel);
+    const hint = HoldingsSort.isMonetary(key) ? ` · ${t("Amounts are sorted in dashboard currency")}: ${state.baseCurrency}` : "";
+    button.setAttribute("aria-pressed", String(selected));
+    button.setAttribute("aria-label", `${t("Sort by")} ${label} · ${t(next)}${hint}`);
+    button.title = `${t("Sort by")} ${label} · ${t(next)}${hint}`;
+    button.querySelector(".holdings-sort-arrow").textContent = selected ? holdingsTableSort.direction === "asc" ? "↑" : "↓" : "↕";
+    if (selected) button.closest("th").setAttribute("aria-sort", holdingsTableSort.direction === "asc" ? "ascending" : "descending");
+  });
+  const mobileSort = document.getElementById("holdingsMobileSort");
+  const mobileDirection = document.getElementById("holdingsMobileSortDirection");
+  if (mobileSort) mobileSort.value = holdingsTableSort.key || "";
+  if (mobileDirection) {
+    const ascending = holdingsTableSort.direction === "asc";
+    mobileDirection.disabled = !holdingsTableSort.key;
+    mobileDirection.textContent = `${t(ascending ? "Ascending" : "Descending")} ${ascending ? "↑" : "↓"}`;
+    mobileDirection.setAttribute("aria-label", `${t("Sort direction")}: ${t(ascending ? "Descending" : "Ascending")}`);
+  }
+}
+
+document.querySelector(".holdings-table-wrap thead")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-holdings-sort]");
+  if (!button || typeof HoldingsSort === "undefined") return;
+  const key = button.dataset.holdingsSort;
+  holdingsTableSort = { key, direction: key === holdingsTableSort.key ? holdingsTableSort.direction === "asc" ? "desc" : "asc" : HoldingsSort.isText(key) ? "asc" : "desc" };
+  renderRows(holdingsTableRows);
+});
+
+document.getElementById("holdingsMobileSort")?.addEventListener("change", (event) => {
+  const key = event.target.value;
+  holdingsTableSort = key ? { key, direction: key === holdingsTableSort.key ? holdingsTableSort.direction : HoldingsSort.isText(key) ? "asc" : "desc" }
+    : { key: null, direction: "asc" };
+  renderRows(holdingsTableRows);
+});
+
+document.getElementById("holdingsMobileSortDirection")?.addEventListener("click", () => {
+  if (!holdingsTableSort.key) return;
+  holdingsTableSort.direction = holdingsTableSort.direction === "asc" ? "desc" : "asc";
+  renderRows(holdingsTableRows);
+});
+
 function renderRows(items) {
+  holdingsTableRows = [...items];
+  items = sortHoldingsRows(items);
+  updateHoldingsSortHeaders();
   const restoreInteraction = preserveRenderedInteraction($("rows"));
   $("count").textContent = `${items.length} shown`;
   $("rows").innerHTML = items.map((item) => {
@@ -14698,6 +14781,11 @@ function closeModal(modal) {
     }
     delete modal.dataset.parentModalId;
   }
+  if (modal.id === "riskScenariosModal" && !modalReturnFocus.get(modal.id)?.isConnected) {
+    const current = [...document.querySelectorAll("[data-open-risk-scenarios]")]
+      .find(button => button.dataset.openRiskScenarios === (modal.dataset.riskScenarioOpenerAccount || ""));
+    modalReturnFocus.set(modal.id, current || document.querySelector('[data-open-risk-scenarios=""]'));
+  }
   if (modal.id === "alarmRiskModal" && !modalReturnFocus.get(modal.id)?.isConnected) {
     const current = [...$("alarmsList").querySelectorAll("[data-open-risk-alarm]")].find(button => button.dataset.openRiskAlarm === modal.dataset.alarmKey);
     modalReturnFocus.set(modal.id, current || $("alarmsModal").querySelector("button[data-close]"));
@@ -15011,6 +15099,8 @@ document.addEventListener("click", (event) => {
 
   const signalAlarm = event.target.closest("[data-open-signal-alarm]");
   if (signalAlarm) openSignalAlarm(signalAlarm.dataset.openSignalAlarm, signalAlarm.dataset.alarmSignalType);
+  const riskScenarioOpener = event.target.closest("[data-open-risk-scenarios]");
+  if (riskScenarioOpener) openRiskScenarios(riskScenarioOpener.dataset.openRiskScenarios, riskScenarioOpener);
   const riskAlarmKey = event.target.closest("[data-open-risk-alarm]")?.dataset.openRiskAlarm;
   if (riskAlarmKey) openRiskAlarm(riskAlarmKey);
 

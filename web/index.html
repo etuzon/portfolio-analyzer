@@ -20,7 +20,8 @@
     <link rel="icon" type="image/png" sizes="48x48" href="/assets/portfolio-vault/icon-48.png?v=1" />
     <link rel="shortcut icon" href="/assets/portfolio-vault/favicon.ico?v=1" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
-  <link rel="stylesheet" href="/styles.css?v=20261112-shared-scheduler" />
+  <link rel="stylesheet" href="/styles.css?v=20261112-risk-scenarios-sort" />
+  <link rel="stylesheet" href="/holdings-sort.css?v=1" />
   <link rel="stylesheet" href="/benchmark.css?v=3" />
   <link rel="stylesheet" href="/trading-journal.css?v=1" />
   <link rel="stylesheet" href="/optimization.css?v=3" />
@@ -263,19 +264,38 @@
             <button id="apply" type="button">Search</button>
           </div>
 
+          <div class="holdings-mobile-sort">
+            <label class="field" for="holdingsMobileSort"><span>Sort by</span><select id="holdingsMobileSort">
+              <option value="">Original order</option>
+              <option value="security">Security</option>
+              <option value="account">Account</option>
+              <option value="risk">Risk</option>
+              <option value="value">Value</option>
+              <option value="profit">Unrealized P/L</option>
+              <option value="high">High</option>
+              <option value="low">Low</option>
+              <option value="income">Net income change (%)</option>
+              <option value="dividend">Dividend change (%)</option>
+              <option value="support">Support</option>
+              <option value="resistance">Resistance</option>
+              <option value="ma">Moving average</option>
+              <option value="status">Data Status</option>
+            </select></label>
+            <button id="holdingsMobileSortDirection" class="secondary" type="button" aria-label="Sort direction" disabled>Ascending ↑</button>
+          </div>
           <div class="table-wrap holdings-table-wrap" tabindex="0" role="region" aria-label="Scrollable holdings table">
             <table class="holdings-table">
               <thead>
                 <tr>
-                  <th>Security</th>
-                  <th>Account</th>
-                  <th>Risk</th>
-                  <th>Value / P&amp;L</th>
-                  <th>1Y High / Low</th>
-                  <th>Net income</th>
-                  <th>Dividend Trend</th>
-                  <th>Support / Resistance</th>
-                  <th>Data Status</th>
+                  <th scope="col" data-holdings-sort-column="security"><button class="holdings-sort-button" type="button" data-holdings-sort="security" data-sort-label="Security"><span>Security</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
+                  <th scope="col" data-holdings-sort-column="account"><button class="holdings-sort-button" type="button" data-holdings-sort="account" data-sort-label="Account"><span>Account</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
+                  <th scope="col" data-holdings-sort-column="risk"><button class="holdings-sort-button" type="button" data-holdings-sort="risk" data-sort-label="Risk"><span>Risk</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
+                  <th scope="col" data-holdings-sort-column="value"><span class="holdings-sort-heading">Value / P&amp;L</span><div class="holdings-sort-group"><button class="holdings-sort-button" type="button" data-holdings-sort="value" data-sort-label="Value"><span>Value</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button><button class="holdings-sort-button" type="button" data-holdings-sort="profit" data-sort-label="Unrealized P/L"><span>P/L</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></div></th>
+                  <th scope="col" data-holdings-sort-column="range"><span class="holdings-sort-heading">1Y High / Low</span><div class="holdings-sort-group"><button class="holdings-sort-button" type="button" data-holdings-sort="high" data-sort-label="High"><span>High</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button><button class="holdings-sort-button" type="button" data-holdings-sort="low" data-sort-label="Low"><span>Low</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></div></th>
+                  <th scope="col" data-holdings-sort-column="income"><button class="holdings-sort-button" type="button" data-holdings-sort="income" data-sort-label="Net income change (%)"><span><span>Net income</span><small class="holdings-sort-detail">Change (%)</small></span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
+                  <th scope="col" data-holdings-sort-column="dividend"><button class="holdings-sort-button" type="button" data-holdings-sort="dividend" data-sort-label="Dividend change (%)"><span><span>Dividend Trend</span><small class="holdings-sort-detail">Change (%)</small></span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
+                  <th scope="col" data-holdings-sort-column="technicals"><span class="holdings-sort-heading">Support / Resistance</span><div class="holdings-sort-group"><button class="holdings-sort-button" type="button" data-holdings-sort="support" data-sort-label="Support"><span>Support</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button><button class="holdings-sort-button" type="button" data-holdings-sort="resistance" data-sort-label="Resistance"><span>Resistance</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button><button class="holdings-sort-button" type="button" data-holdings-sort="ma" data-sort-label="Moving average"><span>MA</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></div></th>
+                  <th scope="col" data-holdings-sort-column="status"><button class="holdings-sort-button" type="button" data-holdings-sort="status" data-sort-label="Data Status"><span>Data Status</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
                 </tr>
               </thead>
               <tbody id="rows"></tbody>
@@ -1217,6 +1237,7 @@
                 <p>Portfolio edits and Refresh load the latest data. A lightweight notification connection reports background analysis progress without repeatedly downloading or redrawing the dashboard and holdings. Displayed results stay in place while the status count advances; one completed snapshot is applied when analysis finishes. Changes from another open session also notify this page. Unchanged notifications do no work. Your page position, active filters, keyboard focus and expanded details are preserved. If the connection is interrupted it reconnects while retaining displayed data; use Refresh to retry a failed load or unavailable notifications. Loading never blocks the page.</p>
                 <p>Unrealized P/L bars and totals use the chart currency shown beside Total P/L. Hover over a bar or focus it with the keyboard to read the holding's P/L in its local currency and converted to ILS at the current saved exchange rate; this does not measure historical FX gains or losses. Missing ILS conversion is shown as unavailable. Holdings without P/L or chart-currency conversion are omitted, and the total remains unavailable until those inputs are complete. Refresh the dashboard to retry missing inputs.</p>
                 <p>Net income shows the percentage change between the two latest available annual reports: (current − previous) / abs(previous) × 100. Green means an increase, red a decrease, and blue exactly no change. The two report dates remain visible; they may not be consecutive years. A zero or missing previous value leaves the percentage unavailable. A smaller loss can produce a positive change. Risk shows only a colored score. Hover or focus the score for its category and explanation; select it to keep the explanation open. With the score focused, use arrow keys or Page Up and Page Down to scroll long explanations. Select it again, click elsewhere or press Escape to close it. The score is a model estimate, not a probability or forecast of loss; missing-data details remain separate. In High / Low, Data available means the range was calculated from sufficient dated price history; Partial indicates limited history.</p>
+                <p>Select a Holdings column's sort button to order the filtered rows; select it again to reverse the order. The arrow shows the current direction. Value and P/L, High and Low, and Support, Resistance and MA have separate sort buttons. Net income and Dividend Trend sort by percentage change; MA uses the period selected in Settings. Monetary values are compared in dashboard currency using saved FX, while each row keeps its displayed currency. Missing values or required FX stay last in either direction. Sorting uses only loaded rows, makes no server request and keeps the current filters and sort during background updates. The choice lasts for this signed-in page session. On small screens, use Sort by and the direction button above the holding cards; Original order clears sorting. Keyboard users can focus a sort button and press Enter or Space.</p>
               </article>
               <article class="help-feature">
                 <h3>Portfolio stocks heatmap</h3>
@@ -1243,6 +1264,12 @@
               </article>
               <article class="help-feature help-feature-wide help-risk-formula">
                 <h3>Investment risk formula</h3>
+                <h4>Risk reduction scenarios</h4>
+                <p>Select Explore lower risk beside Total portfolio risk or on an Investment account card. The account selection limits which holdings can be proposed for sale; the total comparison still includes the full captured dashboard portfolio and unchanged accounts, excluding employee equity. Holdings filters do not limit this snapshot. Viewers can compare scenarios; no transaction or broker order is created.</p>
+                <p>Maximum scenarios defaults to 5 and can be set from 1 to 20, saved for the current user in this browser. Each card is an independent alternative from the same baseline. The app tests sales of 10%, 25% and 50% of eligible long holdings in Investment accounts, keeps one qualifying option per account and security, and ranks them by total then account score reduction. A suggested option must lower at least one score without raising the other. Fewer than the maximum may qualify; these are tested alternatives, not an optimal portfolio.</p>
+                <p>Edit Sell amount in the security currency shown, or move the percentage slider from 0% to 100%. Amounts are currency units, not agorot or bond quote cents. The equivalent quantity, projected account cash, account score and total score recalculate together using the actual model. Zero restores the baseline. Negative amounts and sales above the holding value are rejected. An edited card stays visible even when it no longer qualifies as a reduction. Alternatives are not combined.</p>
+                <p>Prices and exchange rates are frozen at capture; the saved quote date and any stale-price warning remain visible. The captured score can differ from a live badge using different FX. Proceeds remain in the account currency; cross-currency holdings require explicitly enabling the assumption to convert proceeds at captured FX. Fees, taxes, slippage, interest and reinvestment are excluded. A lower heuristic score does not estimate future returns or a probability of loss.</p>
+                <p>Refresh scenarios deliberately captures current completed saved data; background portfolio updates leave the existing baseline and entered amounts fixed. Loading stays inside the dialog. Missing valuation, cash, currency, classification, account attribution or required FX prevents a trustworthy comparison and is not treated as zero. Future activity also blocks the current snapshot. Unsupported instruments, short positions, missing quotes and price/valuation mismatches are explained under Holdings without a supported scenario. Refresh portfolio data to resolve missing inputs, then Refresh scenarios. Failed refreshes retain existing results and entered amounts. Signing out or changing user clears the scenario snapshot.</p>
                 <p>The risk score runs from 0 (very low) to 100 (extreme). It estimates concentration and market exposure; it is not a forecast of the amount you may lose.</p>
                 <p>Expand Missing data below a risk score to see which securities lack price history, sector or industry, holding currency or asset class, or known economic currency allocations. The value out of 5 is an exposure-weighted component, not a count of missing fields. Each group shows its affected exposure, points before the combined cap, and a recovery step. The disclosure lists every affected symbol; tooltips show a compact category summary. Other missing company-report or dividend fields do not enter this component. Historical details describe the saved observation; correcting current data does not rewrite past observations. Viewers can inspect these explanations; correcting instrument data or classifications requires editing access.</p>
 
@@ -1813,6 +1840,25 @@
         <p id="alarmClearStatus" class="status-line" role="status" aria-live="polite" tabindex="-1"></p>
         <p class="section-note">Cleared risk warnings return when the assessment changes. Signals use your dismissal expiry setting.</p>
         <div id="alarmsList" class="stack"></div>
+      </section>
+    </div>
+
+    <div id="riskScenariosModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide risk-scenarios-card" role="dialog" aria-modal="true" aria-labelledby="riskScenariosTitle">
+        <div class="section-head"><h2 id="riskScenariosTitle" tabindex="-1">Explore lower risk</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <p class="section-note">Compare independent sale alternatives using the existing risk model. No trades are placed.</p>
+        <div class="risk-scenarios-controls">
+          <label class="field"><span>Account</span><select id="riskScenariosAccount"><option value="">All investment accounts</option></select></label>
+          <label class="field"><span>Maximum scenarios</span><input id="riskScenariosMax" type="number" min="1" max="20" step="1" value="5" inputmode="numeric" /></label>
+          <button id="riskScenariosRefresh" type="button" class="secondary">Refresh scenarios</button>
+        </div>
+        <label class="risk-scenarios-conversion"><input id="riskScenariosConvert" type="checkbox" /><span>Assume sale proceeds are converted to the account currency at captured FX</span></label>
+        <p class="section-note">The account selection limits sale suggestions. Total risk includes the full captured portfolio, excluding employee equity.</p>
+        <p id="riskScenariosMeta" class="section-note"></p>
+        <p class="section-note">Captured risk uses saved exchange rates and may differ from current dashboard badges. Prices stay fixed; fees, taxes and reinvestment are excluded.</p>
+        <p id="riskScenariosStatus" class="status-line" role="status" aria-live="polite"></p>
+        <section id="riskScenariosResults" aria-label="Risk reduction scenarios"></section>
       </section>
     </div>
 
@@ -2956,7 +3002,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <div id="riskBadgeExplanation" class="risk-badge-explanation" role="tooltip" hidden></div>
-  <script src="/i18n.js?v=20261112-shared-scheduler"></script>
+  <script src="/i18n.js?v=20261112-risk-scenarios-sort"></script>
   <script src="/scheduler.js?v=1"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
@@ -2974,9 +3020,12 @@
   <script src="/heatmap-ui.js?v=20261107-darker-large-moves"></script>
   <script src="/risk-data-gaps-ui.js?v=1"></script>
   <script src="/risk-history-ui.js?v=1"></script>
+  <script src="/risk-scenarios.js?v=1"></script>
+  <script src="/risk-scenarios-ui.js?v=1"></script>
+  <script src="/holdings-sort.js?v=1"></script>
   <script src="/alarm-priority-ui.js?v=20261109-alert-group-label"></script>
   <script src="/account-cash-ui.js?v=20261109-cash-save-label"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=20261112-shared-scheduler"></script>
+  <script src="/app.js?v=20261112-risk-scenarios-sort"></script>
   </body>
 </html>
