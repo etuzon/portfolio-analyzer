@@ -4537,13 +4537,13 @@ def _credit_rating_inventory():
         asset = str(holding.get("asset_class") or "").upper()
         instrument = str(holding.get("asset_sub_class") or holding.get("instrument_type") or "").upper()
         market = str(holding.get("stock_market") or "").upper()
-        if market == "PRIVATE" or asset not in {"EQUITY", "STOCK", "RSU", "BOND"} or instrument in {"OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"}:
+        if market == "PRIVATE" or asset not in {"EQUITY", "STOCK", "RSU", "BOND", "FIXED_INCOME"} or instrument in {"OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"}:
             continue
         if not holding.get("symbol") or not market or not holding.get("currency"):
             continue
         candidate = {name: deepcopy(holding.get(name)) for name in
                      ("symbol", "secondary_symbol", "stock_market", "currency", "location", "name", "asset_class", "asset_sub_class")}
-        candidate["asset_sub_class"] = instrument
+        candidate["asset_sub_class"] = instrument or ("BOND" if asset == "FIXED_INCOME" else "")
         candidate["security_key"] = enrichment_security_key(candidate)
         candidate["has_open_position"] = candidate["security_key"] in open_keys
         cached = hub().cached_profile(candidate["symbol"], stock_market=market,
@@ -4556,13 +4556,19 @@ def _credit_rating_inventory():
             website_host = urlsplit(str(cached["website"])).hostname
             if website_host:
                 candidate["verified_issuer_domains"] = [website_host.removeprefix("www.").lower()]
-        if "BOND" not in {asset, instrument}:
+        if not {asset, instrument} & {"BOND", "FIXED_INCOME"}:
             # A manual display label is not the legal issuer. Use the profile
             # bound by the normal provider to this exact listing when present.
             candidate["issuer_name"] = cached.get("name") or candidate.get("name") or ""
+            candidate["issuer_identity_verified"] = bool(cached.get("name") and
+                str(cached["name"]).strip().upper() != str(candidate["symbol"]).strip().upper())
         else:
             reference = _bond_market_data(candidate, cache_only=True) or {}
             candidate["issuer_name"] = (reference.get("security") or {}).get("issuer") or ""
+            candidate["issuer_identity_verified"] = bool(candidate["issuer_name"])
+            for field in ("isin", "cusip"):
+                if (reference.get("security") or {}).get(field):
+                    candidate[field] = reference["security"][field]
         previous = records.get(candidate["security_key"])
         if not previous or _enrichment_name_missing(previous):
             records[candidate["security_key"]] = candidate
@@ -4576,7 +4582,8 @@ def _credit_research_settings():
 
 credit_rating_service = CreditRatingService(cache=lambda: hub().cache,
     settings=lambda: config.market_data.get("credit_ratings", {}),
-    inventory=_credit_rating_inventory, research_settings=_credit_research_settings)
+    inventory=_credit_rating_inventory, research_settings=_credit_research_settings,
+    manual_store=lambda: local_store)
 app.include_router(credit_rating_service.router())
 
 

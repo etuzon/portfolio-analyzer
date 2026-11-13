@@ -31,6 +31,10 @@ function creditRatingsEntryActive(entry) {
   return Boolean(session && currentUser()?.id === session.owner && state.auth?.csrfToken === session.token && session.entries[entry.key] === entry);
 }
 
+function creditRatingsIsManual(record) {
+  return record?.manual_override === true || record?.source_kind === "manual";
+}
+
 function creditRatingsReason(code, status) {
   return t({
     not_checked: "This agency has not been checked yet.",
@@ -154,12 +158,12 @@ function creditRatingsEvidence(record, agency) {
     const label = t("Source {number}").replace("{number}", String(seen.size));
     return [`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(`${agency}: ${label}`)}">${esc(label)}</a>${fields.length ? ` <span>(${fields.map((field) => esc(t(field))).join(", ")})</span>` : ""}`];
   });
-  return `<details class="credit-rating-evidence"><summary>${esc(t("Details and sources"))}</summary><dl>${details.map(([label, value]) => `<div><dt>${esc(t(label))}</dt><dd><bdi dir="auto">${esc(value)}</bdi></dd></div>`).join("")}</dl>${links.length ? `<div class="credit-rating-sources">${links.map((link) => `<span>${link}</span>`).join("")}</div>` : `<p>${esc(t("No verified source saved."))}</p>`}${creditRatingsOtherCategories(record)}</details>`;
+  return `<details class="credit-rating-evidence" data-credit-disclosure="${esc(agency)}:evidence"><summary>${esc(t("Details and sources"))}</summary><dl>${details.map(([label, value]) => `<div><dt>${esc(t(label))}</dt><dd><bdi dir="auto">${esc(value)}</bdi></dd></div>`).join("")}</dl>${links.length ? `<div class="credit-rating-sources">${links.map((link) => `<span>${link}</span>`).join("")}</div>` : `<p>${esc(t("No verified source saved."))}</p>`}${creditRatingsOtherCategories(record)}</details>`;
 }
 
 function creditRatingsSignal(record, field) {
   const value = creditRatingsDirection(record[field], field === "watch");
-  const stale = record[`${field}_stale`] === true;
+  const stale = !creditRatingsIsManual(record) && record[`${field}_stale`] === true;
   const label = field === "watch" ? "Stale watch" : "Stale outlook";
   const dateLabel = field === "watch" ? "Watch last verified" : "Outlook last verified";
   return `<div class="credit-rating-signal"><span>${esc(value)}</span>${stale ? `<span class="badge warn" title="${esc(`${t(dateLabel)}: ${creditRatingsDate(record[`${field}_fetched_at`])}`)}">${esc(t(label))}</span>` : ""}</div>`;
@@ -169,16 +173,20 @@ function creditRatingsRows(context) {
   const agencies = [["moodys", "Moody’s"], ["sp", "S&P Global Ratings"], ["fitch", "Fitch"]];
   return agencies.map(([key, agency]) => {
     const record = (Array.isArray(context?.ratings) ? context.ratings : []).find((item) => item.agency === key) || { status: "not_checked", outlook: "unknown", watch: "unknown" };
-    const label = { rated: "Verified rating", unrated: "Unrated", withdrawn: "Withdrawn", not_found: "Not found", not_checked: "Not checked",
+    const manual = creditRatingsIsManual(record);
+    const label = { rated: manual ? "Manual rating" : "Verified rating", unrated: "Unrated", withdrawn: "Withdrawn", not_found: "Not found", not_checked: "Not checked",
       unavailable: "Unavailable", conflicting: "Conflicting evidence" }[record.status] || "Unavailable";
     const scope = [{ issuer: "Issuer rating", issue: "Issue rating" }[record.scope], { global: "Global scale", national: "National scale" }[record.scale],
       { long_term: "Long term", short_term: "Short term" }[record.term]].filter(Boolean).map((label) => t(label)).join(" · ");
-    const reason = creditRatingsReason(record.reason_code, record.status);
+    const reason = manual ? t("User-entered information; the app has not independently verified this rating.") : creditRatingsReason(record.reason_code, record.status);
+    const original = (Array.isArray(context?.retrieved_ratings) ? context.retrieved_ratings : []).find((item) => item.agency === key);
+    const evidence = manual && typeof manualCreditEvidenceHtml === "function" ? manualCreditEvidenceHtml(record, original, agency) : creditRatingsEvidence(record, agency);
+    const action = typeof manualCreditActionsHtml === "function" ? manualCreditActionsHtml(context, key) : "";
     return `<tr><th scope="row"><bdi dir="ltr">${esc(agency)}</bdi></th>
-      <td data-label="${esc(t("Credit rating"))}"><div class="credit-rating-value"><bdi class="credit-rating-symbol" dir="ltr">${esc(record.rating || "—")}</bdi><span class="badge neutral">${esc(t(label))}</span>${record.stale ? `<span class="badge warn">${esc(t("Stale evidence"))}</span>` : ""}</div>${scope ? `<span class="credit-rating-scope">${esc(scope)}</span>` : ""}${reason ? `<p class="credit-rating-reason">${esc(reason)}</p>` : ""}</td>
+      <td data-label="${esc(t("Credit rating"))}"><div class="credit-rating-value"><bdi class="credit-rating-symbol" dir="ltr">${esc(record.rating || "—")}</bdi><span class="badge neutral">${esc(t(label))}</span>${manual && record.status !== "rated" ? `<span class="badge credit-manual-badge">${esc(t("Manual"))}</span>` : ""}${record.stale ? `<span class="badge warn">${esc(t(manual ? "Old manual entry" : "Stale evidence"))}</span>` : ""}${manual && record.identity_verification === "user_entered" ? `<span class="badge credit-manual-badge">${esc(t("Manual identity"))}</span>` : ""}</div>${scope ? `<span class="credit-rating-scope">${esc(scope)}</span>` : ""}${reason ? `<p class="credit-rating-reason">${esc(reason)}</p>` : ""}</td>
       <td data-label="${esc(t("Outlook"))}">${creditRatingsSignal(record, "outlook")}</td>
       <td data-label="${esc(t("Watch"))}">${creditRatingsSignal(record, "watch")}</td>
-      <td data-label="${esc(t("Evidence"))}">${creditRatingsEvidence(record, agency)}</td></tr>`;
+      <td data-label="${esc(t("Evidence"))}">${evidence}${action}</td></tr>`;
   }).join("");
 }
 
@@ -198,6 +206,22 @@ function creditRatingsProviderStatus(providers) {
   }).join("")}</ul><p>${esc(t("Agency APIs can require a paid subscription and explicit ratings entitlements. Configuration alone does not establish coverage."))}</p></details>`;
 }
 
+function creditRatingsAvailability(context, editable = canWrite()) {
+  if (!context) return "";
+  const rows = Array.isArray(context.retrieved_ratings) ? context.retrieved_ratings : Array.isArray(context.ratings) ? context.ratings : [];
+  const unchecked = rows.length && rows.every((row) => row.status === "not_checked");
+  const incomplete = rows.some((row) => ["not_checked", "unavailable", "not_found", "conflicting"].includes(row.status));
+  const messages = [];
+  if (unchecked) messages.push(t("No retrieved rating checks are saved. Unknown does not mean Unrated."));
+  else if (incomplete) messages.push(t("Some agency information has not been verified. Unknown does not establish that the issuer is unrated."));
+  if (unchecked || incomplete) messages.push(t(editable
+    ? "Choose Refresh ratings to research public sources, or Add manually to record your own information."
+    : "An Admin or Operator can research ratings or add a manual entry."));
+  const providers = Array.isArray(context.provider_status) ? context.provider_status : [];
+  if (providers.length && providers.every((provider) => !provider.configured)) messages.push(t("Licensed rating API access is not configured. Public AI research does not require this token, but the AI connection must be available."));
+  return messages.join(" ");
+}
+
 function renderSecurityCreditRatings() {
   const panel = $("securityCreditRatings"), detail = state.securityDetail;
   if (!panel || !detail) return;
@@ -209,12 +233,17 @@ function renderSecurityCreditRatings() {
   panel.setAttribute("aria-busy", String(entry.loading || busy));
   $("securityCreditRatingsIssuer").textContent = context?.issuer_name ? `${t("Issuer")}: ${context.issuer_name}` : "";
   $("securityCreditRatingsIssuer").hidden = !context?.issuer_name;
+  const availability = $("securityCreditRatingsAvailability");
+  if (availability) {
+    availability.textContent = creditRatingsAvailability(context);
+    availability.hidden = !availability.textContent;
+  }
   const content = $("securityCreditRatingsRows"), html = creditRatingsRows(context);
   if (content.innerHTML !== html) {
-    const openAgencies = [...content.querySelectorAll("details[open]")].map((node) => node.closest("tr")?.rowIndex);
+    const openDisclosures = new Set([...content.querySelectorAll("details[open]")].map((node) => node.dataset.creditDisclosure));
     const focusedSummary = [...content.querySelectorAll("summary")].indexOf(document.activeElement);
     content.innerHTML = html;
-    content.querySelectorAll("details").forEach((node) => { if (openAgencies.includes(node.closest("tr")?.rowIndex)) node.open = true; });
+    content.querySelectorAll("details").forEach((node) => { if (openDisclosures.has(node.dataset.creditDisclosure)) node.open = true; });
     if (focusedSummary >= 0) content.querySelectorAll("summary")[focusedSummary]?.focus({ preventScroll: true });
   }
   const providerHtml = creditRatingsProviderStatus(context?.provider_status);
@@ -248,6 +277,7 @@ function renderSecurityCreditRatings() {
   if (status.textContent !== message) status.textContent = message;
   status.hidden = !message;
   $("securityCreditRatingsScope").textContent = t("Issuer ratings assess a company; issue ratings assess a specific debt obligation. Outlook and watch are agency assessments. Missing evidence stays unknown.");
+  if (typeof renderManualCreditEditor === "function") renderManualCreditEditor();
 }
 
 async function creditRatingsRequest(path, options = {}) {
@@ -257,6 +287,7 @@ async function creditRatingsRequest(path, options = {}) {
 }
 
 async function loadSecurityCreditRatings(entry = creditRatingsEntry(), { force = false } = {}) {
+  if (entry?.manual?.saving) { entry.reloadAfterManual = true; return; }
   if (!entry || !creditRatingsEntryActive(entry) || (entry.loading && !force)) return;
   const version = ++entry.version;
   entry.loading = true;
@@ -265,6 +296,7 @@ async function loadSecurityCreditRatings(entry = creditRatingsEntry(), { force =
     const context = await creditRatingsRequest(`/api/securities/credit-ratings?${new URLSearchParams(entry.identity)}`);
     if (!creditRatingsEntryActive(entry) || entry.version !== version) return;
     entry.context = context;
+    entry.readRevision = (entry.readRevision || 0) + 1;
     if (typeof updateHoldingsCreditRatingsFromOverview === "function") updateHoldingsCreditRatingsFromOverview(context);
     if (entry.message === "Saved ratings could not be loaded. Reload saved ratings to retry.") entry.message = "";
   } catch {

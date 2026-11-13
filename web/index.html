@@ -33,6 +33,7 @@
   <link rel="stylesheet" href="/risk-data-gaps.css?v=1" />
   <link rel="stylesheet" href="/risk-history.css?v=1" />
   <link rel="stylesheet" href="/security-credit-ratings.css?v=2" />
+  <link rel="stylesheet" href="/manual-credit-ratings.css?v=1" />
   </head>
   <body>
     <div id="authOverlay" class="auth-overlay">
@@ -292,13 +293,13 @@
               <thead>
                 <tr>
                   <th scope="col" data-holdings-sort-column="security"><button class="holdings-sort-button" type="button" data-holdings-sort="security" data-sort-label="Security"><span>Security</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
-                  <th scope="col" data-holdings-credit-column>Credit ratings</th>
                   <th scope="col" data-holdings-sort-column="account"><button class="holdings-sort-button" type="button" data-holdings-sort="account" data-sort-label="Account"><span>Account</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
                   <th scope="col" data-holdings-sort-column="risk"><button class="holdings-sort-button" type="button" data-holdings-sort="risk" data-sort-label="Risk"><span>Risk</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
                   <th scope="col" data-holdings-sort-column="value"><span class="holdings-sort-heading">Value / P&amp;L</span><div class="holdings-sort-group"><button class="holdings-sort-button" type="button" data-holdings-sort="value" data-sort-label="Value"><span>Value</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button><button class="holdings-sort-button" type="button" data-holdings-sort="profit" data-sort-label="Unrealized P/L"><span>P/L</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></div></th>
                   <th scope="col" data-holdings-sort-column="range"><span class="holdings-sort-heading">1Y High / Low</span><div class="holdings-sort-group"><button class="holdings-sort-button" type="button" data-holdings-sort="high" data-sort-label="High"><span>High</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button><button class="holdings-sort-button" type="button" data-holdings-sort="low" data-sort-label="Low"><span>Low</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></div></th>
                   <th scope="col" data-holdings-sort-column="income"><button class="holdings-sort-button" type="button" data-holdings-sort="income" data-sort-label="Net income change (%)"><span><span>Net income</span><small class="holdings-sort-detail">Change (%)</small></span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
                   <th scope="col" data-holdings-sort-column="dividend"><button class="holdings-sort-button" type="button" data-holdings-sort="dividend" data-sort-label="Dividend change (%)"><span><span>Dividend Trend</span><small class="holdings-sort-detail">Change (%)</small></span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
+                  <th scope="col" data-holdings-credit-column>Credit ratings</th>
                   <th scope="col" data-holdings-sort-column="technicals"><span class="holdings-sort-heading">Support / Resistance</span><div class="holdings-sort-group"><button class="holdings-sort-button" type="button" data-holdings-sort="support" data-sort-label="Support"><span>Support</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button><button class="holdings-sort-button" type="button" data-holdings-sort="resistance" data-sort-label="Resistance"><span>Resistance</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button><button class="holdings-sort-button" type="button" data-holdings-sort="ma" data-sort-label="Moving average"><span>MA</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></div></th>
                   <th scope="col" data-holdings-sort-column="status"><button class="holdings-sort-button" type="button" data-holdings-sort="status" data-sort-label="Data Status"><span>Data Status</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
                 </tr>
@@ -1265,7 +1266,7 @@
                 <p>Unrealized P/L bars and totals use the chart currency shown beside Total P/L. Hover over a bar or focus it with the keyboard to read the holding's P/L in its local currency and converted to ILS at the current saved exchange rate; this does not measure historical FX gains or losses. Missing ILS conversion is shown as unavailable. Holdings without P/L or chart-currency conversion are omitted, and the total remains unavailable until those inputs are complete. Refresh the dashboard to retry missing inputs.</p>
                 <p>Net income shows the percentage change between the two latest available annual reports: (current − previous) / abs(previous) × 100. Green means an increase, red a decrease, and blue exactly no change. The two report dates remain visible; they may not be consecutive years. A zero or missing previous value leaves the percentage unavailable. A smaller loss can produce a positive change. Risk shows only a colored score. Hover or focus the score for its category and explanation; select it to keep the explanation open. With the score focused, use arrow keys or Page Up and Page Down to scroll long explanations. Select it again, click elsewhere or press Escape to close it. The score is a model estimate, not a probability or forecast of loss; missing-data details remain separate. In High / Low, Data available means the range was calculated from sufficient dated price history; Partial indicates limited history.</p>
                 <p>Select a Holdings column's sort button to order the filtered rows; select it again to reverse the order. The arrow shows the current direction. Value and P/L, High and Low, and Support, Resistance and MA have separate sort buttons. Net income and Dividend Trend sort by percentage change; MA uses the period selected in Settings. Monetary values are compared in dashboard currency using saved FX, while each row keeps its displayed currency. Missing values or required FX stay last in either direction. Sorting uses only loaded rows, makes no server request and keeps the current filters and sort during background updates. The choice lasts for this signed-in page session. On small screens, use Sort by and the direction button above the holding cards; Original order clears sorting. Keyboard users can focus a sort button and press Enter or Space.</p>
-                <p>Holdings shows saved Moody’s, S&amp;P Global Ratings and Fitch information in Credit ratings beside Security. Each agency has a grade or explicit status, followed by Outlook / Watch; an exclamation mark identifies retained stale evidence. Select the cell for rating scope, dates, sources and other rating categories in the security overview. Not checked does not mean Unrated. Funds and derivatives show Not applicable. Loading is non-blocking and only reads saved data; it does not call a provider or AI. Dashboard Refresh rereads these summaries. A failed read retains saved facts; open the overview to retry. Identical securities in separate accounts share the same evidence. Analytics available, Include missing and the existing sort controls keep their market/report scope; credit ratings are separate and this column is not sortable. Viewers can inspect saved ratings; Refresh ratings in the overview requires editing permission.</p>
+                <p>Holdings shows saved Moody’s, S&amp;P Global Ratings and Fitch information in Credit ratings immediately after Dividend Trend. Each agency has a grade or explicit status, followed by Outlook / Watch. User-entered overrides are marked Manual. An exclamation mark identifies old retrieved evidence or an old manual entry. Select the cell for rating scope, dates, sources and other rating categories in the security overview. Not checked does not mean Unrated. Funds and derivatives show Not applicable. Loading is non-blocking and only reads saved data; it does not call a provider or AI. Dashboard Refresh rereads these summaries. A failed read retains saved facts; open the overview to retry. Identical securities in separate accounts share the same evidence. Analytics available, Include missing and the existing sort controls keep their market/report scope; credit ratings are separate and this column is not sortable. Viewers can inspect saved ratings; Refresh ratings in the overview requires editing permission.</p>
               </article>
               <article class="help-feature">
                 <h3>Portfolio stocks heatmap</h3>
@@ -1342,6 +1343,8 @@
                 <p>Open Portfolio → Securities to browse registered securities. Use Add security manually to enter the security details in a separate window, or Edit beside an existing security to update it. Save closes the editor after refreshing the list; Cancel closes without saving. Search by name, symbol or grant ID, filter by security type, and sort by name, symbol or type in either direction. Reset filters shows the full list again. Filtering and sorting use the loaded list without a server request; reopen Securities to retry a failed load. Use selects the security and opens a New transaction window; employee option grants open their dedicated workflow. Viewers can browse and filter but cannot create, edit or use securities to record transactions.</p>
                 <p>For company shares and bonds, select Ratings in Securities or open the security symbol in Holdings. Company credit ratings lists Moody’s, S&amp;P Global Ratings and Fitch separately, preserving each agency’s symbol, outlook and watch. An issuer rating describes a company; an issue rating describes a specific debt obligation. Global and national scales and long- and short-term ratings remain distinct. Open Details and sources for the rated entity, rating date, source observation date, retrieval date and supporting links. Dates use dd/mm/yyyy. Unknown fields stay unknown; Not found does not mean Unrated, and Withdrawn is shown explicitly. Stale evidence remains visible while a newer check is requested. These ratings do not change portfolio risk scores.</p>
                 <p>Last checked records a research attempt, which may not verify new information. Outlook and watch retain separate verification dates. Refreshing only the grade can preserve an earlier same-grade outlook or watch; its original verification date stays unchanged, with a stale badge in the affected cell when needed. Source observation and rating dates stay as published. The Other rating categories list in Details and sources shows saved deposit, senior unsecured, short-term, national-scale and other ancillary observations with their own entity, scope, scale, term, outlook, watch and source dates. Original signal verification dates remain separate from retrieval dates. A source observation or periodic review does not establish a rating action date. These categories do not replace an unavailable primary long-term issuer or issue rating or supply another legal entity’s rating.</p>
+                <p>To enter your own agency assessment, open a security overview and select Add manually or Edit manually beside that agency. The editor supports global long-term primary ratings only: an issuer rating for shares, or a bond issuer fallback or exact issue when a known ISIN/CUSIP permits it. Use the agency’s native grade list. Enter the legal issuer name if no verified identity is available; it is marked Manual identity and does not change the security profile. Outlook and Watch start Unknown. Unrated and Withdrawn are explicit user assertions and clear the grade, active signals and signal dates. Optional rating/status and signal action dates use dd/mm/yyyy, cannot be future dates, and stay blank when unknown.</p>
+                <p>Supply a public HTTPS source URL without credentials or a short note. Saving does not read or verify the URL. Save manual rating replaces the complete displayed agency record, including Unknown fields; it does not fill them from retrieved evidence. Manual labels, update time and editing user identify its provenance in the table and overview. Retrieved agency evidence remains separately inspectable, and API/AI checks cannot erase the override. Clear manual override restores the retained retrieved facts and their original freshness; saving an empty grade does not clear an override. Admin and Operator users can save or clear; Viewers can read. A failed save retains the draft. On a revision conflict, Reload saved ratings and review before saving again; an identity change requires a new entry. Cancel closes without saving. Other analytics remain usable while a manual request is pending.</p>
                 <p>Opening the overview reads saved ratings without starting Internet research. Admin and Operator users can select Refresh ratings to check configured APIs first, then use the permitted AI Internet workflow for unresolved agencies, including securities whose prices already use an API. Agency APIs may require paid access and explicit ratings entitlements; configuration does not guarantee coverage. Administrators configure market_data.credit_ratings in config.yaml with an entitled S&P Global bearer token; Docker uses the SPGLOBAL_RATINGS_TOKEN environment variable. Public AI research can run without this token. Rating API access shows provider status and documentation. Research shares the existing limits of up to eight AI interactions, eight application data operations and eight Internet requests; unsupported or unverified results remain unavailable. Research runs without blocking other sections. If a rating check is already running, wait until it finishes before refreshing another security. You can close and reopen the overview on the same signed-in page to see the same request. If progress is interrupted, Check AI progress resumes that request. Reload saved ratings retries a failed saved-data load. Viewers can inspect saved ratings and sources; refreshing requires editing permission.</p>
               </article>
               <article class="help-feature">
@@ -1702,11 +1705,48 @@
             </div>
           </div>
           <p id="securityCreditRatingsScope" class="section-note">Issuer ratings assess a company; issue ratings assess a specific debt obligation. Outlook and watch are agency assessments. Missing evidence stays unknown.</p>
+          <p id="securityCreditRatingsAvailability" class="section-note" role="note" hidden></p>
           <p id="securityCreditRatingsStatus" class="status-line" role="status" aria-live="polite" aria-atomic="true" hidden></p>
           <table class="credit-ratings-table" aria-label="Company credit ratings">
             <thead><tr><th scope="col">Agency</th><th scope="col">Credit rating</th><th scope="col">Outlook</th><th scope="col">Watch</th><th scope="col">Evidence</th></tr></thead>
             <tbody id="securityCreditRatingsRows"></tbody>
           </table>
+          <section id="manualCreditEditor" class="manual-credit-editor" aria-labelledby="manualCreditEditorTitle" aria-describedby="manualCreditEditorNote" aria-busy="false" hidden>
+            <div class="section-head"><h4 id="manualCreditEditorTitle">Manual rating</h4><bdi id="manualCreditSecurity" dir="ltr"></bdi></div>
+            <p id="manualCreditEditorNote" class="section-note">Your manual entry replaces the displayed agency row, including Unknown fields. Retrieved evidence remains separate. Source URLs are saved without being read or verified.</p>
+            <form id="manualCreditForm" novalidate>
+              <div class="manual-credit-main-fields">
+                <label class="field" for="manualCreditStatus"><span>Status</span><select id="manualCreditStatus"></select></label>
+                <label class="field" for="manualCreditScope"><span>Rating scope</span><select id="manualCreditScope" aria-describedby="manualCreditScopeHint"></select><small id="manualCreditScopeHint"></small></label>
+                <label class="field" for="manualCreditEntity"><span>Legal issuer name</span><input id="manualCreditEntity" maxlength="300" required aria-required="true" aria-describedby="manualCreditEntityHint" autocomplete="off" /><small id="manualCreditEntityHint"></small></label>
+              </div>
+              <div id="manualCreditActiveFields" class="manual-credit-active-fields">
+                <label class="field" for="manualCreditGrade"><span>Credit rating</span><select id="manualCreditGrade" dir="ltr"></select></label>
+                <label class="field" for="manualCreditOutlook"><span>Outlook</span><select id="manualCreditOutlook"></select></label>
+                <label class="field" for="manualCreditWatch"><span>Watch</span><select id="manualCreditWatch"></select></label>
+              </div>
+              <details class="manual-credit-dates"><summary>Action dates (optional)</summary>
+                <p class="section-note">Leave unknown action dates blank. Do not substitute the date you entered this record.</p>
+                <div class="manual-credit-date-fields">
+                  <label class="field" for="manualCreditRatingDate"><span>Rating/status action date</span><input id="manualCreditRatingDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+                  <label id="manualCreditOutlookDateField" class="field" for="manualCreditOutlookDate"><span>Outlook date</span><input id="manualCreditOutlookDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+                  <label id="manualCreditWatchDateField" class="field" for="manualCreditWatchDate"><span>Watch date</span><input id="manualCreditWatchDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+                </div>
+              </details>
+              <div class="manual-credit-provenance-fields">
+                <label class="field" for="manualCreditSource"><span>Source URL</span><input id="manualCreditSource" type="url" maxlength="2500" autocomplete="off" /></label>
+                <label class="field" for="manualCreditNotes"><span>Notes</span><textarea id="manualCreditNotes" rows="2" maxlength="1000"></textarea></label>
+              </div>
+              <p class="section-note">Enter a public HTTPS source URL or a short note. A manual Unrated entry is your assertion, not agency confirmation.</p>
+              <p id="manualCreditEditorStatus" class="status-line" role="status" aria-live="polite" aria-atomic="true"></p>
+              <div class="manual-credit-actions">
+                <button id="saveManualCreditRating" type="submit">Save manual rating</button>
+                <button id="cancelManualCreditRating" class="secondary compact-button" type="button">Cancel</button>
+                <button id="clearManualCreditRating" class="secondary compact-button" type="button" hidden>Clear manual override</button>
+                <button id="reloadManualCreditRating" class="secondary compact-button" type="button" hidden>Reload saved ratings</button>
+              </div>
+            </form>
+          </section>
           <div id="securityCreditRatingsProviders"></div>
         </section>
         <section id="securityMarketReference" class="bond-reference-panel" aria-labelledby="securityMarketReferenceTitle" hidden>
@@ -3067,7 +3107,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <div id="riskBadgeExplanation" class="risk-badge-explanation" role="tooltip" hidden></div>
-  <script src="/i18n.js?v=20261113-holdings-credit-ratings"></script>
+  <script src="/i18n.js?v=20261113-manual-credit-ratings"></script>
   <script src="/scheduler.js?v=2"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
@@ -3092,9 +3132,10 @@
   <script src="/price-input-units.js?v=1"></script>
   <script src="/alarm-priority-ui.js?v=20261112-transaction-table"></script>
   <script src="/account-cash-ui.js?v=20261109-cash-save-label"></script>
-  <script src="/security-credit-ratings.js?v=2"></script>
-  <script src="/holdings-credit-ratings.js?v=1"></script>
+  <script src="/security-credit-ratings.js?v=3"></script>
+  <script src="/manual-credit-ratings.js?v=1"></script>
+  <script src="/holdings-credit-ratings.js?v=2"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=20261113-holdings-credit-ratings"></script>
+  <script src="/app.js?v=20261113-manual-credit-ratings"></script>
   </body>
 </html>

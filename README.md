@@ -119,7 +119,7 @@ For missing-data research, `./.venv/bin/python tests/security_research_real_repl
 ### Company credit ratings
 
 The Holdings table shows saved Moody’s, S&P Global Ratings and Fitch summaries
-beside each security. Loading the table reads the cache in the background and
+after **Dividend Trend**. Loading the table reads the cache in the background and
 does not start provider or AI research. Repeated positions in one security share
 the same exact symbol/market/currency summary. Open a row’s rating details,
 **Portfolio → Securities → Ratings**, or the security overview for complete
@@ -128,6 +128,21 @@ configured APIs first and uses the existing bounded AI Internet workflow for
 missing information. The eight-model, eight-REST and eight-web limits are shared
 across the request; the model has no database, filesystem or direct-write tools.
 API-priced stocks remain eligible for this separate ratings check.
+
+Admin and Operator users can also select **Add manually** or **Edit manually**
+for an agency in the security overview. Enter its native global long-term grade,
+separate Outlook and Watch, optional original action dates, and a source URL or
+note. An explicit Unrated or Withdrawn entry has no active grade or forward
+signals. Manual entries and any user-asserted issuer identity are labeled; saving
+a URL does not read or verify it. The entire manual agency entry takes precedence,
+including unknown fields. **Clear manual override** restores retained API/AI
+evidence with its original dates, or unknown when no evidence exists.
+
+Manual entries live in the local portfolio database, participate in backup/export,
+and survive market-cache clearing and automatic research. Edits use identity and
+revision checks; a conflict retains the draft for review after reloading. Changes
+to a security's issuer/instrument identity do not silently rebind old manual
+entries. No broker/import source is changed, and the current risk model is unchanged.
 
 The licensed adapter uses [S&P Global Agency Ratings](https://xpressapi.marketplace.spglobal.com/swagger/?urls.primaryName=agencyratings),
 which covers all three agencies' issuer and issue ratings. Merge into private
@@ -158,6 +173,14 @@ Facts persist in the application cache, with original source excerpts and
 separate rating, observation, retrieval and forward-signal dates. An unsuccessful
 refresh retains verified facts and records the attempt. A different security
 cannot attach to another running request.
+
+`PUT /api/securities/credit-ratings/manual` saves one agency entry; `DELETE` on
+the same path clears it. Both require Admin/Operator, normal session/CSRF, the
+exact `security_key`, agency, and the `expected_identity` / `expected_revision`
+from the latest full read (`identity_token` / `manual_revisions`). Conflicting
+edits return 409. Full reads retain `retrieved_ratings` and `manual_ratings`
+separately; `ratings` is the effective display opinion. Manual input never
+satisfies independently verified API/AI research coverage.
 
 Issuer, exact issue, deposit, senior-unsecured class, short-term and national-scale
 ratings remain distinct. A verified debt-class rating appears in **Other rating

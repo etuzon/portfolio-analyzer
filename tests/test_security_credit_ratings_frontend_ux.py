@@ -312,5 +312,5 @@ const help=html.slice(html.indexOf('id="helpModal"'),html.indexOf('id="securityD
 const paragraphs=[...help.matchAll(/<p>([^<]*Company credit ratings[^<]*|Opening the overview reads saved ratings[^<]*|Last checked records a research attempt[^<]*)<\/p>/g)].map(match=>match[1].replaceAll('&amp;','&'));
 assert.equal(paragraphs.length,3);
 for(const text of paragraphs){const translated=window.PortfolioI18n.translate(text,'he');assert.notEqual(translated,text);assert.ok(/[א-ת]/.test(translated));}
-assert.ok(html.includes('/security-credit-ratings.js?v=2'));assert.ok(html.includes('/security-credit-ratings.css?v=2'));
+assert.ok(html.includes('/security-credit-ratings.js?v=3'));assert.ok(html.includes('/security-credit-ratings.css?v=2'));
 ''')

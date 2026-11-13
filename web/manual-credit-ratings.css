@@ -1,0 +1,31 @@
+.manual-credit-editor { width: 100%; max-width: 920px; margin-block: 18px; padding: 16px; border: 1px solid var(--ux-stroke); border-radius: 8px; background: var(--ux-panel-soft); }
+.manual-credit-editor h4 { margin: 0; font-size: 15px; }
+.manual-credit-editor .section-head { gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+#manualCreditSecurity { color: var(--ux-muted); font-size: 12px; }
+.manual-credit-editor form { display: grid; gap: 14px; }
+.manual-credit-main-fields { display: grid; grid-template-columns: minmax(140px, 160px) minmax(170px, 220px) minmax(220px, 1fr); gap: 12px; align-items: start; }
+.manual-credit-active-fields { display: grid; grid-template-columns: 160px minmax(160px, 220px) minmax(160px, 220px); gap: 12px; }
+.manual-credit-provenance-fields { display: grid; grid-template-columns: minmax(230px, 1fr) minmax(260px, 1.2fr); gap: 12px; align-items: start; }
+.manual-credit-editor .field { min-width: 0; margin: 0; }
+.manual-credit-editor input, .manual-credit-editor select, .manual-credit-editor textarea { width: 100%; min-width: 0; }
+.manual-credit-editor input[readonly] { color: var(--ux-muted); }
+.manual-credit-editor textarea { min-height: 74px; resize: vertical; font: inherit; }
+.manual-credit-editor .field small { color: var(--ux-muted); font-size: 11px; line-height: 1.4; }
+.manual-credit-date-fields { display: grid; grid-template-columns: repeat(3, minmax(160px, 190px)); gap: 12px; margin-block-start: 10px; }
+.manual-credit-date-fields input { width: 160px; max-width: 100%; }
+.manual-credit-dates summary { cursor: pointer; min-height: 30px; font-size: 13px; }
+.manual-credit-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.manual-credit-actions button { width: auto; min-height: 36px; }
+.manual-credit-open { width: auto; margin-block-start: 8px; }
+.credit-manual-badge { color: #bca8ff; }
+.manual-credit-notes { white-space: pre-wrap; }
+.manual-credit-retrieved { margin-block-start: 10px; }
+.manual-credit-retrieved > .credit-rating-evidence { padding-inline-start: 8px; }
+@media (max-width: 720px) {
+  .manual-credit-editor { padding: 12px; }
+  .manual-credit-main-fields, .manual-credit-active-fields, .manual-credit-provenance-fields, .manual-credit-date-fields { grid-template-columns: minmax(0, 1fr); }
+  #manualCreditStatus { max-width: 180px; }
+  #manualCreditScope, #manualCreditOutlook, #manualCreditWatch { max-width: 260px; }
+  #manualCreditGrade { max-width: 160px; }
+  .manual-credit-open, .manual-credit-actions button { min-height: 44px; }
+}

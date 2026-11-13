@@ -41,11 +41,13 @@ function holdingsCreditRatingsContent(entry) {
   const staleMark = (label) => `<span class="holding-credit-stale" aria-label="${esc(t(label))}" title="${esc(t(label))}">!</span>`;
   return `<span class="holding-credit-legend">${esc(t("Outlook / Watch"))}</span>${agencies.map(([key, name]) => {
     const record = rows.find((row) => row.agency === key) || { status: unavailable ? "unavailable" : "not_checked", outlook: "unknown", watch: "unknown" };
+    const manual = creditRatingsIsManual(record);
     const status = pending ? t("Loading…") : holdingsCreditRatingStatus(record);
-    const extra = record.issuer_fallback ? t("Issuer rating")
+    const category = record.issuer_fallback ? t("Issuer rating")
       : record.status === "unavailable" && (record.reason_code === "primary_rating_unavailable"
         || Array.isArray(record.observations) && record.observations.some((row) => row.agency === key && row.primary_eligible === false)) ? t("Other categories") : "";
-    return `<span class="holding-credit-agency"><bdi class="holding-credit-agency-name" dir="ltr">${esc(name)}</bdi><span class="holding-credit-opinion"><span class="holding-credit-grade"><bdi dir="auto">${esc(status)}</bdi>${record.stale ? staleMark("Stale evidence") : ""}</span>${pending ? "" : `<span class="holding-credit-forward"><span title="${esc(`${t("Outlook")}: ${creditRatingsDirection(record.outlook)}`)}">${esc(creditRatingsDirection(record.outlook))}${record.outlook_stale ? staleMark("Stale outlook") : ""}</span><span class="holding-credit-divider" aria-hidden="true">/</span><span${["positive", "negative", "developing"].includes(record.watch) ? ' class="holding-credit-active-watch"' : ""} title="${esc(`${t("Watch")}: ${creditRatingsDirection(record.watch, true)}`)}">${esc(creditRatingsDirection(record.watch, true))}${record.watch_stale ? staleMark("Stale watch") : ""}</span></span>`}${extra ? `<span class="holding-credit-category">${esc(extra)}</span>` : ""}</span></span>`;
+    const extra = [manual && t("Manual"), manual && record.identity_verification === "user_entered" && t("Manual identity"), category].filter(Boolean).join(" · ");
+    return `<span class="holding-credit-agency"><bdi class="holding-credit-agency-name" dir="ltr">${esc(name)}</bdi><span class="holding-credit-opinion"><span class="holding-credit-grade"><bdi dir="auto">${esc(status)}</bdi>${record.stale ? staleMark(manual ? "Old manual entry" : "Stale evidence") : ""}</span>${pending ? "" : `<span class="holding-credit-forward"><span title="${esc(`${t("Outlook")}: ${creditRatingsDirection(record.outlook)}`)}">${esc(creditRatingsDirection(record.outlook))}${!manual && record.outlook_stale ? staleMark("Stale outlook") : ""}</span><span class="holding-credit-divider" aria-hidden="true">/</span><span${["positive", "negative", "developing"].includes(record.watch) ? ' class="holding-credit-active-watch"' : ""} title="${esc(`${t("Watch")}: ${creditRatingsDirection(record.watch, true)}`)}">${esc(creditRatingsDirection(record.watch, true))}${!manual && record.watch_stale ? staleMark("Stale watch") : ""}</span></span>`}${extra ? `<span class="holding-credit-category">${esc(extra)}</span>` : ""}</span></span>`;
   }).join("")}`;
 }
 
@@ -58,12 +60,18 @@ function holdingsCreditRatingsDescription(entry, symbol) {
     const record = (Array.isArray(entry.context?.ratings) ? entry.context.ratings : []).find((row) => row.agency === key)
       || { status: ["error", "not_found"].includes(entry.state) ? "unavailable" : "not_checked" };
     lines.push(`${name}: ${holdingsCreditRatingStatus(record)} · ${t("Outlook")}: ${creditRatingsDirection(record.outlook)} · ${t("Watch")}: ${creditRatingsDirection(record.watch, true)}`);
+    const manual = creditRatingsIsManual(record);
+    const reason = manual ? t("User-entered information; the app has not independently verified this rating.") : creditRatingsReason(record.reason_code, record.status);
+    if (reason) lines.push(reason);
     if (record.issuer_fallback) lines.push(t("Issuer rating fallback; the specific debt issue was not verified."));
-    if (record.stale) lines.push(t("Stale evidence"));
-    if (record.outlook_stale) lines.push(`${t("Stale outlook")} · ${t("Outlook last verified")}: ${creditRatingsDate(record.outlook_fetched_at)}`);
-    if (record.watch_stale) lines.push(`${t("Stale watch")} · ${t("Watch last verified")}: ${creditRatingsDate(record.watch_fetched_at)}`);
+    if (manual) lines.push(`${t("Manual")} · ${t("Last updated")}: ${creditRatingsDate(record.updated_at)} · ${t("Updated by")}: ${record.updated_by || t("Unknown")}`);
+    if (record.stale) lines.push(t(manual ? "Old manual entry" : "Stale evidence"));
+    if (!manual && record.outlook_stale) lines.push(`${t("Stale outlook")} · ${t("Outlook last verified")}: ${creditRatingsDate(record.outlook_fetched_at)}`);
+    if (!manual && record.watch_stale) lines.push(`${t("Stale watch")} · ${t("Watch last verified")}: ${creditRatingsDate(record.watch_fetched_at)}`);
     if (record.reason_code === "primary_rating_unavailable") lines.push(t("No supported long-term issuer or issue rating was verified. Other rating categories remain in the sources."));
   }
+  const availability = creditRatingsAvailability(entry.context);
+  if (availability) lines.push(availability);
   lines.push(t("Open the security overview for rating scope, dates and sources."));
   return lines.join("\n");
 }

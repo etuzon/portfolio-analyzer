@@ -169,6 +169,12 @@ const paragraph=html.match(/<p>(Holdings shows saved Moody’s[\s\S]*?)<\/p>/)[1
 assert.notEqual(window.PortfolioI18n.translate(paragraph,'he'),paragraph);
 assert.ok(paragraph.includes('only reads saved data'));assert.ok(paragraph.includes('this column is not sortable'));assert.ok(paragraph.includes('Include missing'));
 const heading=html.match(/<th[^>]*data-holdings-credit-column[^>]*>[\s\S]*?<\/th>/)[0];assert.ok(!heading.includes('data-holdings-sort='));
+const table=html.slice(html.indexOf('<table class="holdings-table">'),html.indexOf('<tbody id="rows">'));
+assert.ok(table.indexOf('data-holdings-sort-column="dividend"')<table.indexOf('data-holdings-credit-column'));
+assert.ok(table.indexOf('data-holdings-credit-column')<table.indexOf('data-holdings-sort-column="technicals"'));
+const body=app.slice(app.indexOf('function renderRows('),app.indexOf('function chartPath('));
+assert.ok(body.indexOf('data-label="Dividend Trend"')<body.indexOf('holdingCreditRatingsCellHtml(item)'));
+assert.ok(body.indexOf('holdingCreditRatingsCellHtml(item)')<body.indexOf('data-label="Support / Resistance"'));
 const status=app.slice(app.indexOf('function statusCell('),app.indexOf('function statusCell(')+2000);
 assert.ok(status.includes('Analytics available'));assert.ok(status.includes('Credit ratings are shown separately.'));assert.ok(!status.includes('All displayed data available'));
 const css=fs.readFileSync('web/holdings-credit-ratings.css','utf8');assert.ok(css.includes('width: 200px'));assert.ok(css.includes('width: 165px'));assert.ok(css.includes('width: 250px'));

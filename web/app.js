@@ -1168,6 +1168,7 @@ const WRITE_CONTROL_IDS = new Set([
   "addHistoricalPrice",
   "aiEnrichmentStart", "aiEnrichmentStartAll", "aiEnrichmentResume",
   "refreshSecurityCreditRatings",
+  "saveManualCreditRating", "clearManualCreditRating",
   "saveXrayReport", "fetchXrayIssuer", "chooseXrayReportFile",
   "addAlertCondition", "newAlertRule", "addBannerItem", "addPensionPeriod", "addPensionRate", "addPensionScenario",
   "saveAISchedule", "applyBackupSchedule", "attachAccountToMember", "attachEditAccountPerson", "attachLocalAccountPerson",
@@ -1193,6 +1194,7 @@ const WRITE_DATA_ACTIONS = new Set([
   "data-remove-banner", "data-run-alert", "data-schedule-pension-scenario", "data-toggle-alert", "data-use-manual-security",
   "data-user-enabled", "data-delete-user",
   "data-remove-exposure-currency",
+  "data-edit-manual-credit",
   "data-position-action", "data-dismiss-alert-signal", "data-clear-alarm", "data-update-account-cash",
 ]);
 
@@ -4487,7 +4489,6 @@ function renderRows(items) {
       : 0;
     return `<tr data-portfolio-position="${esc(JSON.stringify([h.account_id, h.symbol, marketKey, h.currency, h.asset_class]))}">
       <td data-label="Security"><div class="security-cell"><div class="security-symbols">${companyLogoHtml(h)}<button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}<span class="ux-tooltip security-meta-tooltip" tabindex="0" role="note" aria-label="Security details" title="${esc(marketLine)}" data-tooltip="${esc(marketLine)}">i</span></div><div class="security-name">${esc(companyLine)}</div>${referenceBadge}${industryLine}${exposureLine}</div></td>
-      ${typeof holdingCreditRatingsCellHtml === "function" ? holdingCreditRatingsCellHtml(item) : `<td class="holding-credit-ratings-cell" data-label="${esc(t("Credit ratings"))}">—</td>`}
       <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(accountMeta)}</div>${holdingTransactionActionsHtml(h)}</td>
       <td class="holding-risk-cell" data-label="Risk">${riskBadge(rowRisk)}</td>
       <td data-label="Value / P&L"><div class="value-cell">
@@ -4499,6 +4500,7 @@ function renderRows(items) {
       <td data-label="1Y High / Low">${rangeCell(range, h.currency)}</td>
       <td data-label="Net income">${trendCell(item.profit_trend, "Net income", { currency: h.currency, marketCap: item.market_cap, displayPercent: true })}</td>
       <td data-label="Dividend Trend">${trendCell(item.dividend_trend, "Annual dividend", { kind: "dividend", currency: h.currency })}</td>
+      ${typeof holdingCreditRatingsCellHtml === "function" ? holdingCreditRatingsCellHtml(item) : `<td class="holding-credit-ratings-cell" data-label="${esc(t("Credit ratings"))}">—</td>`}
       <td data-label="Support / Resistance">${technicalsCell(sr, movingAverage, h.currency, maPeriod)}</td>
       <td data-label="Data Status">${statusCell(item)}</td>
     </tr>`;

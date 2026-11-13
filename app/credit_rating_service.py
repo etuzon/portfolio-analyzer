@@ -20,6 +20,9 @@ from .security_enrichment import EnrichmentJobs, WEB_RESEARCH_POLICY, security_k
 from .security_research_tools import ResearchSession, ResearchFailure, WebRequestBudget
 from .security_search import SearchFailure, search_is_configured
 from .us_market_providers import ProviderFailure, RequestBudget
+from .manual_credit_ratings import (
+    MANUAL_SCHEMA, manual_identity, manual_policy, manual_preconditions, normalize_manual, preference_key,
+)
 
 PREFIX = "/api/securities/credit-ratings"
 SCHEMA = "credit-ratings-v1"
@@ -30,6 +33,8 @@ SUMMARY_FIELDS = frozenset({
     "observed_at", "fetched_at", "checked_at", "stale", "outlook_stale", "watch_stale", "forward_signal_stale",
     "outlook_fetched_at", "watch_fetched_at", "forward_signal_checked_at", "issuer_fallback", "primary_eligible",
     "record_id", "source_url", "source_kind", "action_type", "snapshot_kind", "currency_basis",
+    "manual_override", "manual_revision", "revision", "verification_status", "identity_verification",
+    "created_at", "updated_at", "updated_by", "staleness_basis",
 })
 
 # Verified official issuer namespaces are discovery leads only, just like the
@@ -41,6 +46,13 @@ ISSUER_SOURCES = (
     ("Electricité de France", "https://www.edf.fr/en/the-edf-group/dedicated-sections/investors/debt/ratings"),
     ("EDF", "https://www.edf.fr/en/the-edf-group/dedicated-sections/investors/debt/ratings"),
     ("UBS Group AG", "https://www.ubs.com/global/en/investor-relations/investors/bondholder-information/ratings.html"),
+)
+
+# Agency action pages are discovery leads, never issuer-owned domains or stored
+# grades. The normal bounded read must independently establish every fact.
+AGENCY_SOURCE_LEADS = (
+    ("Fidus Investment Corporation", "https://www.fitchratings.com/research/corporate-finance/fitch-affirms-fidus-investment-corporation-at-bbb-outlook-stable-15-10-2026"),
+    ("Fidus Investment Corp", "https://www.fitchratings.com/research/corporate-finance/fitch-affirms-fidus-investment-corporation-at-bbb-outlook-stable-15-10-2026"),
 )
 
 POLICY = WEB_RESEARCH_POLICY + (
@@ -150,10 +162,11 @@ def select_observation(rows, candidate):
 
 class CreditRatingService:
     def __init__(self, *, cache: Callable, settings: Callable, inventory: Callable,
-                 research_settings: Callable, api_transport=None):
+                 research_settings: Callable, api_transport=None, manual_store: Callable | None = None):
         self._cache, self._settings, self._inventory = cache, settings, inventory
         self._research_settings = research_settings
         self._api_transport = api_transport
+        self._manual_store = manual_store
         self._lock = RLock()
         self._sessions = {}
         self._api_status = {}
@@ -162,10 +175,24 @@ class CreditRatingService:
     def candidate(self, key):
         return next((item for item in self._inventory() if item["security_key"] == key), None)
 
+    def _manual_snapshot(self, candidate):
+        identity = manual_identity(candidate, _binding(candidate))
+        saved = self._manual_store().get_preference(preference_key(candidate, identity)) if self._manual_store else None
+        return self._manual_value(candidate, saved)
+
+    @staticmethod
+    def _manual_value(candidate, saved):
+        identity = manual_identity(candidate, _binding(candidate))
+        if not isinstance(saved, dict) or saved.get("identity_token") != identity or saved.get("schema_version") != MANUAL_SCHEMA:
+            saved = {"schema_version": MANUAL_SCHEMA, "identity_token": identity, "records": {}, "revisions": {}}
+        return deepcopy(saved)
+
     def read(self, candidate):
         """Cache-only read; retain original agency dates and provenance."""
         key = candidate.get("security_key") or security_key(candidate)
-        saved = self._cache().get_security_snapshot("credit_ratings", key, SCHEMA)
+        with self._lock:
+            saved = self._cache().get_security_snapshot("credit_ratings", key, SCHEMA)
+            manual = self._manual_snapshot(candidate)
         matching = isinstance(saved, dict) and saved.get("_binding") == _binding(candidate)
         observations = saved.get("observations", []) if matching else []
         rows = []
@@ -195,12 +222,30 @@ class CreditRatingService:
             if "observations" in row:
                 row["observations"] = [freshness(item) for item in row["observations"]]
             rows.append(row)
-        known = sum(row["status"] in {"rated", "unrated", "withdrawn"} for row in rows)
+        retrieved = rows
+        effective, manual_rows, revisions = [], [], {}
+        for row in retrieved:
+            agency = row["agency"]
+            revisions[agency] = int(manual.get("revisions", {}).get(agency, 0))
+            user_row = deepcopy(manual.get("records", {}).get(agency))
+            if user_row:
+                entered = _stamp(user_row.get("updated_at"))
+                user_row.update(stale=bool(entered and now - entered > timedelta(days=ttl)),
+                    outlook_stale=False, watch_stale=False, forward_signal_stale=False,
+                    manual_revision=revisions[agency])
+                manual_rows.append(deepcopy(user_row))
+                effective.append(user_row)
+            else:
+                effective.append({**deepcopy(row), "manual_revision": revisions[agency]})
+        known = sum(row["status"] in {"rated", "unrated", "withdrawn"} for row in effective)
         response = {"schema_version": SCHEMA, "security_key": key,
             **{k: candidate.get(k, "") for k in ("symbol", "stock_market", "currency")},
             "issuer_name": candidate.get("issuer_name") or candidate.get("name") or "",
             "status": "ok" if known == 3 else "partial" if known else "unavailable",
-            "ratings": rows, "provider_status": deepcopy(saved.get("provider_status", [])) if matching else credit_ratings_api.registry(self._settings()),
+            "ratings": effective, "retrieved_ratings": retrieved, "manual_ratings": manual_rows,
+            "manual_revisions": revisions, "identity_token": manual["identity_token"],
+            "manual_policy": manual_policy(candidate),
+            "provider_status": deepcopy(saved.get("provider_status", [])) if matching else credit_ratings_api.registry(self._settings()),
             "fetched_at": saved.get("fetched_at") if matching else None}
         return response
 
@@ -230,14 +275,90 @@ class CreditRatingService:
             if key not in inventory:
                 continue
             response = self.read(inventory[key])
-            items.append({**response, "ratings": [compact(row) for row in response["ratings"]], "summary_only": True})
+            items.append({**response, "ratings": [compact(row) for row in response["ratings"]],
+                          "retrieved_ratings": [compact(row) for row in response["retrieved_ratings"]],
+                          "manual_ratings": [compact(row) for row in response["manual_ratings"]], "summary_only": True})
         return {"items": items, "not_found_keys": [key for key in requested if key not in inventory], "summary_only": True}
 
     @staticmethod
     def missing(response):
-        return [row["agency"] for row in response["ratings"] if row["status"] not in {"rated", "unrated", "withdrawn"}
+        return [row["agency"] for row in response.get("retrieved_ratings", response["ratings"]) if row["status"] not in {"rated", "unrated", "withdrawn"}
                 or row.get("stale") or row.get("forward_signal_stale")
                 or row["status"] == "rated" and row.get("outlook") in {None, "unknown"} and row.get("watch") in {None, "unknown"}]
+
+    def save_manual(self, payload, actor):
+        if not self._manual_store:
+            raise HTTPException(503, "manual_rating_store_unavailable")
+        key = payload.get("security_key")
+        if not isinstance(key, str) or not key.strip() or len(key) > 300:
+            raise HTTPException(422, "manual_invalid_security_key")
+        candidate = self.candidate(key.strip().upper())
+        if not candidate:
+            raise HTTPException(404, "security_not_found")
+        try:
+            _, _, expected_identity = manual_preconditions(payload)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        # An unchanged old draft belongs to its captured issuer. Reject that
+        # stale identity before judging the old name against the new issuer.
+        if expected_identity != manual_identity(candidate, _binding(candidate)):
+            raise HTTPException(409, "security_identity_changed")
+        try:
+            record = normalize_manual(payload, candidate)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        with self._lock:
+            current = self.candidate(candidate["security_key"])
+            if not current or _binding(current) != _binding(candidate):
+                raise HTTPException(409, "security_identity_changed")
+            identity = manual_identity(current, _binding(current))
+            def edit(saved):
+                snapshot = self._manual_value(current, saved)
+                if payload["expected_identity"] != snapshot["identity_token"]:
+                    raise HTTPException(409, "security_identity_changed")
+                agency = record["agency"]
+                revision = int(snapshot.get("revisions", {}).get(agency, 0))
+                if payload["expected_revision"] != revision:
+                    raise HTTPException(409, "manual_rating_conflict")
+                stamp = _now()
+                previous = snapshot["records"].get(agency) or {}
+                record.update(revision=revision + 1, created_at=previous.get("created_at") or stamp,
+                    updated_at=stamp, updated_by=str(actor.get("username") or actor.get("id") or ""))
+                snapshot["records"][agency] = record
+                snapshot["revisions"][agency] = revision + 1
+                return snapshot
+            self._manual_store().update_preference(preference_key(current, identity), edit)
+            return self.read(current)
+
+    def clear_manual(self, key, agency, expected_revision, expected_identity):
+        if not self._manual_store:
+            raise HTTPException(503, "manual_rating_store_unavailable")
+        if agency not in AGENCIES:
+            raise HTTPException(422, "manual_invalid_agency")
+        if not isinstance(key, str) or not key.strip() or len(key) > 300:
+            raise HTTPException(422, "manual_invalid_security_key")
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise HTTPException(422, "manual_invalid_revision")
+        candidate = self.candidate(key.strip().upper())
+        if not candidate:
+            raise HTTPException(404, "security_not_found")
+        with self._lock:
+            current = self.candidate(candidate["security_key"])
+            if not current or _binding(current) != _binding(candidate):
+                raise HTTPException(409, "security_identity_changed")
+            identity = manual_identity(current, _binding(current))
+            def edit(saved):
+                snapshot = self._manual_value(current, saved)
+                if expected_identity != snapshot["identity_token"]:
+                    raise HTTPException(409, "security_identity_changed")
+                revision = int(snapshot.get("revisions", {}).get(agency, 0))
+                if expected_revision != revision:
+                    raise HTTPException(409, "manual_rating_conflict")
+                snapshot["records"].pop(agency, None)
+                snapshot["revisions"][agency] = revision + 1
+                return snapshot
+            self._manual_store().update_preference(preference_key(current, identity), edit)
+            return self.read(current)
 
     def _accept_sources(self, candidate, sources):
         from .credit_ratings import extract_rating_records, normalize_observation
@@ -403,9 +524,11 @@ class CreditRatingService:
                 from .credit_ratings import _matches_entity
                 leads = [(url, "Official issuer credit ratings; unverified discovery lead")
                          for entity, url in ISSUER_SOURCES if _matches_entity(entity, current)]
+                leads.extend((url, "Official agency research; unverified discovery lead")
+                             for entity, url in AGENCY_SOURCE_LEADS if _matches_entity(entity, current))
                 # Previously validated source URLs and provider website fields
                 # provide useful discovery when a public search is blocked.
-                for row in self.read(current)["ratings"]:
+                for row in self.read(current)["retrieved_ratings"]:
                     leads.extend((src["url"], src.get("title") or "Previously verified credit-rating source")
                                  for src in row.get("sources", []) if src.get("url"))
                 for field in ("issuer_website", "website"):
@@ -510,6 +633,24 @@ class CreditRatingService:
 
     def router(self):
         router = APIRouter(tags=["company credit ratings"])
+
+        def editor(request):
+            actor = getattr(request.state, "auth_user", None)
+            if not isinstance(actor, dict):
+                raise HTTPException(401, "authentication_required")
+            if actor.get("role") not in {"Admin", "Operator"}:
+                raise HTTPException(403, "read_only")
+            return actor
+
+        @router.put(PREFIX + "/manual")
+        def save_manual(request: Request, payload: dict):
+            return self.save_manual(payload, editor(request))
+
+        @router.delete(PREFIX + "/manual")
+        def clear_manual(request: Request, security_key: str, agency: str,
+                         expected_revision: int = Query(ge=0), expected_identity: str = Query(min_length=64, max_length=64)):
+            editor(request)
+            return self.clear_manual(security_key, agency, expected_revision, expected_identity)
 
         @router.get(PREFIX + "/summaries")
         def summaries(request: Request, security_keys: list[str] = Query(default=[], max_length=200)):

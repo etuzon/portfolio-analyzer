@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from contextlib import nullcontext
+from contextlib import closing, nullcontext
 from threading import RLock
 from dataclasses import asdict
 from datetime import date, datetime, timedelta, timezone
@@ -838,6 +838,25 @@ class LocalPortfolioStore:
                 )
         return {"key": clean_key, "value": value if value is not None else {}, "updated_at": updated_at}
 
+    def update_preference(self, key: str, transform):
+        """Atomically validate and replace a structured local preference.
+
+        The database write lock fences revisions across service instances as
+        well as concurrent requests in the current process.
+        """
+        clean_key = str(key or "").strip()
+        if not clean_key:
+            raise ValueError("Preference key is required")
+        with self._sync_lock, closing(self._connect()) as conn, conn:
+            conn.execute("begin immediate")
+            row = conn.execute("select value from app_preferences where key = ?", (clean_key,)).fetchone()
+            value = json.loads(row["value"]) if row else None
+            updated = transform(value)
+            conn.execute("insert into app_preferences (key, value, updated_at) values (?, ?, ?) "
+                         "on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at",
+                         (clean_key, json.dumps(updated, default=str), _now()))
+        return updated
+
     def export_data(self) -> dict[str, Any]:
         with self._connect() as conn:
             data = {
@@ -864,11 +883,11 @@ class LocalPortfolioStore:
 
     def change_token(self) -> str:
         data = self.export_data()["data"]
-        # Notes and chat history are independent of financial inputs.
-        # Saving a journal reason/review or reply must not refetch market data.
+        # These annotations do not participate in current valuation/risk inputs.
+        # Saving them must not refetch market data.
         data["app_preferences"] = [
             row for row in data.get("app_preferences", [])
-            if row.get("key") != "logging_settings" and not str(row.get("key") or "").startswith(("assistant_chats:", "assistant_context:", "trading_journal_v1:", "var_fx_v1:", "risk_history_v1:"))
+            if row.get("key") != "logging_settings" and not str(row.get("key") or "").startswith(("assistant_chats:", "assistant_context:", "trading_journal_v1:", "var_fx_v1:", "risk_history_v1:", "manual-credit-ratings-v1:"))
         ]
         encoded = json.dumps(data, sort_keys=True, default=str).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
