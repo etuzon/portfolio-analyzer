@@ -60,6 +60,50 @@ def test_first_observation_is_detected_and_same_grade_affirmation_does_not_reset
     assert fitch(affirmed)["latest_change"] == event
 
 
+def test_native_date_enrichment_of_same_crc_grade_keeps_detected_first_observation(environment):
+    service, candidate, _, _, _ = environment
+    candidate.update(security_key="CRC|YAHOO|USD", symbol="CRC", stock_market="YAHOO", issuer_name="California Resources Corp", name="California Resources Corp")
+    body = "California Resources Corp. (CRC) operates in California.\n\nS&P raised its issuer credit rating on CRC to 'BB-' from 'B+'. The outlook is Stable."
+    source = {"source_id": "source-crc", "url": "https://www.spglobal.com/ratings/en/regulatory/article/-/view/type/HTML/id/3615977",
+              "title": "Research Update: California Resources Upgraded", "text": body, "retrieved_at": "2026-11-13T12:00:00+00:00"}
+    service.publish(candidate, service._accept_sources(candidate, [source]))
+    before = service.read(candidate)
+    event, = before["rating_history"]
+    assert event["event_type"] == "first_observation" and event["date_basis"] == "detected" and event["change_date"] is None
+    assert event["rating_date"] is None
+    source["text"] = "* 21-Aug-2026 | 14:31 EDT\n\n# Research Update: California Resources Upgraded\n\n" + body
+    source["retrieved_at"] = "2026-11-13T12:30:00+00:00"
+    service.publish(candidate, service._accept_sources(candidate, [source]))
+    after = service.read(candidate)
+    row = next(row for row in after["ratings"] if row["agency"] == "sp")
+    assert row["rating"] == "BB-" and row["rating_date"] == row["observed_at"] == "2026-08-21"
+    assert row["outlook_date"] is None and row["watch"] == "unknown"
+    assert after["rating_history"] == before["rating_history"]
+    assert row["latest_change"]["event_id"] == event["event_id"]
+
+
+def test_known_outlook_and_owned_date_backfill_keeps_grade_marker_and_no_agency_outlook_date(environment):
+    service, candidate, _, _, _ = environment
+    candidate.update(security_key="RITM|YAHOO|USD", symbol="RITM", stock_market="YAHOO", issuer_name="Rithm Capital Corp.", name="Rithm Capital Corp.")
+    body = "S&P raised its issuer credit rating on Rithm Capital Corp. to 'B+' from 'B'."
+    source = {"source_id": "source-ritm", "url": "https://spratings.spglobal.com/ratings/en/regulatory/article/-/view/type/HTML/id/3633936",
+              "title": "Rithm Capital Corp. Upgraded To 'B+' From 'B' On", "text": body, "retrieved_at": "2026-11-13T12:00:00+00:00"}
+    service.publish(candidate, service._accept_sources(candidate, [source]))
+    before = service.read(candidate)
+    first, = before["rating_history"]
+    source["text"] = "* 25-Sep-2026 | 14:49 EDT\n\n# Rithm Capital Corp. Upgraded To 'B+' From 'B' On Improved Business Diversification\n\n" + body + " The outlook on the rating is stable."
+    source["retrieved_at"] = "2026-11-13T12:30:00+00:00"
+    service.publish(candidate, service._accept_sources(candidate, [source]))
+    after = service.read(candidate)
+    row = next(row for row in after["ratings"] if row["agency"] == "sp")
+    assert row["rating"] == "B+" and row["rating_date"] == row["observed_at"] == "2026-09-25"
+    assert row["outlook"] == "stable" and row["outlook_date"] is None
+    assert row["latest_change"]["event_id"] == first["event_id"]
+    assert not any(event["event_type"] == "rating_change" for event in after["rating_history"])
+    outlook, = [event for event in after["rating_history"] if event["event_type"] == "outlook_change"]
+    assert outlook["date_basis"] == "detected" and outlook["change_date"] is None and outlook["outlook_date"] is None
+
+
 def test_grade_and_forward_changes_keep_independent_dates_and_marker(environment):
     service, candidate, _, _, _ = environment
     first = publish(service, candidate, "2026-03-01")

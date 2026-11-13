@@ -6,7 +6,9 @@ function aiCreditRatingsStatus(status) {
 
 function aiCreditRatingsMessage(outcome) {
   if (outcome.status === "pending") return t("Waiting for its public-source rating batch.");
-  if (outcome.status === "not_attempted") return t("This security was not researched. After an interruption, retry the remaining rating checks.");
+  if (outcome.status === "not_attempted") return t(outcome.attempted === true
+    ? "This check did not finish. After an interruption, retry the remaining rating checks."
+    : "This security was not researched. After an interruption, retry the remaining rating checks.");
   if (outcome.status === "updated" || outcome.status === "partial") return t("Supported agency facts were saved. Missing agency information remains Unknown.");
   return creditRatingsReason(outcome.code, "") || t("Public sources did not verify supported rating evidence. Unknown does not mean Unrated.");
 }

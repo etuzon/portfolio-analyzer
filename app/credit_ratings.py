@@ -36,6 +36,7 @@ _SHORT = {"moodys": ("P-1", "P-2", "P-3", "NP"),
           "fitch": ("F1+", "F1", "F2", "F3", "B", "C", "RD", "D")}
 _GRADE_TOKEN = r"(?:Aaa|Aa[123]|A[123]|Baa[123]|Ba[123]|B[123]|Caa[123]|Ca|AAA|AA[+-]?|A[+-]?|BBB[+-]?|BB[+-]?|B[+-]?|CCC[+-]?|CC|C|SD|RD|D|P-[123]|A-[123]\+?|F[123]\+?|NP)"
 _DATE_PATTERN = (r"(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{4}|"
+                 r"\d{1,2}-(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)-\d{4}|"
                  r"\d{1,2}\s+(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{4}|"
                  r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?\s+\d{1,2},?\s+\d{4})")
 _FIELDS = ("agency", "status", "rating", "scope", "scale", "term", "rating_type", "entity_name", "entity_id", "rating_date", "outlook", "outlook_date", "watch", "watch_date", "currency_basis", "observed_at")
@@ -49,6 +50,49 @@ def _plain(value: Any) -> str:
     value = html.unescape(str(value or "")).replace("−", "-").replace("–", "-")
     value = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", value)
     return _text(re.sub(r"[*_`#]+", "", value))
+
+
+def _article_link_spans(text):
+    """Whole inline links and bare URLs, retaining the original offsets."""
+    spans, brackets = [], []
+    index = 0
+    while index < len(text):
+        if text[index] == "\\":
+            index += 2
+            continue
+        if text[index] == "[":
+            brackets.append(index)
+        elif text[index] == "]" and brackets:
+            start = brackets.pop()
+            if text[index + 1:index + 2] == "(":
+                end, depth, angle = index + 2, 1, False
+                while end < len(text):
+                    char = text[end]
+                    if char == "\\":
+                        end += 2
+                        continue
+                    if char == "<":
+                        angle = True
+                    elif char == ">":
+                        angle = False
+                    elif not angle and char == "(":
+                        depth += 1
+                    elif not angle and char == ")":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    end += 1
+                if depth == 0:
+                    spans.append((start, end + 1))
+                    index = end + 1
+                    continue
+        index += 1
+    spans.extend(match.span() for match in re.finditer(r"https?://[^\s<>]+", text, re.I))
+    return spans
+
+
+def _inside_link(match, spans):
+    return any(start <= match.start() and match.end() <= end for start, end in spans)
 
 
 def normalize_agency(value: Any) -> str:
@@ -128,7 +172,7 @@ def _date(value: Any) -> str | None:
     except ValueError:
         pass
     value = value.replace(".", "")
-    for fmt in ("%d/%m/%Y", "%d %B %Y", "%d %b %Y", "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y"):
+    for fmt in ("%d/%m/%Y", "%d-%b-%Y", "%d %B %Y", "%d %b %Y", "%B %d, %Y", "%b %d, %Y", "%B %d %Y", "%b %d %Y"):
         try:
             return datetime.strptime(value, fmt).date().isoformat()
         except ValueError:
@@ -217,7 +261,10 @@ def _article_aliases(text, candidate):
                 "SA", "S.A.", "AG", "PLC", "LLC", "INC", "CORP", "CO", "LTD"}
     excluded.update(value.upper() for values in _LONG.values() for value in values)
     pattern = r"\(\s*['\"‘“]?(?P<alias>[A-Z][A-Z0-9&.-]{1,15})(?:['’]s)?['\"’”]?\s*\)"
+    links = _article_link_spans(text)
     for match in re.finditer(pattern, text[:8000]):
+        if _inside_link(match, links):
+            continue
         alias = match["alias"]
         if alias in excluded:
             continue
@@ -575,6 +622,25 @@ def _publication(source, text):
     explicit = source.get("published_at") or source.get("publication_date") or source.get("observed_at")
     if explicit and _timestamp(explicit):
         return _timestamp(explicit)
+    # S&P public action pages put the native date/time immediately before
+    # their article title. A dated event or related-reference line elsewhere
+    # in the body does not establish this document's publication date.
+    headers = re.compile(
+        r"(?im)^[ \t]*(?:\*[ \t]+)?(?P<day>" + _DATE_PATTERN + r")[ \t]*\|[ \t]*"
+        r"(?:[01]?\d|2[0-3]):[0-5]\d[ \t]+(?:UTC|GMT|EST|EDT|CST|CDT|MST|MDT|PST|PDT)[ \t]*\r?\n"
+        r"(?:[ \t]*\r?\n)*[ \t]*#[ \t]+(?P<headline>[^\r\n]+)")
+    owner = re.sub(r"\s*\|\s*S\s*&\s*P(?:\s+Global)?\s+Ratings\s*$", "", str(source.get("title") or ""), flags=re.I)
+    title_words = lambda value: re.findall(r"[^\W_]+|[+-]", _plain(value).casefold())
+    owner_words = title_words(owner)
+    actions = {"upgraded", "downgraded", "affirmed", "assigned", "revised", "raised", "lowered", "placed", "withdrawn"}
+    # A truncated title can identify its longer headline only after supplying
+    # a named subject and action. Generic/name-only prefixes are ambiguous.
+    prefix_length = 2 if owner_words[:2] == ["research", "update"] else 0
+    meaningful = any(index > prefix_length and word in actions for index, word in enumerate(owner_words))
+    owned_dates = {_timestamp(header["day"]) for header in headers.finditer(text[:5000])
+                   if meaningful and title_words(header["headline"])[:len(owner_words)] == owner_words}
+    if owned_dates:
+        return next(iter(owned_dates)) if len(owned_dates) == 1 else None
     found = re.search(r"(?im)^\s*(?:published\s*[:：]?\s*)?(" + _DATE_PATTERN + r")\s*$", text[:5000])
     if found:
         return _timestamp(found[1])
@@ -706,8 +772,11 @@ def _explicit_outlook_action(text, candidate, observed, periodic, rating_matches
         r"\b(?:revis(?:es|ed)|chang(?:es|ed)|assign(?:s|ed)|affirm(?:s|ed)|maintain(?:s|ed))\b[^.;\n]{0,180}?\b(?P<label>outlook)\s+(?:to|at|as)\s+(?P<grade>positive|negative|stable|developing)\b",
         r"\b(?P<label>outlook)\s+(?:was\s+)?(?:revis(?:es|ed)|chang(?:es|ed)|assign(?:s|ed)|affirm(?:s|ed)|maintain(?:s|ed))\s+(?:to|at|as)?\s*(?P<grade>positive|negative|stable|developing)\b",
     )
+    links = _article_link_spans(text)
     for pattern in patterns:
         for match in re.finditer(pattern, text[:12000], re.I):
+            if _inside_link(match, links):
+                continue
             paragraph_start = text.rfind("\n\n", 0, match.start()) + 2
             if (_forward_clause_is_bound(text, match, candidate, rating_matches)
                     and (expected is None or normalize_outlook(match["grade"]) == expected)):
@@ -750,7 +819,30 @@ def _clause_entity_matches(text, match, paragraph_start, candidate):
     return _clause_subject_match(text, match, paragraph_start, candidate) is True
 
 
-def _forward_clause_is_bound(text, match, candidate, rating_matches):
+def _forward_clause_is_bound(text, match, candidate, rating_matches, agency=None):
+    if _plain(match["label"]).casefold() == "outlook on the rating":
+        boundary = text.rfind("\n\n", 0, match.start())
+        start = boundary + 2 if boundary >= 0 else 0
+        nearest = max((item for item in rating_matches if start <= item.start() and item.end() <= match.start()
+                       and match.start() - item.end() <= 250), key=lambda item: item.end(), default=None)
+        if nearest is None:
+            return False
+        kind = _kind(nearest["label"])
+        if not kind or kind[0] != "issuer" or kind[1] != "long_term" or kind[2] not in {"issuer", "issuer_default"}:
+            return False
+        if re.search(r"\bshort[ -]term\b", text[max(start, nearest.start() - 60):nearest.start()], re.I):
+            return False
+        try:
+            normalize_grade(nearest["grade"], agency, term="long_term", scale="global")
+        except ValueError:
+            return False
+        if _clause_subject_match(text, nearest, start, candidate) is not True:
+            return False
+        # This pronoun owns only the immediately preceding issuer action,
+        # with an optional prior grade, not another issue/entity or paragraph.
+        between = _plain(text[nearest.end():match.start("label")])
+        return bool(re.fullmatch(r"['\"‘’“”]?\s*(?:from\s+['\"‘’“”]?" + _GRADE_TOKEN
+                                 + r"['\"‘’“”]?)?\s*[.;]\s*(?:the|its)?", between, re.I))
     start = text.rfind("\n\n", 0, match.start()) + 2
     direct = _clause_subject_match(text, match, start, candidate)
     if direct is not None:
@@ -779,10 +871,17 @@ def _forward_clause_is_bound(text, match, candidate, rating_matches):
 def _article_records(source, candidate):
     text = source["text"]
     agency = _document_agency(source)
+    # Article links/URLs remain discovery leads. Mask the complete spans at
+    # original offsets so older grades, URL slugs and pronouns are not facts.
+    # Table extraction has its own literal cell rules and is unchanged here.
+    prose_chars = list(text[:40000])
+    for start, end in _article_link_spans(text[:40000]):
+        prose_chars[start:end] = [char if char in "\r\n" else " " for char in prose_chars[start:end]]
+    prose = "".join(prose_chars)
     # Reader Markdown can put thousands of characters of invisible sharing
     # targets before the article. Bound the visible prose, while retaining the
     # original text/offsets for clause identity and literal source evidence.
-    visible = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    visible = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", prose)
     heading = _plain(source.get("title")) + "\n" + _plain(visible)[:1800]
     if not agency:
         return []
@@ -799,9 +898,9 @@ def _article_records(source, candidate):
     entity_name = canonical_name
     if not entity_name:
         return []
-    observed = _publication(source, text)
-    periodic = bool(re.search(r"periodic review", text[:12000], re.I))
-    no_action = periodic or bool(re.search(r"does not (?:constitute|announce) (?:a|any) (?:credit )?rating action", text[:12000], re.I))
+    observed = _publication(source, prose)
+    periodic = bool(re.search(r"periodic review", prose[:12000], re.I))
+    no_action = periodic or bool(re.search(r"does not (?:constitute|announce) (?:a|any) (?:credit )?rating action", prose[:12000], re.I))
     output = []
     labels = r"(?:long[ -]term\s+)?(?:issuer(?:\s+default)?(?:\s+credit)?\s+rating(?:s)?|IDR|ICR|corporate[ -]family\s+rating|senior\s+unsecured\s+(?:debt\s+)?rating)"
     patterns = [
@@ -811,15 +910,16 @@ def _article_records(source, candidate):
     # Legal-name abbreviation periods do not terminate a financial sentence.
     # Replace them with spaces only in the scan buffer, preserving raw offsets.
     scan = re.sub(r"\b(?:Inc\.|Co\.|Corp\.|Ltd\.|S\.A\.|N\.A\.)",
-                  lambda item: item[0].replace(".", " "), text[:40000], flags=re.I)
+                  lambda item: item[0].replace(".", " "), prose, flags=re.I)
     rating_matches = [match for pattern in patterns for match in pattern.finditer(scan)]
     outlook_pattern = re.compile(r"\b(?P<label>outlook)\s+(?:from\s+(?:positive|negative|stable|developing)\s+to\s+|(?:(?:is|remains|was|of)\s+)?(?:(?:revised|changed|assigned)\s+)?(?:to\s+)?)(?P<grade>positive|negative|stable|developing)\b", re.I)
+    rating_outlook = re.compile(r"\b(?P<label>outlook\s+on\s+the\s+rating)\s+is\s+(?P<grade>positive|negative|stable|developing)\b", re.I)
     reverse_outlook = re.compile(r"\b(?P<grade>positive|negative|stable|developing)\s+(?P<label>outlook)\b", re.I)
     watch_pattern = re.compile(r"(?P<label>CreditWatch|Rating Watch|on review for|under review for)\s*[:;,]?\s*(?:with\s+)?(?P<grade>positive|negative|developing|evolving|upgrade|downgrade|direction uncertain)", re.I)
-    outlook_matches = [match for pattern in (outlook_pattern, reverse_outlook) for match in pattern.finditer(text[:40000])
-                       if _forward_clause_is_bound(text, match, candidate, rating_matches)]
-    watch_matches = [match for match in watch_pattern.finditer(text[:40000])
-                     if _forward_clause_is_bound(text, match, candidate, rating_matches)]
+    outlook_matches = [match for pattern in (outlook_pattern, reverse_outlook, rating_outlook) for match in pattern.finditer(prose)
+                       if _forward_clause_is_bound(prose, match, candidate, rating_matches, agency)]
+    watch_matches = [match for match in watch_pattern.finditer(prose)
+                     if _forward_clause_is_bound(prose, match, candidate, rating_matches)]
     outlook_values = {normalize_outlook(match["grade"]) for match in outlook_matches}
     watch_values = {normalize_watch(match["grade"]) for match in watch_matches}
     bound_outlook = next(iter(outlook_values)) if len(outlook_values) == 1 else "unknown"
@@ -834,33 +934,34 @@ def _article_records(source, candidate):
             paragraph_start = text.rfind("\n\n", 0, match.start()) + 2
             paragraph_end = text.find("\n\n", match.end())
             paragraph_end = len(text) if paragraph_end < 0 else paragraph_end
-            paragraph = text[paragraph_start:paragraph_end]
+            paragraph = prose[paragraph_start:paragraph_end]
             paragraph_identity = " " + _entity(paragraph) + " "
             if not any(" " + name + " " in paragraph_identity for name in names):
                 continue
-            if not _clause_entity_matches(text, match, paragraph_start, candidate):
+            if not _clause_entity_matches(prose, match, paragraph_start, candidate):
                 continue
             start = max(0, match.start() - 700)
             end = min(len(text), match.end() + 900)
             excerpt = text[start:end]
+            prose_excerpt = prose[start:end]
             # Reject old grades after "from" and explicit prospective grades.
-            prefix = text[max(start, match.start() - 80):match.start()]
-            grade_prefix = text[max(0, match.start("grade") - 30):match.start("grade")]
+            prefix = prose[max(start, match.start() - 80):match.start()]
+            grade_prefix = prose[max(0, match.start("grade") - 30):match.start("grade")]
             if re.search(r"\(\s*(?:P|EXP|PI|PRELIM(?:INARY)?|SF|HYB)\s*\)\s*$", grade_prefix, re.I):
                 continue
-            clause = text[match.start():match.end()]
+            clause = prose[match.start():match.end()]
             if re.search(r"\b(?:could|may|would|might|hypothetical|prospective|expected to)\b", prefix + clause, re.I):
                 continue
             if re.search(r"\b(?:previously|formerly|historical(?:ly)?)\b", prefix, re.I):
                 continue
-            action = "periodic_review" if periodic else ("rating_action" if not no_action and re.search(r"\b(?:affirm(?:s|ed)?|upgrad(?:es|ed)|downgrad(?:es|ed)|rais(?:es|ed)|lower(?:s|ed)|assign(?:s|ed))\b", excerpt, re.I) else "rating_observation")
+            action = "periodic_review" if periodic else ("rating_action" if not no_action and re.search(r"\b(?:affirm(?:s|ed)?|upgrad(?:es|ed)|downgrad(?:es|ed)|rais(?:es|ed)|lower(?:s|ed)|assign(?:s|ed))\b", prose_excerpt, re.I) else "rating_observation")
             fields = dict(agency=agency, status="rated", rating=match["grade"], scope=scope,
-                          scale="national" if "national scale" in excerpt.casefold() else "global",
+                          scale="national" if "national scale" in prose_excerpt.casefold() else "global",
                           term=term, rating_type=rating_type, entity_name=entity_name, entity_id=None,
                           rating_date=_date(observed) if action == "rating_action" else None,
                           outlook=bound_outlook, watch=bound_watch, observed_at=observed)
-            fields["outlook_date"] = _explicit_outlook_action(text, candidate, observed, no_action, rating_matches, bound_outlook) if bound_outlook != "unknown" else None
-            fields["watch_date"] = _date(observed) if bound_watch != "unknown" and re.search(r"plac(?:ed|es)\s+(?:on|under)|on review for", excerpt, re.I) else None
+            fields["outlook_date"] = _explicit_outlook_action(prose, candidate, observed, no_action, rating_matches, bound_outlook) if bound_outlook != "unknown" else None
+            fields["watch_date"] = _date(observed) if bound_watch != "unknown" and re.search(r"plac(?:ed|es)\s+(?:on|under)|on review for", prose_excerpt, re.I) else None
             fields["currency_basis"] = ("foreign_currency" if re.search(r"foreign[ -]currency", match["label"], re.I)
                                         else "local_currency" if re.search(r"local[ -]currency", match["label"], re.I) else None)
             try:

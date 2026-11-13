@@ -68,6 +68,23 @@ state.aiEnrichment.resume=false;state.aiEnrichment.job.credit_ratings.summary.no
 ''')
 
 
+def test_interrupted_research_does_not_claim_that_no_research_was_attempted():
+    run_ui(r'''
+for(const language of ['en','he']){
+ state.language=language;
+ const interrupted={security_key:'NREF|NASDAQ|USD',symbol:'NREF',stock_market:'NASDAQ',currency:'USD',status:'not_attempted',attempted:true,code:'ai_provider_unavailable',verified_agencies:[],agency_statuses:{}};
+ assert.equal(aiCreditRatingsMessage(interrupted),t('This check did not finish. After an interruption, retry the remaining rating checks.'));
+ assert.equal(aiCreditRatingsMessage({...interrupted,attempted:false}),t('This security was not researched. After an interruption, retry the remaining rating checks.'));
+ state.aiEnrichment.job=creditJob('failed');state.aiEnrichment.job.credit_ratings.outcomes=[interrupted];renderAIEnrichmentCreditRatings();
+ const html=$('aiCreditRatingsResults').innerHTML;
+ assert.ok(html.includes(t('This check did not finish. After an interruption, retry the remaining rating checks.')));
+ assert.ok(!html.includes(t('This security was not researched. After an interruption, retry the remaining rating checks.')));
+ assert.ok(!html.includes('ai_provider_unavailable'));
+ if(language==='he')assert.ok(!/\b(?:This check|After an interruption|retry the remaining)\b/.test(html));else assert.ok(!/[א-ת]/.test(html));
+}
+''')
+
+
 def test_completed_ratings_reload_cache_once_and_old_reads_cannot_replace_new_manual_facts():
     run_ui(r'''
 (async()=>{

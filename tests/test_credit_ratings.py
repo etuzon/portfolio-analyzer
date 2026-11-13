@@ -347,6 +347,170 @@ def test_periodic_review_and_rating_action_dates_are_distinct_without_ignoring_o
     assert normalize_observation(record, edf)["rating_date"] == "2026-01-14"
 
 
+def test_native_sp_action_header_preserves_source_date_without_dating_unchanged_outlook():
+    company = {"security_key": "CRC|YAHOO|USD", "symbol": "CRC", "issuer_name": "California Resources Corp", "asset_class": "EQUITY"}
+    # Native publication line retained from the accepted official CRC source.
+    header = "* 21-Aug-2026 | 14:31 EDT\n\n# Research Update: California Resources Upgraded\n\n"
+    body = "California Resources Corp. (CRC) operates in California.\n\nS&P raised its issuer credit rating on CRC to 'BB-' from 'B+'. The outlook is Stable."
+    src = source(header + body, title="Research Update: California Resources Upgraded", url="https://www.spglobal.com/ratings/en/regulatory/article/-/view/type/HTML/id/3615977")
+    record, = primary(company, src)
+    row = normalize_observation(record, company)
+    assert row["rating"] == "BB-" and row["entity_name"] == "California Resources Corp"
+    assert row["rating_date"] == row["observed_at"] == "2026-08-21"
+    assert row["outlook"] == "stable" and row["outlook_date"] is None
+    assert row["watch"] == "unknown" and row["watch_date"] is None
+    assert validate_observation(record, {**company, "as_of_date": "2026-08-20"}) is None
+    future = {**src, "text": src["text"].replace("21-Aug-2026", "14-Nov-2026")}
+    future_record, = primary(company, future)
+    assert validate_observation(future_record, company) is None
+    for invalid in ("31-Feb-2026", "21-Not-2026"):
+        invalid_record, = primary(company, {**src, "text": src["text"].replace("21-Aug-2026", invalid)})
+        assert invalid_record["rating_date"] is None and invalid_record["observed_at"] is None
+    mentioned = {**src, "text": "# Research Update: California Resources Upgraded\n\n" + body
+                 + "\n\nThe company scheduled an event on 21-Aug-2026.\n\n## Related research\n* 21-Aug-2026 | 14:31 EDT"}
+    mentioned_record, = primary(company, mentioned)
+    assert mentioned_record["rating_date"] is None and mentioned_record["observed_at"] is None
+
+
+def test_native_header_date_belongs_to_owner_title_and_is_unknown_on_ambiguity():
+    company = {"security_key": "CRC|YAHOO|USD", "symbol": "CRC", "issuer_name": "California Resources Corp", "asset_class": "EQUITY"}
+    body = "The California-based company California Resources Corp. (CRC) operates in California.\n\nS&P raised its issuer credit rating on CRC to 'BB-'. The outlook is Stable."
+    title = "Research Update: California Resources Upgraded To"
+    own_headline = "# Research Update: California Resources Upgraded To 'BB-' On Improved Regulatory Environment; Outlook Stable\n\n"
+    own_date = "* 21-Aug-2026 | 14:31 EDT\n\n"
+    unrelated = "* 20-Aug-2026 | 09:00 EDT\n\n# Research Update: Unrelated Company Upgraded\n\n"
+    src = source(unrelated + own_headline + body, title=title, url="https://www.spglobal.com/ratings/en/regulatory/article/-/view/type/HTML/id/3615977")
+    record, = primary(company, src)
+    assert record["rating_date"] is None and record["observed_at"] is None
+    owned = {**src, "text": unrelated + own_date + own_headline + body}
+    owned_record, = primary(company, owned)
+    assert owned_record["rating_date"] == owned_record["observed_at"] == "2026-08-21"
+    ambiguous = {**owned, "text": owned["text"] + "\n\n* 20-Aug-2026 | 09:00 EDT\n\n" + own_headline}
+    ambiguous_record, = primary(company, ambiguous)
+    assert ambiguous_record["rating_date"] is None and ambiguous_record["observed_at"] is None
+    for insufficient in ("Research Update", "Research Update: California Resources"):
+        insufficient_record, = primary(company, {**owned, "title": insufficient})
+        assert insufficient_record["rating_date"] is None and insufficient_record["observed_at"] is None
+    different_grade = {**owned, "title": "Research Update: California Resources Upgraded To 'AA-'",
+                       "text": own_date + own_headline.replace("'BB-'", "'AA'") + body}
+    different_record, = primary(company, different_grade)
+    assert different_record["rating_date"] is None and different_record["observed_at"] is None
+
+
+def test_rithm_owned_native_headline_and_immediate_issuer_outlook_phrase():
+    company = {"security_key": "RITM|YAHOO|USD", "symbol": "RITM", "issuer_name": "Rithm Capital Corp.", "asset_class": "EQUITY"}
+    body = "S&P raised its issuer credit rating on Rithm Capital Corp. to 'B+' from 'B'. The outlook on the rating is stable. We raised our issue rating on its senior unsecured notes to 'B' from 'B-'."
+    src = source(body, title="S&P Rithm Capital Corp.", url="https://spratings.spglobal.com/ratings/en/regulatory/article/-/view/type/HTML/id/3633936")
+    record, = primary(company, src)
+    row = normalize_observation(record, company)
+    assert (row["rating"], row["rating_type"], row["outlook"], row["watch"]) == ("B+", "issuer", "stable", "unknown")
+    assert row["rating_date"] is row["observed_at"] is row["outlook_date"] is None
+    header = "* 25-Sep-2026 | 14:49 EDT\n\n# Rithm Capital Corp. Upgraded To 'B+' From 'B' On Improved Business Diversification; Outlook Stable\n\n"
+    owned = {**src, "title": "Rithm Capital Corp. Upgraded To 'B+' From 'B' On", "text": header + body}
+    owned_record, = primary(company, owned)
+    owned_row = normalize_observation(owned_record, company)
+    assert owned_row["rating_date"] == owned_row["observed_at"] == "2026-09-25"
+    assert owned_row["outlook"] == "stable" and owned_row["outlook_date"] is None
+    assert validate_observation(owned_record, {**company, "as_of_date": "2026-09-24"}) is None
+    unrelated = {**owned, "text": "* 24-Sep-2026 | 14:49 EDT\n\n# Another Company Upgraded To 'B+'\n\n" + body}
+    unrelated_record, = primary(company, unrelated)
+    assert unrelated_record["rating_date"] is None and unrelated_record["observed_at"] is None
+
+
+@pytest.mark.parametrize("following", [
+    "S&P raised its issuer credit rating on Another Corp. to 'BBB'. The outlook on the rating is stable.",
+    "Its senior unsecured debt rating is 'B'. The outlook on the rating is stable.",
+    "We assigned an issue rating on its senior unsecured notes at 'B'. The outlook on the rating is stable.",
+    "Another Corp.'s outlook on the rating is stable.",
+    "The outlook on the rating is not stable.",
+    "Analysts say the outlook on the rating is stable.",
+    "The outlook on the rating is expected to be stable.",
+    "\n\nThe outlook on the rating is stable.",
+    "Additional business details. " * 15 + "The outlook on the rating is stable.",
+])
+def test_rating_outlook_pronoun_cannot_borrow_wrong_issue_entity_or_remote_signal(following):
+    company = {"security_key": "RITM|YAHOO|USD", "symbol": "RITM", "issuer_name": "Rithm Capital Corp.", "asset_class": "EQUITY"}
+    text = "S&P raised its issuer credit rating on Rithm Capital Corp. to 'B+'. " + following
+    src = source(text, title="S&P Rithm Capital Corp.", url="https://spratings.spglobal.com/ratings/en/regulatory/article/-/view/type/HTML/id/3633936")
+    record, = primary(company, src)
+    assert record["rating"] == "B+" and record["outlook"] == record["watch"] == "unknown"
+
+
+def test_article_forward_opinions_ignore_unread_related_link_titles():
+    company = {"security_key": "RITM|YAHOO|USD", "symbol": "RITM", "issuer_name": "Rithm Capital Corp.", "asset_class": "EQUITY"}
+    body = "S&P raised its issuer credit rating on Rithm Capital Corp. to 'B+' from 'B'. The outlook on the rating is stable."
+    related = "\n\n#### Related Research\n\n* [Rithm Capital Corp. Outlook Revised To Positive On Increasing Scale](https://www.spglobal.com/ratings/previous-action)"
+    src = source(body + related, title="S&P Rithm Capital Corp.", url="https://spratings.spglobal.com/ratings/en/regulatory/article/-/view/type/HTML/id/3633936")
+    record, = primary(company, src)
+    assert record["outlook"] == "stable" and record["watch"] == "unknown"
+    link_only = {**src, "text": body.split(" The outlook", 1)[0]
+                 + "\n\n[Rithm Capital Corp.'s Outlook Stable and Rating Watch Negative](https://www.spglobal.com/ratings/unread-action)"}
+    link_record, = primary(company, link_only)
+    assert link_record["outlook"] == link_record["watch"] == "unknown"
+
+
+def test_article_linked_old_grade_is_neither_current_fact_nor_pronoun_antecedent():
+    company = {"security_key": "RITM|YAHOO|USD", "symbol": "RITM", "issuer_name": "Rithm Capital Corp.", "asset_class": "EQUITY"}
+    header = "* 25-Sep-2026 | 14:49 EDT\n\n# Rithm Capital Corp. Upgraded To 'B+' From 'B' On Improved Business Diversification\n\n"
+    body = "S&P raised its issuer credit rating on Rithm Capital Corp. to 'B+' from 'B'. The outlook on the rating is stable."
+    old = "\n\n* [Rithm Capital Corp.'s issuer credit rating affirmed at 'CCC'; Outlook Positive](https://spratings.spglobal.com/ratings/old), Nov. 14, 2025"
+    src = source(header + body + old, title="Rithm Capital Corp. Upgraded To 'B+' From 'B' On", url="https://spratings.spglobal.com/ratings/en/regulatory/article/-/view/type/HTML/id/3633936")
+    record, = primary(company, src)
+    assert record["rating"] == "B+" and record["outlook"] == "stable"
+    assert record["rating_date"] == "2026-09-25"
+    assert record["claims"]["rating_clause"] in src["text"]
+    only_link = {**src, "text": header + "Rithm Capital Corp. is a financial services company." + old}
+    assert primary(company, only_link) == []
+    linked_alias = {**src, "text": header + "[Rithm Capital Corp. (RITM)](https://spratings.spglobal.com/ratings/unread)\n\nS&P raised its issuer credit rating on RITM to 'B+'."}
+    assert primary(company, linked_alias) == []
+
+
+def test_literal_issuer_table_anchor_grade_cells_remain_source_bound():
+    text = JPM.replace("Long-term issuer rating | A1 | A | AA-", "Long-term issuer rating | [A1](https://ratings.moodys.com/issuer) | [A](https://www.spglobal.com/ratings/issuer) | [AA-](https://www.fitchratings.com/entity/issuer)")
+    rows = primary(src=source(text))
+    assert {row["agency"]: row["rating"] for row in rows} == {"moodys": "A1", "sp": "A", "fitch": "AA-"}
+
+
+@pytest.mark.parametrize("label", [
+    "Rithm Capital Corp.'s issuer credit rating affirmed at 'CCC'",
+    "Rithm Capital Corp. periodic review does not announce a credit rating action",
+    "Rithm Capital Corp. national scale rating formerly 'AAA'",
+])
+def test_linked_article_metadata_cannot_reclassify_current_observation_or_action(label):
+    company = {"security_key": "RITM|YAHOO|USD", "symbol": "RITM", "issuer_name": "Rithm Capital Corp.", "asset_class": "EQUITY"}
+    old_link = "\n\n[" + label + "](https://spratings.spglobal.com/ratings/old)"
+    body = "25 Sep 2026\n\n# Rithm Capital Corp. Credit Profile\n\nRithm Capital Corp.'s issuer credit rating is 'B+'."
+    src = source(body + old_link, title="Rithm Capital Corp. Credit Profile", url="https://spratings.spglobal.com/ratings/en/regulatory/article/-/view/type/HTML/id/3633936")
+    row, = primary(company, src)
+    assert row["rating"] == "B+" and row["scale"] == "global" and row["observed_at"] == "2026-09-25"
+    assert row["action_type"] == "rating_observation" and row["rating_date"] is None
+    action = {**src, "text": body.replace("Rithm Capital Corp.'s issuer credit rating is", "S&P raised its issuer credit rating on Rithm Capital Corp. to") + old_link}
+    action_row, = primary(company, action)
+    assert action_row["action_type"] == "rating_action" and action_row["rating_date"] == "2026-09-25"
+
+
+@pytest.mark.parametrize("archived", [
+    "[Archived note](https://www.fitchratings.com/research/fitch-affirms-rithm-at-ccc-01-01-2025)",
+    "[](https://www.fitchratings.com/research/fitch-affirms-rithm-at-ccc-01-01-2025)",
+    "https://www.fitchratings.com/research/fitch-affirms-rithm-at-ccc-01-01-2025",
+    "[Archived note](https://www.fitchratings.com/research/(archive)/fitch-affirms-rithm-at-ccc-01-01-2025)",
+])
+def test_article_url_targets_and_bare_urls_cannot_supply_financial_action(archived):
+    company = {"security_key": "RITM|YAHOO|USD", "symbol": "RITM", "issuer_name": "Rithm Capital Corp.", "asset_class": "EQUITY"}
+    body = "25 Sep 2026\n\n# Rithm Capital Corp. Credit Profile\n\nRithm Capital Corp.'s issuer credit rating is 'B+'."
+    src = source(body + "\n\n" + archived, title="Rithm Capital Corp. Credit Profile", url="https://spratings.spglobal.com/ratings/en/regulatory/article/-/view/type/HTML/id/3633936")
+    row, = primary(company, src)
+    assert row["rating"] == "B+" and row["action_type"] == "rating_observation"
+    assert row["rating_date"] is None and row["observed_at"] == "2026-09-25"
+    assert row["claims"]["rating_clause"] in src["text"]
+    action = {**src, "text": src["text"].replace("Rithm Capital Corp.'s issuer credit rating is", "S&P raised its issuer credit rating on Rithm Capital Corp. to")}
+    action_row, = primary(company, action)
+    assert action_row["action_type"] == "rating_action" and action_row["rating_date"] == "2026-09-25"
+    prospective_url = {**src, "text": "https://www.spglobal.com/ratings/old-could-lower-rating\n\n" + body}
+    prospective_row, = primary(company, prospective_url)
+    assert prospective_row["rating"] == "B+" and prospective_row["action_type"] == "rating_observation"
+
+
 def test_outlook_revision_retains_new_signal_not_old_from_signal():
     edf = {"security_key": "EDF", "issuer_name": "Electricite de France", "asset_class": "EQUITY", "verified_issuer_domains": ["edf.fr"]}
     text = "06 Nov 2026\n\nFitch affirms Electricite de France's Long-Term Issuer Default Rating (IDR) at 'BBB+' and revised its Outlook to Negative from Stable."
