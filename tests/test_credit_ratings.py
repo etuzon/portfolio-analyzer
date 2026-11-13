@@ -202,6 +202,50 @@ def test_agency_article_binds_each_rating_clause_to_its_own_legal_entity():
     assert {row["rating"] for row in primary(BANK, src)} == {"AA"}
 
 
+def test_live_fdus_corp_name_accepts_captured_fitch_issuer_clause_and_own_outlook():
+    # Literal clause from the actual 13/11/2026 ResearchSession capture, not a
+    # model-generated observation. The live imported key/name differ from the
+    # earlier NASDAQ fixture. Publication metadata is the agency action date.
+    company = {"security_key": "FDUS|YAHOO|USD", "symbol": "FDUS", "stock_market": "YAHOO",
+               "currency": "USD", "issuer_name": "FIDUS INVESTMENT Corp", "asset_class": "EQUITY"}
+    text = "Fitch Ratings has affirmed Fidus Investment Corporation's (FDUS) Long-Term Issuer Default Rating (IDR) at 'BBB-'. The Rating Outlook is Stable."
+    src = source(text, title="Fitch Ratings", published_at="2026-10-15",
+                 url="https://www.fitchratings.com/research/corporate-finance/fitch-affirms-fidus-investment-corporation-at-bbb-outlook-stable-15-10-2026")
+    record, = primary(company, src)
+    normalized = normalize_observation(record, company)
+    assert (normalized["agency"], normalized["rating"], normalized["outlook"], normalized["watch"]) == ("fitch", "BBB-", "stable", "unknown")
+    assert normalized["entity_name"] == "FIDUS INVESTMENT Corp"
+    assert normalized["scope"] == "issuer" and normalized["rating_type"] == "issuer_default"
+    assert normalized["rating_date"] == normalized["observed_at"] == "2026-10-15"
+    assert normalized["outlook_date"] is None and normalized["watch_date"] is None
+    assert normalized["claims"]["rating_clause"] in text
+
+
+@pytest.mark.parametrize("registered,published", [
+    ("Example Corp.", "Example Corporation"), ("Example Corporation", "Example Corp."),
+    ("Example Inc.", "Example Incorporated"), ("Example Incorporated", "Example Inc."),
+    ("Example Ltd.", "Example Limited"), ("Example Limited", "Example Ltd."),
+])
+def test_legal_form_spellings_match_in_rating_and_forward_clauses(registered, published):
+    company = {"security_key": "EXAMPLE", "issuer_name": registered, "asset_class": "EQUITY"}
+    text = "13 November 2026\n\nFitch affirmed " + published + "'s Long-Term Issuer Default Rating (IDR) at 'BBB'. Its Outlook is Negative."
+    src = source(text, title="Fitch Ratings " + published, url="https://www.fitchratings.com/research/example")
+    record, = primary(company, src)
+    assert record["rating"] == "BBB" and record["outlook"] == "negative"
+    assert normalize_observation(record, company)["entity_name"] == registered
+
+
+@pytest.mark.parametrize("different", [
+    "Example Bank Corporation", "Example Holdings Corporation", "Example Subsidiary Corporation",
+    "Example LLC", "Example plc", "Example Corporation OH",
+])
+def test_legal_spelling_equivalence_never_drops_entity_or_legal_form_tokens(different):
+    company = {"security_key": "EXAMPLE", "issuer_name": "Example Corp.", "asset_class": "EQUITY"}
+    text = "13 November 2026\n\nFitch affirmed " + different + "'s Long-Term Issuer Default Rating (IDR) at 'AA'. Its Outlook is Stable."
+    src = source(text, title="Fitch Ratings " + different, url="https://www.fitchratings.com/research/example")
+    assert extract_rating_records(src, company) == []
+
+
 def test_subsidiary_forward_signals_do_not_attach_to_parent_grade():
     text = "6 November 2026\n\nFitch affirmed the Long-Term Issuer Default Rating on JPMorgan Chase & Co. at 'AA-'. JPMorgan Chase Bank, N.A.'s Outlook is Negative and was placed on Rating Watch Negative."
     src = source(text, title="Fitch Ratings", url="https://www.fitchratings.com/research/banks/example")
@@ -211,6 +255,40 @@ def test_subsidiary_forward_signals_do_not_attach_to_parent_grade():
     own = source("6 November 2026\n\nFitch affirmed the Long-Term Issuer Default Rating on JPMorgan Chase & Co. at 'AA-'. Its Outlook is Stable.", title="Fitch Ratings", url="https://www.fitchratings.com/research/banks/example")
     record, = primary(src=own)
     assert record["outlook"] == "stable"
+
+
+def test_source_local_explicit_acronym_binds_edf_but_not_sovereign_or_subsidiary():
+    company = {"security_key": "EDF-ISSUER-QA|MANUAL|EUR", "issuer_name": "Electricite de France", "asset_class": "EQUITY",
+               "verified_issuer_domains": ["edf.fr"]}
+    text = "06 Nov 2026\n\nFitch revised Electricite de France (EDF)'s Outlook to Negative and affirmed their Long-Term Issuer Default Rating (IDR) at 'BBB+'.\n\nFitch affirmed France's Long-Term Issuer Default Rating (IDR) at 'A+'."
+    src = source(text, title="Fitch Revises EDF Outlook", url="https://www.edf.fr/investors/fitch-action.pdf")
+    record, = primary(company, src)
+    normalized = normalize_observation(record, company)
+    assert normalized["rating"] == "BBB+" and normalized["outlook"] == "negative"
+    assert normalized["entity_name"] == "Electricite de France"
+    assert normalized["rating_date"] == normalized["outlook_date"] == "2026-11-06"
+    assert normalized["claims"]["source_bound_aliases"] == ["EDF"]
+    assert any("Electricite de France (EDF)" in item["evidence_quote"] and item.get("fields") == ["entity_name"]
+               for item in normalized["sources"])
+    assert "issuer_aliases" not in company
+    for wrong in ("EDF Trading", "EDF Trading Limited"):
+        assert extract_rating_records(src, {**company, "issuer_name": wrong}) == []
+    for partial in ("France", "de France"):
+        assert all(row["rating"] != "BBB+" for row in extract_rating_records(src, {**company, "issuer_name": partial}))
+
+
+def test_explicit_possessive_acronym_definition_keeps_canonical_axis_without_blanket_alias():
+    company = {"security_key": "EDF", "issuer_name": "Electricite de France", "asset_class": "EQUITY", "verified_issuer_domains": ["edf.fr"]}
+    defined = source("January 14, 2026\n\nElectricite de France S.A.'s (EDF's) operations improved.\n\nS&P raised its issuer credit rating on EDF to 'BBB+'; outlook stable.",
+                     title="Electricite de France Upgraded", url="https://www.edf.fr/investors/sp-action.pdf")
+    record, = primary(company, defined)
+    assert record["entity_name"] == "Electricite de France" and record["rating"] == "BBB+" and record["outlook"] == "stable"
+    undefined = {**defined, "text": "January 14, 2026\n\nS&P raised its issuer credit rating on EDF to 'BBB+'."}
+    assert extract_rating_records(undefined, company) == []
+    wrong = {**defined, "text": "January 14, 2026\n\nEDF Trading Limited (EDF) improved.\n\nS&P raised its issuer credit rating on EDF to 'A'."}
+    assert extract_rating_records(wrong, company) == []
+    conflicting = {**defined, "text": defined["text"].replace("\n\nS&P raised", "\n\nEDF Trading Limited (EDF) is a separate entity.\n\nS&P raised")}
+    assert extract_rating_records(conflicting, company) == []
 
 
 def test_national_article_symbol_is_never_truncated_into_a_global_symbol():

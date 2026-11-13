@@ -154,7 +154,11 @@ def _timestamp(value: Any) -> str | None:
 def _entity(value: Any) -> str:
     value = unicodedata.normalize("NFKD", _plain(value)).casefold().replace("&", " and ")
     value = "".join(char for char in value if not unicodedata.combining(char))
-    return " ".join(re.findall(r"[^\W_]+", value, re.UNICODE))
+    # These are spellings of the same legal form, not removable stop words.
+    # Apply the same expansion to source clauses and candidate names so that
+    # parent/bank/holdings and other substantive identity tokens remain bound.
+    forms = {"corp": "corporation", "inc": "incorporated", "ltd": "limited"}
+    return " ".join(forms.get(word, word) for word in re.findall(r"[^\W_]+", value, re.UNICODE))
 
 
 def _names(candidate: dict[str, Any]) -> set[str]:
@@ -169,6 +173,73 @@ def _names(candidate: dict[str, Any]) -> set[str]:
 
 def _matches_entity(name: str, candidate: dict[str, Any]) -> bool:
     return _entity(name) in _names(candidate)
+
+
+def _legal_subject(value):
+    """The complete named subject, never an arbitrary suffix of its name."""
+    value = value.rstrip().rstrip(")]").rstrip()
+    introductions = list(re.finditer(r"\b(?:affirm(?:s|ed)?|revis(?:es|ed)|assign(?:s|ed)|upgrad(?:es|ed)|downgrad(?:es|ed)|raised|lowered)\s+|\bIn our view,\s*", value, re.I))
+    if introductions:
+        tail = value[introductions[-1].end():].strip()
+        if tail and not re.search(r"[()\[\]]|['’]s|\b(?:rating|outlook|at|to|their|its)\b", tail, re.I):
+            return _entity(tail)
+    words = list(re.finditer(r"[^\W_]+(?:['’][^\W_]+)*", value, re.UNICODE))
+    if not words:
+        return ""
+    particles = {"de", "du", "des", "of", "the", "and", "la", "le", "van", "von", "del", "da", "di"}
+    selected = []
+    boundary = len(value)
+    for word in reversed(words):
+        literal = word[0]
+        if not re.fullmatch(r"[\s,.&-]*", value[word.end():boundary]):
+            break
+        named = any(char.isupper() for char in literal) or (literal.isalpha() and literal.lower() == literal.upper())
+        if not named and literal.casefold() not in particles:
+            break
+        selected.append(word)
+        boundary = word.start()
+    selected.reverse()
+    while selected and selected[0][0] in {"of", "and"}:
+        selected.pop(0)
+    return _entity(value[selected[0].start():selected[-1].end()]) if selected else ""
+
+
+def _article_aliases(text, candidate):
+    """Only an explicit source-local legal-name (ACRONYM) definition binds.
+
+    Do not infer an alias from a ticker or an unrelated heading. Optional S.A.
+    is accepted here as a literal legal-form extension of an already named
+    issuer, never removed from the general legal-entity comparison.
+    """
+    bindings, conflicting_aliases = [], set()
+    names = _names(candidate)
+    excluded = {"IDR", "ICR", "SCP", "SACP", "FFO", "DCF", "EBITDA", "GRE", "LT", "ST",
+                "SA", "S.A.", "AG", "PLC", "LLC", "INC", "CORP", "CO", "LTD"}
+    excluded.update(value.upper() for values in _LONG.values() for value in values)
+    pattern = r"\(\s*['\"‘“]?(?P<alias>[A-Z][A-Z0-9&.-]{1,15})(?:['’]s)?['\"’”]?\s*\)"
+    for match in re.finditer(pattern, text[:8000]):
+        alias = match["alias"]
+        if alias in excluded:
+            continue
+        prefix = text[max(0, match.start() - 300):match.start()].rstrip()
+        prefix = re.sub(r"['’]s$", "", prefix).rstrip()
+        normalized = _legal_subject(prefix)
+        targets = [name for name in names if normalized == name
+                   or len(name.split()) >= 3 and normalized in {name + " s a", name + " sa"}]
+        if not targets:
+            if normalized and normalized != _entity(alias):
+                conflicting_aliases.add(alias)
+            continue
+        # Retain the literal definition, separately from the canonical issuer
+        # used as the comparable axis and history identity.
+        definition = text[max(0, match.start() - 300):match.end()]
+        bindings.append((alias, definition))
+    aliases = [alias for alias, _ in bindings if alias not in conflicting_aliases]
+    definitions = [definition for alias, definition in bindings if alias not in conflicting_aliases]
+    if not aliases:
+        return candidate, []
+    return {**candidate, "issuer_aliases": list(candidate.get("issuer_aliases") or []) + aliases,
+            "_source_bound_aliases": aliases}, definitions
 
 
 def _url(value: Any) -> str:
@@ -661,17 +732,17 @@ def _clause_subject_match(text, match, paragraph_start, candidate):
                     lambda item: item[0].replace(".", " "), prefix, flags=re.I)
     boundary = max(masked.rfind("."), masked.rfind("!"), masked.rfind("?"))
     prefix = prefix[boundary + 1:]
-    adjacent = _entity(prefix)
-    if any(adjacent == name or adjacent.endswith(" " + name) for name in names):
+    adjacent = _legal_subject(prefix)
+    if adjacent in names:
         return True
     if re.search(r"\b(?:Bank|Inc\.|Co\.|Corp\.|Ltd\.|LLC|plc|S\.A\.|N\.A\.|AG)\s*$", prefix, re.I):
         return False
     for possessive in reversed(list(re.finditer(r"['’]s\b", prefix, re.I))):
-        left = _entity(prefix[max(0, possessive.start() - 300):possessive.start()])
+        left = _legal_subject(prefix[max(0, possessive.start() - 300):possessive.start()])
         last = left.split()[-1:]
         if last and last[0] in {"moody", "company", "issuer", "group", "it", "government"}:
             continue
-        return any(left == name or left.endswith(" " + name) for name in names)
+        return left in names
     return None
 
 
@@ -711,6 +782,9 @@ def _article_records(source, candidate):
     heading = _plain(source.get("title")) + "\n" + text[:1800]
     if not agency:
         return []
+    canonical_name = next((candidate.get(key) for key in ("legal_entity_name", "issuer_name", "name")
+                           if isinstance(candidate.get(key), str) and candidate[key].strip()), None)
+    candidate, definitions = _article_aliases(text, candidate)
     names = _names(candidate)
     heading_normal = " " + _entity(heading) + " "
     matched = next((name for name in sorted(names, key=len, reverse=True) if " " + name + " " in heading_normal), None)
@@ -718,10 +792,7 @@ def _article_records(source, candidate):
         return []
     # The article must explicitly name the target legal entity/verified alias
     # near its rating subject; an unrelated security mention is not identity.
-    entity_name = next((str(candidate.get(key)) for key in ("legal_entity_name", "issuer_name", "name")
-                        if _entity(candidate.get(key)) == matched), None)
-    if entity_name is None:
-        entity_name = next((str(alias) for alias in candidate.get("issuer_aliases", []) if _entity(alias) == matched), None)
+    entity_name = canonical_name
     if not entity_name:
         return []
     observed = _publication(source, text)
@@ -789,8 +860,12 @@ def _article_records(source, candidate):
             fields["currency_basis"] = ("foreign_currency" if re.search(r"foreign[ -]currency", match["label"], re.I)
                                         else "local_currency" if re.search(r"local[ -]currency", match["label"], re.I) else None)
             try:
-                output.append(_make_record(source, candidate, fields, excerpt,
-                                           {"rating_clause": text[match.start():match.end()], "entity_alias": entity_name}, action_type=action))
+                literal_alias = next((alias for alias in candidate.get("issuer_aliases", []) if _entity(alias) == matched), entity_name)
+                claims = {"rating_clause": text[match.start():match.end()], "entity_alias": literal_alias}
+                if definitions:
+                    claims["entity_definitions"] = definitions
+                    claims["source_bound_aliases"] = candidate.get("_source_bound_aliases", [])
+                output.append(_make_record(source, candidate, fields, excerpt, claims, action_type=action))
             except ValueError:
                 continue
     return output
@@ -947,6 +1022,11 @@ def normalize_observation(record: dict[str, Any], candidate: dict[str, Any], *, 
                             "evidence_quote": canonical["evidence_quote"], "fetched_at": fetched,
                             "source_kind": canonical["source_kind"]}],
                   primary_eligible=is_primary_observation(canonical, candidate))
+    for definition in canonical.get("claims", {}).get("entity_definitions", []):
+        if definition and definition in source["text"]:
+            result["sources"].append({"url": source["url"], "title": str(source.get("title") or "")[:300],
+                                      "evidence_quote": definition, "fetched_at": fetched,
+                                      "source_kind": canonical["source_kind"], "fields": ["entity_name"]})
     for key in ("action_type", "snapshot_kind"):
         if key in canonical:
             result[key] = canonical[key]

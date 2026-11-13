@@ -1,0 +1,11 @@
+.ai-credit-ratings { display: grid; gap: 8px; padding-block-start: 14px; border-top: 1px solid var(--ux-stroke); }
+.ai-credit-ratings h3 { margin: 0; }
+.ai-credit-ratings > p { margin: 0; color: var(--ux-muted); font-size: 12px; line-height: 1.55; }
+.ai-credit-agencies { display: flex; flex-wrap: wrap; gap: 5px 14px; margin-block: 8px; color: var(--ux-muted); font-size: 12px; }
+.ai-credit-ratings .compact-button { width: auto; margin-block-start: 4px; }
+#aiEnrichmentMarketTitle { margin: 0 0 -8px; font-size: 16px; }
+.ai-enrichment-mode { display: grid; gap: 4px; }
+.ai-enrichment-mode .check { min-height: 36px; width: fit-content; }
+.ai-enrichment-mode p { margin: 0; color: var(--ux-muted); font-size: 12px; line-height: 1.5; }
+@media (max-width: 760px) { .ai-credit-ratings .compact-button { min-height: 44px; } }
+@media (max-width: 760px) { .ai-enrichment-mode .check { min-height: 44px; } }

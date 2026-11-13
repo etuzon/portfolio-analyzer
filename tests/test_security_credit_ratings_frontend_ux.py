@@ -94,18 +94,17 @@ for(const status of ['rated','unrated','withdrawn','not_found','not_checked','un
 ''')
 
 
-def test_provider_access_uses_localized_statuses_and_preserves_entitlement_limits():
+def test_rating_workflow_has_no_licensed_provider_prompt_even_for_old_cached_metadata():
     run_ui(r'''
 const statuses=['configured','not_configured','entitlement_required','authentication_required','provider_unavailable','data_unavailable','identity_unavailable','rate_limited'];
 for(const language of ['en','he']){
  state.language=language;
  const html=creditRatingsProviderStatus(statuses.map(status=>({provider:'spglobal_agency_ratings',configured:status!=='not_configured',status,docs_url:'https://example.org/api'})));
- assert.ok(!html.includes('spglobal_agency_ratings'));
- for(const code of statuses.filter(code=>code.includes('_')))assert.ok(!html.includes(`>${code}<`));
- if(language==='he'){
-  for(const label of ['ממשק דירוגי האשראי של S&amp;P Global','נדרש אימות גישה','נדרשת הרשאת מנוי','הספק אינו זמין','תיעוד API','מנוי בתשלום'])assert.ok(html.includes(label),label);
- }else{
-  assert.ok(!/[א-ת]/.test(html));assert.ok(html.includes('paid subscription'));assert.ok(html.includes('Subscription access required'));
+ assert.equal(html,'','retained provider metadata must not prompt for a licensed rating feed');
+ for(const code of ['api_not_configured','configuration_required','entitlement_required','access_denied']){
+  const reason=creditRatingsReason(code,'unavailable');
+  assert.equal(reason,t('Refresh ratings researches public sources with AI. No licensed rating API is required.'));
+  if(language==='he')assert.ok(!/\b(?:Refresh|licensed|required)\b/.test(reason));else assert.ok(!/[א-ת]/.test(reason));
  }
 }
 ''')
@@ -309,8 +308,9 @@ def test_help_documents_rating_workflow_in_both_languages():
     run_ui(r'''
 const fs=require('node:fs');const html=fs.readFileSync('web/index.html','utf8');
 const help=html.slice(html.indexOf('id="helpModal"'),html.indexOf('id="securityDetailModal"'));
-const paragraphs=[...help.matchAll(/<p>([^<]*Company credit ratings[^<]*|Opening the overview reads saved ratings[^<]*|Last checked records a research attempt[^<]*)<\/p>/g)].map(match=>match[1].replaceAll('&amp;','&'));
-assert.equal(paragraphs.length,3);
+const paragraphs=[...help.matchAll(/<p>([^<]*Company credit ratings[^<]*|Opening the overview only reads saved ratings[^<]*|Last checked records a research attempt[^<]*|Credit ratings in Holdings include[^<]*)<\/p>/g)].map(match=>match[1].replaceAll('&amp;','&'));
+assert.equal(paragraphs.length,4);
 for(const text of paragraphs){const translated=window.PortfolioI18n.translate(text,'he');assert.notEqual(translated,text);assert.ok(/[א-ת]/.test(translated));}
-assert.ok(html.includes('/security-credit-ratings.js?v=3'));assert.ok(html.includes('/security-credit-ratings.css?v=2'));
+assert.ok(html.includes('/security-credit-ratings.js?v=4'));assert.ok(html.includes('/security-credit-ratings.css?v=2'));
+assert.ok(!help.includes('SPGLOBAL_RATINGS_TOKEN'));assert.ok(!help.includes('Administrators configure market_data.credit_ratings'));
 ''')

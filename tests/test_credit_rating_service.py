@@ -78,7 +78,11 @@ def test_cache_only_read_retains_all_agencies_and_survives_new_service_instance(
     assert all(r["reason_code"] == "data_found" and r["rating_date"] is None for r in after["ratings"])
     restarted = CreditRatingService(cache=lambda: SqliteCache(cache.path, ttl_hours=24), settings=lambda: settings,
         inventory=lambda: inventory, research_settings=lambda: {})
-    assert restarted.read(inventory[0]) == after
+    # This legacy cache-only fixture has no local-preference store. Financial
+    # facts survive; durable history is covered with a real local store below.
+    actual = restarted.read(inventory[0])
+    assert [{k: v for k, v in row.items() if k != "latest_change"} for row in actual["ratings"]] == [
+        {k: v for k, v in row.items() if k != "latest_change"} for row in after["ratings"]]
 
 
 def test_main_inventory_uses_listing_bound_issuer_profile_and_excludes_noncompany_instruments(monkeypatch):
@@ -167,7 +171,7 @@ def test_batch_and_overview_recompute_ancillary_freshness_from_its_own_dates_wit
     assert cache.get_security_snapshot("credit_ratings", candidate["security_key"], SCHEMA) == before
 
 
-def test_documented_api_maps_three_native_schemas_without_parent_bank_or_date_substitution(environment):
+def test_retained_legacy_api_source_maps_schemas_without_parent_bank_or_date_substitution(environment):
     service, _, inventory, settings = environment
     settings["spglobal"] = {"enabled": True, "bearer_token": "synthetic-license-token"}
     seen = []
@@ -176,10 +180,9 @@ def test_documented_api_maps_three_native_schemas_without_parent_bank_or_date_su
         assert request.url.path == "/agencyratings/api/v1/issuer"
         assert request.url.params["creditRatingAgency"] == "S&P + MOODY'S + FITCH"
         return httpx.Response(200, json=api_payload())
-    service._api_transport = httpx.MockTransport(handler)
-    result = service.candidates(security_keys=[CANDIDATE["security_key"]])
+    result = fetch(inventory[0], settings, RequestBudget(1), transport=httpx.MockTransport(handler))
     assert len(seen) == 1
-    assert result["preflight_outcomes"][0]["status"] == "updated"
+    service.publish(inventory[0], service._accept_sources(inventory[0], result["sources"]))
     rows = service.read(inventory[0])["ratings"]
     assert {r["agency"]: r["rating"] for r in rows} == {"moodys": "A1", "sp": "A", "fitch": "AA-"}
     assert all(r["rating_date"] == "2026-06-01" and r["outlook"] == "stable" for r in rows)
@@ -196,17 +199,21 @@ def test_unavailable_licensed_api_preserves_fallback_and_never_leaks_response(st
     assert registry({})[0]["configured"] is False
 
 
-def test_partial_api_data_keeps_missing_agencies_research_eligible(environment):
+def test_public_check_never_calls_configured_licensed_api_and_researches_all_agencies(environment):
     service, _, inventory, settings = environment
     settings["spglobal"] = {"bearer_token": "synthetic-token"}
     payload = api_payload()
     payload["results"][0].pop("moodysRatingsData")
     payload["results"][0].pop("fitchRatingsData")
-    service._api_transport = httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+    def forbidden(_):
+        raise AssertionError("Public credit research invoked a licensed API")
+    service._api_transport = httpx.MockTransport(forbidden)
     result = service.candidates(security_keys=[CANDIDATE["security_key"]])
-    assert result["items"][0]["missing_agencies"] == ["moodys", "fitch"]
+    assert result["items"][0]["missing_agencies"] == ["moodys", "sp", "fitch"]
     assert result["preflight_outcomes"][0]["research_eligible"] is True
-    assert next(r for r in service.read(inventory[0])["ratings"] if r["agency"] == "sp")["rating"] == "A"
+    assert result["items"][0]["retrieval_mode"] == "public_ai"
+    assert service.check_apis(inventory[0], RequestBudget(1)) == ([], [])
+    assert all(row["rating"] is None for row in service.read(inventory[0])["ratings"])
 
 
 def test_failed_attempt_is_persisted_without_erasing_verified_ratings_or_refreshing_them(environment):
@@ -292,11 +299,13 @@ def test_deposit_national_and_short_term_observations_do_not_replace_company_pri
 def test_unknown_source_id_proposal_never_saves_a_rating_and_records_actual_attempt(environment):
     service, cache, inventory, _ = environment
     candidate = inventory[0]
-    service.finalize([], "owner", "request", proposal={"records": [{"security_key": candidate["security_key"],
+    outcome, = service.finalize([], "owner", "request", proposal={"records": [{"security_key": candidate["security_key"],
         "source_id": "forged", "record_id": "forged"}]}, evidence_by_key={candidate["security_key"]: [source()]},
         candidates={candidate["security_key"]: candidate})
     after = service.read(candidate)
     assert all(r["rating"] is None and r["status"] == "unavailable" for r in after["ratings"])
+    assert outcome["verified_agencies"] == []
+    assert outcome["agency_statuses"] == {"moodys": "unavailable", "sp": "unavailable", "fitch": "unavailable"}
     assert cache.get_security_snapshot("credit_ratings", candidate["security_key"], SCHEMA).get("observations", []) == []
 
 
@@ -334,8 +343,8 @@ def test_api_preserves_explicit_unrated_withdrawn_and_default_instead_of_active_
     payload = api_payload()
     row = payload["results"][0]["s&pRatingsData"][0]["s&pData"][0]
     row.update(ratingValue=grade, ratingAction=action)
-    service._api_transport = httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
-    service.candidates(security_keys=[CANDIDATE["security_key"]])
+    retained = fetch(inventory[0], settings, RequestBudget(1), transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload)))
+    service.publish(inventory[0], service._accept_sources(inventory[0], retained["sources"]))
     result = next(r for r in service.read(inventory[0])["ratings"] if r["agency"] == "sp")
     assert result["status"] == status
     assert result["rating"] == (grade if status == "rated" else None)
@@ -346,8 +355,8 @@ def test_api_future_action_date_is_rejected_instead_of_silently_becoming_undated
     settings["spglobal"] = {"bearer_token": "synthetic-token"}
     payload = api_payload()
     payload["results"][0]["s&pRatingsData"][0]["s&pData"][0]["ratingDate"] = "2099-01-01"
-    service._api_transport = httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
-    service.candidates(security_keys=[CANDIDATE["security_key"]])
+    retained = fetch(inventory[0], settings, RequestBudget(1), transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload)))
+    service.publish(inventory[0], service._accept_sources(inventory[0], retained["sources"]))
     result = next(r for r in service.read(inventory[0])["ratings"] if r["agency"] == "sp")
     assert result["status"] == "not_checked" and result["rating"] is None
 
@@ -366,8 +375,8 @@ def test_exact_issue_query_binds_identifier_without_accepting_an_issuer_row_as_i
     def handler(request):
         observed.append(request)
         return httpx.Response(200, json=payload)
-    service._api_transport = httpx.MockTransport(handler)
-    service.candidates(position_scope="all", security_keys=[candidate["security_key"]])
+    retained = fetch(candidate, settings, RequestBudget(1), transport=httpx.MockTransport(handler))
+    service.publish(candidate, service._accept_sources(candidate, retained["sources"]))
     assert len(observed) == 1 and observed[0].url.path.endswith("/issue")
     row = next(r for r in service.read(candidate)["ratings"] if r["agency"] == "sp")
     assert row["status"] == "rated" and row["scope"] == "issue" and row["rating"] == "A"

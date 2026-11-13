@@ -1,4 +1,4 @@
-"""Application-owned credit-rating cache, API-first checks and AI REST evidence.
+"""Application-owned public-AI credit evidence, manual overrides and history.
 
 The AI coordinator receives only the fixed REST tools. This application layer
 owns inventory, public-source reads, evidence validation and cache publication.
@@ -9,17 +9,18 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import re
 from threading import RLock
 from typing import Callable
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from . import credit_ratings_api
+from . import credit_rating_history as history
 from .security_enrichment import EnrichmentJobs, WEB_RESEARCH_POLICY, security_key
 from .security_research_tools import ResearchSession, ResearchFailure, WebRequestBudget
 from .security_search import SearchFailure, search_is_configured
-from .us_market_providers import ProviderFailure, RequestBudget
+from .us_market_providers import ProviderFailure
 from .manual_credit_ratings import (
     MANUAL_SCHEMA, manual_identity, manual_policy, manual_preconditions, normalize_manual, preference_key,
 )
@@ -35,6 +36,7 @@ SUMMARY_FIELDS = frozenset({
     "record_id", "source_url", "source_kind", "action_type", "snapshot_kind", "currency_basis",
     "manual_override", "manual_revision", "revision", "verification_status", "identity_verification",
     "created_at", "updated_at", "updated_by", "staleness_basis",
+    "latest_change",
 })
 
 # Verified official issuer namespaces are discovery leads only, just like the
@@ -107,13 +109,13 @@ def _axes(row):
         ("scope", "scale", "term", "rating_type", "currency_basis"))
 
 
-def select_observation(rows, candidate):
+def select_observation(rows, candidate, *, include_ancillary=False):
     """Select a display opinion without merging unlike debt/entity classes."""
     if not rows:
         return None
     from .credit_ratings import is_primary_observation
     all_rows = rows
-    rows = [row for row in rows if is_primary_observation(row, candidate)]
+    rows = rows if include_ancillary else [row for row in rows if is_primary_observation(row, candidate)]
     if not rows:
         return {**_slot(all_rows[0]["agency"]), "status": "unavailable", "reason_code": "primary_rating_unavailable",
                 "observations": all_rows, "sources": [source for row in all_rows for source in row.get("sources", [])]}
@@ -171,9 +173,23 @@ class CreditRatingService:
         self._sessions = {}
         self._api_status = {}
         self._outcomes = {}
+        self._history_memory = {}
+        self._research_attempts = {}
 
     def candidate(self, key):
         return next((item for item in self._inventory() if item["security_key"] == key), None)
+
+    def inventory(self, position_scope="open", security_keys=None):
+        """Full cache-only scope for explicit bounded child scheduling."""
+        if position_scope not in {"open", "all"}:
+            raise HTTPException(422, "invalid_position_scope")
+        items = self._inventory()
+        if position_scope == "open":
+            items = [item for item in items if item.get("has_open_position")]
+        if security_keys:
+            selected = set(security_keys)
+            items = [item for item in items if item["security_key"] in selected]
+        return list({item["security_key"]: deepcopy(item) for item in items}.values())
 
     def _manual_snapshot(self, candidate):
         identity = manual_identity(candidate, _binding(candidate))
@@ -187,11 +203,50 @@ class CreditRatingService:
             saved = {"schema_version": MANUAL_SCHEMA, "identity_token": identity, "records": {}, "revisions": {}}
         return deepcopy(saved)
 
+    def _history_key(self, candidate):
+        return history.preference_key(candidate["security_key"], manual_identity(candidate, _binding(candidate)))
+
+    def _history_value(self, candidate, saved):
+        return history.snapshot(saved, manual_identity(candidate, _binding(candidate)))
+
+    def _history_snapshot(self, candidate):
+        key = self._history_key(candidate)
+        saved = self._manual_store().get_preference(key) if self._manual_store else self._history_memory.get(key)
+        return self._history_value(candidate, saved)
+
+    def _update_preferences(self, keys, transform):
+        if self._manual_store:
+            return self._manual_store().update_preferences(keys, transform)
+        current = {key: deepcopy(self._history_memory.get(key)) for key in keys}
+        changed = transform(current)
+        self._history_memory.update(deepcopy(changed))
+        return changed
+
+    def _public_snapshot(self, candidate, retained=None):
+        retained = self._history_snapshot(candidate) if retained is None else retained
+        durable = retained.get("public_snapshot")
+        if isinstance(durable, dict) and durable.get("_binding") == _binding(candidate):
+            return deepcopy(durable)
+        cached = self._cache().get_security_snapshot("credit_ratings", candidate["security_key"], SCHEMA)
+        return deepcopy(cached) if isinstance(cached, dict) and cached.get("_binding") == _binding(candidate) else {}
+
+    @staticmethod
+    def _agency_rows(candidate, public):
+        return {agency: select_observation([row for row in public.get("observations", []) if row.get("agency") == agency], candidate)
+                or _slot(agency) for agency in AGENCIES}
+
+    def _record_public(self, candidate, retained, public, stamp):
+        retained = history.record_public(retained, public.get("observations", []),
+            lambda rows: select_observation(rows, candidate, include_ancillary=True), stamp)
+        retained["public_snapshot"] = deepcopy(public)
+        return retained
+
     def read(self, candidate):
         """Cache-only read; retain original agency dates and provenance."""
         key = candidate.get("security_key") or security_key(candidate)
         with self._lock:
-            saved = self._cache().get_security_snapshot("credit_ratings", key, SCHEMA)
+            retained = self._history_snapshot(candidate)
+            saved = self._public_snapshot(candidate, retained)
             manual = self._manual_snapshot(candidate)
         matching = isinstance(saved, dict) and saved.get("_binding") == _binding(candidate)
         observations = saved.get("observations", []) if matching else []
@@ -221,6 +276,7 @@ class CreditRatingService:
             row = freshness(row)
             if "observations" in row:
                 row["observations"] = [freshness(item) for item in row["observations"]]
+            row["latest_change"] = history.latest_change(retained, row, include_manual=False)
             rows.append(row)
         retrieved = rows
         effective, manual_rows, revisions = [], [], {}
@@ -233,10 +289,12 @@ class CreditRatingService:
                 user_row.update(stale=bool(entered and now - entered > timedelta(days=ttl)),
                     outlook_stale=False, watch_stale=False, forward_signal_stale=False,
                     manual_revision=revisions[agency])
+                user_row["latest_change"] = history.latest_change(retained, user_row)
                 manual_rows.append(deepcopy(user_row))
                 effective.append(user_row)
             else:
-                effective.append({**deepcopy(row), "manual_revision": revisions[agency]})
+                effective.append({**deepcopy(row), "manual_revision": revisions[agency],
+                                  "latest_change": history.latest_change(retained, row)})
         known = sum(row["status"] in {"rated", "unrated", "withdrawn"} for row in effective)
         response = {"schema_version": SCHEMA, "security_key": key,
             **{k: candidate.get(k, "") for k in ("symbol", "stock_market", "currency")},
@@ -245,7 +303,8 @@ class CreditRatingService:
             "ratings": effective, "retrieved_ratings": retrieved, "manual_ratings": manual_rows,
             "manual_revisions": revisions, "identity_token": manual["identity_token"],
             "manual_policy": manual_policy(candidate),
-            "provider_status": deepcopy(saved.get("provider_status", [])) if matching else credit_ratings_api.registry(self._settings()),
+            "rating_history": deepcopy(sorted(retained["events"], key=lambda entry: entry["detected_at"], reverse=True)),
+            "retrieval_mode": "public_ai", "provider_status": [],
             "fetched_at": saved.get("fetched_at") if matching else None}
         return response
 
@@ -264,6 +323,8 @@ class CreditRatingService:
         inventory = {item["security_key"]: item for item in self._inventory() if item["security_key"] in wanted}
         def compact(row):
             result = {key: deepcopy(value) for key, value in row.items() if key in SUMMARY_FIELDS}
+            if "latest_change" in result:
+                result["latest_change"] = history.compact_change(result["latest_change"])
             if row.get("sources"):
                 result["sources"] = [{key: source[key] for key in ("url", "title", "fields", "fetched_at", "source_kind")
                                       if key in source} for source in row["sources"]]
@@ -275,6 +336,7 @@ class CreditRatingService:
             if key not in inventory:
                 continue
             response = self.read(inventory[key])
+            response.pop("rating_history", None)
             items.append({**response, "ratings": [compact(row) for row in response["ratings"]],
                           "retrieved_ratings": [compact(row) for row in response["retrieved_ratings"]],
                           "manual_ratings": [compact(row) for row in response["manual_ratings"]], "summary_only": True})
@@ -285,6 +347,12 @@ class CreditRatingService:
         return [row["agency"] for row in response.get("retrieved_ratings", response["ratings"]) if row["status"] not in {"rated", "unrated", "withdrawn"}
                 or row.get("stale") or row.get("forward_signal_stale")
                 or row["status"] == "rated" and row.get("outlook") in {None, "unknown"} and row.get("watch") in {None, "unknown"}]
+
+    @staticmethod
+    def agency_coverage(response):
+        rows = response.get("retrieved_ratings", [])
+        return {"verified_agencies": [row["agency"] for row in rows if row["status"] in history.KNOWN],
+                "agency_statuses": {row["agency"]: row["status"] for row in rows}}
 
     def save_manual(self, payload, actor):
         if not self._manual_store:
@@ -303,34 +371,47 @@ class CreditRatingService:
         # stale identity before judging the old name against the new issuer.
         if expected_identity != manual_identity(candidate, _binding(candidate)):
             raise HTTPException(409, "security_identity_changed")
-        try:
-            record = normalize_manual(payload, candidate)
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
+        agency = payload.get("agency")
+        if agency not in AGENCIES:
+            raise HTTPException(422, "manual_invalid_agency")
+        if type(payload.get("expected_revision")) is not int or payload["expected_revision"] < 0:
+            raise HTTPException(422, "manual_invalid_revision")
+        if not isinstance(payload.get("expected_identity"), str) or not re.fullmatch(r"[0-9a-f]{64}", payload["expected_identity"]):
+            raise HTTPException(422, "manual_invalid_identity")
         with self._lock:
             current = self.candidate(candidate["security_key"])
             if not current or _binding(current) != _binding(candidate):
                 raise HTTPException(409, "security_identity_changed")
             identity = manual_identity(current, _binding(current))
-            def edit(saved):
-                snapshot = self._manual_value(current, saved)
+            manual_key = preference_key(current, identity)
+            history_key = self._history_key(current)
+            def edit(values):
+                snapshot = self._manual_value(current, values[manual_key])
                 if payload["expected_identity"] != snapshot["identity_token"]:
                     raise HTTPException(409, "security_identity_changed")
-                agency = record["agency"]
                 revision = int(snapshot.get("revisions", {}).get(agency, 0))
                 if payload["expected_revision"] != revision:
                     raise HTTPException(409, "manual_rating_conflict")
+                try:
+                    record = normalize_manual(payload, current)
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc)) from exc
                 stamp = _now()
                 previous = snapshot["records"].get(agency) or {}
+                retained = self._history_value(current, values[history_key])
+                public = self._public_snapshot(current, retained)
+                retained = self._record_public(current, retained, public, stamp)
+                before = previous or self._agency_rows(current, public)[agency]
                 record.update(revision=revision + 1, created_at=previous.get("created_at") or stamp,
                     updated_at=stamp, updated_by=str(actor.get("username") or actor.get("id") or ""))
                 snapshot["records"][agency] = record
                 snapshot["revisions"][agency] = revision + 1
-                return snapshot
-            self._manual_store().update_preference(preference_key(current, identity), edit)
+                retained = history.record_manual(retained, before, record, stamp, actor=record["updated_by"])
+                return {manual_key: snapshot, history_key: retained}
+            self._update_preferences([manual_key, history_key], edit)
             return self.read(current)
 
-    def clear_manual(self, key, agency, expected_revision, expected_identity):
+    def clear_manual(self, key, agency, expected_revision, expected_identity, actor=None):
         if not self._manual_store:
             raise HTTPException(503, "manual_rating_store_unavailable")
         if agency not in AGENCIES:
@@ -347,17 +428,26 @@ class CreditRatingService:
             if not current or _binding(current) != _binding(candidate):
                 raise HTTPException(409, "security_identity_changed")
             identity = manual_identity(current, _binding(current))
-            def edit(saved):
-                snapshot = self._manual_value(current, saved)
+            manual_key = preference_key(current, identity)
+            history_key = self._history_key(current)
+            def edit(values):
+                snapshot = self._manual_value(current, values[manual_key])
                 if expected_identity != snapshot["identity_token"]:
                     raise HTTPException(409, "security_identity_changed")
                 revision = int(snapshot.get("revisions", {}).get(agency, 0))
                 if expected_revision != revision:
                     raise HTTPException(409, "manual_rating_conflict")
-                snapshot["records"].pop(agency, None)
+                before = snapshot["records"].pop(agency, None)
                 snapshot["revisions"][agency] = revision + 1
-                return snapshot
-            self._manual_store().update_preference(preference_key(current, identity), edit)
+                retained = self._history_value(current, values[history_key])
+                public = self._public_snapshot(current, retained)
+                if before:
+                    stamp = _now()
+                    retained = self._record_public(current, retained, public, stamp)
+                    retained = history.record_manual(retained, before, self._agency_rows(current, public)[agency], stamp,
+                        actor=str((actor or {}).get("username") or (actor or {}).get("id") or ""), clearing=True)
+                return {manual_key: snapshot, history_key: retained}
+            self._update_preferences([manual_key, history_key], edit)
             return self.read(current)
 
     def _accept_sources(self, candidate, sources):
@@ -385,8 +475,74 @@ class CreditRatingService:
             result["_issuer_source_verified"] = True
         return result
 
+    @staticmethod
+    def _merge_public(saved, observations, started_at):
+        def identity(row):
+            return (_axes(row), row["agency"], row.get("source_url"))
+        by_identity = {identity(row): deepcopy(row) for row in saved.get("observations", [])}
+        changed = False
+        accepted_keys = set()
+        for row in observations:
+            row_identity = identity(row)
+            previous = by_identity.get(row_identity)
+            same_axis = [value for value in by_identity.values()
+                         if _axes(value) == _axes(row) and value["agency"] == row["agency"]]
+            newest_read = max(same_axis, key=lambda value: value.get("fetched_at") or "", default=None)
+            if newest_read and started_at and (_stamp(newest_read.get("fetched_at")) or datetime.min.replace(tzinfo=timezone.utc)) > (_stamp(started_at) or datetime.min.replace(tzinfo=timezone.utc)):
+                continue  # A later request already published this axis.
+            # A late read of an older publication/action is historical evidence,
+            # not permission to roll back the current source facts or signals.
+            published = str(row.get("observed_at") or row.get("rating_date") or "")[:10]
+            dated = [value for value in same_axis if value.get("observed_at") or value.get("rating_date")]
+            latest = max(dated, key=lambda value: str(value.get("observed_at") or value.get("rating_date"))[:10], default=None)
+            if latest and published and published < str(latest.get("observed_at") or latest.get("rating_date"))[:10]:
+                continue
+            actions = [value["rating_date"] for value in same_axis if value.get("rating_date")]
+            if actions and row.get("rating_date") and row["rating_date"] < max(actions):
+                if any((value.get("rating"), value.get("status")) != (row.get("rating"), row.get("status")) for value in same_axis):
+                    continue
+            merged = deepcopy(row)
+            # Keep the last supported grade action date on an unchanged grade;
+            # a newer outlook-only report may repeat an older grade action.
+            if previous and (previous.get("rating"), previous.get("status")) == (merged.get("rating"), merged.get("status")):
+                if previous.get("rating_date") and (not merged.get("rating_date") or merged["rating_date"] < previous["rating_date"]):
+                    merged["rating_date"] = previous["rating_date"]
+            for field in ("outlook", "watch"):
+                if merged.get(field) not in {None, "unknown"}:
+                    merged[field + "_fetched_at"] = merged.get("fetched_at")
+            if previous and merged.get("rating") == previous.get("rating") and merged.get("status") == previous.get("status") == "rated":
+                for field in ("outlook", "watch"):
+                    if previous.get(field + "_date") and merged.get(field + "_date") and merged[field + "_date"] < previous[field + "_date"]:
+                        for suffix in ("", "_date", "_fetched_at"):
+                            merged[field + suffix] = previous.get(field + suffix)
+                for field in ("outlook", "watch", "outlook_date", "watch_date"):
+                    if merged.get(field) in {None, "unknown"} and previous.get(field) not in {None, "unknown"}:
+                        merged[field] = previous[field]
+                        if field in {"outlook", "watch"}:
+                            merged[field + "_fetched_at"] = previous.get(field + "_fetched_at") or previous.get("fetched_at")
+                retained = [field for field in ("outlook", "watch") if merged.get(field) != row.get(field)
+                            or merged.get(field + "_date") != row.get(field + "_date")]
+                if retained:
+                    older_sources = [{**source, "fields": retained} for source in previous.get("sources", [])
+                                     if not source.get("fields") or set(source["fields"]) & set(retained)]
+                    all_sources = older_sources + merged.get("sources", [])
+                    merged["sources"] = list({(item["url"], item.get("fetched_at"), item.get("evidence_quote")): item for item in all_sources}.values())[-12:]
+                    merged["forward_signal_checked_at"] = previous.get("forward_signal_checked_at") or previous.get("fetched_at")
+            if merged != previous:
+                changed = True
+                by_identity[row_identity] = merged
+                accepted_keys.add(row_identity)
+        # The evidence bound must never discard the observation just accepted.
+        # Prefer this publication's rows, then the most recent retained source
+        # evidence. Historical events keep their own immutable source excerpts.
+        bounded = sorted(by_identity.values(), key=lambda value: (
+            identity(value) in accepted_keys,
+            str(value.get("observed_at") or value.get("rating_date") or "")[:10],
+            value.get("rating_date") or "", value.get("fetched_at") or ""), reverse=True)[:150]
+        return bounded, changed
+
     def publish(self, candidate, observations, provider_status=None, *, started_at=None):
-        """Recheck identity and publication freshness under one cache lock."""
+        """Persist source baseline/history locally before projecting the cache."""
         current = self.candidate(candidate["security_key"])
         if not current or _binding(current) != _binding(candidate) or (
                 candidate.get("_position_scope") == "open" and not current.get("has_open_position")):
@@ -396,59 +552,23 @@ class CreditRatingService:
             if not current or _binding(current) != _binding(candidate) or (
                     candidate.get("_position_scope") == "open" and not current.get("has_open_position")):
                 return False
-            saved = self._cache().get_security_snapshot("credit_ratings", candidate["security_key"], SCHEMA)
-            saved = saved if isinstance(saved, dict) and saved.get("_binding") == _binding(current) else {}
-            existing = saved.get("observations", [])
-            def identity(row):
-                return (_axes(row), row["agency"], row.get("source_url"))
-            by_identity = {identity(r): deepcopy(r) for r in existing}
+            history_key = self._history_key(current)
             changed = False
-            for row in observations:
-                row_identity = identity(row)
-                previous = by_identity.get(row_identity)
-                same_axis = [value for value in by_identity.values()
-                             if _axes(value) == _axes(row) and value["agency"] == row["agency"]]
-                latest_axis = max(same_axis, key=lambda value: value.get("fetched_at") or "", default=None)
-                if latest_axis and started_at and (_stamp(latest_axis.get("fetched_at")) or datetime.min.replace(tzinfo=timezone.utc)) > (_stamp(started_at) or datetime.min.replace(tzinfo=timezone.utc)):
-                    continue
-                if previous and started_at and (_stamp(previous.get("fetched_at")) or datetime.min.replace(tzinfo=timezone.utc)) > (_stamp(started_at) or datetime.min.replace(tzinfo=timezone.utc)):
-                    continue  # A later verified refresh won while this one ran.
-                if previous and previous.get("rating_date") and row.get("rating_date") and row["rating_date"] < previous["rating_date"]:
-                    continue
-                # Retain missing individual fields rather than overwriting
-                # supported outlook/watch facts with inferred defaults.
-                merged = deepcopy(row)
-                for field in ("outlook", "watch"):
-                    if merged.get(field) not in {None, "unknown"}:
-                        merged[field + "_fetched_at"] = merged.get("fetched_at")
-                if previous and merged.get("rating") == previous.get("rating") and merged.get("status") == previous.get("status") == "rated":
-                    for field in ("outlook", "watch"):
-                        if previous.get(field + "_date") and merged.get(field + "_date") and merged[field + "_date"] < previous[field + "_date"]:
-                            for suffix in ("", "_date", "_fetched_at"):
-                                merged[field + suffix] = previous.get(field + suffix)
-                    for field in ("outlook", "watch", "outlook_date", "watch_date"):
-                        if merged.get(field) in {None, "unknown"} and previous.get(field) not in {None, "unknown"}:
-                            merged[field] = previous[field]
-                            if field in {"outlook", "watch"}:
-                                merged[field + "_fetched_at"] = previous.get(field + "_fetched_at") or previous.get("fetched_at")
-                    retained = [field for field in ("outlook", "watch") if merged.get(field) != row.get(field)
-                                or merged.get(field + "_date") != row.get(field + "_date")]
-                    if retained:
-                        # Two reads of one URL can contain different facts.
-                        # Preserve the original excerpt and fetch date for a
-                        # retained signal, not merely a link to today's page.
-                        older_sources = [{**source, "fields": retained} for source in previous.get("sources", [])
-                                         if not source.get("fields") or set(source["fields"]) & set(retained)]
-                        all_sources = older_sources + merged.get("sources", [])
-                        merged["sources"] = list({(s["url"], s.get("fetched_at"), s.get("evidence_quote")): s for s in all_sources}.values())[-12:]
-                        merged["forward_signal_checked_at"] = previous.get("forward_signal_checked_at") or previous.get("fetched_at")
-                by_identity[row_identity] = merged
-                changed = True
+            def edit(values):
+                nonlocal changed
+                retained = self._history_value(current, values[history_key])
+                saved = self._public_snapshot(current, retained)
+                stamp = _now()
+                retained = self._record_public(current, retained, saved, stamp)
+                accepted, changed = self._merge_public(saved, observations, started_at)
+                public = {"schema_version": SCHEMA, "_binding": _binding(current), "observations": accepted,
+                          "provider_status": [], "retrieval_mode": "public_ai", "attempts": saved.get("attempts", {}),
+                          "fetched_at": stamp if changed else saved.get("fetched_at")}
+                retained = self._record_public(current, retained, public, stamp)
+                return {history_key: retained}
+            updated = self._update_preferences([history_key], edit)
             self._cache().set_security_snapshot("credit_ratings", current["security_key"], SCHEMA,
-                {"schema_version": SCHEMA, "_binding": _binding(current), "observations": list(by_identity.values())[:150],
-                 "provider_status": provider_status if provider_status is not None else saved.get("provider_status", []),
-                 "attempts": saved.get("attempts", {}),
-                 "fetched_at": _now() if changed else saved.get("fetched_at")})
+                                               updated[history_key]["public_snapshot"])
             return changed
 
     def record_attempt(self, candidate, agencies, reason_code):
@@ -456,47 +576,40 @@ class CreditRatingService:
         if not current or _binding(current) != _binding(candidate):
             return
         with self._lock:
-            saved = self._cache().get_security_snapshot("credit_ratings", candidate["security_key"], SCHEMA)
-            saved = saved if isinstance(saved, dict) and saved.get("_binding") == _binding(current) else {}
-            saved.update(schema_version=SCHEMA, _binding=_binding(current))
-            attempts = saved.setdefault("attempts", {})
-            for agency in agencies:
-                if agency in AGENCIES:
-                    attempts[agency] = {"checked_at": _now(), "reason_code": reason_code}
-            self._cache().set_security_snapshot("credit_ratings", candidate["security_key"], SCHEMA, saved)
+            history_key = self._history_key(current)
+            def edit(values):
+                retained = self._history_value(current, values[history_key])
+                saved = self._public_snapshot(current, retained)
+                saved.update(schema_version=SCHEMA, _binding=_binding(current), provider_status=[], retrieval_mode="public_ai")
+                attempts = saved.setdefault("attempts", {})
+                stamp = _now()
+                for agency in agencies:
+                    if agency in AGENCIES:
+                        attempts[agency] = {"checked_at": stamp, "reason_code": reason_code}
+                return {history_key: self._record_public(current, retained, saved, stamp)}
+            updated = self._update_preferences([history_key], edit)
+            self._cache().set_security_snapshot("credit_ratings", current["security_key"], SCHEMA,
+                                               updated[history_key]["public_snapshot"])
 
     def check_apis(self, candidate, budget):
-        checked = credit_ratings_api.fetch(candidate, self._settings(), budget, transport=self._api_transport)
-        accepted = self._accept_sources(candidate, checked["sources"])
-        self.publish(candidate, accepted, checked["provider_status"])
-        return accepted, checked["provider_status"]
+        """Compatibility seam: credit retrieval never invokes a licensed feed."""
+        return [], []
 
     def candidates(self, position_scope="open", security_keys=None):
-        """Selected API preflight is application logic, never model DB access."""
+        """Selected public-source research, independent of other API coverage."""
         settings = self._research_settings()
-        budget = RequestBudget(5)
-        inventory = self._inventory()
-        if position_scope == "open":
-            inventory = [item for item in inventory if item.get("has_open_position")]
-        if security_keys:
-            inventory = [item for item in inventory if item["security_key"] in security_keys]
-        inventory = inventory[:3]
+        inventory = self.inventory(position_scope, security_keys)[:3]
         items, preflight = [], []
         for original in inventory:
             candidate = {**original, "captured_at": _now(), "_binding": _binding(original), "_position_scope": position_scope}
-            accepted, api_status = self.check_apis(candidate, budget)
             response = self.read(candidate)
-            missing = self.missing(response)
-            # An explicit refresh rechecks public evidence if no entitled API
-            # supplied a new observation; existing saved data remains visible.
-            if not accepted:
-                missing = list(AGENCIES)
-            candidate.update(missing_fields=["credit_ratings"] if missing else [],
-                missing_agencies=missing, requested_agencies=list(AGENCIES), available_fields=["credit_ratings"] if accepted else [])
+            missing = list(AGENCIES)  # An explicit public check covers every requested agency.
+            coverage = self.agency_coverage(response)
+            candidate.update(missing_fields=["credit_ratings"], missing_agencies=missing,
+                requested_agencies=list(AGENCIES), available_fields=[], retrieval_mode="public_ai")
             items.append(candidate)
-            preflight.append({**candidate, "status": "updated" if accepted and not missing else "partial" if accepted else "unavailable",
-                "code": "data_found" if accepted and not missing else "partial_data" if accepted else "data_unavailable",
-                "research_eligible": bool(missing), "provider_status": api_status})
+            preflight.append({**candidate, "status": "unavailable", "code": "data_unavailable",
+                "research_eligible": True, "provider_status": [], **coverage})
         return {"items": items, "total_count": len(items), "truncated": False,
                 "research_available": search_is_configured(settings), "preflight_outcomes": preflight,
                 "configured_search_providers": ["yahoo", "duckduckgo"] + (["brave"] if settings.get("search_api_key") else [])}
@@ -511,6 +624,7 @@ class CreditRatingService:
                 self._sessions[key] = ResearchSession(cfg, WebRequestBudget(cfg.get("max_web_calls", 8)))
             for old in list(self._sessions)[:-100]:
                 self._sessions.pop(old, None)
+                self._research_attempts.pop(old, None)
             return self._sessions[key]
 
     def research_tool(self, candidate, action, arguments):
@@ -519,6 +633,7 @@ class CreditRatingService:
                 candidate.get("_position_scope") == "open" and not current.get("has_open_position")):
             return {"evidence": [], "source_status": "not_open"}
         session = self._session(candidate)
+        previous_operations = session.budget.used
         try:
             if action == "discover":
                 from .credit_ratings import _matches_entity
@@ -565,6 +680,10 @@ class CreditRatingService:
         except (ResearchFailure, SearchFailure, ProviderFailure, ValueError, OSError, TimeoutError) as exc:
             return {"evidence": [], "source_status": getattr(exc, "code", "source_read_failed"),
                     "diagnostics": dict(session.diagnostics), "web_requests": session.budget.used}
+        finally:
+            if session.budget.used > previous_operations:
+                with self._lock:
+                    self._research_attempts.setdefault(str(candidate.get("_request_id") or ""), set()).add(candidate["security_key"])
 
     def finalize(self, outcomes, user_id, request_id, *, proposal=None, evidence_by_key=None, candidates=None, **kwargs):
         from .credit_ratings import extract_rating_records, normalize_observation
@@ -600,14 +719,20 @@ class CreditRatingService:
             response = self.read(candidate)
             missing = self.missing(response)
             previous = by_key.get(key, {})
-            self.record_attempt(candidate, candidate.get("requested_agencies", AGENCIES),
-                                "evidence_rejected" if selected and not accepted else "data_unavailable" if missing else "data_found")
-            status = "updated" if changed and not missing else "partial" if changed or previous.get("available_fields") else "unavailable"
-            row = {**candidate, "status": status, "attempted": True,
-                "code": "data_found" if status == "updated" else "partial_data" if status == "partial" else previous.get("code", "data_unavailable"),
+            attempted = bool(accepted or (evidence_by_key or {}).get(key)
+                             or key in self._research_attempts.get(request_id, set()))
+            if attempted:
+                self.record_attempt(candidate, candidate.get("requested_agencies", AGENCIES),
+                                    "evidence_rejected" if selected and not accepted else "data_unavailable" if missing else "data_found")
+                response = self.read(candidate)
+                missing = self.missing(response)
+            status = ("not_attempted" if not attempted else "updated" if changed and not missing
+                      else "partial" if changed or previous.get("available_fields") else "unavailable")
+            row = {**candidate, "status": status, "attempted": attempted,
+                "code": "research_incomplete" if not attempted else "data_found" if status == "updated" else "partial_data" if status == "partial" else previous.get("code", "data_unavailable"),
                 "available_fields": ["credit_ratings"] if changed or previous.get("available_fields") else [],
                 "missing_fields": ["credit_ratings"] if missing else [], "missing_agencies": missing,
-                "last_attempted_at": _now()}
+                "last_attempted_at": _now(), "retrieval_mode": "public_ai", **self.agency_coverage(response)}
             finalized.append(row)
             with self._lock:
                 self._outcomes[key] = deepcopy(row)
@@ -649,8 +774,8 @@ class CreditRatingService:
         @router.delete(PREFIX + "/manual")
         def clear_manual(request: Request, security_key: str, agency: str,
                          expected_revision: int = Query(ge=0), expected_identity: str = Query(min_length=64, max_length=64)):
-            editor(request)
-            return self.clear_manual(security_key, agency, expected_revision, expected_identity)
+            actor = editor(request)
+            return self.clear_manual(security_key, agency, expected_revision, expected_identity, actor=actor)
 
         @router.get(PREFIX + "/summaries")
         def summaries(request: Request, security_keys: list[str] = Query(default=[], max_length=200)):
@@ -672,6 +797,8 @@ class CreditRatingService:
         def providers(request: Request):
             if not isinstance(getattr(request.state, "auth_user", None), dict):
                 raise HTTPException(401, "authentication_required")
-            return {"items": credit_ratings_api.registry(self._settings())}
+            return {"retrieval_mode": "public_ai", "items": [{"provider": "public_ai", "configured": True,
+                "status": "available", "agencies": list(AGENCIES),
+                "supports": ["issuer", "issue", "rating", "outlook", "watch"]}]}
 
         return router

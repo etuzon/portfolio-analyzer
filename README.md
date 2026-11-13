@@ -123,11 +123,30 @@ after **Dividend Trend**. Loading the table reads the cache in the background an
 does not start provider or AI research. Repeated positions in one security share
 the same exact symbol/market/currency summary. Open a row’s rating details,
 **Portfolio → Securities → Ratings**, or the security overview for complete
-scope, original dates and sources. **Refresh ratings** requires Admin or Operator permission, checks
-configured APIs first and uses the existing bounded AI Internet workflow for
-missing information. The eight-model, eight-REST and eight-web limits are shared
-across the request; the model has no database, filesystem or direct-write tools.
-API-priced stocks remain eligible for this separate ratings check.
+scope, original dates and sources. **Refresh ratings** requires Admin or Operator
+permission and uses the bounded AI Internet workflow to read public agency and
+issuer sources. No paid ratings feed, rating-provider licence or API token is
+used. The model has no database, filesystem or direct-write tools.
+
+**Find missing data with AI → Search open positions** also checks credit ratings
+for every eligible open company security, including API-priced stocks and public
+employee shares. Repeated holdings share one exact symbol/market/currency task.
+**Search open and closed positions** adds recorded closed holdings; merely
+registering an unheld security does not add it to this portfolio task. Private
+securities, ordinary funds and derivatives are excluded from issuer ratings.
+Price/profile eligibility remains separate. Scheduled AI searches use the same
+scope and coverage behavior.
+
+The application queues one rating child per issuer so a multi-company request
+cannot consume the next company's research budget. Market-data children contain
+at most three securities. Each child retains its existing maximum of eight model
+calls, eight application REST calls and eight Internet requests. Aggregate counts
+and queued/checked/unavailable coverage remain visible without blocking the
+dashboard. **Retry remaining rating checks** resumes an interrupted parent after
+review, preserving completed work and starting only its unfinished tasks.
+Select **Ratings only** to skip price/profile inventory and research entirely;
+its aggregate budget then covers only rating children. The choice is fixed for
+that request and any retry, so resuming does not silently widen its work.
 
 Admin and Operator users can also select **Add manually** or **Edit manually**
 for an agency in the security overview. Enter its native global long-term grade,
@@ -144,23 +163,14 @@ revision checks; a conflict retains the draft for review after reloading. Change
 to a security's issuer/instrument identity do not silently rebind old manual
 entries. No broker/import source is changed, and the current risk model is unchanged.
 
-The licensed adapter uses [S&P Global Agency Ratings](https://xpressapi.marketplace.spglobal.com/swagger/?urls.primaryName=agencyratings),
-which covers all three agencies' issuer and issue ratings. Merge into private
-`config.yaml`:
-
-```yaml
-market_data:
-  credit_ratings:
-    verification_ttl_days: 30
-    spglobal:
-      enabled: true
-      bearer_token: "${SPGLOBAL_RATINGS_TOKEN}"
-```
-
-Docker Compose forwards `SPGLOBAL_RATINGS_TOKEN` from the host or private `.env`;
-recreate the container after changing it. Suitable ratings entitlements are
-required. Public-source AI research can run without this token using the
-configured signed-in CLI and public reader/search services.
+The table shows each agency's latest comparable rating change, or its first
+recorded observation. **Rating history** in the overview retains source quotes,
+scope, old/new grade and status, separate outlook/watch events, and manual
+add/edit/clear events. Supported agency action dates are distinct from the time
+the app first detected a change; missing action dates stay unknown. An unchanged
+affirmation does not replace the last grade-change marker. History and the
+retained source baseline live in the local portfolio database and participate
+in backup/export, including after market-cache clearing.
 
 `GET /api/securities/credit-ratings?symbol=JPM&stock_market=NYSE&currency=USD`
 is cache-only. The table uses `GET /api/securities/credit-ratings/summaries` with
@@ -169,7 +179,7 @@ preserve financial categories and freshness but omit long evidence excerpts;
 the single-security overview retains those excerpts. `POST /api/securities/credit-ratings/ai` accepts up to three
 `security_keys` and `position_scope`; poll the returned request at
 `GET /api/securities/credit-ratings/ai/{request_id}`. Viewer access is read-only.
-Facts persist in the application cache, with original source excerpts and
+Facts persist with original source excerpts and
 separate rating, observation, retrieval and forward-signal dates. An unsuccessful
 refresh retains verified facts and records the attempt. A different security
 cannot attach to another running request.

@@ -204,7 +204,7 @@ for(const language of ['he','en']){
  }else{assert.ok(first.includes('Manual'));assert.ok(first.includes('Old manual entry'));assert.ok(!/[א-ת]/.test(first));}
  const empty=baseContext({ratings:['moodys','sp','fitch'].map(agency=>({agency,status:'not_checked',outlook:'unknown',watch:'unknown'})),retrieved_ratings:['moodys','sp','fitch'].map(agency=>({agency,status:'not_checked'})),provider_status:[{configured:false,status:'not_configured'}]});
  const reason=creditRatingsAvailability(empty,true);assert.ok(reason.includes(t('No retrieved rating checks are saved. Unknown does not mean Unrated.')));assert.ok(reason.includes(t('Choose Refresh ratings to research public sources, or Add manually to record your own information.')));
- assert.ok(reason.includes(t('Licensed rating API access is not configured. Public AI research does not require this token, but the AI connection must be available.')));
+ assert.ok(reason.includes(t('Ratings use public-source AI research. An available AI connection and Internet search are required; no licensed rating API is required.')));
 }
 ''')
 

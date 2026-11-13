@@ -47,7 +47,8 @@ function holdingsCreditRatingsContent(entry) {
       : record.status === "unavailable" && (record.reason_code === "primary_rating_unavailable"
         || Array.isArray(record.observations) && record.observations.some((row) => row.agency === key && row.primary_eligible === false)) ? t("Other categories") : "";
     const extra = [manual && t("Manual"), manual && record.identity_verification === "user_entered" && t("Manual identity"), category].filter(Boolean).join(" · ");
-    return `<span class="holding-credit-agency"><bdi class="holding-credit-agency-name" dir="ltr">${esc(name)}</bdi><span class="holding-credit-opinion"><span class="holding-credit-grade"><bdi dir="auto">${esc(status)}</bdi>${record.stale ? staleMark(manual ? "Old manual entry" : "Stale evidence") : ""}</span>${pending ? "" : `<span class="holding-credit-forward"><span title="${esc(`${t("Outlook")}: ${creditRatingsDirection(record.outlook)}`)}">${esc(creditRatingsDirection(record.outlook))}${!manual && record.outlook_stale ? staleMark("Stale outlook") : ""}</span><span class="holding-credit-divider" aria-hidden="true">/</span><span${["positive", "negative", "developing"].includes(record.watch) ? ' class="holding-credit-active-watch"' : ""} title="${esc(`${t("Watch")}: ${creditRatingsDirection(record.watch, true)}`)}">${esc(creditRatingsDirection(record.watch, true))}${!manual && record.watch_stale ? staleMark("Stale watch") : ""}</span></span>`}${extra ? `<span class="holding-credit-category">${esc(extra)}</span>` : ""}</span></span>`;
+    const history = !pending && typeof creditRatingLatestChangeHtml === "function" ? creditRatingLatestChangeHtml(record) : "";
+    return `<span class="holding-credit-agency"><bdi class="holding-credit-agency-name" dir="ltr">${esc(name)}</bdi><span class="holding-credit-opinion"><span class="holding-credit-grade"><bdi dir="auto">${esc(status)}</bdi>${record.stale ? staleMark(manual ? "Old manual entry" : "Stale evidence") : ""}</span>${pending ? "" : `<span class="holding-credit-forward"><span title="${esc(`${t("Outlook")}: ${creditRatingsDirection(record.outlook)}`)}">${esc(creditRatingsDirection(record.outlook))}${!manual && record.outlook_stale ? staleMark("Stale outlook") : ""}</span><span class="holding-credit-divider" aria-hidden="true">/</span><span${["positive", "negative", "developing"].includes(record.watch) ? ' class="holding-credit-active-watch"' : ""} title="${esc(`${t("Watch")}: ${creditRatingsDirection(record.watch, true)}`)}">${esc(creditRatingsDirection(record.watch, true))}${!manual && record.watch_stale ? staleMark("Stale watch") : ""}</span></span>`}${extra ? `<span class="holding-credit-category">${esc(extra)}</span>` : ""}${history}</span></span>`;
   }).join("")}`;
 }
 
@@ -69,6 +70,7 @@ function holdingsCreditRatingsDescription(entry, symbol) {
     if (!manual && record.outlook_stale) lines.push(`${t("Stale outlook")} · ${t("Outlook last verified")}: ${creditRatingsDate(record.outlook_fetched_at)}`);
     if (!manual && record.watch_stale) lines.push(`${t("Stale watch")} · ${t("Watch last verified")}: ${creditRatingsDate(record.watch_fetched_at)}`);
     if (record.reason_code === "primary_rating_unavailable") lines.push(t("No supported long-term issuer or issue rating was verified. Other rating categories remain in the sources."));
+    if (record.latest_change && typeof creditRatingLatestChangeText === "function") lines.push(creditRatingLatestChangeText(record.latest_change));
   }
   const availability = creditRatingsAvailability(entry.context);
   if (availability) lines.push(availability);
@@ -79,7 +81,7 @@ function holdingsCreditRatingsDescription(entry, symbol) {
 function holdingCreditRatingsCellHtml(item) {
   const holding = item.holding || {};
   if (!creditRatingsEligible(holding)) {
-    const unsupported = ["ETF", "MUTUALFUND", "OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION", "PRIVATE"]
+    const unsupported = ["ETF", "FUND", "MUTUALFUND", "MUTUAL_FUND", "OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION", "PRIVATE"]
       .some((kind) => [holding.asset_class, holding.asset_sub_class, holding.instrument_type, holding.stock_market].some((value) => String(value || "").toUpperCase() === kind));
     return `<td class="holding-credit-ratings-cell" data-label="${esc(t("Credit ratings"))}"><span class="holding-credit-inapplicable" title="${esc(t(unsupported ? "Company credit ratings do not apply to this instrument." : "A supported security type is required for company credit ratings."))}">${esc(t(unsupported ? "Not applicable" : "Unavailable"))}</span></td>`;
   }

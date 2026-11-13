@@ -120,7 +120,7 @@ def test_callback_reads_current_scope_owner_and_honors_disablement(schedule_envi
     calls = []
     def start(owner, credentials, language, scope, **kwargs):
         calls.append((owner, language, scope))
-    monkeypatch.setattr(main.security_enrichment, 'start', start)
+    monkeypatch.setattr(main.portfolio_ai_research, 'start', start)
     main.run_scheduled_ai_enrichment('open')
     main.run_scheduled_ai_enrichment('all')
     assert [(row[1], row[2]) for row in calls] == [('he', 'open'), ('en', 'all')]

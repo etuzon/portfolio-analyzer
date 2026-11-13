@@ -139,7 +139,7 @@ const state = {
   auth: { user: null, csrfToken: "", forcedPasswordChange: false },
   users: [],
   authenticatedAppStarted: false,
-  aiEnrichment: { job: null, outcomes: [], pending: false, resume: false, message: "", timer: null, polls: 0 },
+  aiEnrichment: { job: null, outcomes: [], pending: false, resume: false, ratingsOnly: false, message: "", timer: null, polls: 0 },
   language: "he",
 };
 
@@ -1166,7 +1166,7 @@ async function saveLoggingSettings() {
 
 const WRITE_CONTROL_IDS = new Set([
   "addHistoricalPrice",
-  "aiEnrichmentStart", "aiEnrichmentStartAll", "aiEnrichmentResume",
+  "aiEnrichmentStart", "aiEnrichmentStartAll", "aiEnrichmentResume", "aiEnrichmentRetryRatings",
   "refreshSecurityCreditRatings",
   "saveManualCreditRating", "clearManualCreditRating",
   "saveXrayReport", "fetchXrayIssuer", "chooseXrayReportFile",
@@ -1217,8 +1217,8 @@ function aiSecurityKey(holding = {}) {
 function aiOutcomeMessage(outcome) {
   const messages = {
     data_found: "Verified data was saved.",
-    partial_data: "Some data was found; other fields remain unavailable.",
-    data_unavailable: "Reliable data could not be found. You can enter it in Prices or security settings.",
+    partial_data: outcome?.ratings_only ? "Supported agency facts were saved. Missing agency information remains Unknown." : "Some data was found; other fields remain unavailable.",
+    data_unavailable: outcome?.ratings_only ? "No supported rating evidence was verified. Unknown does not mean Unrated. Use Add manually in the security overview to record your own information." : "Reliable data could not be found. You can enter it in Prices or security settings.",
     ai_unavailable: "AI research is unavailable. Check the AI configuration or try again later.",
     ai_disabled: "AI is disabled. An administrator must enable it before research can start.",
     ai_bridge_missing: "The host AI bridge is not running. An administrator must start it, then start a new request.",
@@ -1235,9 +1235,9 @@ function aiOutcomeMessage(outcome) {
     search_blocked: "The search service temporarily blocked this request. Try again later or choose another search provider.",
     api_price_ready: "Verified API prices are ready to save.",
     already_available: "Another update already supplied this price. Your saved price was kept.",
-    api_managed: "This security uses automatic API updates. Use dashboard Refresh; AI research is not used.",
-    api_not_configured: "API provider setup or access is required. Configure the provider and use dashboard Refresh; AI research is not used for this security.",
-    configuration_required: "API provider setup or access is required. Configure the provider and use dashboard Refresh; AI research is not used for this security.",
+    api_managed: "Prices use automatic API updates. Company credit ratings are researched separately from public sources.",
+    api_not_configured: "Price-provider setup or access is required for prices. Public-source company rating research is independent of this price route.",
+    configuration_required: "Price-provider setup or access is required for prices. Public-source company rating research is independent of this price route.",
     api_unavailable: "The API update is unavailable. Use dashboard Refresh to retry; this security stays on its API route.",
     evidence_rejected: "The source did not provide enough verified information.",
     research_incomplete: "Sources were found, but this security was not fully checked before the request ended.",
@@ -1251,7 +1251,7 @@ function aiOutcomeMessage(outcome) {
     not_open: "This security is no longer eligible for this request.",
     authentication_expired: "Sign in again before continuing AI research.",
     job_failed: "AI research could not finish. Saved data is retained.",
-    nothing_missing: "No securities in the selected scope are eligible for AI research. API-supported securities use the normal dashboard update flow.",
+    nothing_missing: outcome?.ratings_only ? "No eligible company securities are available for rating research in the selected scope." : "No supported market-data gaps or company rating checks are available in the selected scope.",
   };
   return t(messages[outcome?.code] || (outcome?.status === "updated" ? messages.data_found : outcome?.status === "partial" ? messages.partial_data : messages.data_unavailable));
 }
@@ -1283,7 +1283,7 @@ function aiOutcomeTooltip(outcome) {
 function resetAIEnrichment() {
   const ui = state.aiEnrichment;
   clearTimeout(ui.timer);
-  state.aiEnrichment = { job: null, outcomes: [], pending: false, resume: false, message: "", timer: null, polls: 0 };
+  state.aiEnrichment = { job: null, outcomes: [], pending: false, resume: false, ratingsOnly: false, message: "", timer: null, polls: 0 };
   renderAIEnrichment();
 }
 
@@ -1291,12 +1291,16 @@ function renderAIEnrichment() {
   const opener = $("enrichMissingData"), button = $("aiEnrichmentStart");
   if (!button || !opener) return;
   const ui = state.aiEnrichment;
+  const ratingsOnly = Boolean(ui.ratingsOnly);
+  const mode = $("aiEnrichmentRatingsOnly");
+  mode.checked = ratingsOnly;
+  mode.disabled = !canWrite() || ui.pending || ui.resume || state.auth.forcedPasswordChange || Boolean(currentUser()?.must_change_password);
   const bondScope = $("aiEnrichmentBondScope");
   const bonds = [...new Map(state.allPortfolioItems.filter((item) => isBondHolding(item.holding))
     .map((item) => [aiSecurityKey(item.holding), item])).values()];
   const apiBonds = bonds.filter((item) => item.api_data_route?.owner === "api");
-  bondScope.hidden = !bonds.length;
-  bondScope.innerHTML = bonds.length ? `${esc(t("Open bond securities: {total}. These results are not the full holdings list.").replace("{total}", fmt(bonds.length, 0)))}${apiBonds.length ? ` ${esc(t("Bonds using API updates are excluded from AI research and remain in Holdings:"))} ${apiBonds.map((item) => `<bdi dir="auto">${esc(item.holding.symbol)}</bdi>`).join(", ")}` : ""}` : "";
+  bondScope.hidden = ratingsOnly || !bonds.length;
+  bondScope.innerHTML = bonds.length ? `${esc(t("Open bond securities: {total}. These results are not the full holdings list.").replace("{total}", fmt(bonds.length, 0)))}${apiBonds.length ? ` ${esc(t("These bonds keep their API price route and remain in Holdings; eligible company ratings are researched separately:"))} ${apiBonds.map((item) => `<bdi dir="auto">${esc(item.holding.symbol)}</bdi>`).join(", ")}` : ""}` : "";
   $("aiEnrichmentFooterNote").textContent = t(ui.pending || ui.resume
     ? "You can close this window while research continues. Reopen it from Portfolio to see progress."
     : "You can close this window. Reopen it from Portfolio to view results or start a new request.");
@@ -1315,25 +1319,28 @@ function renderAIEnrichment() {
   resumeButton.disabled = disabled;
   resumeButton.textContent = t("Check AI progress");
   const permission = t("AI data updates require Admin or Operator permission.");
-  button.title = canWrite() ? t("Choose open positions or open and closed positions. Only securities without usable API access are researched.") : permission;
+  button.title = canWrite() ? t(ratingsOnly ? "Research only company credit ratings in the selected scope, including API-priced stocks. Skip price and profile work." : "Choose open positions or open and closed positions. Company ratings include API-priced stocks; missing market data keeps its existing route.") : permission;
   $("aiEnrichmentStartAll").title = button.title;
   $("aiEnrichmentAction").title = button.title;
   $("aiEnrichmentAction").tabIndex = canWrite() ? -1 : 0;
   $("aiEnrichmentAction").setAttribute("aria-label", button.title);
   const status = $("aiEnrichmentStatus");
+  const ratingWork = Boolean(ui.job?.credit_ratings && (Number(ui.job.credit_ratings.summary?.total_candidates) > 0 || ui.job.credit_ratings.outcomes?.length));
+  const nothingMissing = ui.job?.code === "nothing_missing" && !ratingWork;
   let message = ui.message ? t(ui.message) : (!canWrite() && currentUser() ? permission : "");
   if (ui.pending) message = t("Researching eligible holdings. You can keep using the dashboard.");
   else if (!message && ui.job) {
-    message = ui.job.code === "nothing_missing" ? aiOutcomeMessage(ui.job) : "";
+    message = nothingMissing ? aiOutcomeMessage(ui.job) : "";
     if (ui.job.status === "failed") message = aiOutcomeMessage(ui.job);
   }
   if (status.textContent !== message) status.textContent = message;
   status.hidden = !message;
   const stage = ui.job?.progress?.stage || (ui.pending ? "queued" : ui.job?.status === "failed" ? "failed" : ui.job ? "completed" : "ready");
-  const phases = { ready: "Ready to research", queued: "Waiting to start", checking_apis: "Checking AI eligibility", researching: "Researching remaining gaps", saving: "Saving verified results", completed: "Research finished", failed: "Research stopped" };
-  const phaseText = t(ui.resume ? "Progress check needed" : ui.job?.code === "nothing_missing" ? "No AI research needed" : phases[stage] || "Research in progress");
+  const phases = { ready: "Ready to research", queued: "Waiting to start", checking_apis: "Checking AI eligibility", researching: "Researching remaining gaps", researching_market_data: "Researching missing market data", researching_ratings: "Researching public-source company ratings", saving: "Saving verified results", completed: "Research finished", failed: "Research stopped" };
+  const phaseText = t(ui.resume ? "Progress check needed" : nothingMissing ? "No AI research needed" : phases[stage] || "Research in progress");
   if ($("aiEnrichmentPhase").textContent !== phaseText) $("aiEnrichmentPhase").textContent = phaseText;
-  const completed = Number(ui.job?.progress?.completed), total = Number(ui.job?.progress?.total);
+  const phaseProgress = (stage === "researching_ratings" || ratingsOnly) && ui.job?.credit_ratings ? ui.job.credit_ratings.progress : ui.job?.progress;
+  const completed = Number(phaseProgress?.completed), total = Number(phaseProgress?.total);
   const knownProgress = Number.isFinite(completed) && completed >= 0 && Number.isFinite(total) && total > 0;
   const progress = $("aiEnrichmentProgress");
   progress.hidden = !ui.pending && !knownProgress;
@@ -1343,21 +1350,23 @@ function renderAIEnrichment() {
   const countText = knownProgress ? t("Checked {completed} of {total} securities in this phase").replace("{completed}", fmt(completed, 0)).replace("{total}", fmt(total, 0)) : "";
   if ($("aiEnrichmentCounts").textContent !== countText) $("aiEnrichmentCounts").textContent = countText;
   if (countText) progress.setAttribute("aria-valuetext", countText); else progress.removeAttribute("aria-valuetext");
-  const current = ui.pending && ui.job?.progress?.current_security;
+  const current = ui.pending && phaseProgress?.current_security;
   $("aiEnrichmentCurrent").hidden = !current;
   const currentText = current ? [current.symbol, current.stock_market, current.currency].filter(Boolean).join(" · ") : "";
   if ($("aiEnrichmentCurrentSecurity").textContent !== currentText) $("aiEnrichmentCurrentSecurity").textContent = currentText;
   const summary = ui.job?.summary;
-  $("aiEnrichmentSummary").hidden = !summary || ui.pending || ui.job?.code === "nothing_missing";
+  $("aiEnrichmentSummary").hidden = ratingsOnly || !summary || ui.pending || ui.job?.code === "nothing_missing";
+  if ($("aiEnrichmentMarketTitle")) $("aiEnrichmentMarketTitle").hidden = ratingsOnly || !summary || ui.pending || !ui.job?.credit_ratings;
   $("aiEnrichmentSummary").innerHTML = summary ? [[summary.updated || 0, "Updated"], [summary.partial || 0, "Partial results"], [(summary.unavailable || 0) + (summary.not_attempted || 0), "Unavailable or not checked"]].map(([count, label]) => `<div><strong>${esc(fmt(count, 0))}</strong><span>${esc(t(label))}</span></div>`).join("") : "";
   const displayedOutcomes = (ui.job ? ui.job.outcomes || [] : ui.pending ? [] : ui.outcomes).filter((outcome) => {
+    if (ratingsOnly) return false;
     const item = state.allPortfolioItems.find((entry) => aiSecurityKey(entry.holding) === aiSecurityKey(outcome));
     if (item?.api_data_route) return item.api_data_route.owner === "ai";
     return Boolean(ui.job);
   });
   $("aiEnrichmentDetails").hidden = !displayedOutcomes.length;
-  $("aiEnrichmentResultsTitle").textContent = t(ui.job ? "Results by security" : "Latest saved results");
-  $("aiEnrichmentEmpty").hidden = Boolean(displayedOutcomes.length) || ui.job?.code === "nothing_missing";
+  $("aiEnrichmentResultsTitle").textContent = t(ui.job?.credit_ratings ? "Market-data results by security" : ui.job ? "Results by security" : "Latest saved results");
+  $("aiEnrichmentEmpty").hidden = ratingsOnly || Boolean(displayedOutcomes.length) || nothingMissing || ratingWork;
   $("aiEnrichmentEmpty").textContent = t(ui.pending ? "Results will appear as checks finish." : "No AI research results yet.");
   const results = $("aiEnrichmentResults");
   const resultHtml = displayedOutcomes.map((outcome) => {
@@ -1376,6 +1385,7 @@ function renderAIEnrichment() {
     const item = state.allPortfolioItems.find((entry) => aiSecurityKey(entry.holding) === node.dataset.aiGapKey);
     if (item) node.title = dataGapTooltip(item);
   });
+  if (typeof renderAIEnrichmentCreditRatings === "function") renderAIEnrichmentCreditRatings();
 }
 
 function openAIEnrichment() {
@@ -1394,6 +1404,7 @@ function openAIEnrichment() {
 function acceptAIEnrichmentJob(job) {
   const ui = state.aiEnrichment;
   ui.job = job;
+  if (typeof job.ratings_only === "boolean") ui.ratingsOnly = job.ratings_only;
   if (Array.isArray(job.outcomes)) {
     const outcomes = new Map(ui.outcomes.map((outcome) => [aiSecurityKey(outcome), outcome]));
     job.outcomes.forEach((outcome) => outcomes.set(aiSecurityKey(outcome), outcome));
@@ -1410,12 +1421,15 @@ function acceptAIEnrichmentJob(job) {
     });
     if (job.portfolio_refresh_required && ui.refreshedJob !== job.request_id) {
       ui.refreshedJob = job.request_id;
-      loadPortfolio().catch(() => {
+      loadPortfolio().then(() => {
+        if (typeof refreshAIEnrichmentCreditRatings === "function") refreshAIEnrichmentCreditRatings(job, ui, { table: false });
+      }).catch(() => {
         if (state.aiEnrichment !== ui) return;
         ui.message = "Verified data was saved. Use Refresh to reload the displayed portfolio.";
         renderAIEnrichment();
+        if (typeof refreshAIEnrichmentCreditRatings === "function") refreshAIEnrichmentCreditRatings(job, ui);
       });
-    }
+    } else if (typeof refreshAIEnrichmentCreditRatings === "function") refreshAIEnrichmentCreditRatings(job, ui);
   }
 }
 
@@ -1460,9 +1474,11 @@ async function loadAIEnrichmentStatus() {
   } else renderAIEnrichment();
 }
 
-async function requestAIEnrichment(positionScope = "open") {
+async function requestAIEnrichment(positionScope = "open", { resumeRequestId = "" } = {}) {
   const ui = state.aiEnrichment;
   if (!canWrite() || ui.pending || state.auth.forcedPasswordChange || currentUser()?.must_change_password) return;
+  const ratingsOnly = resumeRequestId ? Boolean(ui.job?.ratings_only) : Boolean(ui.ratingsOnly);
+  ui.ratingsOnly = ratingsOnly;
   ui.version = (ui.version || 0) + 1;
   clearTimeout(ui.timer);
   ui.pending = true;
@@ -1487,7 +1503,7 @@ async function requestAIEnrichment(positionScope = "open") {
       }
     } else {
       ui.job = null;
-      const job = await api("/api/securities/enrichment/ai", { method: "POST", body: JSON.stringify({ position_scope: positionScope }) });
+      const job = await api("/api/securities/enrichment/ai", { method: "POST", body: JSON.stringify({ position_scope: positionScope, ratings_only: ratingsOnly, ...(resumeRequestId ? { resume_request_id: resumeRequestId } : {}) }) });
       if (state.aiEnrichment !== ui) return;
       acceptAIEnrichmentJob(job);
     }
@@ -3691,15 +3707,15 @@ function securityDataRouteHint(item) {
   const provider = names[route.provider] ? ` · ${names[route.provider]}` : "";
   if (route.owner === "api") {
     if (route.configured === false || route.coverage === "not_configured" || ["api_not_configured", "configuration_required"].includes(route.reason)) {
-      return `${t("API configuration required")}${provider}\n${t("Set up or enable the required provider access, then use dashboard Refresh. This security is excluded from AI research.")}`;
+      return `${t("API configuration required")}${provider}\n${t("Set up the price provider, then use dashboard Refresh for prices. Public-source company rating research is separate.")}`;
     }
     if (route.coverage === "unsupported" || route.reason === "api_coverage_unsupported") {
-      return `${t("API coverage unavailable")}${provider}\n${t("Check the API provider's coverage or use dashboard Refresh. This security stays on its API route and is excluded from AI research.")}`;
+      return `${t("API coverage unavailable")}${provider}\n${t("Check the price provider's coverage or use dashboard Refresh for prices. Eligible company rating research still uses public sources.")}`;
     }
     if (["api_unavailable", "provider_unavailable"].includes(route.reason)) {
-      return `${t("API update unavailable")}${provider}\n${t("Use dashboard Refresh to retry. Saved data is retained, and this security stays excluded from AI research.")}`;
+      return `${t("API update unavailable")}${provider}\n${t("Use dashboard Refresh to retry prices. Saved data is retained; eligible company rating research is separate.")}`;
     }
-    return `${t("Automatic API refresh route")}${provider}\n${t("Normal background updates and dashboard Refresh use this API route. AI research is not used for this security.")}`;
+    return `${t("Automatic API refresh route")}${provider}\n${t("Normal background updates and dashboard Refresh use this price route. Company rating research includes eligible API-priced stocks.")}`;
   }
   if (route.owner === "ai") {
     if (route.reason === "api_access_denied") return `${t("API access denied")}${provider}\n${t("No other usable API route is available. AI research can use public sources; dashboard Refresh retries API access.")}`;
@@ -16200,6 +16216,12 @@ $("reloadAISchedule").addEventListener("click", loadAISchedule);
 $("aiEnrichmentStart").addEventListener("click", () => requestAIEnrichment("open"));
 $("aiEnrichmentStartAll").addEventListener("click", () => requestAIEnrichment("all"));
 $("aiEnrichmentResume").addEventListener("click", () => requestAIEnrichment());
+$("aiEnrichmentRetryRatings").addEventListener("click", () => requestAIEnrichment(state.aiEnrichment.job?.position_scope || "open", { resumeRequestId: state.aiEnrichment.job?.request_id || "" }));
+$("aiEnrichmentRatingsOnly").addEventListener("change", (event) => {
+  const ui = state.aiEnrichment;
+  if (canWrite() && !ui.pending && !ui.resume) ui.ratingsOnly = event.target.checked;
+  renderAIEnrichment();
+});
 $("assistantComposer").addEventListener("submit", (event) => {
   event.preventDefault();
   askPortfolioAssistant();

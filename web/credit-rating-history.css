@@ -1,0 +1,15 @@
+.holding-credit-change { display: block; flex-basis: 100%; color: var(--ux-muted); font-size: 10px; line-height: 1.4; }
+.credit-history-transition { white-space: nowrap; }
+.credit-rating-history { margin-block: 16px; padding-block-start: 12px; border-top: 1px solid var(--ux-stroke); }
+.credit-rating-history > summary { cursor: pointer; min-height: 36px; font-size: 14px; font-weight: 650; }
+.credit-rating-history > p { color: var(--ux-muted); font-size: 12px; line-height: 1.5; }
+.credit-rating-history ol { list-style: none; padding: 0; margin-block: 8px; }
+.credit-rating-history li { padding-block: 12px; }
+.credit-rating-history li + li { border-top: 1px solid var(--ux-stroke); }
+.credit-history-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.credit-rating-history li p { margin-block: 8px; font-size: 13px; }
+.credit-rating-history dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 7px 16px; }
+.credit-rating-history dl div { min-width: 0; }
+.credit-rating-history dt { color: var(--ux-muted); font-size: 11px; }
+.credit-rating-history dd { margin: 3px 0 0; overflow-wrap: anywhere; font-size: 12px; }
+@media (max-width: 760px) { .credit-rating-history > summary { min-height: 44px; } }

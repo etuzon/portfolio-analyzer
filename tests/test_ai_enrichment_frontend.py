@@ -187,7 +187,7 @@ def test_ai_single_request_partial_results_tooltips_permissions_and_narrow_layou
     assert evaluate("!$('aiEnrichmentStartAll').disabled&&!$('aiEnrichmentStart').disabled")
     evaluate("$('aiEnrichmentStart').click();")
     browser_wait(evaluate, "state.aiEnrichment.pending===true&&qa.aiPosts===1&&!!qa.poll")
-    assert evaluate("qa.aiBodies") == [{"position_scope": "open"}]
+    assert evaluate("qa.aiBodies") == [{"position_scope": "open", "ratings_only": False}]
     assert evaluate("$('refresh').disabled") is False
     assert evaluate("$('loadingOverlay').hidden") is True
     assert evaluate("$('aiEnrichmentModal').hidden") is False
@@ -337,13 +337,13 @@ renderAIEnrichment();
     assert evaluate("$('aiEnrichmentResults').children.length") == 1
     assert ("No supported price/reference API route" if language == "en" else "אין מסלול API נתמך למחירים או לנתוני ייחוס") in evaluate("securityDataRouteHint(qa.other)")
     assert evaluate("aiOutcomeMessage({code:'api_managed'})") == (
-        "This security uses automatic API updates. Use dashboard Refresh; AI research is not used." if language == "en" else
-        "נייר זה משתמש בעדכוני API אוטומטיים. השתמשו ברענון הלוח; לא מופעל חיפוש AI.")
+        "Prices use automatic API updates. Company credit ratings are researched separately from public sources." if language == "en" else
+        "המחירים משתמשים בעדכוני API אוטומטיים. דירוגי האשראי של החברה נחקרים בנפרד במקורות ציבוריים.")
     evaluate("state.aiEnrichment.job={...qa.job(),status:'completed',code:'nothing_missing',outcomes:[],progress:{stage:'completed',completed:0,total:0}};renderAIEnrichment();$('enrichMissingData').click();closeModal($('aiEnrichmentModal'));$('enrichMissingData').click();")
     assert evaluate("qa.aiPosts") == 0
     assert evaluate("$('aiEnrichmentSummary').hidden&&$('aiEnrichmentEmpty').hidden&&$('aiEnrichmentProgress').hidden")
     assert evaluate("$('aiEnrichmentPhase').textContent") == ("No AI research needed" if language == "en" else "אין צורך בחיפוש AI")
-    assert ("normal dashboard update flow" if language == "en" else "בעדכוני לוח הבקרה הרגילים") in evaluate("$('aiEnrichmentStatus').textContent")
+    assert ("selected scope" if language == "en" else "בהיקף שנבחר") in evaluate("$('aiEnrichmentStatus').textContent")
     assert evaluate("qa.errors") == []
 
 
@@ -357,7 +357,7 @@ def test_opening_is_inert_and_both_explicit_scopes_are_available(tmp_path, chrom
     assert evaluate("[$('aiEnrichmentStart').textContent,$('aiEnrichmentStartAll').textContent]") == expected
     evaluate("$('aiEnrichmentStartAll').click();$('aiEnrichmentStart').click();")
     browser_wait(evaluate, "state.aiEnrichment.pending===true")
-    assert evaluate("qa.aiBodies") == [{"position_scope": "all"}]
+    assert evaluate("qa.aiBodies") == [{"position_scope": "all", "ratings_only": False}]
     assert evaluate("$('aiEnrichmentStartAll').disabled&&$('aiEnrichmentStart').disabled") is True
     evaluate("qa.jobStatus='completed';qa.poll();")
     browser_wait(evaluate, "!state.aiEnrichment.pending")

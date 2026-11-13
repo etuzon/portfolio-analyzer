@@ -65,6 +65,7 @@ from .security_market_data import SecurityMarketData, security_market_router, no
 from .security_web_research import research_sources, validate_proposals
 from .security_enrichment import EnrichmentJobs, security_key as enrichment_security_key
 from .credit_rating_service import CreditRatingService
+from .portfolio_ai_research import PortfolioAIResearch
 from .enrichment_preflight import ApiPreflight
 from .metrics import analyze_holding, moving_averages, screen, support_resistance, technical_signals, to_dict, volume_metrics
 from .mcp_server import create_portfolio_mcp_server
@@ -376,7 +377,7 @@ ASSISTANT_READ_TOOLS: dict[str, dict[str, Any]] = {
     },
     "get_credit_ratings": {
         "path": "/api/securities/credit-ratings",
-        "description": "Read verified saved Moody's, S&P Global Ratings and Fitch credit ratings for an exact registered stock/bond. Match symbol, stock_market and currency from get_securities. Preserve issuer versus issue, legal entity, scale, term, outlook/watch and dates. Unknown is not Stable or Not Rated; these are credit opinions, not stock buy/sell recommendations. This GET is cache-only; a permitted editor uses Refresh ratings for API-first and bounded AI public-source research when needed.",
+        "description": "Read saved Moody's, S&P Global Ratings and Fitch credit ratings and history for an exact registered stock/bond. Match symbol, stock_market and currency from get_securities. Preserve issuer versus issue, legal entity, scale, term, outlook/watch and original dates. Manual user-entered overrides remain distinct from verified public evidence. Unknown is not Stable or Not Rated; these are credit opinions, not stock buy/sell recommendations. This GET does not start research. Permitted editors use Refresh ratings or Find missing data with AI for bounded public-source research; no licensed rating feed or token is required.",
         "parameters": {"type": "object", "properties": {key: {"type": "string"} for key in ("symbol", "stock_market", "currency")},
                        "required": ["symbol", "stock_market", "currency"]},
     },
@@ -4525,6 +4526,7 @@ def _enrichment_missing_fields(item: dict[str, Any]) -> list[str]:
 
 def _credit_rating_inventory():
     """Current public stock/bond identities, including registered unheld items."""
+    from urllib.parse import urlsplit
     records = {}
     # Stock/bond registration and recorded holdings are the source of identity.
     # Cached profiles can fill a ticker-only name; this path never calls APIs.
@@ -4537,7 +4539,8 @@ def _credit_rating_inventory():
         asset = str(holding.get("asset_class") or "").upper()
         instrument = str(holding.get("asset_sub_class") or holding.get("instrument_type") or "").upper()
         market = str(holding.get("stock_market") or "").upper()
-        if market == "PRIVATE" or asset not in {"EQUITY", "STOCK", "RSU", "BOND", "FIXED_INCOME"} or instrument in {"OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"}:
+        kinds = {str(holding.get(field) or "").upper() for field in ("asset_sub_class", "instrument_type")}
+        if market == "PRIVATE" or asset not in {"EQUITY", "STOCK", "RSU", "BOND", "FIXED_INCOME"} or kinds & {"OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION", "ETF", "FUND", "MUTUALFUND", "MUTUAL_FUND"}:
             continue
         if not holding.get("symbol") or not market or not holding.get("currency"):
             continue
@@ -4552,7 +4555,6 @@ def _credit_rating_inventory():
             candidate["name"] = cached["name"]
         if cached.get("website"):
             candidate["website"] = cached["website"]
-            from urllib.parse import urlsplit
             website_host = urlsplit(str(cached["website"])).hostname
             if website_host:
                 candidate["verified_issuer_domains"] = [website_host.removeprefix("www.").lower()]
@@ -4565,7 +4567,20 @@ def _credit_rating_inventory():
         else:
             reference = _bond_market_data(candidate, cache_only=True) or {}
             candidate["issuer_name"] = (reference.get("security") or {}).get("issuer") or ""
-            candidate["issuer_identity_verified"] = bool(candidate["issuer_name"])
+            identity = reference.get("security") or {}
+            try:
+                source_host = urlsplit(str(reference.get("source_url") or "")).hostname or ""
+            except ValueError:
+                source_host = ""
+            exact_identifier = str(identity.get("identifier") or "").upper() in {
+                str(candidate.get(field) or "").upper() for field in ("symbol", "secondary_symbol") if candidate.get(field)}
+            treasury_issuer = (reference.get("provider") == "treasury_direct" and
+                source_host in {"treasurydirect.gov", "www.treasurydirect.gov"} and
+                candidate["issuer_name"] == "United States Department of the Treasury")
+            explicit_profile_issuer = (reference.get("provider") in {"finnhub", "eodhd"} and
+                identity.get("issuer_origin") == "provider_profile" and bool(source_host))
+            candidate["issuer_identity_verified"] = bool(candidate["issuer_name"] and exact_identifier and
+                                                        (treasury_issuer or explicit_profile_issuer))
             for field in ("isin", "cusip"):
                 if (reference.get("security") or {}).get(field):
                     candidate[field] = reference["security"][field]
@@ -5271,10 +5286,25 @@ security_enrichment = EnrichmentJobs(app, lambda: _enrichment_assistant_settings
                                     event_writer=lambda event, **fields: _record_log("market-data", event, **fields),
                                     outcome_reader=lambda: _enrichment_outcomes(),
                                     outcome_writer=lambda outcomes, user_id, request_id, **kwargs: _save_enrichment_outcomes(outcomes, user_id, request_id, **kwargs))
-app.include_router(security_enrichment.router())
-
 credit_rating_jobs = credit_rating_service.manager(app, lambda: _enrichment_assistant_settings(),
     event_writer=lambda event, **fields: _record_log("market-data", "credit_" + event, **fields))
+
+
+def _portfolio_ai_inventory(position_scope="open", *, ratings_only=False):
+    """Separate market-data eligibility from public company-rating coverage."""
+    scope_keys = _enrichment_scope_keys(position_scope)
+    return {"market_items": [] if ratings_only else _ai_enrichment_candidates(position_scope)["items"],
+            "credit_items": [item for item in _credit_rating_inventory() if item["security_key"] in scope_keys]}
+
+
+portfolio_ai_research = PortfolioAIResearch(security_enrichment, credit_rating_jobs, _portfolio_ai_inventory)
+# The public start/status routes coordinate all bounded children. The original
+# REST-only child routes remain available for their owner-bound research tools.
+app.include_router(portfolio_ai_research.router())
+market_research_router = security_enrichment.router()
+coordinated_paths = {security_enrichment.prefix + suffix for suffix in ("/ai", "/ai/{request_id}", "/status")}
+market_research_router.routes[:] = [route for route in market_research_router.routes if route.path not in coordinated_paths]
+app.include_router(market_research_router)
 app.include_router(credit_rating_jobs.router())
 
 
@@ -5341,8 +5371,8 @@ def run_scheduled_ai_enrichment(position_scope: str | None = None) -> None:
         return ({"cookie": f"{SESSION_COOKIE_NAME}={token}", "x-csrf-token": csrf}, lambda: auth_store.logout(token))
 
     try:
-        security_enrichment.start(settings["owner_id"], {}, settings["language"], settings["position_scope"],
-                                  scheduled_credentials=credentials)
+        portfolio_ai_research.start(settings["owner_id"], {}, settings["language"], settings["position_scope"],
+                                    scheduled_credentials=credentials)
     except PermissionError:
         _record_log("market-data", "security_ai_schedule_skipped", code="owner_not_authorized", position_scope=settings["position_scope"])
     except HTTPException as exc:

@@ -90,8 +90,9 @@ def test_manual_survives_late_publish_cache_clear_restart_and_backup(manual_env,
         restarted = CreditRatingService(cache=lambda: cache, settings=lambda: settings, inventory=lambda: inventory,
             research_settings=lambda: {}, manual_store=lambda: local)
         context = restarted.read(candidate)
-        assert context["ratings"][0]["rating"] == "Baa2" and context["retrieved_ratings"][0]["status"] == "not_checked"
-        assert restarted.missing(context) == list(AGENCIES), "User assertions cannot satisfy verified research coverage"
+        assert context["ratings"][0]["rating"] == "Baa2"
+        assert context["retrieved_ratings"][0]["rating"] == "A1", "Persistent source baseline survives market-cache clearing"
+        assert context["rating_history"]
 
 
 def test_manual_revision_tombstone_and_identity_preconditions_reject_old_writers(manual_env):

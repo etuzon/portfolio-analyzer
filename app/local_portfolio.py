@@ -839,22 +839,28 @@ class LocalPortfolioStore:
         return {"key": clean_key, "value": value if value is not None else {}, "updated_at": updated_at}
 
     def update_preference(self, key: str, transform):
-        """Atomically validate and replace a structured local preference.
+        """Atomically validate and replace one structured local preference."""
+        key = str(key or "").strip()
+        return self.update_preferences([key], lambda current: {key: transform(current[key])})[key]
 
-        The database write lock fences revisions across service instances as
-        well as concurrent requests in the current process.
-        """
-        clean_key = str(key or "").strip()
-        if not clean_key:
-            raise ValueError("Preference key is required")
+    def update_preferences(self, keys, transform):
+        """Fence related revisions and audit history in one database commit."""
+        keys = list(dict.fromkeys(keys))
+        if not keys or any(not isinstance(key, str) or not key.strip() or key != key.strip() for key in keys):
+            raise ValueError("Preference keys are required")
         with self._sync_lock, closing(self._connect()) as conn, conn:
             conn.execute("begin immediate")
-            row = conn.execute("select value from app_preferences where key = ?", (clean_key,)).fetchone()
-            value = json.loads(row["value"]) if row else None
-            updated = transform(value)
-            conn.execute("insert into app_preferences (key, value, updated_at) values (?, ?, ?) "
-                         "on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at",
-                         (clean_key, json.dumps(updated, default=str), _now()))
+            current = {}
+            for key in keys:
+                row = conn.execute("select value from app_preferences where key = ?", (key,)).fetchone()
+                current[key] = json.loads(row["value"]) if row else None
+            updated = transform(current)
+            if not isinstance(updated, dict) or set(updated) != set(keys):
+                raise ValueError("Updated preference keys must match the captured keys")
+            for key, value in updated.items():
+                conn.execute("insert into app_preferences (key, value, updated_at) values (?, ?, ?) "
+                             "on conflict(key) do update set value=excluded.value, updated_at=excluded.updated_at",
+                             (key, json.dumps(value, default=str), _now()))
         return updated
 
     def export_data(self) -> dict[str, Any]:
@@ -887,7 +893,7 @@ class LocalPortfolioStore:
         # Saving them must not refetch market data.
         data["app_preferences"] = [
             row for row in data.get("app_preferences", [])
-            if row.get("key") != "logging_settings" and not str(row.get("key") or "").startswith(("assistant_chats:", "assistant_context:", "trading_journal_v1:", "var_fx_v1:", "risk_history_v1:", "manual-credit-ratings-v1:"))
+            if row.get("key") != "logging_settings" and not str(row.get("key") or "").startswith(("assistant_chats:", "assistant_context:", "trading_journal_v1:", "var_fx_v1:", "risk_history_v1:", "manual-credit-ratings-v1:", "credit-rating-history-v1:"))
         ]
         encoded = json.dumps(data, sort_keys=True, default=str).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()

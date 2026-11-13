@@ -162,7 +162,7 @@ def test_callbacks_reload_scope_settings_and_current_owner_authorization(schedul
         events.append((user_id, language, position_scope))
         revoke()
         assert auth.session(token) is None
-    monkeypatch.setattr(main.security_enrichment, "start", start)
+    monkeypatch.setattr(main.portfolio_ai_research, "start", start)
     monkeypatch.setattr(main, "_record_log", lambda *args, **kwargs: events.append(kwargs["code"]) if "code" in kwargs else None)
     main.run_scheduled_ai_enrichment("open")
     main.run_scheduled_ai_enrichment("all")

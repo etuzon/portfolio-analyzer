@@ -99,7 +99,8 @@ def manual_preconditions(payload):
 def normalize_manual(payload, candidate):
     if (str(candidate.get("stock_market") or "").upper() == "PRIVATE"
             or str(candidate.get("asset_class") or "").upper() not in {"EQUITY", "STOCK", "RSU", "BOND", "FIXED_INCOME"}
-            or str(candidate.get("asset_sub_class") or "").upper() in {"OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"}):
+            or str(candidate.get("asset_sub_class") or "").upper() in {"OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION", "ETF", "FUND", "MUTUALFUND", "MUTUAL_FUND"}
+            or str(candidate.get("instrument_type") or "").upper() in {"OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION", "ETF", "FUND", "MUTUALFUND", "MUTUAL_FUND"}):
         raise ValueError("manual_unsupported_security")
     agency, _, _ = manual_preconditions(payload)
     status = _text(payload, "status", 12, required=True)

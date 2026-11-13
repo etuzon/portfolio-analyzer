@@ -21,14 +21,11 @@ market_data:
     enabled: true
   google_finance:
     enabled: false
-  # Licensed issuer/issue credit ratings from Moody's, S&P and Fitch via one API.
-  # Without an entitled bearer token, the Ratings refresh uses bounded AI public
-  # source research. It never substitutes financial-ratio or stock-analyst grades.
+  # Public-source AI research for Moody's, S&P and Fitch credit ratings.
+  # No rating-provider licence or paid API token is used. Each bounded child
+  # researches an exact issuer/issue; missing evidence remains unknown.
   credit_ratings:
     verification_ttl_days: 30  # Last verified date, not rating-action age.
-    spglobal:
-      enabled: true
-      bearer_token: "${SPGLOBAL_RATINGS_TOKEN}"
   # Automatic US bond/fund research; GET /api/security/market-data.
   # Background/dashboard refresh also saves qualified automatic price observations.
   # Existing manual observations and recorded positions/transactions are preserved.

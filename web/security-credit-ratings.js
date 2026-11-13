@@ -20,9 +20,9 @@ function creditRatingsEntry(detail = state.securityDetail) {
 
 function creditRatingsEligible(security = {}) {
   const asset = String(security.asset_class || "").toUpperCase();
-  const kind = String(security.asset_sub_class || security.instrument_type || "").toUpperCase();
+  const kinds = [security.asset_sub_class, security.instrument_type].map((value) => String(value || "").toUpperCase());
   return Boolean(security.symbol) && ["EQUITY", "FIXED_INCOME", "STOCK", "BOND", "RSU"].includes(asset)
-    && !["OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"].includes(kind)
+    && !kinds.some((kind) => ["OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION", "ETF", "FUND", "MUTUALFUND", "MUTUAL_FUND"].includes(kind))
     && String(security.stock_market || security.market_key || "").toUpperCase() !== "PRIVATE";
 }
 
@@ -48,10 +48,10 @@ function creditRatingsReason(code, status) {
     evidence_rejected: "The available source did not verify the agency, entity, rating and date together.",
     stale: "Saved evidence is old. Refresh ratings to check for newer agency information.",
     stale_evidence: "Saved evidence is old. Refresh ratings to check for newer agency information.",
-    api_not_configured: "Licensed API access is not configured. Refresh ratings can search public evidence with AI.",
-    configuration_required: "An administrator must configure the provider's licensed API access.",
-    entitlement_required: "The provider requires an entitled subscription. Public evidence can be researched with AI.",
-    access_denied: "The API denied access. Public evidence can be researched with AI.",
+    api_not_configured: "Refresh ratings researches public sources with AI. No licensed rating API is required.",
+    configuration_required: "Refresh ratings researches public sources with AI. No licensed rating API is required.",
+    entitlement_required: "Refresh ratings researches public sources with AI. No licensed rating API is required.",
+    access_denied: "Refresh ratings researches public sources with AI. No licensed rating API is required.",
     rate_limited: "The provider rate limit was reached. Try again later.",
     source_read_failed: "A source page could not be read. Refresh ratings to try again.",
     research_unavailable: "Internet research is unavailable. Configure the search service and try again.",
@@ -191,19 +191,8 @@ function creditRatingsRows(context) {
 }
 
 function creditRatingsProviderStatus(providers) {
-  if (!Array.isArray(providers) || !providers.length) return "";
-  const statusLabels = { ok: "API access available", ready: "API access available", configured: "API access configured",
-    not_configured: "API access not configured", disabled: "API access disabled", unavailable: "API unavailable", unsupported: "No verified API coverage",
-    access_denied: "Subscription access required", entitlement_required: "Subscription access required", not_entitled: "Subscription access required",
-    rate_limited: "API rate limit reached", error: "API request failed", not_found: "No matching API rating found", partial: "Partial API coverage",
-    authentication_required: "API authentication required", provider_unavailable: "Provider unavailable", data_unavailable: "No verified API rating data",
-    identity_unavailable: "A verified security identifier is required." };
-  return `<details class="credit-rating-api"><summary>${esc(t("Rating API access"))}</summary><ul>${providers.map((provider) => {
-    const label = statusLabels[provider.status] || (provider.configured ? "API coverage not verified" : "API access not configured");
-    const url = creditRatingsSourceUrl(provider.docs_url);
-    const name = provider.provider === "spglobal_agency_ratings" ? t("S&P Global Agency Ratings API") : t("Rating data provider");
-    return `<li><bdi dir="auto">${esc(name)}</bdi>: ${esc(t(label))}${url ? ` · <a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(t("API documentation"))}</a>` : ""}</li>`;
-  }).join("")}</ul><p>${esc(t("Agency APIs can require a paid subscription and explicit ratings entitlements. Configuration alone does not establish coverage."))}</p></details>`;
+  // Retained cached provider metadata does not make a licensed feed a prerequisite.
+  return "";
 }
 
 function creditRatingsAvailability(context, editable = canWrite()) {
@@ -217,8 +206,7 @@ function creditRatingsAvailability(context, editable = canWrite()) {
   if (unchecked || incomplete) messages.push(t(editable
     ? "Choose Refresh ratings to research public sources, or Add manually to record your own information."
     : "An Admin or Operator can research ratings or add a manual entry."));
-  const providers = Array.isArray(context.provider_status) ? context.provider_status : [];
-  if (providers.length && providers.every((provider) => !provider.configured)) messages.push(t("Licensed rating API access is not configured. Public AI research does not require this token, but the AI connection must be available."));
+  messages.push(t("Ratings use public-source AI research. An available AI connection and Internet search are required; no licensed rating API is required."));
   return messages.join(" ");
 }
 
@@ -248,6 +236,7 @@ function renderSecurityCreditRatings() {
   }
   const providerHtml = creditRatingsProviderStatus(context?.provider_status);
   const providers = $("securityCreditRatingsProviders");
+  providers.hidden = true;
   if (providers.innerHTML !== providerHtml) {
     const wasOpen = providers.querySelector("details")?.open;
     providers.innerHTML = providerHtml;
@@ -256,7 +245,7 @@ function renderSecurityCreditRatings() {
   const refresh = $("refreshSecurityCreditRatings");
   refresh.disabled = !canWrite() || entry.loading || busy || entry.resume || !context?.security_key;
   refresh.textContent = t("Refresh ratings");
-  refresh.title = !canWrite() ? t("Rating updates require Admin or Operator permission.") : t("Check configured APIs, then research unresolved agency ratings with AI.");
+  refresh.title = !canWrite() ? t("Rating updates require Admin or Operator permission.") : t("Research Moody’s, S&P Global Ratings and Fitch from public sources with AI.");
   const resume = $("resumeSecurityCreditRatings");
   resume.hidden = !entry.resume;
   resume.disabled = entry.loading || busy;
@@ -265,7 +254,7 @@ function renderSecurityCreditRatings() {
   reload.hidden = !entry.message || busy || entry.resume;
   reload.disabled = entry.loading;
   reload.textContent = t("Reload saved ratings");
-  const phases = { queued: "Waiting to start", checking_apis: "Checking rating APIs", researching: "Researching agency ratings",
+  const phases = { queued: "Waiting to start", checking_apis: "Preparing public-source rating research", researching: "Researching agency ratings",
     saving: "Saving verified ratings", completed: "Rating check finished", failed: "Rating check stopped" };
   const phase = entry.job?.progress?.stage || (busy ? "queued" : "");
   let message = entry.loading ? t("Loading saved ratings…") : busy ? t(phases[phase] || "Research in progress")
@@ -278,6 +267,7 @@ function renderSecurityCreditRatings() {
   status.hidden = !message;
   $("securityCreditRatingsScope").textContent = t("Issuer ratings assess a company; issue ratings assess a specific debt obligation. Outlook and watch are agency assessments. Missing evidence stays unknown.");
   if (typeof renderManualCreditEditor === "function") renderManualCreditEditor();
+  if (typeof renderCreditRatingHistory === "function") renderCreditRatingHistory(context);
 }
 
 async function creditRatingsRequest(path, options = {}) {
