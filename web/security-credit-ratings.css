@@ -1,0 +1,50 @@
+.security-credit-ratings { margin-block: 18px; padding-block: 14px; border-block: 1px solid var(--ux-stroke); }
+.security-credit-ratings > .section-head { align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.security-credit-ratings h3 { margin: 0; }
+.security-credit-ratings .section-note { margin-block: 6px; }
+.credit-ratings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.credit-ratings-actions button { width: auto; flex: 0 0 auto; }
+.credit-ratings-table { width: 100%; min-width: 0; max-width: 100%; border-collapse: collapse; table-layout: fixed; }
+.credit-ratings-table th, .credit-ratings-table td { padding: 12px 10px; text-align: start; vertical-align: top; border-bottom: 1px solid var(--ux-stroke); overflow-wrap: anywhere; white-space: normal; }
+.credit-ratings-table thead th { color: var(--ux-muted); font-size: .78rem; }
+.credit-ratings-table thead th:nth-child(1) { width: 16%; }
+.credit-ratings-table thead th:nth-child(2) { width: 30%; }
+.credit-ratings-table thead th:nth-child(3), .credit-ratings-table thead th:nth-child(4) { width: 13%; }
+.credit-ratings-table thead th:nth-child(5) { width: 28%; }
+.credit-ratings-table tbody th { font-size: .88rem; text-transform: none; background: transparent; color: var(--ux-text); }
+.credit-rating-value { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.credit-rating-value .badge.neutral { color: var(--ux-muted); font-weight: 600; }
+.credit-rating-signal { display: flex; align-items: flex-start; flex-direction: column; gap: 6px; }
+.credit-rating-symbol { font-size: 1.1rem; font-weight: 750; min-width: 2.5em; }
+.credit-rating-scope { display: block; margin-block-start: 5px; font-size: .8rem; color: var(--ux-muted); }
+.credit-rating-reason { margin: 5px 0 0; font-size: .78rem; line-height: 1.45; color: var(--ux-muted); }
+.credit-rating-evidence, .credit-rating-api { font-size: .8rem; }
+.credit-rating-evidence summary, .credit-rating-api summary { cursor: pointer; min-height: 28px; line-height: 1.5; }
+.credit-rating-evidence summary:focus-visible, .credit-rating-api summary:focus-visible { outline: 2px solid var(--ux-blue); outline-offset: 3px; }
+.credit-rating-evidence dl { margin: 8px 0; }
+.credit-rating-evidence dl > div { display: flex; flex-wrap: wrap; gap: 3px 8px; margin-block: 5px; }
+.credit-rating-evidence dt { color: var(--ux-muted); }
+.credit-rating-evidence dd { margin: 0; }
+.credit-rating-evidence p { margin-block: 6px; }
+.credit-rating-other { margin-block-start: 12px; }
+.credit-rating-other ul { padding-inline-start: 18px; margin-block: 8px; }
+.credit-rating-other li { margin-block: 12px; }
+.credit-rating-other li > div:first-child { font-weight: 600; }
+.credit-rating-sources { display: flex; flex-direction: column; gap: 6px; }
+.credit-rating-sources a, .credit-rating-api a { text-decoration: underline; text-underline-offset: 2px; }
+.credit-rating-api { margin-block-start: 10px; }
+.credit-rating-api ul { padding-inline-start: 20px; margin-block: 8px; }
+.credit-rating-api li { margin-block: 6px; }
+.credit-rating-api p { color: var(--ux-muted); margin-block: 6px; }
+.security-credit-ratings > .status-line { min-height: 0; margin-block: 9px; }
+@media (max-width: 720px) {
+  .security-credit-ratings > .section-head { flex-direction: column; }
+  .credit-ratings-table, .credit-ratings-table tbody, .credit-ratings-table tr, .credit-ratings-table th, .credit-ratings-table td { display: block; width: 100%; }
+  .credit-ratings-table thead { display: none; }
+  .credit-ratings-table tr { padding-block: 8px; border-bottom: 1px solid var(--ux-stroke); }
+  .credit-ratings-table tbody th { padding: 8px 0; font-size: .95rem; border-bottom: 0; }
+  .credit-ratings-table td { display: grid; grid-template-columns: minmax(80px, 30%) minmax(0, 1fr); gap: 5px 10px; padding: 7px 0; border-bottom: 0; }
+  .credit-ratings-table td::before { content: attr(data-label); grid-column: 1; grid-row: 1 / 4; color: var(--ux-muted); font-size: .8rem; }
+  .credit-ratings-table td > * { grid-column: 2; min-width: 0; }
+  .credit-rating-scope, .credit-rating-reason { margin-block-start: 0; }
+}

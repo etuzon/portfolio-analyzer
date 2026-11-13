@@ -189,6 +189,14 @@ def fetch_research_document(url: str, settings: dict[str, Any]) -> dict[str, Any
     headers = {"Accept": "application/json", "X-Respond-With": "markdown", "X-With-Links-Summary": "true",
                "X-Retain-Images": "none", "X-With-Generated-Alt": "false", "X-Timeout": "20",
                "X-No-Cache": "true", "DNT": "1"}
+    # UBS IR pages contain server-rendered tables. Executing their tracking
+    # scripts can navigate a renderer to an ad pixel instead of the document.
+    # Select the documented static engine before the single reader request;
+    # this is not a retry or another uncounted fetch.
+    static_engine = (reader == "auto" and parsed.hostname in {"www.ubs.com", "ubs.com"}
+                     and "/investor-relations/" in parsed.path and not parsed.path.lower().endswith(".pdf"))
+    if static_engine:
+        headers["X-Engine"] = "direct"
     # Only the public URL is sent. No application identity, credentials, cookies,
     # arbitrary headers, instructions, custom script or model feature is exposed.
     with httpx.Client(timeout=25, follow_redirects=False, trust_env=False) as client:
@@ -207,7 +215,8 @@ def fetch_research_document(url: str, settings: dict[str, Any]) -> dict[str, Any
     if data.get("httpStatus", 200) != 200 or public_source_url(data["url"], resolve=False) != url:
         raise ResearchFailure("source_read_failed", "The rendered source reader returned a different or unavailable source.")
     return {"url": data.get("finalUrl") or data["url"], "text": data["content"], "title": data.get("title", ""),
-            "links": data.get("links") or {}, "structured_data": [], "reader": "jina"}
+            "links": data.get("links") or {}, "structured_data": [], "reader": "jina",
+            "reader_engine": "direct" if static_engine else "rendered"}
 
 
 class ResearchSession:
@@ -385,6 +394,8 @@ class ResearchSession:
                         "retrieved_at": datetime.now(timezone.utc).isoformat(), "links": links, "structured_data": structured,
                         "locale": str(document.get("locale") or self.settings.get("locale") or "")[:20],
                         "reader": str(document.get("reader") or self.settings.get("reader") or "auto")[:20]}
+            if document.get("reader_engine"):
+                evidence["reader_engine"] = str(document["reader_engine"])[:20]
             self._evidence.setdefault(key, []).append(evidence)
             return evidence
         except (ValueError, OSError, httpx.HTTPError, http.client.HTTPException) as exc:

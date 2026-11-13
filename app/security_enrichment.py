@@ -18,7 +18,7 @@ from uuid import uuid4
 import anyio
 from fastapi import APIRouter, HTTPException, Request
 import httpx
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .assistant_rest import validate_arguments
 from .llm_assistant import AssistantError, PortfolioAssistant
@@ -51,7 +51,7 @@ WEB_CATALOG = {
     },
     "read_security_source": {
         "path": PREFIX + "/web/read",
-        "description": "Open a discovered source_id and inspect its fetched page text, facts and links. reader=auto selects the configured reader with Google Finance HTTP compatibility. You may explicitly choose compatible (browser headers, no JavaScript), jina (rendered page) or direct (plain HTTPS); each attempt spends one research operation. Match identity, price basis, date, currency and units.",
+        "description": "Open a discovered source_id and inspect its fetched page text, facts and links. reader=auto selects the configured reader with static HTTP compatibility for Google Finance and UBS investor-relations pages. You may explicitly choose compatible (browser headers, no JavaScript), jina (rendered page) or direct (plain HTTPS); each attempt spends one research operation. Match identity, price basis, date, currency and units.",
         "parameters": {"type": "object", "properties": {"security_key": {"type": "string"}, "source_id": {"type": "string"}, "reader": {"type": "string", "enum": ["auto", "jina", "direct", "compatible"]}}, "required": ["security_key", "source_id"]},
     },
     "follow_security_source": {
@@ -129,6 +129,7 @@ def _public_job(job: dict[str, Any]) -> dict[str, Any]:
 
 class EnrichmentStart(BaseModel):
     position_scope: Literal["open", "all"] = "open"
+    security_keys: list[str] | None = Field(default=None, max_length=MAX_SELECTED)
 
 
 class EnrichmentJobs:
@@ -142,6 +143,12 @@ class EnrichmentJobs:
                  research_tool_fetcher: Callable[[dict[str, Any], str, dict[str, Any]], dict[str, Any]] | None = None,
                  source_hint_reader: Callable[[dict[str, Any]], list[dict[str, Any]]] | None = None,
                  event_writer: Callable[..., None] | None = None,
+                 prefix: str = PREFIX,
+                 research_policy: str = WEB_RESEARCH_POLICY,
+                 research_metadata: set[str] | None = None,
+                 discovery_subject: str | None = None,
+                 refresh_portfolio_on_update: bool = True,
+                 selection_reader: bool = False,
                  worker_factory=Thread):
         self.app, self.settings = app, settings
         self._candidate_reader, self._security_fetcher = candidate_reader, security_fetcher
@@ -149,13 +156,25 @@ class EnrichmentJobs:
         self._research_tool_fetcher = research_tool_fetcher
         self._source_hint_reader = source_hint_reader
         self._event_writer = event_writer
+        self.prefix = prefix
+        self._research_policy = research_policy
+        self._research_metadata = RESEARCH_METADATA | (research_metadata or set())
+        self._discovery_subject = discovery_subject
+        self._refresh_portfolio_on_update = refresh_portfolio_on_update
+        self._selection_reader = selection_reader
+        self._web_catalog = deepcopy(WEB_CATALOG)
+        for tool in self._web_catalog.values():
+            tool["path"] = prefix + tool["path"][len(PREFIX):]
         self._worker_factory = worker_factory
         self._lock = RLock()
         self._jobs: dict[str, dict[str, Any]] = {}
 
-    def start(self, user_id: str, headers: dict[str, str], language: str, position_scope: str = "open", *, scheduled_credentials=None) -> dict[str, Any]:
+    def start(self, user_id: str, headers: dict[str, str], language: str, position_scope: str = "open", *, scheduled_credentials=None, security_keys: list[str] | None = None) -> dict[str, Any]:
         if position_scope not in {"open", "all"}:
             raise HTTPException(422, "invalid_position_scope")
+        if security_keys is not None and (not security_keys or len(security_keys) > MAX_SELECTED
+                or any(not isinstance(key, str) or not key.strip() or len(key) > 300 for key in security_keys)):
+            raise HTTPException(422, "invalid_enrichment_candidate")
         configured = self.settings()
         model_limit = min(MAX_MODEL_CALLS, max(1, int(configured.get("max_tool_loops", MAX_MODEL_CALLS))))
         rest_limit = min(MAX_REST_CALLS, max(1, int(configured.get("max_rest_calls", MAX_REST_CALLS))))
@@ -165,6 +184,9 @@ class EnrichmentJobs:
                 raise HTTPException(409, "enrichment_busy")
             for job in self._jobs.values():
                 if job["_user_id"] == user_id and job["status"] in {"queued", "running"}:
+                    if self._selection_reader and (set(job.get("_security_keys") or []) != set(security_keys or [])
+                            or job["position_scope"] != position_scope):
+                        raise HTTPException(409, "enrichment_busy")
                     return _public_job(job)
             active = sum(job["status"] in {"queued", "running"} for job in self._jobs.values())
             if active >= 2:
@@ -182,7 +204,8 @@ class EnrichmentJobs:
                 "progress": {"stage": "queued", "completed": 0, "total": 0, "current_security": None},
                 "failure": None,
                 "coverage": {"inventory_truncated": False, "listed_candidates": 0},
-                "_user_id": user_id, "_candidates": {}, "_results": {}, "_research_responses": {}, "_evidence_by_key": {}, "_proposal": None,
+                "_user_id": user_id, "_security_keys": list(dict.fromkeys(security_keys)) if security_keys else None,
+                "_candidates": {}, "_results": {}, "_research_responses": {}, "_evidence_by_key": {}, "_proposal": None,
                 "_finalized": False, "_ready_to_finalize": False,
                 "_web_responses": {}, "_web_lock": RLock(), "_trace": [],
             }
@@ -239,10 +262,10 @@ class EnrichmentJobs:
         return deepcopy(diagnostic)
 
     def _request(self, job_id: str, headers: dict[str, str], method: str, path: str, *, params=None, payload=None):
-        allowed = {("GET", PREFIX + "/candidates"), ("GET", PREFIX + "/security"),
-                   ("POST", PREFIX + "/ai/" + job_id + "/finalize")}
+        allowed = {("GET", self.prefix + "/candidates"), ("GET", self.prefix + "/security"),
+                   ("POST", self.prefix + "/ai/" + job_id + "/finalize")}
         if self._research_tool_fetcher is not None:
-            allowed.update(("GET", entry["path"]) for entry in WEB_CATALOG.values())
+            allowed.update(("GET", entry["path"]) for entry in self._web_catalog.values())
         with self._lock:
             job = self._job(job_id)
             if job["counts"]["rest_requests"] >= job["counts"]["max_rest_requests"]:
@@ -289,7 +312,7 @@ class EnrichmentJobs:
             job.update(status="running", code="running")
         failure = None
         try:
-            candidates = self._request(identifier, headers, "GET", PREFIX + "/candidates", params={"request_id": identifier})
+            candidates = self._request(identifier, headers, "GET", self.prefix + "/candidates", params={"request_id": identifier})
             items = candidates.get("items") if isinstance(candidates, dict) else None
             if not isinstance(items, list):
                 raise RestError("job_failed")
@@ -298,7 +321,7 @@ class EnrichmentJobs:
             with self._lock:
                 job["_candidates"] = {item["security_key"]: deepcopy(item) for item in selected}
                 job["_trace"].append({"step": "inventory", "candidates": [
-                    {key: deepcopy(value) for key, value in item.items() if key in RESEARCH_METADATA} for item in selected]})
+                    {key: deepcopy(value) for key, value in item.items() if key in self._research_metadata} for item in selected]})
                 job["_all_candidates"] = deepcopy(items)
                 job["_research_mode"] = "research_available" in candidates
                 total = candidates.get("total_count", len(items))
@@ -328,12 +351,12 @@ class EnrichmentJobs:
                 settings.update(max_tool_loops=min(settings.get("max_tool_loops", MAX_MODEL_CALLS), job["counts"]["max_model_requests"]),
                                 max_rest_calls=max(0, job["counts"]["max_rest_requests"] - 2), max_context_messages=0,
                                 research_mode=self._research_tool_fetcher is not None)
-                catalog = deepcopy(WEB_CATALOG) if self._research_tool_fetcher is not None else CATALOG
+                catalog = deepcopy(self._web_catalog) if self._research_tool_fetcher is not None else CATALOG
                 configured_providers = candidates.get("configured_search_providers")
                 if self._research_tool_fetcher is not None and isinstance(configured_providers, list):
                     catalog["search_security_sources"]["parameters"]["properties"]["provider"]["enum"] = [
                         "auto", *[provider for provider in ("yahoo", "duckduckgo", "brave") if provider in configured_providers]]
-                assistant = PortfolioAssistant(settings, catalog, system_policy=WEB_RESEARCH_POLICY if self._research_tool_fetcher is not None else RESEARCH_POLICY)
+                assistant = PortfolioAssistant(settings, catalog, system_policy=self._research_policy if self._research_tool_fetcher is not None else RESEARCH_POLICY)
                 started = time.monotonic()
 
                 def audit(event, **fields):
@@ -374,7 +397,7 @@ class EnrichmentJobs:
                                 job["_abort_code"] = exc.code
                         raise
 
-                research_metadata = [{key: value for key, value in item.items() if key in RESEARCH_METADATA} for item in pending]
+                research_metadata = [{key: value for key, value in item.items() if key in self._research_metadata} for item in pending]
                 prompt = ("Research source-backed missing information only for these selected candidates. Position scope: " + job["position_scope"] + ". Today is " + _now()[:10]
                           + ". Configured search providers (setup only, not an availability guarantee): " + json.dumps(configured_providers)
                           + ". Request budgets: " + json.dumps({"model": job["counts"]["max_model_requests"],
@@ -412,7 +435,7 @@ class EnrichmentJobs:
             job["code"] = failure or self._result_code(job)
             job["_ready_to_finalize"] = True
         try:
-            self._request(identifier, headers, "POST", PREFIX + "/ai/" + identifier + "/finalize", payload={"proposal": job["_proposal"]})
+            self._request(identifier, headers, "POST", self.prefix + "/ai/" + identifier + "/finalize", payload={"proposal": job["_proposal"]})
         except RestError as exc:
             failure = failure or exc.code
         except Exception:
@@ -468,19 +491,20 @@ class EnrichmentJobs:
             self.get(identifier, owner["id"])
             return self._job(identifier)
 
-        @router.post(PREFIX + "/ai", status_code=202)
+        @router.post(self.prefix + "/ai", status_code=202)
         def start(request: Request, payload: EnrichmentStart | None = None):
             owner = user(request)
             if owner.get("role") not in {"Admin", "Operator"}:
                 raise HTTPException(403, "read_only")
             return self.start(owner["id"], dict(request.headers), request.headers.get("Accept-Language", "en")[:24],
-                              position_scope=payload.position_scope if payload else "open")
+                              position_scope=payload.position_scope if payload else "open",
+                              security_keys=payload.security_keys if payload else None)
 
-        @router.get(PREFIX + "/ai/{request_id}")
+        @router.get(self.prefix + "/ai/{request_id}")
         def status(request_id: str, request: Request):
             return self.get(request_id, user(request)["id"])
 
-        @router.get(PREFIX + "/status")
+        @router.get(self.prefix + "/status")
         def outcomes(request: Request):
             owner = user(request)
             with self._lock:
@@ -488,7 +512,7 @@ class EnrichmentJobs:
                                if job["_user_id"] == owner["id"] and job["status"] in {"queued", "running"}), None)
             return {"items": self._outcome_reader(), "active_job": active}
 
-        @router.get(PREFIX + "/candidates")
+        @router.get(self.prefix + "/candidates")
         def candidates(request_id: str, request: Request):
             if user(request).get("role") not in {"Admin", "Operator"}:
                 raise HTTPException(403, "read_only")
@@ -503,7 +527,15 @@ class EnrichmentJobs:
                 job["_inventory_pending"] = True
                 self._progress(job, "checking_apis")
             try:
-                result = self._candidate_reader(position_scope=job["position_scope"]) if job["position_scope"] != "open" else self._candidate_reader()
+                reader_arguments = {"position_scope": job["position_scope"]} if job["position_scope"] != "open" else {}
+                if job.get("_security_keys") and self._selection_reader:
+                    reader_arguments["security_keys"] = job["_security_keys"]
+                result = self._candidate_reader(**reader_arguments)
+                if job.get("_security_keys") and not self._selection_reader:
+                    result = deepcopy(result)
+                    result["items"] = [item for item in result.get("items", [])
+                                       if item.get("security_key") in job["_security_keys"]]
+                    result.update(total_count=len(result["items"]), truncated=False)
                 if self._source_hint_reader is not None:
                     result = deepcopy(result)
                     for item in (result.get("items") or [])[:MAX_SELECTED]:
@@ -512,7 +544,9 @@ class EnrichmentJobs:
                     identity = " ".join(dict.fromkeys(str(item.get(field) or "").strip() for field in ("symbol", "secondary_symbol") if item.get(field)))
                     asset = str(item.get("asset_sub_class") or item.get("asset_class") or "").upper()
                     kind = "bond" if asset == "BOND" else "fund" if asset in {"FUND", "MUTUALFUND", "ETF"} else "security"
-                    subject = "price date currency quote units" if "prices" in item.get("missing_fields", []) else "industry company classification"
+                    subject = self._discovery_subject or ("price date currency quote units" if "prices" in item.get("missing_fields", []) else "industry company classification")
+                    if self._discovery_subject:
+                        identity = " ".join(dict.fromkeys(str(item.get(field) or "").strip() for field in ("issuer_name", "name", "symbol") if item.get(field)))
                     item["search_hints"] = [{"query": identity + " " + kind + " " + subject, "discovery_only": True}]
                     if "profile" in item.get("missing_fields", []) and item.get("needs_name"):
                         item["search_hints"].insert(0, {"query": identity + " " + kind + " issuer instrument name", "discovery_only": True})
@@ -532,7 +566,7 @@ class EnrichmentJobs:
                 job["_inventory_response"] = deepcopy(result)
             return result
 
-        @router.get(PREFIX + "/security")
+        @router.get(self.prefix + "/security")
         def fetch(request_id: str, security_key: str, request: Request, field: str = "auto"):
             if user(request).get("role") not in {"Admin", "Operator"}:
                 raise HTTPException(403, "read_only")
@@ -586,7 +620,7 @@ class EnrichmentJobs:
                 raise HTTPException(422, "invalid_enrichment_candidate")
             name = {"search": "search_security_sources", "read": "read_security_source", "follow": "follow_security_source"}[action]
             try:
-                validate_arguments({"security_key": security_key, **arguments}, WEB_CATALOG[name]["parameters"])
+                validate_arguments({"security_key": security_key, **arguments}, self._web_catalog[name]["parameters"])
             except (ValueError, TypeError):
                 raise HTTPException(422, "invalid_research_arguments") from None
             cache_key = json.dumps([action, security_key, arguments], sort_keys=True)
@@ -621,22 +655,22 @@ class EnrichmentJobs:
                     self._progress(job, "researching", len(job.get("_research_completed", set())), job.get("_research_total", len(job["_candidates"])))
                 return result
 
-        @router.get(PREFIX + "/web/search")
+        @router.get(self.prefix + "/web/search")
         def search_source(request_id: str, security_key: str, query: str, request: Request, provider: str = "auto"):
             arguments = {"query": query}
             if provider != "auto":
                 arguments["provider"] = provider
             return research_tool("search", request_id, security_key, request, arguments)
 
-        @router.get(PREFIX + "/web/read")
+        @router.get(self.prefix + "/web/read")
         def read_source(request_id: str, security_key: str, source_id: str, request: Request, reader: str | None = None):
             return research_tool("read", request_id, security_key, request, {"source_id": source_id, **({"reader": reader} if reader is not None else {})})
 
-        @router.get(PREFIX + "/web/follow")
+        @router.get(self.prefix + "/web/follow")
         def follow_source(request_id: str, security_key: str, source_id: str, link_id: str, request: Request, reader: str | None = None):
             return research_tool("follow", request_id, security_key, request, {"source_id": source_id, "link_id": link_id, **({"reader": reader} if reader is not None else {})})
 
-        @router.post(PREFIX + "/ai/{request_id}/finalize")
+        @router.post(self.prefix + "/ai/{request_id}/finalize")
         def finalize(request_id: str, request: Request, payload: dict[str, Any] | None = None):
             owner = user(request)
             if owner.get("role") not in {"Admin", "Operator"}:
@@ -680,7 +714,7 @@ class EnrichmentJobs:
                     for outcome_status in ("updated", "partial", "unavailable", "not_attempted"):
                         job["summary"][outcome_status] = sum(item.get("status") == outcome_status for item in finalized_outcomes)
                     job["summary"]["not_attempted"] += max(0, job["summary"]["total_candidates"] - len(finalized_outcomes))
-                    job["portfolio_refresh_required"] = any(item.get("status") in {"updated", "partial"} for item in finalized_outcomes)
+                    job["portfolio_refresh_required"] = self._refresh_portfolio_on_update and any(item.get("status") in {"updated", "partial"} for item in finalized_outcomes)
                     if job["code"] in {"nothing_missing", "data_found", "partial_data", "data_unavailable"}:
                         job["code"] = self._result_code(job)
                 job["_finalized"] = True

@@ -116,6 +116,49 @@ Transcripts and review flags are saved under `/tmp/portfolio-chat-qa`. The real 
 
 For missing-data research, `./.venv/bin/python tests/security_research_real_replay.py --main tase` runs the actual application login, password change, authenticated research tools, live model, public-source reads, validation and saving against a temporary synthetic portfolio. Replace `tase` with `bond` or `tva` for the bond cases, or `mixed` for the original three-candidate request with the third bond retained on its API route. It uses the stable host bridge by default, or `PORTFOLIO_CODEX_SOCKET` when set, and never loads private configuration or the runtime portfolio. The output distinguishes verified saved facts from remaining gaps and includes source dates, raw units, request counts and before/after ledger values. These opt-in live checks consume model and Internet calls; ordinary pytest remains offline.
 
+### Company credit ratings
+
+Open **Portfolio → Securities → Ratings**, or a held security's overview, to
+inspect Moody’s, S&P Global Ratings and Fitch separately. Opening reads saved
+evidence. **Refresh ratings** requires Admin or Operator permission, checks
+configured APIs first and uses the existing bounded AI Internet workflow for
+missing information. The eight-model, eight-REST and eight-web limits are shared
+across the request; the model has no database, filesystem or direct-write tools.
+API-priced stocks remain eligible for this separate ratings check.
+
+The licensed adapter uses [S&P Global Agency Ratings](https://xpressapi.marketplace.spglobal.com/swagger/?urls.primaryName=agencyratings),
+which covers all three agencies' issuer and issue ratings. Merge into private
+`config.yaml`:
+
+```yaml
+market_data:
+  credit_ratings:
+    verification_ttl_days: 30
+    spglobal:
+      enabled: true
+      bearer_token: "${SPGLOBAL_RATINGS_TOKEN}"
+```
+
+Docker Compose forwards `SPGLOBAL_RATINGS_TOKEN` from the host or private `.env`;
+recreate the container after changing it. Suitable ratings entitlements are
+required. Public-source AI research can run without this token using the
+configured signed-in CLI and public reader/search services.
+
+`GET /api/securities/credit-ratings?symbol=JPM&stock_market=NYSE&currency=USD`
+is cache-only. `POST /api/securities/credit-ratings/ai` accepts up to three
+`security_keys` and `position_scope`; poll the returned request at
+`GET /api/securities/credit-ratings/ai/{request_id}`. Viewer access is read-only.
+Facts persist in the application cache, with original source excerpts and
+separate rating, observation, retrieval and forward-signal dates. An unsuccessful
+refresh retains verified facts and records the attempt. A different security
+cannot attach to another running request.
+
+Issuer, exact issue, deposit, senior-unsecured class, short-term and national-scale
+ratings remain distinct. A verified debt-class rating appears in **Other rating
+categories** when no primary issuer rating is available; its own outlook and
+source dates remain visible. Missing evidence does not mean Unrated or Stable.
+Portfolio risk calculations remain unchanged pending the separate risk review.
+
 ### Security price API and AI updater
 
 #### Automatic U.S. bond and fund retrieval

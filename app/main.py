@@ -64,6 +64,7 @@ from .security_prices import price_router
 from .security_market_data import SecurityMarketData, security_market_router, normalize_identifier, SNAPSHOT_VERSION
 from .security_web_research import research_sources, validate_proposals
 from .security_enrichment import EnrichmentJobs, security_key as enrichment_security_key
+from .credit_rating_service import CreditRatingService
 from .enrichment_preflight import ApiPreflight
 from .metrics import analyze_holding, moving_averages, screen, support_resistance, technical_signals, to_dict, volume_metrics
 from .mcp_server import create_portfolio_mcp_server
@@ -372,6 +373,12 @@ ASSISTANT_READ_TOOLS: dict[str, dict[str, Any]] = {
             "provider": {"type": "string", "enum": ["auto", "finnhub", "eodhd", "treasury_direct"]},
             "date_from": {"type": "string"}, "date_to": {"type": "string"}, "cache_only": {"type": "boolean"}, "refresh": {"type": "boolean"},
         }, "required": ["identifier", "kind"]},
+    },
+    "get_credit_ratings": {
+        "path": "/api/securities/credit-ratings",
+        "description": "Read verified saved Moody's, S&P Global Ratings and Fitch credit ratings for an exact registered stock/bond. Match symbol, stock_market and currency from get_securities. Preserve issuer versus issue, legal entity, scale, term, outlook/watch and dates. Unknown is not Stable or Not Rated; these are credit opinions, not stock buy/sell recommendations. This GET is cache-only; a permitted editor uses Refresh ratings for API-first and bounded AI public-source research when needed.",
+        "parameters": {"type": "object", "properties": {key: {"type": "string"} for key in ("symbol", "stock_market", "currency")},
+                       "required": ["symbol", "stock_market", "currency"]},
     },
     "get_stock_dividends": {
         "path": "/api/assistant/stock-dividends", "description": "Read provider dividend history for an explicit listed ticker. Amounts and payment/ex dates are per record; missing history is unknown.",
@@ -4516,6 +4523,63 @@ def _enrichment_missing_fields(item: dict[str, Any]) -> list[str]:
     return fields
 
 
+def _credit_rating_inventory():
+    """Current public stock/bond identities, including registered unheld items."""
+    records = {}
+    # Stock/bond registration and recorded holdings are the source of identity.
+    # Cached profiles can fill a ticker-only name; this path never calls APIs.
+    candidates = list(local_store.list_manual_securities())
+    recorded = [to_dict(item.holding) for item in local_store.holdings(include_closed=True)]
+    open_keys = {enrichment_security_key(holding) for holding in recorded
+                 if (quantity := _number_or_none(holding.get("quantity"))) is not None and quantity != 0}
+    candidates.extend(recorded)
+    for holding in candidates:
+        asset = str(holding.get("asset_class") or "").upper()
+        instrument = str(holding.get("asset_sub_class") or holding.get("instrument_type") or "").upper()
+        market = str(holding.get("stock_market") or "").upper()
+        if market == "PRIVATE" or asset not in {"EQUITY", "STOCK", "RSU", "BOND"} or instrument in {"OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"}:
+            continue
+        if not holding.get("symbol") or not market or not holding.get("currency"):
+            continue
+        candidate = {name: deepcopy(holding.get(name)) for name in
+                     ("symbol", "secondary_symbol", "stock_market", "currency", "location", "name", "asset_class", "asset_sub_class")}
+        candidate["asset_sub_class"] = instrument
+        candidate["security_key"] = enrichment_security_key(candidate)
+        candidate["has_open_position"] = candidate["security_key"] in open_keys
+        cached = hub().cached_profile(candidate["symbol"], stock_market=market,
+                    secondary_symbol=candidate.get("secondary_symbol") or "") if hasattr(hub(), "cached_profile") else {}
+        if cached.get("name") and _enrichment_name_missing(candidate):
+            candidate["name"] = cached["name"]
+        if cached.get("website"):
+            candidate["website"] = cached["website"]
+            from urllib.parse import urlsplit
+            website_host = urlsplit(str(cached["website"])).hostname
+            if website_host:
+                candidate["verified_issuer_domains"] = [website_host.removeprefix("www.").lower()]
+        if "BOND" not in {asset, instrument}:
+            # A manual display label is not the legal issuer. Use the profile
+            # bound by the normal provider to this exact listing when present.
+            candidate["issuer_name"] = cached.get("name") or candidate.get("name") or ""
+        else:
+            reference = _bond_market_data(candidate, cache_only=True) or {}
+            candidate["issuer_name"] = (reference.get("security") or {}).get("issuer") or ""
+        previous = records.get(candidate["security_key"])
+        if not previous or _enrichment_name_missing(previous):
+            records[candidate["security_key"]] = candidate
+    return sorted(records.values(), key=lambda row: row["security_key"])
+
+
+def _credit_research_settings():
+    from .price_agent import price_agent_settings
+    return price_agent_settings(config.raw)
+
+
+credit_rating_service = CreditRatingService(cache=lambda: hub().cache,
+    settings=lambda: config.market_data.get("credit_ratings", {}),
+    inventory=_credit_rating_inventory, research_settings=_credit_research_settings)
+app.include_router(credit_rating_service.router())
+
+
 _enrichment_api_preflight = ApiPreflight()
 _automatic_api_refresher = None
 
@@ -5201,6 +5265,10 @@ security_enrichment = EnrichmentJobs(app, lambda: _enrichment_assistant_settings
                                     outcome_reader=lambda: _enrichment_outcomes(),
                                     outcome_writer=lambda outcomes, user_id, request_id, **kwargs: _save_enrichment_outcomes(outcomes, user_id, request_id, **kwargs))
 app.include_router(security_enrichment.router())
+
+credit_rating_jobs = credit_rating_service.manager(app, lambda: _enrichment_assistant_settings(),
+    event_writer=lambda event, **fields: _record_log("market-data", "credit_" + event, **fields))
+app.include_router(credit_rating_jobs.router())
 
 
 AI_ENRICHMENT_JOB_ID = "ai-missing-data-enrichment"  # Legacy singleton, removed on reconciliation.

@@ -21,6 +21,14 @@ market_data:
     enabled: true
   google_finance:
     enabled: false
+  # Licensed issuer/issue credit ratings from Moody's, S&P and Fitch via one API.
+  # Without an entitled bearer token, the Ratings refresh uses bounded AI public
+  # source research. It never substitutes financial-ratio or stock-analyst grades.
+  credit_ratings:
+    verification_ttl_days: 30  # Last verified date, not rating-action age.
+    spglobal:
+      enabled: true
+      bearer_token: "${SPGLOBAL_RATINGS_TOKEN}"
   # Automatic US bond/fund research; GET /api/security/market-data.
   # Background/dashboard refresh also saves qualified automatic price observations.
   # Existing manual observations and recorded positions/transactions are preserved.
@@ -96,8 +104,9 @@ price_agent:
   max_web_calls: 8
   timeout_seconds: 110
   base_url: "https://localhost:6443"
-  # auto/jina reads rendered public pages without a key; only public source URLs
-  # are sent to Jina Reader. auto uses compatible HTTP for Google Finance.
+  # jina reads rendered public pages without a key; only public source URLs
+  # are sent to Jina Reader. auto also selects static HTTP for supported pages
+  # such as Google Finance and UBS investor relations, before one counted read.
   # compatible reads actual HTML with browser headers (no JavaScript or sign-in);
   # direct uses the plain HTTPS text reader. The AI can choose a reader per read.
   reader: "auto"

@@ -31,6 +31,7 @@
   <link rel="stylesheet" href="/heatmap.css?v=20261107-darker-large-moves" />
   <link rel="stylesheet" href="/risk-data-gaps.css?v=1" />
   <link rel="stylesheet" href="/risk-history.css?v=1" />
+  <link rel="stylesheet" href="/security-credit-ratings.css?v=2" />
   </head>
   <body>
     <div id="authOverlay" class="auth-overlay">
@@ -1336,6 +1337,9 @@
               <article class="help-feature">
                 <h3>Securities</h3>
                 <p>Open Portfolio → Securities to browse registered securities. Use Add security manually to enter the security details in a separate window, or Edit beside an existing security to update it. Save closes the editor after refreshing the list; Cancel closes without saving. Search by name, symbol or grant ID, filter by security type, and sort by name, symbol or type in either direction. Reset filters shows the full list again. Filtering and sorting use the loaded list without a server request; reopen Securities to retry a failed load. Use selects the security and opens a New transaction window; employee option grants open their dedicated workflow. Viewers can browse and filter but cannot create, edit or use securities to record transactions.</p>
+                <p>For company shares and bonds, select Ratings in Securities or open the security symbol in Holdings. Company credit ratings lists Moody’s, S&amp;P Global Ratings and Fitch separately, preserving each agency’s symbol, outlook and watch. An issuer rating describes a company; an issue rating describes a specific debt obligation. Global and national scales and long- and short-term ratings remain distinct. Open Details and sources for the rated entity, rating date, source observation date, retrieval date and supporting links. Dates use dd/mm/yyyy. Unknown fields stay unknown; Not found does not mean Unrated, and Withdrawn is shown explicitly. Stale evidence remains visible while a newer check is requested. These ratings do not change portfolio risk scores.</p>
+                <p>Last checked records a research attempt, which may not verify new information. Outlook and watch retain separate verification dates. Refreshing only the grade can preserve an earlier same-grade outlook or watch; its original verification date stays unchanged, with a stale badge in the affected cell when needed. Source observation and rating dates stay as published. The Other rating categories list in Details and sources shows saved deposit, senior unsecured, short-term, national-scale and other ancillary observations with their own entity, scope, scale, term, outlook, watch and source dates. Original signal verification dates remain separate from retrieval dates. A source observation or periodic review does not establish a rating action date. These categories do not replace an unavailable primary long-term issuer or issue rating or supply another legal entity’s rating.</p>
+                <p>Opening the overview reads saved ratings without starting Internet research. Admin and Operator users can select Refresh ratings to check configured APIs first, then use the permitted AI Internet workflow for unresolved agencies, including securities whose prices already use an API. Agency APIs may require paid access and explicit ratings entitlements; configuration does not guarantee coverage. Administrators configure market_data.credit_ratings in config.yaml with an entitled S&P Global bearer token; Docker uses the SPGLOBAL_RATINGS_TOKEN environment variable. Public AI research can run without this token. Rating API access shows provider status and documentation. Research shares the existing limits of up to eight AI interactions, eight application data operations and eight Internet requests; unsupported or unverified results remain unavailable. Research runs without blocking other sections. If a rating check is already running, wait until it finishes before refreshing another security. You can close and reopen the overview on the same signed-in page to see the same request. If progress is interrupted, Check AI progress resumes that request. Reload saved ratings retries a failed saved-data load. Viewers can inspect saved ratings and sources; refreshing requires editing permission.</p>
               </article>
               <article class="help-feature">
                 <h3>Transactions</h3>
@@ -1685,6 +1689,23 @@
           <button class="icon-button" type="button" data-close aria-label="Close">×</button>
         </div>
         <div id="securityDetailOverview" class="report-grid security-overview-grid"></div>
+        <section id="securityCreditRatings" class="security-credit-ratings" aria-labelledby="securityCreditRatingsTitle" aria-describedby="securityCreditRatingsScope" aria-busy="false" hidden>
+          <div class="section-head">
+            <div><h3 id="securityCreditRatingsTitle">Company credit ratings</h3><p id="securityCreditRatingsIssuer" class="section-note" dir="auto" hidden></p></div>
+            <div class="credit-ratings-actions">
+              <button id="refreshSecurityCreditRatings" class="secondary compact-button" type="button" aria-describedby="securityCreditRatingsStatus">Refresh ratings</button>
+              <button id="resumeSecurityCreditRatings" class="secondary compact-button" type="button" hidden>Check AI progress</button>
+              <button id="reloadSecurityCreditRatings" class="secondary compact-button" type="button" hidden>Reload saved ratings</button>
+            </div>
+          </div>
+          <p id="securityCreditRatingsScope" class="section-note">Issuer ratings assess a company; issue ratings assess a specific debt obligation. Outlook and watch are agency assessments. Missing evidence stays unknown.</p>
+          <p id="securityCreditRatingsStatus" class="status-line" role="status" aria-live="polite" aria-atomic="true" hidden></p>
+          <table class="credit-ratings-table" aria-label="Company credit ratings">
+            <thead><tr><th scope="col">Agency</th><th scope="col">Credit rating</th><th scope="col">Outlook</th><th scope="col">Watch</th><th scope="col">Evidence</th></tr></thead>
+            <tbody id="securityCreditRatingsRows"></tbody>
+          </table>
+          <div id="securityCreditRatingsProviders"></div>
+        </section>
         <section id="securityMarketReference" class="bond-reference-panel" aria-labelledby="securityMarketReferenceTitle" hidden>
           <div class="section-head"><h3 id="securityMarketReferenceTitle">API reference data</h3><button class="secondary compact-button" type="button" data-bond-reference="detail">Load API reference</button></div>
           <div class="bond-reference-content"></div>
@@ -3043,7 +3064,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <div id="riskBadgeExplanation" class="risk-badge-explanation" role="tooltip" hidden></div>
-  <script src="/i18n.js?v=20261112-transaction-layout"></script>
+  <script src="/i18n.js?v=20261113-credit-ratings"></script>
   <script src="/scheduler.js?v=2"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
@@ -3068,7 +3089,8 @@
   <script src="/price-input-units.js?v=1"></script>
   <script src="/alarm-priority-ui.js?v=20261112-transaction-table"></script>
   <script src="/account-cash-ui.js?v=20261109-cash-save-label"></script>
+  <script src="/security-credit-ratings.js?v=2"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=20261112-transaction-table"></script>
+  <script src="/app.js?v=20261113-credit-ratings"></script>
   </body>
 </html>

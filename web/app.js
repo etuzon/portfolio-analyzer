@@ -1167,6 +1167,7 @@ async function saveLoggingSettings() {
 const WRITE_CONTROL_IDS = new Set([
   "addHistoricalPrice",
   "aiEnrichmentStart", "aiEnrichmentStartAll", "aiEnrichmentResume",
+  "refreshSecurityCreditRatings",
   "saveXrayReport", "fetchXrayIssuer", "chooseXrayReportFile",
   "addAlertCondition", "newAlertRule", "addBannerItem", "addPensionPeriod", "addPensionRate", "addPensionScenario",
   "saveAISchedule", "applyBackupSchedule", "attachAccountToMember", "attachEditAccountPerson", "attachLocalAccountPerson",
@@ -1560,6 +1561,7 @@ function renderCurrentUser() {
   applyRolePermissions();
   renderAIEnrichment();
   renderPriceEntryState();
+  if (typeof renderSecurityCreditRatings === "function" && state.securityDetail) renderSecurityCreditRatings();
   renderAssistantChat();
 }
 
@@ -7758,6 +7760,7 @@ async function openSecurityDetail(dataset, returnFocus = document.activeElement)
     asset_sub_class: h.asset_sub_class || "",
     currency: dataset.securityDetailCurrency || h.currency || "USD",
     location: dataset.securityDetailLocation || h.country || h.location || "USA",
+    name: dataset.securityDetailName || h.name || symbol,
   };
   state.securityHistory = [];
   state.securityHistoryMeta = {};
@@ -7769,6 +7772,7 @@ async function openSecurityDetail(dataset, returnFocus = document.activeElement)
   $("detailPriceInput").value = "";
   $("detailPriceComments").value = "";
   openModal("securityDetailModal", returnFocus);
+  if (typeof openSecurityCreditRatings === "function") openSecurityCreditRatings(state.securityDetail);
   await loadSecurityDetail();
 }
 
@@ -7849,7 +7853,7 @@ function renderSecurityDetail() {
   const referenceData = detail.market_data || state.securityHistoryMeta?.market_data || detail.item?.market_data;
   $("securityDetailTitle").textContent = t(`${detail.symbol}${detail.secondary_symbol ? ` · ${detail.secondary_symbol}` : ""} overview`);
   $("securityDetailOverview").innerHTML = [
-    ["Name", h.name || detail.symbol],
+    ["Name", h.name || detail.name || detail.symbol],
     ...(detail.secondary_symbol ? [["Secondary symbol", detail.secondary_symbol, "Optional alternate ticker used for market-data lookup."]] : []),
     [manualRegistration ? "Instrument registration" : "Stock market", manualRegistration ? t("Manual registration") : detail.stock_market, manualRegistration ? "Manual describes instrument registration, not whether API reference data is available." : "The exchange/market where the security trades. This is not the API provider."],
     ...(bondReference ? [["Valuation price source", detail.valuation_provider || detail.data_provider, "Source of the prices currently used for the holding's value."], ["API reference source", referenceData?.security ? bondReferenceProvider(referenceData.provider) : t("Not available"), "API reference data does not change the holding's valuation."]]
@@ -7896,6 +7900,7 @@ function renderSecurityDetail() {
   renderSecurityTechnicalSignal();
   renderSecurityChart();
   renderBondReference("detail");
+  if (typeof renderSecurityCreditRatings === "function") renderSecurityCreditRatings();
   if ($("securityLocalPriceScope")) $("securityLocalPriceScope").hidden = !bondReference;
   if ($("securityChartTitle")) $("securityChartTitle").textContent = t(bondReference ? "Local valuation price history" : "Price chart");
   const failed = Object.values(load).includes("error");
@@ -9176,6 +9181,7 @@ function renderManualSecuritiesList() {
           <div class="sub">${esc(optionLabel(item.asset_class))}${item.grant_id ? ` · Grant ID ${esc(item.grant_id)}` : ""}${item.grant_date ? ` · Grant Date ${esc(formatDate(item.grant_date))}` : ""}${item.vesting_start_date ? ` · Vesting Start ${esc(formatDate(item.vesting_start_date))}` : ""}${item.underlying_symbol ? ` · Underlying ${esc(item.underlying_symbol)}` : ""}${item.option_type && item.instrument_type !== "EMPLOYEE_STOCK_OPTION" ? ` · ${esc(item.option_type)} option` : ""}${item.expiration_date ? ` · Exp ${esc(formatDate(item.expiration_date))}` : ""}${item.instrument_type === "BOND" ? ` · ${esc(t("Bond maturity date"))}: ${esc(item.maturity_date ? formatDate(item.maturity_date) : t("Not set"))}` : ""}${item.strike_price ? ` · Strike ${fmt(item.strike_price, 4)}` : ""}${item.instrument_type !== "EMPLOYEE_STOCK_OPTION" && item.contract_multiplier ? ` · Multiplier ${fmt(item.contract_multiplier, 4)}` : ""}${item.manual_share_value ? ` · Valuation ${money(item.manual_share_value, item.currency, 4)} on ${esc(formatDate(item.valuation_date))}` : ""}${item.comments ? ` · ${esc(item.comments)}` : ""}</div>
         </div>
         <div class="row-actions security-management-actions">
+          ${["STOCK", "BOND"].includes(item.instrument_type) ? `<button class="secondary compact-button" type="button" data-security-detail-symbol="${esc(item.symbol)}" data-security-detail-market-key="${esc(item.stock_market || "MANUAL")}" data-security-detail-stock-market="${esc(item.stock_market || "MANUAL")}" data-security-detail-asset="${esc(item.asset_class || (item.instrument_type === "BOND" ? "FIXED_INCOME" : "EQUITY"))}" data-security-detail-currency="${esc(item.currency)}" data-security-detail-location="${esc(item.location || "")}" data-security-detail-name="${esc(item.name || item.symbol)}" aria-haspopup="dialog" aria-controls="securityDetailModal">${esc(t("Ratings"))}</button>` : ""}
           <button class="secondary compact-button" type="button" data-use-manual-security="${esc(item.id)}">${employeeOptionsWorkflowActive() ? "Add to account" : "Use"}</button>
           <button class="secondary compact-button" type="button" data-edit-manual-security="${esc(item.id)}">Edit</button>
           ${item.instrument_type === "EMPLOYEE_STOCK_OPTION" && item.listing_status !== "PUBLIC" ? `<button class="secondary compact-button" type="button" data-link-employee-listing="${esc(item.id)}">Link public listing</button>` : ""}

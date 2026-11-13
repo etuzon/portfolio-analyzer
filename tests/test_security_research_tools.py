@@ -184,6 +184,26 @@ def test_rendered_reader_uses_documented_json_and_one_credential_free_request(mo
     assert not any(key in request.headers for key in ("authorization", "cookie", "x-set-cookie", "x-instruction", "x-json-schema", "x-inject-page-script"))
 
 
+@pytest.mark.parametrize("url,reader,static", [
+    ("https://www.ubs.com/global/en/investor-relations/investors/bondholder-information/ratings.html", "auto", True),
+    ("https://www.ubs.com/global/en/investor-relations/investors/bondholder-information/ratings.html", "jina", False),
+    ("https://www.ubs.com/global/en/investor-relations/report.pdf", "auto", False),
+    ("https://example.com/quote", "auto", False),
+])
+def test_static_issuer_reader_selects_engine_before_one_request_without_extra_access(monkeypatch, url, reader, static):
+    requests = []
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(200, json={"code": 200, "data": {"url": url, "content": "Issuer ratings table"}})
+    client_class = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kwargs: client_class(transport=httpx.MockTransport(handle), **kwargs))
+    document = fetch_research_document(url, {"reader": reader})
+    assert len(requests) == 1
+    assert requests[0].headers.get("x-engine") == ("direct" if static else None)
+    assert document["reader_engine"] == ("direct" if static else "rendered")
+    assert not any(key in requests[0].headers for key in ("authorization", "cookie", "x-set-cookie", "x-instruction", "x-inject-page-script"))
+
+
 def test_rendered_reader_does_not_retry_or_fallback_on_block(monkeypatch):
     requests = []
     client_class = httpx.Client
