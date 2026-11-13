@@ -22,7 +22,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
   <link rel="stylesheet" href="/styles.css?v=20261112-transaction-table" />
   <link rel="stylesheet" href="/holdings-sort.css?v=1" />
-  <link rel="stylesheet" href="/holdings-credit-ratings.css?v=1" />
+  <link rel="stylesheet" href="/holdings-credit-ratings.css?v=2" />
   <link rel="stylesheet" href="/transaction-list.css?v=3" />
   <link rel="stylesheet" href="/price-input-units.css?v=1" />
   <link rel="stylesheet" href="/benchmark.css?v=3" />
@@ -1355,7 +1355,7 @@
                 <p>To enter your own agency assessment, open a security overview and select Add manually or Edit manually beside that agency. The editor supports global long-term primary ratings only: an issuer rating for shares, or a bond issuer fallback or exact issue when a known ISIN/CUSIP permits it. Use the agency’s native grade list. Enter the legal issuer name if no verified identity is available; it is marked Manual identity and does not change the security profile. Outlook and Watch start Unknown. Unrated and Withdrawn are explicit user assertions and clear the grade, active signals and signal dates. Optional rating/status and signal action dates use dd/mm/yyyy, cannot be future dates, and stay blank when unknown.</p>
                 <p>Supply a public HTTPS source URL without credentials or a short note. Saving does not read or verify the URL. Save manual rating replaces the complete displayed agency record, including Unknown fields; it does not fill them from retrieved evidence. Manual labels, update time and editing user identify its provenance in the table and overview. Retrieved agency evidence remains separately inspectable, and API/AI checks cannot erase the override. Clear manual override restores the retained retrieved facts and their original freshness; saving an empty grade does not clear an override. Admin and Operator users can save or clear; Viewers can read. A failed save retains the draft. On a revision conflict, Reload saved ratings and review before saving again; an identity change requires a new entry. Cancel closes without saving. Other analytics remain usable while a manual request is pending.</p>
                 <p>Opening the overview only reads saved ratings. Admin and Operator users can select Refresh ratings to research Moody’s, S&amp;P Global Ratings and Fitch through the permitted public-source AI workflow, regardless of the price provider. No licensed agency API or rating token is required. The AI connection and Internet search must be available. Each request keeps the existing limits of up to eight model interactions, eight application REST operations and eight Internet requests. Unsupported or unverified facts remain Unknown. Research is non-blocking. If another rating request is running, wait for it to finish. Close and reopen the overview on the same signed-in page to see the same request; Check AI progress reads it after interruption. Reload saved ratings retries a failed saved-data read. For all eligible companies together, use Portfolio → Find missing data with AI. Viewers can read saved ratings, sources and history; starting research requires editing permission.</p>
-                <p>Credit ratings in Holdings include the previous → new primary grade or status and its date. Agency action dates appear only when the source dates that rating action; dates in links or unrelated articles are ignored. Otherwise Detected at identifies when the app first accepted the change. First recorded is an initial observation, not an upgrade. An unchanged refresh does not reset the last grade change. Open Rating history in the security overview for comparable agency/entity/category changes, separate Outlook and Watch changes, dates and sources. Manual add, edit and clear events have their own labels and editing user; clearing an override is not an agency action. History is saved with local portfolio preferences and included in backups; opening it never creates events or starts research.</p>
+                <p>Credit ratings in Holdings include the current primary grade or status. Grade colors describe the latest comparable agency grade change: green for an upgrade, red for a downgrade and blue when unchanged or no comparable change is recorded. Colors compare native agency grades for the same entity, scope, scale, term, category and currency basis; first observations, manual edits and unknown statuses are not upgrades or downgrades. An unchanged refresh retains the last recorded grade change. Previous → new grades, First recorded and dates appear in the information tooltip instead of inline. Hover over or focus the information button, or tap it to keep the explanation open. Use arrow keys or Page Up and Page Down to scroll it; press Escape, tap again or click elsewhere to close it. Selecting the rating itself opens the overview. Agency action dates appear only when source-supported; Detected at remains separate. Manual add, edit and clear events keep their labels and editing user. Open Rating history in the overview for the full saved history, separate Outlook and Watch changes, dates and sources. History stays in local preferences and backups; opening it never starts research or creates events.</p>
               </article>
               <article class="help-feature">
                 <h3>Transactions</h3>
@@ -3210,7 +3210,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <div id="riskBadgeExplanation" class="risk-badge-explanation" role="tooltip" hidden></div>
-  <script src="/i18n.js?v=20261113-sovereign-ratings"></script>
+  <script src="/i18n.js?v=20261113-credit-grade-colors"></script>
   <script src="/scheduler.js?v=2"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
@@ -3236,12 +3236,12 @@
   <script src="/alarm-priority-ui.js?v=20261112-transaction-table"></script>
   <script src="/account-cash-ui.js?v=20261109-cash-save-label"></script>
   <script src="/security-credit-ratings.js?v=5"></script>
-  <script src="/credit-rating-history.js?v=2"></script>
+  <script src="/credit-rating-history.js?v=3"></script>
   <script src="/manual-credit-ratings.js?v=1"></script>
   <script src="/sovereign-credit-ratings.js?v=1"></script>
-  <script src="/holdings-credit-ratings.js?v=3"></script>
+  <script src="/holdings-credit-ratings.js?v=4"></script>
   <script src="/ai-credit-ratings.js?v=2"></script>
-  <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=20261113-sovereign-ratings"></script>
+  <script src="/risk-badge-ui.js?v=2"></script>
+  <script src="/app.js?v=20261113-credit-grade-colors"></script>
   </body>
 </html>

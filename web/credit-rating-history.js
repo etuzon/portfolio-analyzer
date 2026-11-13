@@ -37,8 +37,13 @@ function creditRatingHistoryTransitionHtml(change) {
 
 function creditRatingLatestChangeText(event) {
   if (!event) return "";
-  const transitions = creditRatingHistoryChanges(event).map((change) => `${t(change.label)}: ${change.previous !== null ? `${change.previous} → ` : ""}${change.current}`);
-  return [creditRatingHistoryEventLabel(event), ...transitions, `${t(creditRatingHistoryDateLabel(event))}: ${creditRatingHistoryDate(event)}`].join(" · ");
+  const transitions = creditRatingHistoryChanges(event).map((change) => `${t(change.label)}: \u2066${change.previous !== null ? `${change.previous} → ` : ""}${change.current}\u2069`);
+  const dates=[`${t(creditRatingHistoryDateLabel(event))}: ${creditRatingHistoryDate(event)}`];
+  if(event.origin !== "manual" && event.date_basis === "agency_action" && event.detected_at) dates.push(`${t("Detected at")}: ${creditRatingsDate(event.detected_at)}`);
+  for(const [field,label] of [["rating_date","Rating date"],["outlook_date","Outlook date"],["watch_date","Watch date"]]) if(event[field]) dates.push(`${t(label)}: ${creditRatingsDate(event[field])}`);
+  if(event.actor) dates.push(`${t("Updated by")}: ${event.actor}`);
+  if(event.origin === "manual") dates.push(t("This records a manual edit, not an agency rating action."));
+  return [creditRatingHistoryEventLabel(event), ...transitions, ...dates].join(" · ");
 }
 
 function creditRatingLatestChangeHtml(record) {

@@ -22,3 +22,15 @@
   .holding-credit-ratings { min-height: 84px; font-size: 12px; }
   .holding-credit-agency { grid-template-columns: 55px minmax(0, 1fr); }
 }
+
+.holding-credit-ratings-layout { display:grid; grid-template-columns:minmax(0,1fr) 22px; align-items:start; gap:4px; }
+.holding-credit-grade-unchanged > bdi { color:#5fb8ff; }
+.holding-credit-grade-upgrade > bdi { color:#6ee787; }
+.holding-credit-grade-downgrade > bdi { color:#ff6875; }
+.holding-credit-history-info { width:22px; height:26px; min-height:26px; padding:0; border:0; background:transparent; color:var(--ux-muted); font:inherit; font-size:15px; line-height:1; cursor:var(--info-cursor); }
+.holding-credit-history-info:hover { color:var(--ux-text); background:rgba(124,92,255,.08); }
+.holding-credit-history-info:focus-visible { outline:2px solid var(--ux-blue); outline-offset:2px; }
+@media(max-width:760px) {
+  .holding-credit-ratings-layout { grid-template-columns:minmax(0,1fr) 44px; }
+  .holding-credit-history-info { width:44px; height:44px; min-height:44px; }
+}

@@ -148,7 +148,7 @@ const summary=holdingsCreditRatingsEntry('ACME|NASDAQ|USD');summary.state='ready
 renderRows(state.items);applyLanguage();renderHoldingsCreditRatings();document.querySelector('.holding-credit-ratings-cell').scrollIntoView({block:'center'});
 ''')
     table_geometry = evaluate("(()=>{const cell=document.querySelector('.holding-credit-ratings-cell');return {overflow:document.documentElement.scrollWidth-innerWidth,clipped:cell.scrollWidth>cell.clientWidth+1,width:cell.getBoundingClientRect().width,height:cell.getBoundingClientRect().height,changes:cell.querySelectorAll('[data-credit-latest-change]').length}})()")
-    assert table_geometry["overflow"] <= 1 and not table_geometry["clipped"] and table_geometry["changes"] == 3, table_geometry
+    assert table_geometry["overflow"] <= 1 and not table_geometry["clipped"] and table_geometry["changes"] == 0, table_geometry
     (tmp_path / f"rating-table-history-{language}-{width}.png").write_bytes(base64.b64decode(command("Page.captureScreenshot", {"format": "png", "captureBeyondViewport": False})["data"]))
     assert evaluate("qa.aiPosts") == 0
     assert evaluate("qa.errors") == []

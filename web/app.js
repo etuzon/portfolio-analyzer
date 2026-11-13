@@ -4359,7 +4359,7 @@ function preserveRenderedInteraction(root) {
   const active = root.contains(document.activeElement) ? document.activeElement : null;
   const rowKey = active?.closest("[data-portfolio-position]")?.dataset.portfolioPosition;
   const accountKey = active?.closest("[data-account-summary]")?.dataset.accountSummary;
-  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-update-account-cash|data-cash-entry|data-risk-badge|data-edit-security|data-delete-security|data-open-risk-scenarios|data-open-(signal|risk|dividend|vesting|maturity)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
+  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-update-account-cash|data-cash-entry|data-risk-badge|data-holdings-credit-info|data-edit-security|data-delete-security|data-open-risk-scenarios|data-open-(signal|risk|dividend|vesting|maturity)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
   const detailKey = (node) => JSON.stringify([node.closest?.("[data-account-summary]")?.dataset.accountSummary || "", node.id, node.className]);
   const detailStates = new Map();
   root.querySelectorAll("details").forEach((node) => {

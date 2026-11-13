@@ -33,6 +33,36 @@ function holdingsCreditRatingStatus(record = {}) {
     unavailable: "Unavailable", conflicting: "Conflicting evidence" }[record.status] || "Not checked");
 }
 
+function holdingsCreditRatingDescriptionValue(record = {}) {
+  const value = holdingsCreditRatingStatus(record);
+  // Keep native symbols such as AA-, BBB+ and Aa2 intact inside RTL prose.
+  return record.status === "rated" && record.rating ? `\u2066${value}\u2069` : value;
+}
+
+function holdingsCreditRatingEntity(value) {
+  const forms={corp:"corporation",inc:"incorporated",ltd:"limited"};
+  return (String(value || "").normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replaceAll("&", " and ").match(/[\p{L}\p{N}]+/gu) || [])
+    .map((word)=>Object.hasOwn(forms,word) ? forms[word] : word).join(" ");
+}
+
+function holdingsCreditRatingTone(record = {}) {
+  const change=record.latest_change, grades=typeof MANUAL_CREDIT_GRADES === "undefined" ? null : MANUAL_CREDIT_GRADES[record.agency];
+  if (record.status !== "rated" || record.primary_eligible === false || creditRatingsIsManual(record) || record.identity_verification === "user_entered"
+    || !change || change.origin !== "public_ai" || change.event_type !== "rating_change"
+    || change.previous_status !== "rated" || change.new_status !== "rated" || change.new_rating !== record.rating
+    || change.agency !== record.agency || record.scale !== "global" || record.term !== "long_term" || !record.scope || !record.rating_type
+    || !holdingsCreditRatingEntity(record.entity_name) || holdingsCreditRatingEntity(record.entity_name) !== holdingsCreditRatingEntity(change.entity_name)
+    || ["scope","scale","term","rating_type","currency_basis"].some((field)=>(record[field] ?? null) !== (change[field] ?? null)) || !grades) return "unchanged";
+  // Missing exact debt identity cannot establish a comparable issue transition.
+  if (record.scope === "issue" && !["isin","cusip"].some((field)=>record[field] && record[field] === change[field])) return "unchanged";
+  const previous=grades.indexOf(change.previous_rating), current=grades.indexOf(change.new_rating);
+  return previous < 0 || current < 0 || current === previous ? "unchanged" : current < previous ? "upgrade" : "downgrade";
+}
+
+function holdingsCreditRatingToneLabel(record) {
+  return t({upgrade:"Agency rating upgraded",downgrade:"Agency rating downgraded",unchanged:"No comparable agency grade change"}[holdingsCreditRatingTone(record)]);
+}
+
 function holdingsCreditRatingsContent(entry) {
   const agencies = [["moodys", "Moody’s"], ["sp", "S&P"], ["fitch", "Fitch"]];
   const rows = Array.isArray(entry.context?.ratings) ? entry.context.ratings : [];
@@ -47,8 +77,8 @@ function holdingsCreditRatingsContent(entry) {
       : record.status === "unavailable" && (record.reason_code === "primary_rating_unavailable"
         || Array.isArray(record.observations) && record.observations.some((row) => row.agency === key && row.primary_eligible === false)) ? t("Other categories") : "";
     const extra = [manual && t("Manual"), manual && record.identity_verification === "user_entered" && t("Manual identity"), category].filter(Boolean).join(" · ");
-    const history = !pending && typeof creditRatingLatestChangeHtml === "function" ? creditRatingLatestChangeHtml(record) : "";
-    return `<span class="holding-credit-agency"><bdi class="holding-credit-agency-name" dir="ltr">${esc(name)}</bdi><span class="holding-credit-opinion"><span class="holding-credit-grade"><bdi dir="auto">${esc(status)}</bdi>${record.stale ? staleMark(manual ? "Old manual entry" : "Stale evidence") : ""}</span>${pending ? "" : `<span class="holding-credit-forward"><span title="${esc(`${t("Outlook")}: ${creditRatingsDirection(record.outlook)}`)}">${esc(creditRatingsDirection(record.outlook))}${!manual && record.outlook_stale ? staleMark("Stale outlook") : ""}</span><span class="holding-credit-divider" aria-hidden="true">/</span><span${["positive", "negative", "developing"].includes(record.watch) ? ' class="holding-credit-active-watch"' : ""} title="${esc(`${t("Watch")}: ${creditRatingsDirection(record.watch, true)}`)}">${esc(creditRatingsDirection(record.watch, true))}${!manual && record.watch_stale ? staleMark("Stale watch") : ""}</span></span>`}${extra ? `<span class="holding-credit-category">${esc(extra)}</span>` : ""}${history}</span></span>`;
+    const tone = !pending && record.status === "rated" && record.rating ? holdingsCreditRatingTone(record) : "";
+    return `<span class="holding-credit-agency"><bdi class="holding-credit-agency-name" dir="ltr">${esc(name)}</bdi><span class="holding-credit-opinion"><span class="holding-credit-grade${tone ? ` holding-credit-grade-${tone}` : ""}"${tone ? ` data-credit-grade-tone="${tone}"` : ""}><bdi dir="auto">${esc(status)}</bdi>${record.stale ? staleMark(manual ? "Old manual entry" : "Stale evidence") : ""}</span>${pending ? "" : `<span class="holding-credit-forward"><span title="${esc(`${t("Outlook")}: ${creditRatingsDirection(record.outlook)}`)}">${esc(creditRatingsDirection(record.outlook))}${!manual && record.outlook_stale ? staleMark("Stale outlook") : ""}</span><span class="holding-credit-divider" aria-hidden="true">/</span><span${["positive", "negative", "developing"].includes(record.watch) ? ' class="holding-credit-active-watch"' : ""} title="${esc(`${t("Watch")}: ${creditRatingsDirection(record.watch, true)}`)}">${esc(creditRatingsDirection(record.watch, true))}${!manual && record.watch_stale ? staleMark("Stale watch") : ""}</span></span>`}${extra ? `<span class="holding-credit-category">${esc(extra)}</span>` : ""}</span></span>`;
   }).join("")}`;
 }
 
@@ -60,7 +90,7 @@ function holdingsCreditRatingsDescription(entry, symbol) {
   for (const [key, name] of [["moodys", "Moody’s"], ["sp", "S&P Global Ratings"], ["fitch", "Fitch"]]) {
     const record = (Array.isArray(entry.context?.ratings) ? entry.context.ratings : []).find((row) => row.agency === key)
       || { status: ["error", "not_found"].includes(entry.state) ? "unavailable" : "not_checked" };
-    lines.push(`${name}: ${holdingsCreditRatingStatus(record)} · ${t("Outlook")}: ${creditRatingsDirection(record.outlook)} · ${t("Watch")}: ${creditRatingsDirection(record.watch, true)}`);
+    lines.push(`${name}: ${holdingsCreditRatingDescriptionValue(record)}${record.status === "rated" && record.rating ? ` · ${holdingsCreditRatingToneLabel(record)}` : ""} · ${t("Outlook")}: ${creditRatingsDirection(record.outlook)} · ${t("Watch")}: ${creditRatingsDirection(record.watch, true)}`);
     const manual = creditRatingsIsManual(record);
     const reason = manual ? t("User-entered information; the app has not independently verified this rating.") : creditRatingsReason(record.reason_code, record.status);
     if (reason) lines.push(reason);
@@ -87,8 +117,9 @@ function holdingCreditRatingsCellHtml(item) {
   }
   if (!holdingsCreditRatingsIdentityValid(holding)) return `<td class="holding-credit-ratings-cell" data-label="${esc(t("Credit ratings"))}"><span class="holding-credit-inapplicable" title="${esc(t("A symbol, stock market and currency are required for saved company ratings."))}">${esc(t("Unavailable"))}</span></td>`;
   const key = holdingsCreditRatingsKey(holding), entry = holdingsCreditRatingsEntry(key);
-  const marketKey = holdingMarketKey(holding);
-  return `<td class="holding-credit-ratings-cell" data-label="${esc(t("Credit ratings"))}"><button class="holding-credit-ratings" type="button" data-holdings-credit-key="${esc(key)}" data-holdings-credit-symbol="${esc(holding.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(stockMarketDisplay(holding, marketKey, item.exchange))}" data-security-detail-provider="${esc(dataProviderDisplay(item, holding, marketKey))}" data-security-detail-asset="${esc(holding.asset_class)}" data-security-detail-currency="${esc(holding.currency)}" data-security-detail-location="${esc(holding.country || holding.location || "")}" data-security-detail-name="${esc(holding.name || holding.symbol)}" aria-haspopup="dialog" aria-controls="securityDetailModal" aria-busy="${entry.state === "loading"}" aria-label="${esc(holdingsCreditRatingsDescription(entry, holding.symbol))}" title="${esc(holdingsCreditRatingsDescription(entry, holding.symbol))}">${holdingsCreditRatingsContent(entry)}</button></td>`;
+  const marketKey = holdingMarketKey(holding), description = holdingsCreditRatingsDescription(entry, holding.symbol);
+  const infoLabel=t("Rating changes and dates for {symbol}").replace("{symbol}",holding.symbol);
+  return `<td class="holding-credit-ratings-cell" data-label="${esc(t("Credit ratings"))}"><div class="holding-credit-ratings-layout"><button class="holding-credit-ratings" type="button" data-holdings-credit-key="${esc(key)}" data-holdings-credit-symbol="${esc(holding.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(stockMarketDisplay(holding, marketKey, item.exchange))}" data-security-detail-provider="${esc(dataProviderDisplay(item, holding, marketKey))}" data-security-detail-asset="${esc(holding.asset_class)}" data-security-detail-currency="${esc(holding.currency)}" data-security-detail-location="${esc(holding.country || holding.location || "")}" data-security-detail-name="${esc(holding.name || holding.symbol)}" aria-haspopup="dialog" aria-controls="securityDetailModal" aria-busy="${entry.state === "loading"}" aria-label="${esc(description)}" title="${esc(description)}">${holdingsCreditRatingsContent(entry)}</button><button class="holding-credit-history-info" type="button" data-holdings-credit-info="${esc(key)}" data-explanation="${esc(description)}" aria-label="${esc(infoLabel)}" aria-describedby="riskBadgeExplanation">ⓘ</button></div></td>`;
 }
 
 function renderHoldingsCreditRatings() {
@@ -101,6 +132,8 @@ function renderHoldingsCreditRatings() {
     button.title = description;
     button.setAttribute("aria-label", description);
     button.setAttribute("aria-busy", String(entry.state === "loading"));
+    const info=button.parentElement?.querySelector("[data-holdings-credit-info]");
+    if(info){info.dataset.explanation=description; const label=t("Rating changes and dates for {symbol}").replace("{symbol}",button.dataset.holdingsCreditSymbol);info.setAttribute("aria-label",label);}
   });
 }
 

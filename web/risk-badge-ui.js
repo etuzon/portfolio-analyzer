@@ -97,6 +97,13 @@
   }, true);
   window.addEventListener("resize", position);
   document.addEventListener("scroll", position, true);
-  new MutationObserver(() => { if (source && !source.isConnected) hide(); })
-    .observe(document.body, { childList: true, subtree: true });
+  new MutationObserver((mutations) => {
+    if (source && !source.isConnected) { hide(); return; }
+    if (source && !panel()?.hidden && mutations.some((mutation) => mutation.type === "attributes" && mutation.target === source)) {
+      const scrollTop = panel().scrollTop;
+      show(source);
+      panel().scrollTop = Math.min(scrollTop, Math.max(0, panel().scrollHeight - panel().clientHeight));
+    }
+  }).observe(document.body, { childList: true, subtree: true, attributes: true,
+    attributeFilter: ["data-explanation", "data-risk-explanation"] });
 })();
