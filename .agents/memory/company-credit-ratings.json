@@ -1,0 +1,142 @@
+{
+  "updated_at": "2026-11-13T20:23:31.165984+00:00",
+  "task": "Public company credit ratings, manual overrides, history, and all-position AI research",
+  "user_preferences": {
+    "agencies": [
+      "moodys",
+      "sp",
+      "fitch"
+    ],
+    "licensed_rating_feeds": false,
+    "public_source_ai": true,
+    "holdings_column": "Immediately after Dividend Trend",
+    "manual_ratings": "Allow authorized user add/update/clear; preserve provenance",
+    "history": "Show prior/current rating and supported action date or explicitly detected date",
+    "ratings_only": "Optional checkbox in Find missing data with AI; skip prices/profile",
+    "research_scope": "All eligible open securities, including API-priced stocks",
+    "release_authorized": true,
+    "holdings_rating_colors": {
+      "unchanged_or_no_comparable_change": "blue",
+      "downgrade": "red",
+      "upgrade": "green",
+      "basis": "Latest recorded comparable public agency grade change within the same native scale and exact entity/category; manual/first-observation/status-only events neutral."
+    },
+    "holdings_history_display": "Tooltip on information button; remove inline First recorded/Detected dates and transitions; full overview history retained."
+  },
+  "risk_review": {
+    "status": "postponed; numeric model unchanged by ratings UI delivery",
+    "simulations_per_scenario_requested": 200,
+    "formula_changed_by_this_task": false,
+    "next_review_must_include": "Company credit rating, outlook/watch and missing-evidence confidence"
+  },
+  "qa": {
+    "status": "Ready; all required local and production acceptance passed",
+    "focused_tests_passed": 315,
+    "additional_probes_passed": 20,
+    "verdict": ".runtime/all-open-credit-qa-2026-11-13/final-review.json",
+    "next_action": "No open company rating or holdings color-tooltip acceptance failures. Numeric risk review remains postponed.",
+    "focused_corrective_tests_passed": 276,
+    "correction_review": ".runtime/all-open-credit-postdeploy-qa-2026-11-13/corrective-fix-independent-review.json",
+    "real_source_retake": "BBDC authenticated General AI retrieves current official Fitch issuer fact within7model/8REST/6web; no grades seeded.",
+    "real_resume_retake": "Normal HTTP logout/401, fresh same-owner login+CSRF, explicit same-process/same-ID resume preserves completed context and targets only unfinished securities.",
+    "production_audit": ".runtime/all-open-credit-postdeploy-qa-2026-11-13/production-bbdc-and-cmdb-independent-review.json",
+    "correction_scope": [
+      "app/credit_ratings.py",
+      "tests/test_credit_ratings.py",
+      "tests/test_credit_rating_history.py",
+      "tests/test_ai_credit_ratings_frontend.py",
+      "web/ai-credit-ratings.js",
+      "web/i18n.js",
+      "web/index.html"
+    ],
+    "blocked_marker": "cleared",
+    "final_review": ".runtime/all-open-credit-postdeploy-qa-2026-11-13/final-production-acceptance.json"
+  },
+  "release": {
+    "status": "deployed and verified",
+    "commit": "90528a4c0bac64b5a10660ef563e5c2a9461bb74",
+    "https_health": "ok",
+    "container_sources_verified": 16,
+    "served_assets_verified": 9,
+    "full_release_suite": "passed",
+    "task_smoke": ".runtime/all-open-credit-ai-2026-11-13/deployed_smoke_result.json",
+    "log": ".runtime/releases/release.du2l71tg.log",
+    "follow_up_fix": {
+      "status": "deployed",
+      "commit": "c76af0a41cce27ca13ed410a0cc681a6ab20c061",
+      "log": ".runtime/releases/release.LNpbkhwj.log",
+      "https_health": "ok",
+      "container_sources_verified": 5,
+      "served_assets_verified": 2,
+      "full_release_suite": "passed",
+      "task_smoke": "passed"
+    },
+    "current_commit": "c9966203f4d057249a8ee7959a3853746f9d3a6a",
+    "final_correction": {
+      "status": "passed",
+      "target": "Established local Docker Compose HTTPS localhost:6443",
+      "health": "ok",
+      "full_release_tests": "passed",
+      "container_sources_verified": 4,
+      "served_assets_verified": 3,
+      "log": ".runtime/releases/release.uRbxncJq.log",
+      "task_smoke": "deployed_smoke_result.json"
+    },
+    "holdings_color_tooltip": {
+      "status": "deployed and verified",
+      "commit": "01571122ce95bf88d770b9a0825ef8bf2192c928",
+      "log": ".runtime/releases/release.34lvJlWP.log",
+      "health": "ok",
+      "full_release_suite": "passed",
+      "focused_checks": 123,
+      "sources_verified": 7,
+      "served_assets_verified": 7,
+      "independent_qa": ".runtime/holdings-credit-colors-qa-2026-11-13/final-review.json",
+      "deployed_smoke": ".runtime/holdings-credit-colors-qa-2026-11-13/deployed-smoke.json",
+      "notation": "RTL tooltip native grades isolated with LRI/PDI; AA-/BBB+ signs independently verified in all summary/first/public/manual occurrences.",
+      "production_review": ".runtime/holdings-credit-colors-qa-2026-11-13/production-review.json",
+      "full_release_tests_passed": 3248,
+      "acceptance": "Ready/CLOSED; no open required checks"
+    }
+  },
+  "live_research": {
+    "status": "complete",
+    "ratings_only": true,
+    "scope": "open",
+    "eligible_exact_securities": 26,
+    "request_id": "783dacde-0830-4c86-be40-5425fde1481f",
+    "receipt": ".runtime/all-open-credit-ai-2026-11-13/live-ratings-only/result.json",
+    "note": "Actual public AI research; credentials held only in controller memory and revoked at finish.",
+    "completed": 5,
+    "not_attempted": 21,
+    "session_revoked": true,
+    "blocker": "BBDC official public Fitch fact missed; CMDB search returned invalid_request before web.",
+    "failed_receipt": ".runtime/all-open-credit-ai-2026-11-13/live-ratings-only/result.json",
+    "planned_after_deploy": "Explicit BBDC acceptance retake plus only original21 not_attempted keys; new selected parents because old job is process-local.",
+    "known_failures": "BBDC supported fact retrieval and CMDB zero-web starvation independently closed on deployed fix.",
+    "current_receipt": ".runtime/all-open-credit-ai-2026-11-13/live-resume/result.json",
+    "new_blocker": "CRC S&Psource *21-Aug-2026 timestamp readbutdateparserleftblank; acceptedgrade/entity/outlookpass.",
+    "checked": 26,
+    "primary_verified_companies": 6,
+    "verified_keys": [
+      "BBDC|YAHOO|USD",
+      "CRC|YAHOO|USD",
+      "FDUS|YAHOO|USD",
+      "OBDC|YAHOO|USD",
+      "RITM|YAHOO|USD",
+      "SLRC|YAHOO|USD"
+    ],
+    "manual_history_preserved": "Explicit same-ID NREF resume preserved completed NEWT; prior receipts immutable.",
+    "securities_with_some_verified_facts": 7,
+    "accepted_typed_observations": 9,
+    "source_field_backfills_complete": true,
+    "final_report": ".runtime/all-open-credit-ai-2026-11-13/release_result.json"
+  },
+  "pending_public_field_refreshes": {},
+  "qualifications": [
+    "Unknown is not Unrated. Public evidence is incomplete.",
+    "PRU observations are junior-subordinated debt-class facts, not primary issuer grades.",
+    "SLRC is supported by the dated 30/06/2025 agency action; fetching it today is not an exhaustive latest-history claim.",
+    "Runtime source-cache/history updates only; no prices, quantities, cash, broker/import records or manual grades were edited."
+  ]
+}

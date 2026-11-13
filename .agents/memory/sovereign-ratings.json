@@ -1,0 +1,48 @@
+{
+  "updated_at": "2026-11-13T19:46:13.022743+00:00",
+  "status": "Complete; committed/deployed/independently verified",
+  "requirements": {
+    "agencies": [
+      "moodys",
+      "sp",
+      "fitch"
+    ],
+    "global_long_term_currency_bases": [
+      "foreign_currency",
+      "local_currency",
+      "unknown"
+    ],
+    "history": "Durable acquired public observations and manual edits; agency action dates separate from detected dates; no fabricated complete archive",
+    "schedule": {
+      "default_enabled": false,
+      "default_scope": "accounts",
+      "account_country_source": "account.location only; deduplicated; unknown stays empty",
+      "all_scope": "Explicit all249ISOjurisdictions; not all are independently sovereign or rated",
+      "frequency": "Shared minutely/hourly/daily/weekly/monthly recurrence and IANA timezone",
+      "owner": "Current saving user permissions; revoke short-lived session; skip overlap and missed runs"
+    },
+    "manual_country_association": "Issuer domicile from cached profile.country or explicit CAS override; independent from account country/currency/exchange",
+    "licensed_rating_feed_required": false
+  },
+  "risk_formula": {
+    "changed": false,
+    "review": "Still postponed;200simulations per scenario requested"
+  },
+  "qa": {
+    "status": "Ready",
+    "affected_checks_passed": 306,
+    "report": ".runtime/sovereign-independent-qa-2026-11-13/final-review.json",
+    "production_status": "Ready; no open required checks"
+  },
+  "real_ai_proof": ".runtime/sovereign-rating-review/actual-auth-parent-accepted/result.json",
+  "release_log": ".runtime/releases/release.yqjMtYf4.log",
+  "commit": "854fa4feec05058781d7a4d3c28ab73f1372390c",
+  "production_qa": ".runtime/sovereign-independent-qa-2026-11-13/production-final-review.json",
+  "production_receipt": ".runtime/sovereign-release-2026-11-13/live-result.json",
+  "schedule_enabled": false,
+  "account_countries_verified": [
+    "IL",
+    "US"
+  ],
+  "iso_catalog_size": 249
+}

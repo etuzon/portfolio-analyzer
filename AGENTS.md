@@ -86,6 +86,8 @@ The Docker app is served at `https://localhost:6443`.
 
 ### Existing Models and Implementation Patterns
 
+- Dated risk-formula research is retained in [.agents/memory/risk-formula-review.json](.agents/memory/risk-formula-review.json). Treat prior recommendations as research comparators, not an implemented model or a fixed conclusion. For a fresh assessment, freeze the new method before consulting prior rankings.
+
 - For financial score, report normalization, or forecast evaluation changes, read [.agents/skills/company-outlook-model/SKILL.md](.agents/skills/company-outlook-model/SKILL.md) and keep its implemented formula aligned with code.
 - For portfolio risk, cash-buffer, or borrowing-score changes, read [.agents/skills/trade-simulation/references/portfolio-risk.md](.agents/skills/trade-simulation/references/portfolio-risk.md) and keep the dashboard and simulator on the same model.
 - Prefer existing patterns in `app/local_portfolio.py`, `app/main.py`, and `web/app.js`.

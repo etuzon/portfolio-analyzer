@@ -1,0 +1,123 @@
+{
+  "topic": "Portfolio risk formula research",
+  "saved_at": "2026-11-13",
+  "purpose": "Preserve dated research findings and comparators at the user's explicit request. This is not an implemented model or authorization to change/deploy the application.",
+  "prior_review": {
+    "artifact_directory": ".runtime/risk-formula-review-2026-11-13",
+    "report": "output/pdf/portfolio-risk-formula-review-2026-11-13.pdf",
+    "scenario_families": 14,
+    "variants_per_family": 100,
+    "formula_evaluations": 7000,
+    "recommendation": "F2 maximum illustrative stress loss, with F3 as a secondary factor-risk check; show stressed loss, borrowing and coverage separately.",
+    "quality_grades": {
+      "F0_current": 54.75,
+      "F1_repaired": 85,
+      "F2_stress": 93,
+      "F3_factor": 91,
+      "F4_hybrid": 90
+    },
+    "portfolio_scores": {
+      "F0_current": 31,
+      "F1_repaired": 16,
+      "F2_stress": 52,
+      "F3_factor": 19,
+      "F4_hybrid": 42
+    },
+    "meaning": "Quality grades use a declared judgmental/structural rubric and are not predictive accuracy. Portfolio scores are different model scales.",
+    "material_findings": [
+      "Current v2 changed from 31 to 17 when identical exposures were split into rows.",
+      "Equivalent account repartition changed the current model's score.",
+      "Recorded pension/savings funds were outside the holdings risk model; their allocations were unavailable.",
+      "Some bond/fund valuations were stale; reconciliation did not establish current broker market values.",
+      "No formula was calibrated or validated against a chronological holdout of observed portfolio losses."
+    ]
+  },
+  "latest_user_request": "Use a fresh-context review, choose/load appropriate skills before analysis, compare all formulas with current v2 and the previous F2 recommendation, and run 200 variants per scenario family.",
+  "decision_rule": "Treat previous findings as comparators, not the oracle. Freeze methods and scoring before outcomes. Preserve missing exposures and distinguish research from production behavior.",
+  "current_priority": {
+    "instruction": "Postpone risk calculations until the company credit-rating mission is finished.",
+    "risk_status": "postponed_not_resumed_during_company_ratings_mission",
+    "preserved_research": ".runtime/risk-formula-review-200-2026-11-13/",
+    "company_ratings": {
+      "agencies": [
+        "Moody's",
+        "S&P Global Ratings",
+        "Fitch"
+      ],
+      "fields": [
+        "rating",
+        "outlook",
+        "watch or review",
+        "legal entity",
+        "issuer or exact issue",
+        "scale",
+        "term",
+        "supported dates",
+        "source provenance"
+      ],
+      "retrieval": "Licensed API first; bounded authenticated AI public-source research for missing evidence.",
+      "risk_requirement": "Include eligible verified credit-rating and forward-signal evidence in the subsequent risk model assessment; no risk formula changes during this phase.",
+      "implementation_status": "Company rating retrieval/overview, Holdings summaries and manual add/edit/clear are committed and deployed; latest dd0dcbf; independent acceptance Ready; risk research remains postponed and local.",
+      "deployment": {
+        "commit": "dd0dcbf",
+        "target": "https://localhost:6443",
+        "release_script": "passed",
+        "verification": "Full pytest release gate passed; 11 container sources and 7 served assets matched commit; live column order, route/auth guards and isolated deployed-image manual lifecycle passed.",
+        "evidence": ".runtime/manual-credit-ratings-2026-11-13/release_result.json"
+      },
+      "evidence_directory": ".runtime/company-credit-ratings-2026-11-13/",
+      "qa_report": ".runtime/company-credit-ratings-2026-11-13/qa/final_review.json",
+      "verification": "3003 full-suite tests, 14 independent financial checks and 57 actual-browser assertions passed; real authenticated AI retrieval and restart persistence verified on JPM, EDF and UBS.",
+      "licensed_api_limit": "S&P Global Agency Ratings adapter supports the documented all-three-agency schema. Paid live access was not exercised because no entitlement was supplied; public AI fallback was verified.",
+      "important_category_example": "UBS Group AG Moody's A2/Stable is senior unsecured debt, not a parent issuer rating; retain as ancillary. S&P A-/Stable and Fitch A+/Stable apply to the parent issuer/IDR. Never substitute UBS AG bank ratings.",
+      "date_rule": "Keep rating action, outlook/watch action, source publication/as-of and retrieval dates separate. A periodic review or new fetch does not establish a new rating action.",
+      "initial_deployment": {
+        "commit": "ed24dde",
+        "target": "https://localhost:6443",
+        "release_script": "passed after repairing ownership of the empty dedicated AI-bridge directory; existing /tmp/portfolio-codex-etuzon mount preserved",
+        "verification": "3003 tests passed; 11 deployed sources and 5 served assets matched the commit. Live ratings route/auth checks, isolated cache behavior inside the deployed image, bridge health and token environment forwarding passed.",
+        "evidence": ".runtime/company-credit-ratings-2026-11-13/release_result.json"
+      },
+      "holdings_table_followup": {
+        "commit": "e0e3012",
+        "position": "Credit ratings column immediately after Dividend Trend",
+        "fields": "Moody’s, S&P Global Ratings, Fitch; separate outlook/watch and per-field stale warnings",
+        "interaction": "Select the cell for full scope, original dates and sources; Refresh ratings requires Admin or Operator.",
+        "data": "Background cache-only summaries; exact symbol/market/currency shared across accounts; unknown/unsupported and ancillary types remain distinct.",
+        "risk_calculation": "Unchanged; no simulation or formula work resumed."
+      },
+      "holdings_initial_deployment": {
+        "commit": "e0e3012",
+        "target": "https://localhost:6443",
+        "release_script": "passed",
+        "verification": "Full pytest release gate passed; 7 deployed container sources and 6 served assets matched commit; live summary/auth checks and isolated saved-cache behavior inside deployed image passed.",
+        "evidence": ".runtime/holdings-credit-ratings-2026-11-13/release_result.json"
+      },
+      "manual_entry_followup": {
+        "commit": "dd0dcbf",
+        "column_position": "Immediately after Dividend Trend, including mobile and RTL reading order",
+        "permissions": "Admin/Operator add, edit or clear; Viewer saved read only.",
+        "storage": "Durable local app_preferences, exact security/issuer identity namespace; atomic per-agency revisions and clear tombstones; retained API/AI cache separate.",
+        "meaning": "Native primary global long-term only, explicit manual/user_entered provenance, whole-agency override including unknowns, no source fetch/verification on manual save.",
+        "fields": [
+          "grade/status",
+          "independent outlook/watch",
+          "optional original action dates",
+          "entity/scope",
+          "source URL or note",
+          "server update time/actor"
+        ],
+        "retrieval_diagnosis": "No configured licensed API token and no saved credit observations; effective AI is available. Unknown does not establish Unrated.",
+        "public_AI_fix": "URL-only exact-issuer official agency discovery lead; normal authenticated bounded workflow retrieved FDUS Fitch BBB-/Stable, source/action15/10/2026, WatchUnknown, no invented outlook/watch action dates; other agencies unverified.",
+        "future_risk_note": "No risk formula or simulation work resumed. Manual entries are excluded from the present valuation/risk input change token; revisit invalidation and manual-vs-verified source confidence when the credit-aware risk model is explicitly resumed.",
+        "evidence": ".runtime/manual-credit-ratings-2026-11-13/release_result.json"
+      }
+    },
+    "remaining_work": [
+      "Resume the preserved 200-variant risk study as a separate phase; no final independent quality ranking or new recommendation has been completed.",
+      "Compare the current v2 model, the prior F2 research recommendation and the frozen fresh candidates using the same declared validation rubric.",
+      "Assess how eligible verified agency ratings and their own forward signals enter the shared dashboard/simulator risk calculation; missing or ancillary evidence must not become an issuer rating or zero credit risk.",
+      "Deliver the requested three-best-formula report and scores without presenting structural simulations as calibrated forecast accuracy."
+    ]
+  }
+}
