@@ -11,11 +11,19 @@ function creditRatingsSession() {
 function creditRatingsEntry(detail = state.securityDetail) {
   if (!detail?.symbol) return null;
   const session = creditRatingsSession();
-  const identity = { symbol: detail.symbol, stock_market: detail.market_key || detail.stock_market || "MANUAL", currency: detail.currency || "" };
+  const identity = { symbol: detail.symbol, stock_market: detail.item?.holding?.stock_market || detail.market_key || detail.stock_market || "MANUAL", currency: detail.currency || "" };
   const key = [identity.symbol, identity.stock_market, identity.currency].map((value) => String(value).trim().toUpperCase()).join("|");
   if (!session.entries[key]) session.entries[key] = { key, identity, context: null, loading: false, pending: false, starting: false,
     resume: false, job: null, message: "", polls: 0, version: 0, timer: null };
   return session.entries[key];
+}
+
+function creditRatingsEligible(security = {}) {
+  const asset = String(security.asset_class || "").toUpperCase();
+  const kind = String(security.asset_sub_class || security.instrument_type || "").toUpperCase();
+  return Boolean(security.symbol) && ["EQUITY", "FIXED_INCOME", "STOCK", "BOND", "RSU"].includes(asset)
+    && !["OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"].includes(kind)
+    && String(security.stock_market || security.market_key || "").toUpperCase() !== "PRIVATE";
 }
 
 function creditRatingsEntryActive(entry) {
@@ -193,7 +201,7 @@ function creditRatingsProviderStatus(providers) {
 function renderSecurityCreditRatings() {
   const panel = $("securityCreditRatings"), detail = state.securityDetail;
   if (!panel || !detail) return;
-  const supported = ["EQUITY", "FIXED_INCOME", "STOCK", "BOND", "RSU"].includes(String(detail.asset_class || "EQUITY").toUpperCase());
+  const supported = creditRatingsEligible({ ...detail, asset_class: detail.asset_class || "EQUITY" });
   panel.hidden = !supported;
   if (!supported) return;
   const entry = creditRatingsEntry(detail), context = entry.context;
@@ -257,6 +265,7 @@ async function loadSecurityCreditRatings(entry = creditRatingsEntry(), { force =
     const context = await creditRatingsRequest(`/api/securities/credit-ratings?${new URLSearchParams(entry.identity)}`);
     if (!creditRatingsEntryActive(entry) || entry.version !== version) return;
     entry.context = context;
+    if (typeof updateHoldingsCreditRatingsFromOverview === "function") updateHoldingsCreditRatingsFromOverview(context);
     if (entry.message === "Saved ratings could not be loaded. Reload saved ratings to retry.") entry.message = "";
   } catch {
     if (creditRatingsEntryActive(entry) && entry.version === version) entry.message = "Saved ratings could not be loaded. Reload saved ratings to retry.";

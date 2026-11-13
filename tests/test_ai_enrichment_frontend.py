@@ -230,7 +230,7 @@ def test_ai_single_request_partial_results_tooltips_permissions_and_narrow_layou
     assert expected in evaluate("dataGapTooltip(qa.item)")
     assert expected not in evaluate("dataGapTooltip(qa.other)")
     # Later manual/provider corrections take precedence over old partial AI outcomes.
-    assert ("All displayed data available" if language == "en" else "כל הנתונים המוצגים זמינים") in evaluate("statusCell({...qa.item,missing:[]})")
+    assert ("Analytics available" if language == "en" else "נתוני הניתוח זמינים") in evaluate("statusCell({...qa.item,missing:[]})")
     assert "partial" not in evaluate("statusCell({...qa.item,missing:[]})")
     evaluate("$('aiEnrichmentTitle').scrollIntoView({block:'start'});")
     geometry = evaluate("(()=>{const b=$('aiEnrichmentModal').querySelector('.modal-card').getBoundingClientRect(),r=$('aiEnrichmentResults').getBoundingClientRect();return {left:b.left,right:b.right,resultLeft:r.left,resultRight:r.right,overflow:document.documentElement.scrollWidth-innerWidth};})()")

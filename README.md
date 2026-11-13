@@ -118,9 +118,12 @@ For missing-data research, `./.venv/bin/python tests/security_research_real_repl
 
 ### Company credit ratings
 
-Open **Portfolio → Securities → Ratings**, or a held security's overview, to
-inspect Moody’s, S&P Global Ratings and Fitch separately. Opening reads saved
-evidence. **Refresh ratings** requires Admin or Operator permission, checks
+The Holdings table shows saved Moody’s, S&P Global Ratings and Fitch summaries
+beside each security. Loading the table reads the cache in the background and
+does not start provider or AI research. Repeated positions in one security share
+the same exact symbol/market/currency summary. Open a row’s rating details,
+**Portfolio → Securities → Ratings**, or the security overview for complete
+scope, original dates and sources. **Refresh ratings** requires Admin or Operator permission, checks
 configured APIs first and uses the existing bounded AI Internet workflow for
 missing information. The eight-model, eight-REST and eight-web limits are shared
 across the request; the model has no database, filesystem or direct-write tools.
@@ -145,7 +148,10 @@ required. Public-source AI research can run without this token using the
 configured signed-in CLI and public reader/search services.
 
 `GET /api/securities/credit-ratings?symbol=JPM&stock_market=NYSE&currency=USD`
-is cache-only. `POST /api/securities/credit-ratings/ai` accepts up to three
+is cache-only. The table uses `GET /api/securities/credit-ratings/summaries` with
+up to 200 repeated `security_keys` query values. Its `summary_only` responses
+preserve financial categories and freshness but omit long evidence excerpts;
+the single-security overview retains those excerpts. `POST /api/securities/credit-ratings/ai` accepts up to three
 `security_keys` and `position_scope`; poll the returned request at
 `GET /api/securities/credit-ratings/ai/{request_id}`. Viewer access is read-only.
 Facts persist in the application cache, with original source excerpts and

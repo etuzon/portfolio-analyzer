@@ -1,0 +1,24 @@
+@media (min-width: 761px) {
+  .holdings-table-wrap .holdings-table th[data-holdings-credit-column] { width: 200px; }
+  .holdings-table-wrap .holdings-table th[data-holdings-sort-column="account"] { width: 165px; }
+  .holdings-table-wrap .holdings-table th[data-holdings-sort-column="technicals"] { width: 250px; }
+}
+.holding-credit-ratings { display: grid; gap: 4px; width: 100%; min-width: 0; min-height: 96px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--ux-text); font: inherit; font-size: 11px; line-height: 1.35; text-align: start; align-content: start; }
+.holding-credit-ratings:hover { background: rgba(124, 92, 255, .08); }
+.holding-credit-ratings:focus-visible { outline: 2px solid var(--ux-blue); outline-offset: 4px; }
+.holding-credit-legend { display: block; text-align: end; color: var(--ux-muted); font-size: 10px; font-weight: 500; }
+.holding-credit-agency { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 5px; align-items: baseline; min-width: 0; }
+.holding-credit-agency-name { font-weight: 600; white-space: nowrap; }
+.holding-credit-opinion { display: flex; align-items: baseline; flex-wrap: wrap; gap: 2px 5px; min-width: 0; }
+.holding-credit-grade { font-weight: 700; }
+.holding-credit-forward { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 3px; color: var(--ux-muted); font-weight: 400; }
+.holding-credit-active-watch { color: var(--ux-text); font-weight: 700; }
+.holding-credit-category { display: block; flex-basis: 100%; color: var(--ux-muted); font-size: 10px; }
+.holding-credit-divider { opacity: .65; }
+.holding-credit-stale { display: inline-block; min-width: 11px; margin-inline-start: 2px; border: 1px solid #8c6d22; border-radius: 3px; color: #f0d86a; text-align: center; font-size: 9px; line-height: 11px; font-weight: 700; }
+.holding-credit-inapplicable { color: var(--ux-muted); font-size: 12px; }
+@media (max-width: 760px) {
+  .holdings-table td.holding-credit-ratings-cell { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .holding-credit-ratings { min-height: 84px; font-size: 12px; }
+  .holding-credit-agency { grid-template-columns: 55px minmax(0, 1fr); }
+}

@@ -1562,6 +1562,7 @@ function renderCurrentUser() {
   renderAIEnrichment();
   renderPriceEntryState();
   if (typeof renderSecurityCreditRatings === "function" && state.securityDetail) renderSecurityCreditRatings();
+  if (typeof renderHoldingsCreditRatings === "function") renderHoldingsCreditRatings();
   renderAssistantChat();
 }
 
@@ -3716,7 +3717,7 @@ function statusCell(item) {
   }
   if (!item.missing.length) {
     return `<div class="status-cell status-cell-compact">
-      <span class="badge ok" title="${esc(t("All displayed metrics are available"))}">${esc(t("All displayed data available"))}</span>
+      <span class="badge ok" title="${esc(t("This status covers market and report analytics. Credit ratings are shown separately."))}">${esc(t("Analytics available"))}</span>
     </div>`;
   }
   const details = dataGapDetails(item);
@@ -4380,7 +4381,7 @@ function holdingsStatusSortLabel(item) {
     return t(item.analytics_state === "queued" ? (saved ? "Saved data · awaiting update" : "Awaiting update") : (saved ? "Saved data · updating" : "Updating analytics"));
   }
   if (["refreshing", "failed"].includes(item.analytics_state)) return t(item.analytics_state === "failed" ? "Update failed" : "Updating analytics");
-  if (!item.missing?.length) return t("All displayed data available");
+  if (!item.missing?.length) return t("Analytics available");
   const details = dataGapDetails(item), confirmed = details.filter((entry) => entry.status === "missing").length;
   return [confirmed ? t(`${confirmed} data gaps`) : "", details.some((entry) => entry.status === "updating") ? t("Updating analytics") : "",
     details.some((entry) => entry.status === "failed") ? t("Update failed") : ""].filter(Boolean).join(" · ");
@@ -4486,6 +4487,7 @@ function renderRows(items) {
       : 0;
     return `<tr data-portfolio-position="${esc(JSON.stringify([h.account_id, h.symbol, marketKey, h.currency, h.asset_class]))}">
       <td data-label="Security"><div class="security-cell"><div class="security-symbols">${companyLogoHtml(h)}<button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}<span class="ux-tooltip security-meta-tooltip" tabindex="0" role="note" aria-label="Security details" title="${esc(marketLine)}" data-tooltip="${esc(marketLine)}">i</span></div><div class="security-name">${esc(companyLine)}</div>${referenceBadge}${industryLine}${exposureLine}</div></td>
+      ${typeof holdingCreditRatingsCellHtml === "function" ? holdingCreditRatingsCellHtml(item) : `<td class="holding-credit-ratings-cell" data-label="${esc(t("Credit ratings"))}">—</td>`}
       <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(accountMeta)}</div>${holdingTransactionActionsHtml(h)}</td>
       <td class="holding-risk-cell" data-label="Risk">${riskBadge(rowRisk)}</td>
       <td data-label="Value / P&L"><div class="value-cell">
@@ -13076,6 +13078,7 @@ async function loadPortfolio({ refresh = false, notification = false } = {}) {
     const allItems = data.items || [];
     state.allPortfolioItems = allItems;
     state.items = portfolioItems(allItems);
+    if (typeof loadHoldingsCreditRatings === "function") loadHoldingsCreditRatings(state.items);
     if (typeof checkTradePlannerInputs === "function") checkTradePlannerInputs();
     state.portfolioReady = true;
     state.accountTrend = {

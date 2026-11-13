@@ -22,6 +22,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/portfolio-vault/icon-180.png?v=1" />
   <link rel="stylesheet" href="/styles.css?v=20261112-transaction-table" />
   <link rel="stylesheet" href="/holdings-sort.css?v=1" />
+  <link rel="stylesheet" href="/holdings-credit-ratings.css?v=1" />
   <link rel="stylesheet" href="/transaction-list.css?v=3" />
   <link rel="stylesheet" href="/price-input-units.css?v=1" />
   <link rel="stylesheet" href="/benchmark.css?v=3" />
@@ -291,6 +292,7 @@
               <thead>
                 <tr>
                   <th scope="col" data-holdings-sort-column="security"><button class="holdings-sort-button" type="button" data-holdings-sort="security" data-sort-label="Security"><span>Security</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
+                  <th scope="col" data-holdings-credit-column>Credit ratings</th>
                   <th scope="col" data-holdings-sort-column="account"><button class="holdings-sort-button" type="button" data-holdings-sort="account" data-sort-label="Account"><span>Account</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
                   <th scope="col" data-holdings-sort-column="risk"><button class="holdings-sort-button" type="button" data-holdings-sort="risk" data-sort-label="Risk"><span>Risk</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></th>
                   <th scope="col" data-holdings-sort-column="value"><span class="holdings-sort-heading">Value / P&amp;L</span><div class="holdings-sort-group"><button class="holdings-sort-button" type="button" data-holdings-sort="value" data-sort-label="Value"><span>Value</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button><button class="holdings-sort-button" type="button" data-holdings-sort="profit" data-sort-label="Unrealized P/L"><span>P/L</span><span class="holdings-sort-arrow" aria-hidden="true">↕</span></button></div></th>
@@ -1263,6 +1265,7 @@
                 <p>Unrealized P/L bars and totals use the chart currency shown beside Total P/L. Hover over a bar or focus it with the keyboard to read the holding's P/L in its local currency and converted to ILS at the current saved exchange rate; this does not measure historical FX gains or losses. Missing ILS conversion is shown as unavailable. Holdings without P/L or chart-currency conversion are omitted, and the total remains unavailable until those inputs are complete. Refresh the dashboard to retry missing inputs.</p>
                 <p>Net income shows the percentage change between the two latest available annual reports: (current − previous) / abs(previous) × 100. Green means an increase, red a decrease, and blue exactly no change. The two report dates remain visible; they may not be consecutive years. A zero or missing previous value leaves the percentage unavailable. A smaller loss can produce a positive change. Risk shows only a colored score. Hover or focus the score for its category and explanation; select it to keep the explanation open. With the score focused, use arrow keys or Page Up and Page Down to scroll long explanations. Select it again, click elsewhere or press Escape to close it. The score is a model estimate, not a probability or forecast of loss; missing-data details remain separate. In High / Low, Data available means the range was calculated from sufficient dated price history; Partial indicates limited history.</p>
                 <p>Select a Holdings column's sort button to order the filtered rows; select it again to reverse the order. The arrow shows the current direction. Value and P/L, High and Low, and Support, Resistance and MA have separate sort buttons. Net income and Dividend Trend sort by percentage change; MA uses the period selected in Settings. Monetary values are compared in dashboard currency using saved FX, while each row keeps its displayed currency. Missing values or required FX stay last in either direction. Sorting uses only loaded rows, makes no server request and keeps the current filters and sort during background updates. The choice lasts for this signed-in page session. On small screens, use Sort by and the direction button above the holding cards; Original order clears sorting. Keyboard users can focus a sort button and press Enter or Space.</p>
+                <p>Holdings shows saved Moody’s, S&amp;P Global Ratings and Fitch information in Credit ratings beside Security. Each agency has a grade or explicit status, followed by Outlook / Watch; an exclamation mark identifies retained stale evidence. Select the cell for rating scope, dates, sources and other rating categories in the security overview. Not checked does not mean Unrated. Funds and derivatives show Not applicable. Loading is non-blocking and only reads saved data; it does not call a provider or AI. Dashboard Refresh rereads these summaries. A failed read retains saved facts; open the overview to retry. Identical securities in separate accounts share the same evidence. Analytics available, Include missing and the existing sort controls keep their market/report scope; credit ratings are separate and this column is not sortable. Viewers can inspect saved ratings; Refresh ratings in the overview requires editing permission.</p>
               </article>
               <article class="help-feature">
                 <h3>Portfolio stocks heatmap</h3>
@@ -3064,7 +3067,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <div id="riskBadgeExplanation" class="risk-badge-explanation" role="tooltip" hidden></div>
-  <script src="/i18n.js?v=20261113-credit-ratings"></script>
+  <script src="/i18n.js?v=20261113-holdings-credit-ratings"></script>
   <script src="/scheduler.js?v=2"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
@@ -3090,7 +3093,8 @@
   <script src="/alarm-priority-ui.js?v=20261112-transaction-table"></script>
   <script src="/account-cash-ui.js?v=20261109-cash-save-label"></script>
   <script src="/security-credit-ratings.js?v=2"></script>
+  <script src="/holdings-credit-ratings.js?v=1"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=20261113-credit-ratings"></script>
+  <script src="/app.js?v=20261113-holdings-credit-ratings"></script>
   </body>
 </html>

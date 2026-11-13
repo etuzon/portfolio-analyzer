@@ -371,11 +371,11 @@ for(const language of ['he','en']) {
  }
  for(const analytics_state of ['queued','updating','refreshing','failed']) {
   const status=statusCell({...item,analytics_state});
-  assert.ok(!status.includes(t('All displayed data available')));
+  assert.ok(!status.includes(t('Analytics available')));
   assert.ok(!status.includes('2 data gaps')&&!status.includes('2 פערי נתונים'));
  }
  const recovered=statusCell({...item,missing:[]});
- assert.ok(recovered.includes(t('All displayed data available')));
+ assert.ok(recovered.includes(t('Analytics available')));
  assert.ok(!recovered.includes('ConnectTimeout'));
  state.aiEnrichment.outcomes=[{code:'evidence_rejected',status:'unavailable'}];
  const researched=dataGapTooltip(item);

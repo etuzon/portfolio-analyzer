@@ -120,13 +120,19 @@ assert.equal(security.arrow.textContent,'↕');assert.deepEqual(holdingsTableRow
     assert not re.search(r'\b(?:api|fetch|loadPortfolio)\(', controller)
 
 
-def test_every_holdings_column_has_keyboard_sort_controls_and_help_documents_units():
+def test_existing_holdings_columns_keep_sort_controls_beside_the_unsorted_ratings_column():
     html = (ROOT/'web/index.html').read_text()
     table = html[html.index('<table class="holdings-table">'):html.index('<tbody id="rows">')]
     headings = re.findall(r'<th\b.*?</th>', table, re.S)
-    assert len(headings) == 9
+    assert len(headings) == 10
+    assert sum('data-holdings-sort-column=' in heading for heading in headings) == 9
+    rating_heading = next(heading for heading in headings if 'data-holdings-credit-column' in heading)
+    assert 'data-holdings-sort=' not in rating_heading
+    assert 'Credit ratings' in rating_heading
     for heading in headings:
         assert 'scope="col"' in heading
+        if 'data-holdings-credit-column' in heading:
+            continue
         assert 'data-holdings-sort-column=' in heading
         assert 'data-holdings-sort=' in heading
         for button in re.findall(r'<button\b[^>]+>', heading):

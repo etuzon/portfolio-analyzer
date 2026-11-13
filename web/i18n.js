@@ -2,6 +2,21 @@
   "use strict";
 
   const HEBREW_TEXT = Object.freeze({
+    "Holdings shows saved Moody’s, S&P Global Ratings and Fitch information in Credit ratings beside Security. Each agency has a grade or explicit status, followed by Outlook / Watch; an exclamation mark identifies retained stale evidence. Select the cell for rating scope, dates, sources and other rating categories in the security overview. Not checked does not mean Unrated. Funds and derivatives show Not applicable. Loading is non-blocking and only reads saved data; it does not call a provider or AI. Dashboard Refresh rereads these summaries. A failed read retains saved facts; open the overview to retry. Identical securities in separate accounts share the same evidence. Analytics available, Include missing and the existing sort controls keep their market/report scope; credit ratings are separate and this column is not sortable. Viewers can inspect saved ratings; Refresh ratings in the overview requires editing permission.": "בהחזקות מוצג מידע שמור של Moody’s, של S&P Global Ratings ושל Fitch בעמודת דירוגי אשראי לצד נייר הערך. לכל חברת דירוג מוצג דירוג או מצב מפורש, ואחריו תחזית / מעקב; סימן קריאה מציין אסמכתאות ישנות שנשמרו. בחרו בתא כדי לראות את תחולת הדירוג, התאריכים, המקורות וקטגוריות הדירוג הנוספות בסקירת נייר הערך. לא נבדק אינו שקול לללא דירוג. בקרנות ובנגזרים מוצג לא רלוונטי. הטעינה אינה חוסמת וקוראת נתונים שמורים בלבד, ללא פנייה לספק או ל־AI. רענון לוח הבקרה קורא שוב את הסיכומים. קריאה שנכשלה משאירה את העובדות השמורות; פתחו את הסקירה לניסיון חוזר. ניירות זהים בחשבונות שונים משתפים את אותן אסמכתאות. נתוני הניתוח זמינים, הכללת נתונים חסרים וכפתורי המיון הקיימים שומרים על תחולת נתוני השוק והדוחות; דירוגי האשראי נפרדים ועמודה זו אינה ניתנת למיון. צופים יכולים לבדוק דירוגים שמורים; רענון דירוגים בסקירה דורש הרשאת עריכה.",
+    "Credit ratings": "דירוגי אשראי",
+    "Could not open the security overview. Try again.": "לא ניתן לפתוח את סקירת נייר הערך. נסו שוב.",
+    "Outlook / Watch": "תחזית / מעקב",
+    "Other categories": "קטגוריות נוספות",
+    "Credit ratings for {symbol}": "דירוגי אשראי של {symbol}",
+    "Saved ratings could not be loaded. Open the overview to retry.": "לא ניתן לטעון דירוגים שמורים. פתחו את הסקירה לניסיון חוזר.",
+    "This security could not be matched to saved rating information.": "לא נמצאה התאמה של נייר זה למידע דירוג שמור.",
+    "Issuer rating fallback; the specific debt issue was not verified.": "מוצג דירוג מנפיק חלופי; דירוג החוב המסוים לא אומת.",
+    "Open the security overview for rating scope, dates and sources.": "פתחו את סקירת נייר הערך לתחולת הדירוג, לתאריכים ולמקורות.",
+    "Company credit ratings do not apply to this instrument.": "דירוגי אשראי של חברות אינם חלים על מכשיר זה.",
+    "A supported security type is required for company credit ratings.": "לדירוגי אשראי של חברות נדרש סוג נייר ערך נתמך.",
+    "A symbol, stock market and currency are required for saved company ratings.": "לדירוגי חברה שמורים נדרשים סימול, שוק מסחר ומטבע.",
+    "Analytics available": "נתוני הניתוח זמינים",
+    "This status covers market and report analytics. Credit ratings are shown separately.": "מצב זה מתייחס לניתוח נתוני שוק ודוחות. דירוגי אשראי מוצגים בנפרד.",
     "Company credit ratings": "דירוגי אשראי של החברה",
     "Ratings": "דירוגי אשראי",
     "Agency": "חברת דירוג",

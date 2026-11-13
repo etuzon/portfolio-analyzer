@@ -139,7 +139,7 @@ for(const state of ['pending','error']){
  }
 }
 assert.ok(statusCell({analytics_state:'refreshing',missing:[]}).includes('Updating analytics'));
-assert.ok(!statusCell({analytics_state:'refreshing',missing:[]}).includes('All displayed data available'));
+assert.ok(!statusCell({analytics_state:'refreshing',missing:[]}).includes('Analytics available'));
 const coverage=renderCompleteness([{missing:[],price_ranges:{'1y':{state:'pending'}},profit_trend:{state:'pending'},dividend_trend:{state:'pending'}}]);
 assert.ok(!coverage.includes('100%'));assert.ok(coverage.includes('0%'));
 """

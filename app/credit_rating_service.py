@@ -13,7 +13,7 @@ from threading import RLock
 from typing import Callable
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from . import credit_ratings_api
 from .security_enrichment import EnrichmentJobs, WEB_RESEARCH_POLICY, security_key
@@ -24,6 +24,13 @@ from .us_market_providers import ProviderFailure, RequestBudget
 PREFIX = "/api/securities/credit-ratings"
 SCHEMA = "credit-ratings-v1"
 AGENCIES = ("moodys", "sp", "fitch")
+SUMMARY_FIELDS = frozenset({
+    "agency", "status", "reason_code", "rating", "rating_raw", "scope", "scale", "term", "rating_type",
+    "entity_name", "entity_id", "rating_date", "outlook", "watch", "outlook_date", "watch_date",
+    "observed_at", "fetched_at", "checked_at", "stale", "outlook_stale", "watch_stale", "forward_signal_stale",
+    "outlook_fetched_at", "watch_fetched_at", "forward_signal_checked_at", "issuer_fallback", "primary_eligible",
+    "record_id", "source_url", "source_kind", "action_type", "snapshot_kind", "currency_basis",
+})
 
 # Verified official issuer namespaces are discovery leads only, just like the
 # existing TASE and issuer-document hints. Each refresh must actually read the
@@ -163,6 +170,17 @@ class CreditRatingService:
         observations = saved.get("observations", []) if matching else []
         rows = []
         ttl = max(1, int(self._settings().get("verification_ttl_days", 30)))
+        now = datetime.now(timezone.utc)
+        def freshness(original):
+            row = deepcopy(original)
+            checked = _stamp(row.get("fetched_at"))
+            row["stale"] = bool(checked and now - checked > timedelta(days=ttl))
+            for field in ("outlook", "watch"):
+                verified = _stamp(row.get(field + "_fetched_at") or row.get("fetched_at"))
+                row[field + "_stale"] = bool(row.get(field) not in {None, "unknown"} and verified
+                    and now - verified > timedelta(days=ttl))
+            row["forward_signal_stale"] = row["outlook_stale"] or row["watch_stale"]
+            return row
         for agency in AGENCIES:
             selected = select_observation([r for r in observations if r.get("agency") == agency], candidate)
             row = {**_slot(agency), **(deepcopy(selected) if selected else {})}
@@ -173,13 +191,9 @@ class CreditRatingService:
                 row["checked_at"] = attempt.get("checked_at")
                 if not selected:
                     row.update(status="unavailable", reason_code=attempt.get("reason_code", "data_unavailable"))
-            checked = _stamp(row.get("fetched_at"))
-            row["stale"] = bool(checked and datetime.now(timezone.utc) - checked > timedelta(days=ttl))
-            for field in ("outlook", "watch"):
-                verified = _stamp(row.get(field + "_fetched_at") or row.get("fetched_at"))
-                row[field + "_stale"] = bool(row.get(field) not in {None, "unknown"} and verified
-                    and datetime.now(timezone.utc) - verified > timedelta(days=ttl))
-            row["forward_signal_stale"] = row["outlook_stale"] or row["watch_stale"]
+            row = freshness(row)
+            if "observations" in row:
+                row["observations"] = [freshness(item) for item in row["observations"]]
             rows.append(row)
         known = sum(row["status"] in {"rated", "unrated", "withdrawn"} for row in rows)
         response = {"schema_version": SCHEMA, "security_key": key,
@@ -189,6 +203,35 @@ class CreditRatingService:
             "ratings": rows, "provider_status": deepcopy(saved.get("provider_status", [])) if matching else credit_ratings_api.registry(self._settings()),
             "fetched_at": saved.get("fetched_at") if matching else None}
         return response
+
+    def summaries(self, keys):
+        """One inventory capture and cache-only financial summaries for the table.
+
+        Long source excerpts remain available in the single-security overview;
+        the projection is never a replacement for its complete source context.
+        """
+        if len(keys) > 200 or any(not isinstance(key, str) or not key.strip() or len(key) > 300 for key in keys):
+            raise HTTPException(422, "invalid_credit_rating_keys")
+        requested = list(dict.fromkeys(key.strip().upper() for key in keys))
+        if not requested:
+            return {"items": [], "not_found_keys": [], "summary_only": True}
+        wanted = set(requested)
+        inventory = {item["security_key"]: item for item in self._inventory() if item["security_key"] in wanted}
+        def compact(row):
+            result = {key: deepcopy(value) for key, value in row.items() if key in SUMMARY_FIELDS}
+            if row.get("sources"):
+                result["sources"] = [{key: source[key] for key in ("url", "title", "fields", "fetched_at", "source_kind")
+                                      if key in source} for source in row["sources"]]
+            if "observations" in row:
+                result["observations"] = [compact(item) for item in row["observations"]]
+            return result
+        items = []
+        for key in requested:
+            if key not in inventory:
+                continue
+            response = self.read(inventory[key])
+            items.append({**response, "ratings": [compact(row) for row in response["ratings"]], "summary_only": True})
+        return {"items": items, "not_found_keys": [key for key in requested if key not in inventory], "summary_only": True}
 
     @staticmethod
     def missing(response):
@@ -467,6 +510,12 @@ class CreditRatingService:
 
     def router(self):
         router = APIRouter(tags=["company credit ratings"])
+
+        @router.get(PREFIX + "/summaries")
+        def summaries(request: Request, security_keys: list[str] = Query(default=[], max_length=200)):
+            if not isinstance(getattr(request.state, "auth_user", None), dict):
+                raise HTTPException(401, "authentication_required")
+            return self.summaries(security_keys)
 
         @router.get(PREFIX)
         def read(symbol: str, request: Request, stock_market: str = "", currency: str = ""):

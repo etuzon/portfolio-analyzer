@@ -98,6 +98,75 @@ def test_main_inventory_uses_listing_bound_issuer_profile_and_excludes_noncompan
     assert candidate["has_open_position"] is False
 
 
+def test_holdings_batch_is_viewer_cache_only_deduplicated_and_retains_financial_scope(environment, monkeypatch):
+    service, _, inventory, _ = environment
+    candidate = inventory[0]
+    rows = service._accept_sources(candidate, [source()])
+    service.publish(candidate, rows)
+    captures = []
+    service._inventory = lambda: (captures.append(True) or inventory)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("A cache-only table read called a provider or AI")
+    monkeypatch.setattr(service, "check_apis", forbidden)
+    monkeypatch.setattr(service, "_research_settings", forbidden)
+    app = FastAPI()
+    @app.middleware("http")
+    async def authenticate(request, call_next):
+        if request.headers.get("X-Test-Viewer") == "yes":
+            request.state.auth_user = {"id": "viewer", "role": "Viewer"}
+        return await call_next(request)
+    app.include_router(service.router())
+    client = TestClient(app)
+    path = PREFIX + "/summaries"
+    assert client.get(path).status_code == 401
+    response = client.get(path, headers={"X-Test-Viewer": "yes"}, params=[
+        ("security_keys", candidate["security_key"].lower()), ("security_keys", candidate["security_key"]),
+        ("security_keys", "MISSING|NYSE|USD")])
+    assert response.status_code == 200
+    assert len(captures) == 1
+    result = response.json()
+    assert result["summary_only"] is True and len(result["items"]) == 1
+    assert result["not_found_keys"] == ["MISSING|NYSE|USD"]
+    item, = result["items"]
+    assert item["summary_only"] is True
+    assert {row["agency"]: row["rating"] for row in item["ratings"]} == {"moodys": "A1", "sp": "A", "fitch": "AA-"}
+    assert all(row["scope"] == "issuer" and row["term"] == "long_term" and row["outlook"] == "stable" for row in item["ratings"])
+    assert "evidence_quote" not in json.dumps(result) and "claims" not in json.dumps(result)
+    # The full overview continues to expose the original retained evidence.
+    overview = client.get(PREFIX, headers={"X-Test-Viewer": "yes"},
+        params={key: candidate[key] for key in ("symbol", "stock_market", "currency")}).json()
+    assert overview["ratings"][0]["sources"][0]["evidence_quote"] == rows[0]["sources"][0]["evidence_quote"]
+    assert "JPMorgan Chase Bank" not in overview["ratings"][0]["sources"][0]["evidence_quote"]
+
+
+def test_holdings_batch_rejects_invalid_bounds_and_empty_batch_never_reads_inventory(environment):
+    service, _, _, _ = environment
+    service._inventory = lambda: (_ for _ in ()).throw(AssertionError("Empty batch captured inventory"))
+    assert service.summaries([]) == {"items": [], "not_found_keys": [], "summary_only": True}
+    for keys in ([""] , [" "], ["x" * 301], [CANDIDATE["security_key"]] * 201):
+        with pytest.raises(Exception) as error:
+            service.summaries(keys)
+        assert error.value.status_code == 422
+
+
+def test_batch_and_overview_recompute_ancillary_freshness_from_its_own_dates_without_writes(environment):
+    service, cache, inventory, _ = environment
+    candidate = inventory[0]
+    old = (datetime.now(timezone.utc) - timedelta(days=45)).isoformat()
+    rows = service._accept_sources(candidate, [source(fetched=old)])
+    ancillary = {**rows[0], "rating_type": "senior_unsecured_class", "primary_eligible": False}
+    service.publish(candidate, [ancillary])
+    before = cache.get_security_snapshot("credit_ratings", candidate["security_key"], SCHEMA)
+    item, = service.summaries([candidate["security_key"]])["items"]
+    primary = item["ratings"][0]
+    assert primary["status"] == "unavailable" and primary["rating"] is None
+    saved, = primary["observations"]
+    assert saved["rating"] == "A1" and saved["rating_type"] == "senior_unsecured_class"
+    assert saved["stale"] and saved["outlook_stale"] and saved["outlook_fetched_at"] == old
+    assert service.read(candidate)["ratings"][0]["observations"][0]["stale"] is True
+    assert cache.get_security_snapshot("credit_ratings", candidate["security_key"], SCHEMA) == before
+
+
 def test_documented_api_maps_three_native_schemas_without_parent_bank_or_date_substitution(environment):
     service, _, inventory, settings = environment
     settings["spglobal"] = {"enabled": True, "bearer_token": "synthetic-license-token"}
