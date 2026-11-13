@@ -65,6 +65,10 @@ from .security_market_data import SecurityMarketData, security_market_router, no
 from .security_web_research import research_sources, validate_proposals
 from .security_enrichment import EnrichmentJobs, security_key as enrichment_security_key
 from .credit_rating_service import CreditRatingService
+from .security_countries import SecurityCountries
+from .sovereign_ratings import COUNTRIES, normalize_country, country_descriptor
+from .sovereign_rating_service import SovereignRatingService
+from .country_rating_schedules import CountryRatingResearch, CountryRatingSchedules
 from .portfolio_ai_research import PortfolioAIResearch
 from .enrichment_preflight import ApiPreflight
 from .metrics import analyze_holding, moving_averages, screen, support_resistance, technical_signals, to_dict, volume_metrics
@@ -96,6 +100,7 @@ async def application_lifespan(_app: FastAPI):
     configure_dividend_job()
     configure_portfolio_refresh_job()
     configure_ai_enrichment_job()
+    country_rating_schedules.configure()
     Thread(target=_refresh_portfolio_fx_history, name="portfolio-fx-history", daemon=True).start()
     if _mcp_session_context is None:
         _mcp_session_context = portfolio_mcp.session_manager.run()
@@ -380,6 +385,16 @@ ASSISTANT_READ_TOOLS: dict[str, dict[str, Any]] = {
         "description": "Read saved Moody's, S&P Global Ratings and Fitch credit ratings and history for an exact registered stock/bond. Match symbol, stock_market and currency from get_securities. Preserve issuer versus issue, legal entity, scale, term, outlook/watch and original dates. Manual user-entered overrides remain distinct from verified public evidence. Unknown is not Stable or Not Rated; these are credit opinions, not stock buy/sell recommendations. This GET does not start research. Permitted editors use Refresh ratings or Find missing data with AI for bounded public-source research; no licensed rating feed or token is required.",
         "parameters": {"type": "object", "properties": {key: {"type": "string"} for key in ("symbol", "stock_market", "currency")},
                        "required": ["symbol", "stock_market", "currency"]},
+    },
+    "get_country_credit_ratings": {
+        "path": "/api/countries/credit-ratings",
+        "description": "Read saved sovereign Moody's, S&P and Fitch opinions and durable history for one ISO country code. Preserve local-currency, foreign-currency and unspecified opinions separately. Keep manual entries distinct, action dates separate from detected dates, and Unknown separate from Unrated. Country credit is not a company rating or a numeric portfolio risk score. Cache-only; does not start research or change the risk formula.",
+        "parameters": {"type": "object", "properties": {"country_code": {"type": "string"}}, "required": ["country_code"]},
+    },
+    "get_country_rating_countries": {
+        "path": "/api/countries/credit-ratings/countries",
+        "description": "List countries recorded on accounts by default, or all supported ISO jurisdictions when explicitly requested. Account country is independent from issuer domicile, listing and trading currency. Unknown account locations are reported; no country rating is inferred.",
+        "parameters": {"type": "object", "properties": {"country_scope": {"type": "string", "enum": ["accounts", "all"]}}},
     },
     "get_stock_dividends": {
         "path": "/api/assistant/stock-dividends", "description": "Read provider dividend history for an explicit listed ticker. Amounts and payment/ex dates are per record; missing history is unknown.",
@@ -2137,6 +2152,7 @@ def restore_full_backup(payload: bytes) -> dict[str, Any]:
         restore_backup_settings_from_preferences()
         configure_dividend_job()
         configure_ai_enrichment_job()
+        country_rating_schedules.configure()
         return {
             "status": "restored",
             "restored_from": inspection,
@@ -4558,6 +4574,7 @@ def _credit_rating_inventory():
             website_host = urlsplit(str(cached["website"])).hostname
             if website_host:
                 candidate["verified_issuer_domains"] = [website_host.removeprefix("www.").lower()]
+        candidate["issuer_country"] = cached.get("country") or ""
         if not {asset, instrument} & {"BOND", "FIXED_INCOME"}:
             # A manual display label is not the legal issuer. Use the profile
             # bound by the normal provider to this exact listing when present.
@@ -4600,6 +4617,50 @@ credit_rating_service = CreditRatingService(cache=lambda: hub().cache,
     inventory=_credit_rating_inventory, research_settings=_credit_research_settings,
     manual_store=lambda: local_store)
 app.include_router(credit_rating_service.router())
+
+security_countries = SecurityCountries(store=lambda: local_store, inventory=_credit_rating_inventory,
+    normalize_country=normalize_country, country_descriptor=country_descriptor)
+app.include_router(security_countries.router())
+
+
+def _sovereign_inventory():
+    counts = {}
+    for account in local_store.list_accounts():
+        code = normalize_country(account.get("location"))
+        if code:
+            counts[code] = counts.get(code, 0) + 1
+    return [{**country_descriptor(row["code"]), "has_open_position": bool(counts.get(row["code"])),
+             "has_accounts": bool(counts.get(row["code"])), "account_count": counts.get(row["code"], 0)}
+            for row in COUNTRIES]
+
+
+def _country_research_inventory(country_scope="accounts"):
+    if country_scope not in {"accounts", "all"}:
+        raise HTTPException(422, "invalid_country_scope")
+    return [row for row in _sovereign_inventory() if country_scope == "all" or row["has_accounts"]]
+
+
+@app.get("/api/countries/credit-ratings/countries")
+def sovereign_countries(request: Request, country_scope: str = "accounts"):
+    if not isinstance(getattr(request.state, "auth_user", None), dict):
+        raise HTTPException(401, "authentication_required")
+    return {"country_scope": country_scope, "items": _country_research_inventory(country_scope),
+            "unknown_account_countries": sum(not normalize_country(row.get("location")) for row in local_store.list_accounts())}
+
+
+sovereign_rating_service = SovereignRatingService(cache=lambda: hub().cache,
+    settings=lambda: config.market_data.get("credit_ratings", {}), inventory=_sovereign_inventory,
+    research_settings=_credit_research_settings, manual_store=lambda: local_store)
+app.include_router(sovereign_rating_service.router())
+
+
+@app.get("/api/countries/credit-ratings/risk-context")
+def sovereign_risk_context(request: Request, country_scope: str = "accounts"):
+    catalog = sovereign_countries(request, country_scope)
+    return {"country_scope": country_scope, "country_basis": "account_location",
+            "risk_formula_applied": False, "unknown_account_countries": catalog["unknown_account_countries"],
+            "items": [{**row, "credit_ratings": sovereign_rating_service.read(row)} for row in catalog["items"]],
+            "security_countries": [security_countries.read(row) for row in _credit_rating_inventory()]}
 
 
 _enrichment_api_preflight = ApiPreflight()
@@ -5306,6 +5367,23 @@ coordinated_paths = {security_enrichment.prefix + suffix for suffix in ("/ai", "
 market_research_router.routes[:] = [route for route in market_research_router.routes if route.path not in coordinated_paths]
 app.include_router(market_research_router)
 app.include_router(credit_rating_jobs.router())
+
+sovereign_rating_jobs = sovereign_rating_service.manager(app, lambda: _enrichment_assistant_settings(),
+    event_writer=lambda event, **fields: _record_log("market-data", "sovereign_" + event, **fields))
+country_rating_research = CountryRatingResearch(sovereign_rating_jobs, _country_research_inventory,
+                                               lambda: _enrichment_assistant_settings())
+country_rating_schedules = CountryRatingSchedules(
+    lambda: local_store.get_preference("country_rating_schedule", {}),
+    lambda value: local_store.set_preference("country_rating_schedule", value),
+    lambda: scheduler, auth_store, country_rating_research,
+    timezone=str(config.alerts.get("timezone") or "UTC"),
+    logger=lambda event, **fields: _record_log("market-data", event, **fields))
+app.include_router(country_rating_research.router())
+app.include_router(country_rating_schedules.router())
+sovereign_child_router = sovereign_rating_jobs.router()
+sovereign_coordinated_paths = {sovereign_rating_jobs.prefix + suffix for suffix in ("/ai", "/ai/{request_id}", "/status")}
+sovereign_child_router.routes[:] = [route for route in sovereign_child_router.routes if route.path not in sovereign_coordinated_paths]
+app.include_router(sovereign_child_router)
 
 
 AI_ENRICHMENT_JOB_ID = "ai-missing-data-enrichment"  # Legacy singleton, removed on reconciliation.

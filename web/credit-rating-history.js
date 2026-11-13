@@ -53,13 +53,13 @@ function creditRatingLatestChangeHtml(record) {
   return `<span class="holding-credit-change" data-credit-latest-change="${esc(event.event_id || "")}" title="${esc(creditRatingLatestChangeText(event))}">${transition}${transition ? " · " : ""}${esc(label)} ${esc(creditRatingHistoryDate(event))}</span>`;
 }
 
-function renderCreditRatingHistory(context) {
-  const panel = $("securityCreditRatingHistory"), list = $("securityCreditRatingHistoryList");
+function renderCreditRatingHistory(context, prefix = "securityCreditRatingHistory") {
+  const panel = $(prefix), list = $(`${prefix}List`);
   if (!panel || !list) return;
   panel.hidden = !context;
   if (!context) return;
   const events = Array.isArray(context.rating_history) ? context.rating_history : [];
-  const empty = $("securityCreditRatingHistoryEmpty");
+  const empty = $(`${prefix}Empty`);
   empty.hidden = Boolean(events.length);
   empty.textContent = t("No rating history has been recorded yet. A saved current rating does not establish its earlier history.");
   list.hidden = !events.length;
@@ -67,7 +67,7 @@ function renderCreditRatingHistory(context) {
   const html = events.map((event) => {
     const agency = { moodys: "Moody’s", sp: "S&P Global Ratings", fitch: "Fitch" }[event.agency] || t("Unknown");
     const changes = creditRatingHistoryChanges(event);
-    const scope = t({ issuer: "Issuer rating", issue: "Issue rating" }[event.scope] || "Unknown");
+    const scope = t({ issuer: "Issuer rating", issue: "Issue rating", sovereign: "Sovereign credit rating" }[event.scope] || "Unknown");
     const scale = t({ global: "Global scale", national: "National scale" }[event.scale] || "Unknown");
     const term = t({ long_term: "Long term", short_term: "Short term" }[event.term] || "Unknown");
     const metadata = [["Rated entity", event.entity_name || t("Unknown")], ["Rating scope", scope], ["Rating scale", scale], ["Rating term", term],

@@ -311,6 +311,6 @@ const help=html.slice(html.indexOf('id="helpModal"'),html.indexOf('id="securityD
 const paragraphs=[...help.matchAll(/<p>([^<]*Company credit ratings[^<]*|Opening the overview only reads saved ratings[^<]*|Last checked records a research attempt[^<]*|Credit ratings in Holdings include[^<]*)<\/p>/g)].map(match=>match[1].replaceAll('&amp;','&'));
 assert.equal(paragraphs.length,4);
 for(const text of paragraphs){const translated=window.PortfolioI18n.translate(text,'he');assert.notEqual(translated,text);assert.ok(/[א-ת]/.test(translated));}
-assert.ok(html.includes('/security-credit-ratings.js?v=4'));assert.ok(html.includes('/security-credit-ratings.css?v=2'));
+assert.ok(html.includes('/security-credit-ratings.js?v=5'));assert.ok(html.includes('/security-credit-ratings.css?v=2'));
 assert.ok(!help.includes('SPGLOBAL_RATINGS_TOKEN'));assert.ok(!help.includes('Administrators configure market_data.credit_ratings'));
 ''')

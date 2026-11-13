@@ -89,7 +89,7 @@ function creditRatingsSourceUrl(value) {
 }
 
 function creditRatingsCategory(record) {
-  return t({ issuer: "Issuer credit rating", issuer_default: "Issuer default rating", issuer_rating: "Issuer rating", issuer_credit_rating: "Issuer credit rating", issuer_default_rating: "Issuer default rating",
+  return t({ sovereign: "Sovereign credit rating", sovereign_rating: "Sovereign credit rating", sovereign_issuer: "Sovereign credit rating", issuer: "Issuer credit rating", issuer_default: "Issuer default rating", issuer_rating: "Issuer rating", issuer_credit_rating: "Issuer credit rating", issuer_default_rating: "Issuer default rating",
     long_term_issuer_credit_rating: "Issuer credit rating", long_term_issuer_default_rating: "Issuer default rating",
     corporate_family: "Corporate family rating", deposit: "Deposit rating", issue: "Issue rating",
     senior_unsecured: "Senior unsecured debt", senior_unsecured_class: "Senior unsecured debt", senior_secured: "Senior secured debt",
@@ -129,7 +129,7 @@ function creditRatingsOtherCategories(record) {
 }
 
 function creditRatingsEvidence(record, agency) {
-  const scope = { issuer: "Issuer rating", issue: "Issue rating" }[record.scope] || "Unknown";
+  const scope = { issuer: "Issuer rating", issue: "Issue rating", sovereign: "Sovereign credit rating" }[record.scope] || "Unknown";
   const scale = { global: "Global scale", national: "National scale" }[record.scale] || "Unknown";
   const term = { long_term: "Long term", short_term: "Short term" }[record.term] || "Unknown";
   const details = [["Rated entity", record.entity_name || t("Unknown")], ["Rating scope", t(scope)], ["Rating scale", t(scale)],
@@ -169,19 +169,19 @@ function creditRatingsSignal(record, field) {
   return `<div class="credit-rating-signal"><span>${esc(value)}</span>${stale ? `<span class="badge warn" title="${esc(`${t(dateLabel)}: ${creditRatingsDate(record[`${field}_fetched_at`])}`)}">${esc(t(label))}</span>` : ""}</div>`;
 }
 
-function creditRatingsRows(context) {
+function creditRatingsRows(context, options = {}) {
   const agencies = [["moodys", "Moody’s"], ["sp", "S&P Global Ratings"], ["fitch", "Fitch"]];
   return agencies.map(([key, agency]) => {
     const record = (Array.isArray(context?.ratings) ? context.ratings : []).find((item) => item.agency === key) || { status: "not_checked", outlook: "unknown", watch: "unknown" };
     const manual = creditRatingsIsManual(record);
     const label = { rated: manual ? "Manual rating" : "Verified rating", unrated: "Unrated", withdrawn: "Withdrawn", not_found: "Not found", not_checked: "Not checked",
       unavailable: "Unavailable", conflicting: "Conflicting evidence" }[record.status] || "Unavailable";
-    const scope = [{ issuer: "Issuer rating", issue: "Issue rating" }[record.scope], { global: "Global scale", national: "National scale" }[record.scale],
+    const scope = [{ issuer: "Issuer rating", issue: "Issue rating", sovereign: "Sovereign credit rating" }[record.scope], { global: "Global scale", national: "National scale" }[record.scale],
       { long_term: "Long term", short_term: "Short term" }[record.term]].filter(Boolean).map((label) => t(label)).join(" · ");
     const reason = manual ? t("User-entered information; the app has not independently verified this rating.") : creditRatingsReason(record.reason_code, record.status);
     const original = (Array.isArray(context?.retrieved_ratings) ? context.retrieved_ratings : []).find((item) => item.agency === key);
     const evidence = manual && typeof manualCreditEvidenceHtml === "function" ? manualCreditEvidenceHtml(record, original, agency) : creditRatingsEvidence(record, agency);
-    const action = typeof manualCreditActionsHtml === "function" ? manualCreditActionsHtml(context, key) : "";
+    const action = options.actions ? options.actions(context, key) : typeof manualCreditActionsHtml === "function" ? manualCreditActionsHtml(context, key) : "";
     return `<tr><th scope="row"><bdi dir="ltr">${esc(agency)}</bdi></th>
       <td data-label="${esc(t("Credit rating"))}"><div class="credit-rating-value"><bdi class="credit-rating-symbol" dir="ltr">${esc(record.rating || "—")}</bdi><span class="badge neutral">${esc(t(label))}</span>${manual && record.status !== "rated" ? `<span class="badge credit-manual-badge">${esc(t("Manual"))}</span>` : ""}${record.stale ? `<span class="badge warn">${esc(t(manual ? "Old manual entry" : "Stale evidence"))}</span>` : ""}${manual && record.identity_verification === "user_entered" ? `<span class="badge credit-manual-badge">${esc(t("Manual identity"))}</span>` : ""}</div>${scope ? `<span class="credit-rating-scope">${esc(scope)}</span>` : ""}${reason ? `<p class="credit-rating-reason">${esc(reason)}</p>` : ""}</td>
       <td data-label="${esc(t("Outlook"))}">${creditRatingsSignal(record, "outlook")}</td>

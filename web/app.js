@@ -1580,6 +1580,7 @@ function renderCurrentUser() {
   renderAIEnrichment();
   renderPriceEntryState();
   if (typeof renderSecurityCreditRatings === "function" && state.securityDetail) renderSecurityCreditRatings();
+  if (typeof renderSovereignCreditRatings === "function") renderSovereignCreditRatings();
   if (typeof renderHoldingsCreditRatings === "function") renderHoldingsCreditRatings();
   renderAssistantChat();
 }
@@ -1987,6 +1988,7 @@ function ensureHierarchicalNav() {
       <div class="nav-children">
         <button class="nav-item" type="button" data-modal="positionsModal">${esc(t("positions"))}</button>
         <button class="nav-item" type="button" data-modal="instrumentCatalogModal">${esc(t("Securities"))}</button>
+        <button id="openCountryRatings" class="nav-item" type="button" aria-haspopup="dialog" aria-controls="countryRatingsModal">${esc(t("Country ratings"))}</button>
         <button class="nav-item" type="button" data-modal="securitiesModal">${esc(t("Transactions"))}</button>
         <button class="nav-item" type="button" data-modal="tradingJournalModal">${esc(t("Trading Journal"))}</button>
         <button class="nav-item" type="button" data-modal="eventsModal">${esc(t("Dividends & Events"))}</button>
@@ -7793,6 +7795,7 @@ async function openSecurityDetail(dataset, returnFocus = document.activeElement)
   $("detailPriceComments").value = "";
   openModal("securityDetailModal", returnFocus);
   if (typeof openSecurityCreditRatings === "function") openSecurityCreditRatings(state.securityDetail);
+  if (typeof openSovereignCreditRatings === "function") openSovereignCreditRatings(state.securityDetail);
   await loadSecurityDetail();
 }
 
@@ -7921,6 +7924,7 @@ function renderSecurityDetail() {
   renderSecurityChart();
   renderBondReference("detail");
   if (typeof renderSecurityCreditRatings === "function") renderSecurityCreditRatings();
+  if (typeof renderSovereignCreditRatings === "function") renderSovereignCreditRatings();
   if ($("securityLocalPriceScope")) $("securityLocalPriceScope").hidden = !bondReference;
   if ($("securityChartTitle")) $("securityChartTitle").textContent = t(bondReference ? "Local valuation price history" : "Price chart");
   const failed = Object.values(load).includes("error");
@@ -15266,7 +15270,7 @@ function closeModal(modal) {
   }
   const returnFocus = modalReturnFocus.get(modal.id);
   modalReturnFocus.delete(modal.id);
-  const fallbackSelector = modal.id === "securitiesModal" && employeeOptionsWorkflowActive()
+  const fallbackSelector = modal.id === "countryRatingsModal" ? "#openCountryRatings" : modal.id === "securitiesModal" && employeeOptionsWorkflowActive()
     ? '[data-modal="securitiesModal"][data-securities-workflow="employee-options"]'
     : modal.id === "transactionEntryModal" ? "#newSecurityTransaction" : `[data-modal="${modal.id}"]`;
   requestAnimationFrame(() => {

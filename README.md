@@ -198,6 +198,30 @@ categories** when no primary issuer rating is available; its own outlook and
 source dates remain visible. Missing evidence does not mean Unrated or Stable.
 Portfolio risk calculations remain unchanged pending the separate risk review.
 
+### Country credit ratings
+
+**Portfolio → Country ratings** provides separate Moody’s, S&P and Fitch
+sovereign opinions and history. Global long-term foreign-currency, local-currency
+and unspecified opinions remain separate. Public research never substitutes a
+company, bank, national-scale or country-ceiling rating for a sovereign opinion.
+ISO catalog membership does not establish an independent sovereign rating.
+
+Country research and its optional schedule default to countries recorded in
+account locations, deduplicated across accounts. **All countries** explicitly
+selects the full supported ISO catalog. Unknown account locations do not broaden
+the scope. Schedules start disabled; editors select cadence and timezone.
+Runs use the saving user's current permissions, skip overlaps and missed runs,
+and retain the existing per-country AI/REST/web limits. An interrupted request
+can resume its original scope without repeating completed countries.
+
+Security overviews separately associate issuer domicile from a cached provider
+profile or a revision-checked manual correction, never from exchange or currency.
+Country grades support manual overrides and persistent agency/basis history,
+including source action dates, detection dates and user edits. Acquired history
+does not reconstruct an agency's complete archive. Saved country data is available
+through authenticated country-rating APIs and the cache-only risk-context endpoint;
+the current numeric portfolio risk model remains unchanged.
+
 ### Security price API and AI updater
 
 #### Automatic U.S. bond and fund retrieval

@@ -137,7 +137,7 @@ def test_static_interface_and_help_copy_have_hebrew_translations():
     # Data identifiers, market codes, language name and literal input examples.
     unchanged = {'0', '0.00', '100', 'AMEX', 'ANET, HPE, JNPR', 'AVGO, MSFT', 'Asia/Jerusalem',
                  'English', 'NASDAQ', 'NASDAQ, NYSE, TASE…', 'NYSE', 'REST API', 'RSU', 'TASE',
-                 'US', 'USD/ILS, IXIC, GCUSD', 'dd/mm/yyyy'}
+                 'US', 'IL', 'USD/ILS, IXIC, GCUSD', 'dd/mm/yyyy'}
     output = run_js('const copy = ' + json.dumps(sorted(parser.items)) + ';\n'
                     'console.log(JSON.stringify(copy.filter(text => window.PortfolioI18n.translate(text,"he") === text)));')
     missing = set(json.loads(output)) - unchanged

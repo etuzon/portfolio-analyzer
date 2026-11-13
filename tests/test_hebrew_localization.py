@@ -196,6 +196,7 @@ TECHNICAL_UI_VALUES = {
     "1M", "6M", "1Y", "3Y", "5Y",
     "MA 7", "MA 10", "MA 15", "MA 30",
     "AMEX", "NASDAQ", "NYSE", "TASE", "US", "RSU",
+    "IL",  # Language-neutral ISO country-code example in issuer domicile input.
     "ANET, HPE, JNPR", "AVGO, MSFT", "NASDAQ, NYSE, TASE…",
     "USD/ILS, IXIC, GCUSD", "Asia/Jerusalem", "dd/mm/yyyy",
 }

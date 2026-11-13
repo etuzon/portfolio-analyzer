@@ -1,0 +1,31 @@
+.sovereign-credit-ratings .sovereign-country-form { display:flex; flex-wrap:wrap; align-items:end; gap:10px; margin-block:10px; }
+.sovereign-country-form .field { margin:0; width:170px; flex:0 0 170px; }
+.sovereign-country-form input { width:100%; min-width:120px; text-transform:uppercase; }
+.sovereign-country-form button { width:auto; min-height:38px; }
+.sovereign-basis-field { width:280px; max-width:100%; margin-block:12px; }
+.sovereign-basis-field select { width:100%; min-width:230px; }
+#sovereignCountryAssignment > summary { cursor:pointer; min-height:30px; }
+#sovereignCountryAssignment > p { max-width:760px; font-size:.85rem; color:var(--ux-muted); }
+#sovereignManualSecurity { color:var(--ux-muted); font-size:12px; }
+#sovereignManualGrade { min-width:140px; }
+@media(max-width:720px) {
+  .sovereign-country-form button { min-height:44px; }
+  #sovereignManualStatus { max-width:180px; }
+  #sovereignManualScope, #sovereignManualOutlook, #sovereignManualWatch { max-width:260px; }
+  #sovereignManualGrade { max-width:160px; }
+}
+.sovereign-inventory-controls { display:flex; flex-wrap:wrap; align-items:end; gap:10px; }
+.sovereign-inventory-controls .field { width:200px; min-width:180px; margin:0; }
+.sovereign-inventory-controls .sovereign-country-choice { flex:1 1 260px; min-width:230px; max-width:420px; }
+.sovereign-inventory-controls select { width:100%; }
+.sovereign-inventory-controls button { width:auto; min-height:38px; }
+#countryRatingSchedule { margin-block:18px; padding-block:12px; border-top:1px solid var(--ux-stroke); }
+#countryRatingSchedule > summary { cursor:pointer; min-height:36px; font-weight:650; }
+#countryRatingSchedule > p { font-size:.85rem; color:var(--ux-muted); }
+.sovereign-schedule-scope { margin-block:10px; }
+.sovereign-schedule-scope .field { width:250px; max-width:100%; }
+.sovereign-schedule-scope select { width:100%; }
+@media(max-width:720px) {
+  .sovereign-inventory-controls .field, .sovereign-inventory-controls .sovereign-country-choice { width:100%; max-width:none; flex:1 1 100%; min-width:0; }
+  .sovereign-inventory-controls button { min-height:44px; }
+}

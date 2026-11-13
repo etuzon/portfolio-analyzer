@@ -36,6 +36,7 @@
   <link rel="stylesheet" href="/manual-credit-ratings.css?v=1" />
   <link rel="stylesheet" href="/credit-rating-history.css?v=1" />
   <link rel="stylesheet" href="/ai-credit-ratings.css?v=1" />
+  <link rel="stylesheet" href="/sovereign-credit-ratings.css?v=1" />
   </head>
   <body>
     <div id="authOverlay" class="auth-overlay">
@@ -94,6 +95,7 @@
               <button class="nav-item" type="button" data-modal="eventsModal" data-dividends-section="calendar">Dividends &amp; Events</button>
               <button class="nav-item" type="button" data-modal="pricesModal">Prices</button>
               <button class="nav-item" type="button" data-modal="reportsModal">Portfolio Reports</button>
+              <button id="openCountryRatings" class="nav-item" type="button" aria-haspopup="dialog" aria-controls="countryRatingsModal">Country ratings</button>
               <button id="enrichMissingData" class="nav-item" type="button" aria-haspopup="dialog" aria-controls="aiEnrichmentModal">Find missing data with AI</button>
             </div>
           </details>
@@ -1344,6 +1346,9 @@
               </article>
               <article class="help-feature">
                 <h3>Securities</h3>
+                <p>After a country research run stops with unchecked countries, Retry remaining country checks continues the original request and country scope. Check AI progress only reads the current request; it does not start another run.</p>
+                <p>Open Portfolio → Country ratings to browse saved sovereign ratings and history. Account countries is the default scope and uses account locations, independently of issuer domicile. Choose All countries to browse the ISO country catalog; some territories have no separate sovereign rating, and a parent country’s opinion is never substituted. An empty account-country scope stays empty. Research countries with AI checks the selected scope through bounded batches, with progress and recovery through Check AI progress. Refresh country ratings checks only the selected country. Automatic country rating checks starts disabled, defaults to Account countries, and lets an Admin or Operator explicitly choose All countries, frequency and timezone. Save schedule saves without starting research; Reload schedule discards the unsaved schedule draft. A failed save keeps the draft. The saved schedule, next run and timezone remain visible. Viewers can inspect but cannot save or research. Scheduled checks run with the saving user’s current permissions only while the app is running, skip overlaps and missed runs, and use the same public-source research limits as manual checks.</p>
+                <p>Open a security overview to inspect Sovereign credit ratings and Country rating history separately from company ratings. Issuer domicile uses the cached issuer profile or an explicit manual ISO country assignment; exchange, trading currency and account country do not establish domicile. Admin and Operator users can save a country assignment or clear its override to restore the profile fallback. Ratings are shared by country across securities. Select Foreign currency, Local currency or Unspecified currency basis; these global long-term categories never fill one another. Refresh country ratings uses public-source AI without a licensed agency API. Opening the overview and history only reads saved information; loading and research are non-blocking. Check AI progress recovers the same request, and Reload saved ratings retries a failed read while preserving saved evidence. Add manually or Edit manually records an agency assessment for the selected basis, with a native grade, optional action dates in dd/mm/yyyy and a source URL or notes. Manual entries remain separate from retrieved evidence; clearing one restores the retained retrieved facts. Failed saves retain drafts, and a revision conflict requires reloading and reviewing before another save. Viewers can inspect saved ratings, history and sources but cannot change assignments, ratings or start research. Country history preserves supported agency action dates separately from detection dates, Outlook and Watch changes, and manual add, edit and clear events. Initial observations are not upgrades, unchanged checks do not create changes, and saved current ratings do not reconstruct earlier history. Country ratings and history are retained in local preferences and backups. They do not change current portfolio risk calculations.</p>
                 <p>Open Portfolio → Securities to browse registered securities. Use Add security manually to enter the security details in a separate window, or Edit beside an existing security to update it. Save closes the editor after refreshing the list; Cancel closes without saving. Search by name, symbol or grant ID, filter by security type, and sort by name, symbol or type in either direction. Reset filters shows the full list again. Filtering and sorting use the loaded list without a server request; reopen Securities to retry a failed load. Use selects the security and opens a New transaction window; employee option grants open their dedicated workflow. Viewers can browse and filter but cannot create, edit or use securities to record transactions.</p>
                 <p>For company shares and bonds, select Ratings in Securities or open the security symbol in Holdings. Company credit ratings lists Moody’s, S&amp;P Global Ratings and Fitch separately, preserving each agency’s symbol, outlook and watch. An issuer rating describes a company; an issue rating describes a specific debt obligation. Global and national scales and long- and short-term ratings remain distinct. Open Details and sources for the rated entity, rating date, source observation date, retrieval date and supporting links. Dates use dd/mm/yyyy. Unknown fields stay unknown; Not found does not mean Unrated, and Withdrawn is shown explicitly. Stale evidence remains visible while a newer check is requested. These ratings do not change portfolio risk scores.</p>
                 <p>Last checked records a research attempt, which may not verify new information. Outlook and watch retain separate verification dates. Refreshing only the grade can preserve an earlier same-grade outlook or watch; its original verification date stays unchanged, with a stale badge in the affected cell when needed. Source observation and rating dates stay as published. The Other rating categories list in Details and sources shows saved deposit, senior unsecured, short-term, national-scale and other ancillary observations with their own entity, scope, scale, term, outlook, watch and source dates. Original signal verification dates remain separate from retrieval dates. A source observation or periodic review does not establish a rating action date. These categories do not replace an unavailable primary long-term issuer or issue rating or supply another legal entity’s rating.</p>
@@ -1689,6 +1694,30 @@
       </section>
     </div>
 
+    <div id="countryRatingsModal" class="modal" hidden>
+      <div class="modal-backdrop" data-close></div>
+      <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="countryRatingsTitle">
+        <div class="section-head"><h2 id="countryRatingsTitle" tabindex="-1">Country ratings</h2><button class="icon-button" type="button" data-close aria-label="Close">×</button></div>
+        <p class="section-note">Research sovereign ratings from public sources for countries where accounts are located, or explicitly choose all countries. Account location and issuer domicile are different scopes. Missing sovereign opinions remain unknown.</p>
+        <div class="sovereign-inventory-controls">
+          <label class="field" for="sovereignResearchScope"><span>Country scope</span><select id="sovereignResearchScope"><option value="accounts">Account countries</option><option value="all">All countries</option></select></label>
+          <label class="field sovereign-country-choice" for="sovereignSelectedCountry"><span>Country</span><select id="sovereignSelectedCountry"></select></label>
+          <button id="researchCountryScope" type="button">Research countries with AI</button><button id="resumeCountryScope" class="secondary compact-button" type="button" hidden>Check AI progress</button><button id="retryCountryScope" class="secondary compact-button" type="button" hidden>Retry remaining country checks</button><button id="reloadCountryInventory" class="secondary compact-button" type="button">Reload countries</button>
+        </div>
+        <p id="sovereignScopeHint" class="section-note" hidden>All countries uses the full ISO country catalog and can take longer and use more AI tokens. Some entries have no separate sovereign rating.</p>
+        <p id="countryInventoryStatus" class="status-line" role="status" aria-live="polite" aria-atomic="true"></p>
+        <p id="countryResearchStatus" class="status-line" role="status" aria-live="polite" aria-atomic="true" hidden></p>
+        <div id="sovereignGlobalSlot"></div>
+        <details id="countryRatingSchedule"><summary>Automatic country rating checks</summary><p>Automatic checks start disabled and use account countries by default. Choose All countries explicitly to broaden the schedule. Runs use the saving user’s editing permissions, skip overlapping work and run only while the app is running. Saving a schedule does not start research.</p>
+          <div id="countryScheduleEditor"></div>
+          <div id="countryScheduleScopeFields" class="sovereign-schedule-scope"><label class="field" for="countryScheduleScope"><span>Country scope</span><select id="countryScheduleScope"><option value="accounts">Account countries</option><option value="all">All countries</option></select></label></div>
+          <p id="countryScheduleScopeHint" class="section-note" hidden>All countries uses the full ISO country catalog and can take longer and use more AI tokens. Some entries have no separate sovereign rating.</p>
+          <p id="countryScheduleSaved" class="section-note"></p><p id="countryScheduleStatus" class="status-line" role="status" aria-live="polite"></p>
+          <div class="credit-ratings-actions"><button id="saveCountrySchedule" type="button">Save schedule</button><button id="reloadCountrySchedule" class="secondary compact-button" type="button">Reload schedule</button></div>
+        </details>
+      </section>
+    </div>
+
     <div id="securityDetailModal" class="modal" hidden>
       <div class="modal-backdrop" data-close></div>
       <section class="modal-card wide" role="dialog" aria-modal="true" aria-labelledby="securityDetailTitle">
@@ -1759,6 +1788,59 @@
             </form>
           </section>
           <div id="securityCreditRatingsProviders"></div>
+        </section>
+        <div id="sovereignSecuritySlot"></div>
+        <section id="sovereignCreditRatings" class="security-credit-ratings sovereign-credit-ratings" aria-labelledby="sovereignCreditRatingsTitle" aria-describedby="sovereignCreditRatingsScope" aria-busy="false" hidden>
+          <div class="section-head"><h3 id="sovereignCreditRatingsTitle">Sovereign credit ratings</h3><div class="credit-ratings-actions"><button id="refreshSovereignRatings" class="secondary compact-button" type="button">Refresh country ratings</button><button id="resumeSovereignRatings" class="secondary compact-button" type="button" hidden>Check AI progress</button><button id="reloadSovereignRatings" class="secondary compact-button" type="button">Reload saved ratings</button></div></div>
+          <p id="sovereignCreditRatingsScope" class="section-note">Country ratings assess the sovereign, separately from the company. They are saved for future risk analysis and do not change current risk scores.</p>
+          <p class="section-note">Ratings use public-source AI research. An available AI connection and Internet search are required; no licensed rating API is required.</p>
+          <p id="sovereignCountryIdentity" class="section-note"></p>
+          <details id="sovereignCountryAssignment"><summary>Issuer domicile</summary><p>Use the issuer’s country of domicile, not its exchange, trading currency or account country. A manual assignment applies to this security; country ratings are shared across securities.</p>
+            <form id="sovereignCountryForm" class="sovereign-country-form"><label class="field" for="sovereignCountryCode"><span>Country ISO code</span><input id="sovereignCountryCode" maxlength="2" minlength="2" pattern="[A-Za-z]{2}" dir="ltr" autocomplete="off" placeholder="IL" required /></label><button id="saveSovereignCountry" type="submit">Save country</button><button id="clearSovereignCountry" class="secondary compact-button" type="button" hidden>Clear country override</button></form>
+          </details>
+          <p id="sovereignCreditRatingsStatus" class="status-line" role="status" aria-live="polite" aria-atomic="true" hidden></p>
+          <div id="sovereignCreditRatingsContent" hidden>
+            <label class="field sovereign-basis-field" for="sovereignCurrencyBasis"><span>Rating currency basis</span><select id="sovereignCurrencyBasis"></select></label>
+            <p class="section-note">Global long-term sovereign ratings. Local and foreign currency ratings remain separate; an unspecified basis is not a substitute for either.</p>
+            <table class="credit-ratings-table" aria-label="Sovereign credit ratings"><thead><tr><th scope="col">Agency</th><th scope="col">Credit rating</th><th scope="col">Outlook</th><th scope="col">Watch</th><th scope="col">Evidence</th></tr></thead><tbody id="sovereignCreditRatingsRows"></tbody></table>
+            <details id="sovereignRatingHistory" class="credit-rating-history" hidden><summary>Country rating history</summary><p>History compares the same country, agency and currency basis. Agency action dates appear only when supported; otherwise the app shows Detected at. Manual edits remain distinct. Opening this history does not research earlier ratings.</p><p id="sovereignRatingHistoryEmpty" hidden></p><ol id="sovereignRatingHistoryList" aria-label="Country rating history"></ol></details>
+          <section id="sovereignManualEditor" class="manual-credit-editor" aria-labelledby="sovereignManualEditorTitle" aria-describedby="sovereignManualEditorNote" aria-busy="false" hidden>
+            <div class="section-head"><h4 id="sovereignManualEditorTitle">Manual rating</h4><bdi id="sovereignManualSecurity" dir="ltr"></bdi></div>
+            <p id="sovereignManualEditorNote" class="section-note">Your manual entry replaces the displayed agency row, including Unknown fields. Retrieved evidence remains separate. Source URLs are saved without being read or verified.</p>
+            <form id="sovereignManualForm" novalidate>
+              <div class="manual-credit-main-fields">
+                <label class="field" for="sovereignManualStatus"><span>Status</span><select id="sovereignManualStatus"></select></label>
+                <label class="field" for="sovereignManualScope"><span>Rating scope</span><select id="sovereignManualScope" aria-describedby="sovereignManualScopeHint"></select><small id="sovereignManualScopeHint"></small></label>
+                <label class="field" for="sovereignManualEntity"><span>Sovereign entity name</span><input id="sovereignManualEntity" maxlength="300" required aria-required="true" aria-describedby="sovereignManualEntityHint" autocomplete="off" /><small id="sovereignManualEntityHint"></small></label>
+              </div>
+              <div id="sovereignManualActiveFields" class="manual-credit-active-fields">
+                <label class="field" for="sovereignManualGrade"><span>Credit rating</span><select id="sovereignManualGrade" dir="ltr"></select></label>
+                <label class="field" for="sovereignManualOutlook"><span>Outlook</span><select id="sovereignManualOutlook"></select></label>
+                <label class="field" for="sovereignManualWatch"><span>Watch</span><select id="sovereignManualWatch"></select></label>
+              </div>
+              <details class="manual-credit-dates"><summary>Action dates (optional)</summary>
+                <p class="section-note">Leave unknown action dates blank. Do not substitute the date you entered this record.</p>
+                <div class="manual-credit-date-fields">
+                  <label class="field" for="sovereignManualRatingDate"><span>Rating/status action date</span><input id="sovereignManualRatingDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+                  <label id="sovereignManualOutlookDateField" class="field" for="sovereignManualOutlookDate"><span>Outlook date</span><input id="sovereignManualOutlookDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+                  <label id="sovereignManualWatchDateField" class="field" for="sovereignManualWatchDate"><span>Watch date</span><input id="sovereignManualWatchDate" class="date-field" inputmode="numeric" placeholder="dd/mm/yyyy" /></label>
+                </div>
+              </details>
+              <div class="manual-credit-provenance-fields">
+                <label class="field" for="sovereignManualSource"><span>Source URL</span><input id="sovereignManualSource" type="url" maxlength="2500" autocomplete="off" /></label>
+                <label class="field" for="sovereignManualNotes"><span>Notes</span><textarea id="sovereignManualNotes" rows="2" maxlength="1000"></textarea></label>
+              </div>
+              <p class="section-note">Enter a public HTTPS source URL or a short note. A manual Unrated entry is your assertion, not agency confirmation.</p>
+              <p id="sovereignManualEditorStatus" class="status-line" role="status" aria-live="polite" aria-atomic="true"></p>
+              <div class="manual-credit-actions">
+                <button id="saveSovereignManualRating" type="submit">Save manual rating</button>
+                <button id="cancelSovereignManualRating" class="secondary compact-button" type="button">Cancel</button>
+                <button id="clearSovereignManualRating" class="secondary compact-button" type="button" hidden>Clear manual override</button>
+                <button id="reloadSovereignManualRating" class="secondary compact-button" type="button" hidden>Reload saved ratings</button>
+              </div>
+            </form>
+          </section>
+          </div>
         </section>
         <section id="securityMarketReference" class="bond-reference-panel" aria-labelledby="securityMarketReferenceTitle" hidden>
           <div class="section-head"><h3 id="securityMarketReferenceTitle">API reference data</h3><button class="secondary compact-button" type="button" data-bond-reference="detail">Load API reference</button></div>
@@ -3128,7 +3210,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
   <div id="riskBadgeExplanation" class="risk-badge-explanation" role="tooltip" hidden></div>
-  <script src="/i18n.js?v=20261113-public-credit-dates3"></script>
+  <script src="/i18n.js?v=20261113-sovereign-ratings"></script>
   <script src="/scheduler.js?v=2"></script>
   <script src="/scenario-model.js?v=0.9.7"></script>
   <script src="/assistant-format.js?v=1"></script>
@@ -3153,12 +3235,13 @@
   <script src="/price-input-units.js?v=1"></script>
   <script src="/alarm-priority-ui.js?v=20261112-transaction-table"></script>
   <script src="/account-cash-ui.js?v=20261109-cash-save-label"></script>
-  <script src="/security-credit-ratings.js?v=4"></script>
-  <script src="/credit-rating-history.js?v=1"></script>
+  <script src="/security-credit-ratings.js?v=5"></script>
+  <script src="/credit-rating-history.js?v=2"></script>
   <script src="/manual-credit-ratings.js?v=1"></script>
+  <script src="/sovereign-credit-ratings.js?v=1"></script>
   <script src="/holdings-credit-ratings.js?v=3"></script>
   <script src="/ai-credit-ratings.js?v=2"></script>
   <script src="/risk-badge-ui.js?v=1"></script>
-  <script src="/app.js?v=20261113-public-credit-history"></script>
+  <script src="/app.js?v=20261113-sovereign-ratings"></script>
   </body>
 </html>
