@@ -13,6 +13,47 @@ from app.us_market_providers import ProviderFailure, RequestBudget
 CANDIDATE = {"security_key": "one", "symbol": "EXAMPLE", "name": "Example Company"}
 
 
+@pytest.mark.parametrize("query", [
+    '"Barings BDC Inc" Fitch rating',
+    'Barings BDC, Inc. long-term issuer rating',
+    'BBDC Moody\'s issuer rating',
+])
+def test_full_registered_search_identity_tolerates_punctuation_only(query):
+    candidate = {"security_key": "BBDC|YAHOO|USD", "symbol": "BBDC", "name": "Barings BDC, Inc."}
+    requests = []
+    research = session(search=lambda query, settings: requests.append(query) or [])
+    assert research.search(candidate, query)["discovery_only"] is True
+    assert requests == [query] and research.budget.used == 1
+    assert research.evidence(candidate) == []
+
+
+@pytest.mark.parametrize("query", [
+    'Barings BDC Holdings Inc Fitch rating',
+    'Barings BDC LLC Fitch rating',
+    'Barings BDC Fitch rating',
+    'XXBBDCYY Fitch rating',
+    'XBarings BDC IncY Fitch rating',
+])
+def test_discovery_identity_does_not_drop_words_legal_forms_or_boundaries(query):
+    candidate = {"security_key": "BBDC|YAHOO|USD", "symbol": "BBDC", "name": "Barings BDC, Inc."}
+    requests = []
+    research = session(search=lambda query, settings: requests.append(query) or [])
+    with pytest.raises(ResearchFailure, match="identifier"):
+        research.search(candidate, query)
+    assert requests == [] and research.budget.used == 0
+
+
+def test_omitted_legal_suffix_requires_the_registered_ticker_for_discovery():
+    candidate = {"security_key": "CMDB|YAHOO|USD", "symbol": "CMDB", "name": "Costamare Bulkers Holdings Ltd"}
+    research = session()
+    query = '"Costamare Bulkers Holdings" credit ratings Moody\'s S&P Fitch'
+    with pytest.raises(ResearchFailure, match="identifier"):
+        research.search(candidate, query)
+    assert research.budget.used == 0
+    assert research.search(candidate, "CMDB " + query)["discovery_only"] is True
+    assert research.budget.used == 1 and research.evidence(candidate) == []
+
+
 @pytest.mark.parametrize("query", ['"88059E" "SH8" issuer', '88059E SH8 bond', '"88059E SH8" offering'])
 def test_formatted_checksum_valid_cusip_remains_an_exact_discovery_query(query):
     candidate = {"security_key": "strip", "symbol": "88059ESH8", "name": "US_88059ESH8", "asset_class": "BOND"}

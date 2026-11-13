@@ -779,7 +779,11 @@ def _forward_clause_is_bound(text, match, candidate, rating_matches):
 def _article_records(source, candidate):
     text = source["text"]
     agency = _document_agency(source)
-    heading = _plain(source.get("title")) + "\n" + text[:1800]
+    # Reader Markdown can put thousands of characters of invisible sharing
+    # targets before the article. Bound the visible prose, while retaining the
+    # original text/offsets for clause identity and literal source evidence.
+    visible = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)
+    heading = _plain(source.get("title")) + "\n" + _plain(visible)[:1800]
     if not agency:
         return []
     canonical_name = next((candidate.get(key) for key in ("legal_entity_name", "issuer_name", "name")

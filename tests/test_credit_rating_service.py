@@ -85,6 +85,46 @@ def test_cache_only_read_retains_all_agencies_and_survives_new_service_instance(
         {k: v for k, v in row.items() if k != "latest_change"} for row in after["ratings"]]
 
 
+def test_credit_search_keeps_valid_identity_and_binds_incomplete_query_to_registered_symbol(environment):
+    service, _, _, _ = environment
+    candidate = service.candidates("open")["items"][0]
+    candidate["_request_id"] = "search-recovery"
+    queries = []
+    session = ResearchSession({}, WebRequestBudget(8), search=lambda query, settings:
+        queries.append(query) or [{"url": "https://www.fitchratings.com/research/example", "title": "Fitch Ratings"}])
+    service._sessions["search-recovery"] = session
+    full_name_query = "JPMorgan Chase & Co. issuer credit ratings"
+    original = service.research_tool(candidate, "search", {"query": full_name_query})
+    assert original["source_status"] == "search_results" and queries == [full_name_query]
+    incomplete = "JPMorgan Chase credit ratings"
+    corrected = service.research_tool(candidate, "search", {"query": incomplete})
+    assert corrected["source_status"] == "search_results" and corrected["web_requests"] == 2
+    assert queries[-1] == "JPM " + incomplete
+    oversized = service.research_tool(candidate, "search", {"query": "x" * 499})
+    assert oversized["source_status"] == "invalid_request" and oversized["web_requests"] == 2
+    assert candidate["symbol"] in oversized["recovery_guidance"]
+    assert len(queries) == 2  # No silent truncation, retry or budget reset.
+
+
+def test_verified_agency_discovery_lead_does_not_create_or_authorize_rating_fact(environment):
+    service, _, inventory, _ = environment
+    inventory[0] = {"security_key": "BBDC|YAHOO|USD", "symbol": "BBDC", "stock_market": "YAHOO", "currency": "USD",
+                    "name": "Barings BDC, Inc.", "issuer_name": "Barings BDC, Inc.", "asset_class": "EQUITY",
+                    "has_open_position": True, "website": "https://www.barings.com", "verified_issuer_domains": ["barings.com"]}
+    candidate = service.candidates("open")["items"][0]
+    candidate["_request_id"] = "agency-discovery-only"
+    result = service.research_tool(candidate, "discover", {})
+    agencies = [lead for lead in result["sources"] if "fitchratings.com/" in lead["url"]]
+    assert any("/entity/" in lead["url"] for lead in agencies)
+    assert any("/research/" in lead["url"] for lead in agencies)
+    assert all(agency["discovery_only"] is True for agency in agencies) and result["evidence"] == []
+    assert result["web_requests"] == 0
+    assert all(row["rating"] is None and row["status"] == "not_checked" for row in service.read(candidate)["ratings"])
+    # Catalog membership does not grant issuer ownership to another page.
+    unrelated = service._authorize_source(candidate, {"url": "https://unverified.example/article", "text": "unverified"})
+    assert "_issuer_source_verified" not in unrelated
+
+
 def test_main_inventory_uses_listing_bound_issuer_profile_and_excludes_noncompany_instruments(monkeypatch):
     from types import SimpleNamespace
     from app import main

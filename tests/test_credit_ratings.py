@@ -246,6 +246,35 @@ def test_legal_spelling_equivalence_never_drops_entity_or_legal_form_tokens(diff
     assert extract_rating_records(src, company) == []
 
 
+def test_article_identity_uses_visible_prose_when_share_targets_precede_named_subject():
+    company = {"security_key": "BBDC|YAHOO|USD", "issuer_name": "Barings BDC, Inc.", "asset_class": "EQUITY"}
+    # The actual Fitch/Jina read puts over 1,800 characters of sharing URLs
+    # before the legal subject. Keep raw offsets/evidence, but do not let link
+    # targets consume the bounded visible-prose identity check.
+    sharing = "[](https://share.example/?url=" + "a" * 2200 + ")\n\n"
+    body = "10 Jul 2026\n\nFitch affirmed Barings BDC, Inc.'s (BBDC) Long-Term Issuer Default Rating at 'BBB-\u200c'. Its Outlook is Stable."
+    src = source(sharing + body, title="Fitch Affirms Barings BDC", url="https://www.fitchratings.com/research/corporate-finance/example")
+    record, = primary(company, src)
+    row = normalize_observation(record, company)
+    assert (row["rating"], row["rating_type"], row["outlook"], row["watch"]) == ("BBB-", "issuer_default", "stable", "unknown")
+    assert row["rating_date"] == row["observed_at"] == "2026-07-10"
+    assert row["outlook_date"] is None
+    assert record["claims"]["rating_clause"] in src["text"]
+    assert row["entity_name"] == "Barings BDC, Inc."
+
+
+def test_article_link_identity_and_other_entity_do_not_supply_target_rating():
+    company = {"security_key": "BBDC|YAHOO|USD", "issuer_name": "Barings BDC, Inc.", "asset_class": "EQUITY"}
+    sharing = "[](https://share.example/?name=Barings%20BDC%2C%20Inc.&padding=" + "a" * 2200 + ")\n\n"
+    body = "10 Jul 2026\n\nFitch affirmed Barings Private Credit Corporation's Long-Term Issuer Default Rating at 'BBB'. Its Outlook is Stable."
+    src = source(sharing + body, title="Fitch Ratings", url="https://www.fitchratings.com/research/corporate-finance/example")
+    assert extract_rating_records(src, company) == []
+    # Even an explicit link label naming BBDC cannot transfer another named
+    # company's clause-bound rating.
+    src["text"] = "[Barings BDC, Inc.](https://www.fitchratings.com/entity/example)\n\n" + body
+    assert extract_rating_records(src, company) == []
+
+
 def test_subsidiary_forward_signals_do_not_attach_to_parent_grade():
     text = "6 November 2026\n\nFitch affirmed the Long-Term Issuer Default Rating on JPMorgan Chase & Co. at 'AA-'. JPMorgan Chase Bank, N.A.'s Outlook is Negative and was placed on Rating Watch Negative."
     src = source(text, title="Fitch Ratings", url="https://www.fitchratings.com/research/banks/example")

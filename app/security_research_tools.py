@@ -219,6 +219,24 @@ def fetch_research_document(url: str, settings: dict[str, Any]) -> dict[str, Any
             "reader_engine": "direct" if static_engine else "rendered"}
 
 
+def search_query_matches_identity(query: str, candidate: dict[str, Any]) -> bool:
+    """Bind discovery to complete registered words, allowing punctuation only."""
+    if not isinstance(query, str) or not isinstance(candidate, dict):
+        return False
+    identifiers = [str(candidate.get(field) or "").strip() for field in ("symbol", "secondary_symbol", "name")]
+    query_words = " " + " ".join(re.findall(r"[^\W_]+", query.casefold())) + " "
+    for value in identifiers:
+        words = " ".join(re.findall(r"[^\W_]+", value.casefold()))
+        if words and " " + words + " " in query_words:
+            return True
+    from .security_identifiers import valid_cusip
+    # Offering tables may print the exact six-character issuer and three-
+    # character issue/check parts separately; disjoint or partial IDs fail.
+    return any(valid_cusip(value.upper()) and re.search(
+        r"(?<!\w)[\"']?" + re.escape(value[:6]) + r"[\"']?\s+[\"']?" + re.escape(value[6:]) + r"[\"']?(?!\w)", query, re.I)
+        for value in identifiers)
+
+
 class ResearchSession:
     def __init__(self, settings: dict[str, Any], budget: RequestBudget, *, search: Callable | None = None,
                  fetch: Callable | None = None, resolver: Callable | None = None):
@@ -322,15 +340,11 @@ class ResearchSession:
         query = query or " ".join(value for value in identity if value) + " price date currency company industry"
         if not isinstance(query, str) or not 1 <= len(query.strip()) <= 500:
             raise ResearchFailure("invalid_request", "A research query must contain 1 to 500 characters.")
-        identifiers = identity[:3]
-        from .security_identifiers import valid_cusip
-        # Issuer offering tables commonly print the six-character issuer and
-        # three-character issue/check portion separately. That exact formatted
-        # identifier is the same discovery identity, not a broader query.
-        formatted_cusip = any(valid_cusip(value.upper()) and re.search(
-            r"(?<!\w)[\"']?" + re.escape(value[:6]) + r"[\"']?\s+[\"']?" + re.escape(value[6:]) + r"[\"']?(?!\w)", query, re.I)
-            for value in identifiers)
-        if not any(value and value.casefold() in query.casefold() for value in identifiers) and not formatted_cusip:
+        # Discovery can tolerate punctuation in a complete registered name or
+        # ticker. Keep every word and word boundary: a suffix, subsidiary or
+        # embedded ticker substring is not the same discovery identity. Source
+        # facts still undergo their independent exact-entity validation.
+        if not search_query_matches_identity(query, candidate):
             raise ResearchFailure("invalid_request", "Keep the security identifier or name in the search query.")
         if provider not in {"auto", "brave", "duckduckgo", "yahoo"}:
             raise ResearchFailure("invalid_request", "Choose an allowed search provider.")

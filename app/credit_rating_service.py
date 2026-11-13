@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from . import credit_rating_history as history
 from .security_enrichment import EnrichmentJobs, WEB_RESEARCH_POLICY, security_key
-from .security_research_tools import ResearchSession, ResearchFailure, WebRequestBudget
+from .security_research_tools import ResearchSession, ResearchFailure, WebRequestBudget, search_query_matches_identity
 from .security_search import SearchFailure, search_is_configured
 from .us_market_providers import ProviderFailure
 from .manual_credit_ratings import (
@@ -55,11 +55,14 @@ ISSUER_SOURCES = (
 AGENCY_SOURCE_LEADS = (
     ("Fidus Investment Corporation", "https://www.fitchratings.com/research/corporate-finance/fitch-affirms-fidus-investment-corporation-at-bbb-outlook-stable-15-10-2026"),
     ("Fidus Investment Corp", "https://www.fitchratings.com/research/corporate-finance/fitch-affirms-fidus-investment-corporation-at-bbb-outlook-stable-15-10-2026"),
+    ("Barings BDC, Inc.", "https://www.fitchratings.com/entity/barings-bdc-inc-96883397"),
+    ("Barings BDC, Inc.", "https://www.fitchratings.com/research/corporate-finance/fitch-affirms-barings-bdc-at-bbb-outlook-stable-10-07-2026"),
 )
 
 POLICY = WEB_RESEARCH_POLICY + (
     " This task is COMPANY CREDIT RATINGS, not prices, stock recommendations or financial-ratio scores. "
     "Research Moody's, S&P Global Ratings and Fitch independently for the exact supplied legal issuer or bond issue. "
+    "Include the exact supplied registered symbol in every search query, together with the requested issuer and rating fields. "
     "Find agency credit rating, outlook and review/watch independently; never assume Stable or Not Rated from absence. "
     "Prefer current official agency statements or issuer investor-relations debt/credit-rating tables. "
     "Parent companies, banks and subsidiaries can have different ratings. Never transfer one entity's rating to another. "
@@ -662,7 +665,14 @@ class CreditRatingService:
                     sources.append({"source_id": source_id, "url": url, "title": title, "discovery_only": True})
                 return {"sources": sources[:8], "evidence": [], "source_status": "sources_found", "web_requests": session.budget.used}
             if action == "search":
-                result = session.search(candidate, arguments["query"], provider=arguments.get("provider", "auto"))
+                query = arguments["query"]
+                if isinstance(query, str) and query.strip() and not search_query_matches_identity(query, candidate):
+                    # Discovery remains bound to this registered security even
+                    # when the model omits a legal suffix. Preserve its full
+                    # query; the shared reader enforces length/budgets and all
+                    # source facts still require exact issuer/issue identity.
+                    query = str(candidate.get("symbol") or "") + " " + query
+                result = session.search(candidate, query, provider=arguments.get("provider", "auto"))
                 return {**result, "evidence": [], "source_status": "search_results", "web_requests": session.budget.used}
             if action == "read":
                 source = session.read(candidate, arguments["source_id"], reader=arguments.get("reader"))
@@ -678,8 +688,15 @@ class CreditRatingService:
             source["context_records"] = [{k: deepcopy(v) for k, v in record.items() if not k.startswith("_")} for record in records]
             return {"evidence": [source], "source_status": "evidence_found", "diagnostics": dict(session.diagnostics), "web_requests": session.budget.used}
         except (ResearchFailure, SearchFailure, ProviderFailure, ValueError, OSError, TimeoutError) as exc:
-            return {"evidence": [], "source_status": getattr(exc, "code", "source_read_failed"),
-                    "diagnostics": dict(session.diagnostics), "web_requests": session.budget.used}
+            result = {"evidence": [], "source_status": getattr(exc, "code", "source_read_failed"),
+                      "diagnostics": dict(session.diagnostics), "web_requests": session.budget.used}
+            if action == "search" and result["source_status"] == "invalid_request":
+                result["recovery_guidance"] = (
+                    "Include the exact registered symbol " + repr(str(candidate.get("symbol") or "")[:80])
+                    + " in the search query, or the full stored legal name including its suffix; keep the requested issuer. "
+                    "Correct the query within the remaining request budgets."
+                )
+            return result
         finally:
             if session.budget.used > previous_operations:
                 with self._lock:

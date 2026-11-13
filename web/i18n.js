@@ -2,6 +2,7 @@
   "use strict";
 
   const HEBREW_TEXT = Object.freeze({
+    "Company rating searches use the registered symbol or complete name. Abbreviated queries are anchored to that symbol; accepting a rating still requires the exact legal issuer.": "חיפוש דירוגי חברה משתמש בסימול הרשום או בשם המלא. שאילתות עם שם מקוצר מקושרות לסימול הרשום; קבלת דירוג עדיין דורשת התאמה למנפיק המשפטי המדויק.",
     "Ratings only": "דירוגים בלבד",
     "Skip price and profile research. Check only company credit ratings in the selected scope.": "דילוג על חיפוש מחירים ופרופילים. בדיקת דירוגי אשראי של חברות בלבד בהיקף שנבחר.",
     "No eligible company securities are available for rating research in the selected scope.": "אין ניירות ערך מתאימים של חברות לחיפוש דירוגים בהיקף שנבחר.",
