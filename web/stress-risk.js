@@ -9,6 +9,7 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function () {
   "use strict";
   const MODEL = "portfolio-risk-v3";
+  const PROVISIONAL_MODEL = "portfolio-risk-provisional-v1";
   const BUCKETS = ["AAA", "AA", "A", "BBB", "BB", "B", "CCC"];
   const SPREAD = [.005, .0075, .01, .015, .03, .05, .08];
   const COUNTRY = [
@@ -51,15 +52,22 @@
     const base = upper(options.baseCurrency || options.base_currency);
     const asOf = String(options.asOf || options.as_of || new Date().toISOString()).slice(0, 10);
     const gaps = [], assumptions = [], countries = new Map(), prepared = [];
-    let valuesKnown = true, knownGross = 0, coveredGross = 0, gapCount = 0;
+    const sourceOwners = new Map(), missingSources = new Set();
+    const identityFacts = new Map();
+    let unscopedGaps = false;
+    let valuesKnown = true, knownGross = 0, gapCount = 0;
     const sourceItems = Array.isArray(items) ? items : [];
     const normalize = options.normalizeField || ((item, name) => item.holding?.[name]);
     const gap = (code, item, detail = "") => {
       gapCount++;
+      const owner = sourceOwners.get(item);
+      if (owner) missingSources.add(owner); else unscopedGaps = true;
       const h = item?.holding || {}, m = item?.stress_risk || {};
       const row = { code, symbol: String(h.symbol || ""), security_key: String(m.security_key || ""), account_id: String(h.account_id || "") };
       if (detail) row.detail = detail;
-      if (!gaps.some(x => x.code === code && x.security_key === row.security_key && x.symbol === row.symbol && x.account_id === row.account_id && x.detail === detail)) gaps.push(row);
+      if (!gaps.some(x => x.code === code && x.security_key === row.security_key && x.symbol === row.symbol && x.account_id === row.account_id && x.detail === detail)) {
+        gaps.push(row);
+      }
     };
     const assume = (code, item) => {
       const row = { code, symbol: String(item?.holding?.symbol || ""), security_key: String(item?.stress_risk?.security_key || "") };
@@ -84,6 +92,22 @@
     }
     const ratingFor = (primary, estimate, item, enabled) => selectedRating(primary, item, enabled)
       || (enabled ? selectedRating(estimate, item, true) : null);
+
+    function rememberIdentity(item, depth = 0, seen = new Set()) {
+      if (!item || depth > 3 || seen.has(item)) return;
+      seen.add(item);
+      const m = item?.stress_risk || {};
+      if (m.issuer_identity_verified === true && typeof m.issuer_name_key === "string" && m.issuer_name_key.trim()) {
+        const id = String(m.issuer_id || ""), strong = /^sec:\d+$/.test(id) ? `sec:${id.slice(4).replace(/^0+(?=\d)/, "")}` : null;
+        identityFacts.set(item, { name:m.issuer_name_key, id, strong,
+          weak:id === m.issuer_name_key || id === `issuer:${m.issuer_name_key}`,
+          jurisdiction:upper(m.issuer_legal_jurisdiction) });
+      }
+      const children = m.lookthrough || m.fund_components || m.parameters?.fund_components;
+      if (Array.isArray(children)) for (const child of children) {
+        if (child && typeof child === "object") rememberIdentity(child.item || {stress_risk:child.stress_risk || child}, depth + 1, seen);
+      }
+    }
 
     function exposures(item, metadata, params, value) {
       const asset = upper(item.holding?.asset_class);
@@ -114,7 +138,20 @@
       return result;
     }
 
-    function prepare(item, value, inherited = null, depth = 0) {
+    function includeCountry(target, row) {
+      const { countryCode, countryCurrency, countryRating, countryFxRating, item } = row;
+      if (!countryRating) return;
+      const prior = target.get(countryCode);
+      if (prior && prior.currency !== countryCurrency) gap("country_currency", item);
+      const fxRating = countryFxRating || countryRating;
+      if (!prior || countryFxRating && !prior.fxVerified || Boolean(countryFxRating) === prior.fxVerified && prior.rating.bucket < fxRating.bucket) {
+        target.set(countryCode, { rating:fxRating, currency:countryCurrency, fxVerified:Boolean(countryFxRating), item });
+      }
+    }
+
+    function prepare(item, value, inherited = null, depth = 0, sourceItem = item) {
+      sourceOwners.set(item, sourceItem);
+      rememberIdentity(item);
       const initialGaps = gapCount;
       const h = item.holding || {}, m = item.stress_risk || {}, p = m.parameters || {};
       const enabled = p.assumptions_enabled === true;
@@ -144,7 +181,7 @@
         const childStart = prepared.length;
         children.forEach((child, i) => {
           const childItem = child.item || { holding: { ...h, symbol: child.symbol || h.symbol, asset_class: child.asset_class, currency: child.currency || h.currency }, stress_risk: child.stress_risk || child };
-          prepare(childItem, value * weights[i], { parent: item, fx }, depth + 1);
+          prepare(childItem, value * weights[i], { parent: inherited?.parent || item, fx }, depth + 1, sourceItem);
         });
         // A stated wrapper hedge must agree with the complete child/hedge
         // decomposition; the wrapper's trading currency is not a hedge.
@@ -221,22 +258,16 @@
       if (!countryCurrency && kind !== "cash_like") gap("country_currency", item);
       if (kind === "cash_like") { gap("unsupported_instrument", item); }
       if (gapCount !== initialGaps) return;
-      const row = { item, parent: inherited?.parent || item, value, kind, issuer: String(issuer), countryCode, countryCurrency, fx, credit, countryRating, countryFxRating, price, duration, spread, sensitivity: p.country_sensitivity };
+      const row = { item, sourceItem, parent: inherited?.parent || item, value, kind, issuer: String(issuer), countryCode, countryCurrency, fx, credit, countryRating, countryFxRating, price, duration, spread, sensitivity: p.country_sensitivity };
       prepared.push(row);
-      if (countryRating) {
-        const prior = countries.get(countryCode);
-        if (prior && prior.currency !== countryCurrency) gap("country_currency", item);
-        // Common country scenario conservatively uses weakest comparable eligible opinion.
-        const fxRating = countryFxRating || countryRating;
-        if (!prior || countryFxRating && !prior.fxVerified || Boolean(countryFxRating) === prior.fxVerified && prior.rating.bucket < fxRating.bucket) {
-          countries.set(countryCode, { rating: fxRating, currency: countryCurrency, fxVerified: Boolean(countryFxRating), item });
-        }
-      }
+      includeCountry(countries, row);
       if (inherited && inherited.fx && !fx) gap("fx", item);
     }
 
     let signedValues = 0;
     for (const item of sourceItems) {
+      sourceOwners.set(item, item);
+      rememberIdentity(item);
       const raw = item?.holding?.market_value;
       const value = normalize(item, "market_value");
       if (!finite(raw) || !finite(value) || (!value && finite(item?.holding?.quantity) && item.holding.quantity !== 0)) {
@@ -245,12 +276,45 @@
       signedValues += value;
       knownGross += Math.abs(value);
       if (!value) continue;
-      const before = gapCount, rowCount = prepared.length;
       const mark = item.stress_risk?.valuation_date || Object.values(item.price_ranges || {}).map(range => range.current_date).filter(Boolean).sort().at(-1);
       if (!mark) { gap("valuation", item); valuesKnown = false; }
       else if (item.stress_risk?.valuation_stale || day(mark) === null || day(mark) > day(asOf) || day(asOf) - day(mark) > 7 * 86400000) { gap("valuation_stale", item); valuesKnown = false; }
       prepare(item, value);
-      if (before === gapCount && prepared.length > rowCount) coveredGross += Math.abs(value);
+    }
+    // Source acquisition can cover different listings in different batches.
+    // An identifier-format difference must not create issuer diversification.
+    // Build this crosswalk from captured verified legal identity facts, even
+    // when the corresponding position lacks some other model input.
+    const legalIssuers = new Map();
+    const weakJurisdictions = new Map();
+    for (const fact of identityFacts.values()) if (fact.weak && fact.jurisdiction) {
+      if (!weakJurisdictions.has(fact.name)) weakJurisdictions.set(fact.name, new Set());
+      weakJurisdictions.get(fact.name).add(fact.jurisdiction);
+    }
+    for (const fact of identityFacts.values()) if (fact.strong) {
+      if (!legalIssuers.has(fact.name)) legalIssuers.set(fact.name, new Map());
+      const ids = legalIssuers.get(fact.name);
+      if (!ids.has(fact.strong)) ids.set(fact.strong, new Set());
+      if (fact.jurisdiction) ids.get(fact.strong).add(fact.jurisdiction);
+    }
+    for (const row of prepared) {
+      const fact = identityFacts.get(row.item), ids = fact && legalIssuers.get(fact.name);
+      if (!fact) continue;
+      if (fact.strong) { row.issuer = fact.strong; continue; }
+      if (!fact.weak) continue;
+      if (!ids?.size) {
+        // Issuer-IR facts and verified profiles use the same proved legal-name
+        // identity, even when one source adds the explicit "issuer:" namespace.
+        if ((weakJurisdictions.get(fact.name)?.size || 0) > 1) gap("issuer_identity", row.item);
+        else row.issuer = fact.name;
+        continue;
+      }
+      const [id, jurisdictions] = ids.entries().next().value;
+      if (ids.size !== 1 || jurisdictions.size > 1 || fact.jurisdiction && jurisdictions.size && !jurisdictions.has(fact.jurisdiction)) {
+        gap("issuer_identity", row.item);
+      } else {
+        row.issuer = id;
+      }
     }
     let cashAccounts;
     if (Array.isArray(options.cashAccounts)) cashAccounts = options.cashAccounts;
@@ -276,8 +340,30 @@
         || knownCash.some(a => a.value !== 0 && upper(a.currency) === country.currency);
       if (country.currency !== base && exposed && !country.fxVerified) gap("country_rating", country.item, "foreign_currency_fx");
     }
-    const coverage = { covered_value_percent: valuesKnown ? (gross ? Math.min(100,(coveredGross + positiveCash) / gross * 100) : 100) : null,
-      complete: gaps.length === 0, covered_value: coveredGross + positiveCash, known_gross_value: gross };
+    function assessmentExclusions() {
+      const excluded = new Set(missingSources), unsupportedCash = new Set();
+      let unscoped = unscopedGaps;
+      for (const country of countries.values()) {
+        if (country.currency === base || country.fxVerified) continue;
+        for (const row of prepared) if (row.fx[country.currency] > 0) excluded.add(row.sourceItem);
+        for (const account of knownCash) if (account.value !== 0 && upper(account.currency) === country.currency) {
+          unsupportedCash.add(account);
+          unscoped = true;
+        }
+      }
+      return { excluded, unsupportedCash, unscoped };
+    }
+    function inputCoverage() {
+      const { excluded, unsupportedCash } = assessmentExclusions();
+      const preparedSources = new Set(prepared.map(row => row.sourceItem));
+      const coveredSecurities = total(sourceItems.filter(item => preparedSources.has(item) && !excluded.has(item)).map(item => Math.abs(normalize(item, "market_value"))));
+      const cashGap = gaps.some(row => ["cash", "cash_currency_breakdown"].includes(row.code));
+      const coveredCash = cashGap ? 0 : total(knownCash.filter(account => !unsupportedCash.has(account)).map(account => Math.max(0, account.value)));
+      const coveredValue = coveredSecurities + coveredCash;
+      return { covered_value_percent: valuesKnown ? (gross ? Math.min(100, coveredValue / gross * 100) : 100) : null,
+        complete:gaps.length === 0, covered_value:coveredValue, known_gross_value:gross };
+    }
+    const coverage = inputCoverage();
     const result = {
       model: MODEL, base_currency: base, source_revision: options.sourceRevision || "", label: options.label || "Portfolio risk", status: gaps.length ? "incomplete" : "ok", score: null,
       estimated_score: null, loss_pct: null, stress_loss: null, worst_scenario: null,
@@ -303,23 +389,23 @@
       currencies.forEach(c => paths.push({ name: `${c}_${suffix}`, fx: { [c]: .15 * sign } }));
     }
     const contributionsByScenario = new Map();
-    function evaluateScenarios(downgrade = false) {
+    function evaluateScenarios(downgrade = false, positions = prepared, scenarioCountries = countries, capture = true) {
       const scenarios = [];
       const bucket = rating => Math.min(6, rating.bucket + (downgrade && rating.negative ? 1 : 0));
       const add = (name, local, fx) => {
         let pnl = 0;
         const contributions = [];
-        for (const p of prepared) {
+        for (const p of positions) {
           const move = local(p), fxMove = total(Object.entries(p.fx).map(([c, w]) => w * (fx[c] || 0)));
           const amount = p.value * ((1 + move) * (1 + fxMove) - 1);
           if (!finite(amount) || 1 + move < 0) { gap("unsupported_instrument", p.item); return; }
           pnl += amount;
-          if (!downgrade) contributions.push({item:p.parent,pnl:amount});
+          if (!downgrade && capture) contributions.push({item:p.parent,pnl:amount});
         }
         pnl += total(knownCash.map(a => a.value * (fx[upper(a.currency)] || 0)));
         if (!finite(pnl)) { gap("valuation", null); return; }
         scenarios.push({ name, pnl, loss: Math.max(0, -pnl) });
-        if (!downgrade) contributionsByScenario.set(name, contributions);
+        if (!downgrade && capture) contributionsByScenario.set(name, contributions);
       };
       for (const s of GLOBAL) for (const path of paths) {
         add(`${s.name}:${path.name}`, p => {
@@ -328,13 +414,13 @@
           return p.price(s.curve, widening < 0 ? Math.max(widening, -p.spread) : widening);
         }, path.fx);
       }
-      const issuers = [...new Set(prepared.filter(p => p.kind !== "sovereign_bond").map(p => p.issuer))].sort();
+      const issuers = [...new Set(positions.filter(p => p.kind !== "sovereign_bond").map(p => p.issuer))].sort();
       for (const issuer of issuers) {
         add(`issuer_distress:${issuer}`, p => p.issuer !== issuer || p.kind === "sovereign_bond" ? 0 : p.kind === "equity" ? -.60
           : p.price(0, Math.max(.2 / p.duration, 2 * SPREAD[bucket(p.credit)])), {});
         add(`issuer_rally:${issuer}`, p => p.issuer !== issuer || p.kind === "sovereign_bond" ? 0 : p.kind === "equity" ? 1 : p.price(-.02, -p.spread), {});
       }
-      for (const [code, country] of [...countries].sort(([a], [b]) => a.localeCompare(b))) {
+      for (const [code, country] of [...scenarioCountries].sort(([a], [b]) => a.localeCompare(b))) {
         const shock = COUNTRY[bucket(country.rating)];
         add(`country_crisis:${code}`, p => {
           if (p.countryCode !== code) return 0;
@@ -349,12 +435,46 @@
       return scenarios;
     }
     result.scenarios = evaluateScenarios();
-    result.coverage.complete = gaps.length === 0;
+    result.coverage = inputCoverage();
     const worst = result.scenarios.reduce((a, b) => a.loss >= b.loss ? a : b, { name: "none", loss: 0, pnl: 0 });
     if (gaps.length || !(equity > 0)) {
       result.status = "incomplete";
       result.partial_stress_loss = worst.loss;
       result.partial_worst_scenario = worst.name;
+      // A displayed provisional score does not change the verified-input
+      // assessment. Missing exposure is charged once at principal at risk;
+      // no rating, maturity, fund diversification or FX fact is invented.
+      const { excluded, unscoped } = assessmentExclusions();
+      const unmodeledValues = sourceItems.filter(item => excluded.has(item)).map(item => {
+        const value = normalize(item, "market_value");
+        return finite(value) ? Math.abs(value) : null;
+      });
+      const unknownGross = valuesKnown && unmodeledValues.every(finite) ? total(unmodeledValues) : null;
+      const unbounded = [...excluded].some(item => {
+        const h = item.holding || {}, profile = item.exposure_profile || {};
+        return normalize(item, "market_value") < 0
+          || ["OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"].includes(upper(h.asset_sub_class || h.asset_class))
+          || profile.leverage_type && !["none", "unleveraged"].includes(profile.leverage_type);
+      });
+      result.provisional_model = PROVISIONAL_MODEL;
+      result.provisional_unmodeled_gross = unknownGross;
+      if (!(equity > 0) || unscoped || unbounded || !finite(unknownGross)) {
+        result.provisional_score = 100;
+        result.provisional_basis = "missing_valuation_ceiling";
+        result.provisional_loss = null;
+      } else {
+        const supported = prepared.filter(row => !excluded.has(row.sourceItem));
+        const supportedCountries = new Map();
+        const beforeProvisional = gapCount;
+        for (const row of supported) includeCountry(supportedCountries, row);
+        const cases = evaluateScenarios(false, supported, supportedCountries, false);
+        const knownLoss = cases.reduce((amount, scenario) => Math.max(amount, scenario.loss), 0);
+        const loss = knownLoss + unknownGross;
+        result.provisional_basis = finite(loss) && cases.length && gapCount === beforeProvisional ? "unmodeled_exposure_allowance" : "missing_valuation_ceiling";
+        result.provisional_loss = result.provisional_basis === "unmodeled_exposure_allowance" ? loss : null;
+        result.provisional_score = result.provisional_loss === null ? 100 : scoreOf(loss / equity);
+      }
+      result.coverage = inputCoverage();
       return result;
     }
     const lossPct = worst.loss / equity * 100;
@@ -384,5 +504,5 @@
     }
     return result;
   }
-  return Object.freeze({ MODEL, calculate, ratingBucket, parameters: Object.freeze({ buckets: BUCKETS, spread: SPREAD, country: COUNTRY, global: GLOBAL }) });
+  return Object.freeze({ MODEL, PROVISIONAL_MODEL, calculate, ratingBucket, parameters: Object.freeze({ buckets: BUCKETS, spread: SPREAD, country: COUNTRY, global: GLOBAL }) });
 });

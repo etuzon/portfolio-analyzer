@@ -164,6 +164,27 @@ def _stress_risk(value: Any) -> dict:
         if not isinstance(data, dict):
             raise RiskHistoryError("risk_history_invalid_metadata")
         result[field] = deepcopy(data)
+    provisional_fields = {"provisional_model", "provisional_score", "provisional_basis", "provisional_loss", "provisional_unmodeled_gross"}
+    if provisional_fields.intersection(value):
+        if (not provisional_fields.issubset(value) or status not in {"incomplete", "unavailable"}
+                or value["provisional_model"] != "portfolio-risk-provisional-v1"
+                or type(value["provisional_score"]) is not int or not 0 <= value["provisional_score"] <= 100):
+            raise RiskHistoryError("risk_history_invalid_metadata")
+        basis = value["provisional_basis"]
+        gross = _number(value["provisional_unmodeled_gross"])
+        if value["provisional_unmodeled_gross"] is not None and (gross is None or gross < 0):
+            raise RiskHistoryError("risk_history_invalid_metadata")
+        if basis == "missing_valuation_ceiling":
+            if value["provisional_score"] != 100 or value["provisional_loss"] is not None:
+                raise RiskHistoryError("risk_history_invalid_metadata")
+        elif basis == "unmodeled_exposure_allowance":
+            equity, loss = _number(value.get("net_equity")), _number(value["provisional_loss"])
+            if (equity is None or equity <= 0 or loss is None or gross is None or loss < gross
+                    or value["provisional_score"] != math.floor(min(100, 200 * (loss / equity)) + .5)):
+                raise RiskHistoryError("risk_history_invalid_metadata")
+        else:
+            raise RiskHistoryError("risk_history_invalid_metadata")
+        result.update({field: deepcopy(value[field]) for field in provisional_fields})
     coverage = result["coverage"]
     if "covered_value_percent" in coverage:
         percent = coverage["covered_value_percent"]

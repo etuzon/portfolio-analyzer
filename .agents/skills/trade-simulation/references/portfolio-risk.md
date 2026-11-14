@@ -36,6 +36,22 @@ positive-cashflow continuous-yield PV-weighted duration, equal to maturity time
 for a confirmed zero coupon. Issuer rally uses curve -200bp and credit tightening
 to zero. Direct sovereigns never receive this corporate issuer-distress channel.
 
+Public evidence can introduce an exact SEC issuer ID while another listing
+still has a previously verified legal-name identity. `issuer_name_key` normalizes
+only those verified legal names, retaining parent/bank/holdings tokens. The
+calculation builds an alias registry from all captured verified identity facts,
+including positions missing other model inputs. A unique SEC ID for that exact
+legal name also identifies matching verified-name fallback positions; raw source
+IDs/names remain unchanged in the frozen inputs. Identifier formatting or partial
+research coverage must not create diversification. Verified name-only formats
+`<name>` and `issuer:<name>` share the same legal-name grouping when no stronger
+bound identity is available. Multiple distinct strong IDs
+or contradictory known legal jurisdictions leave weak name-only mappings
+incomplete/provisional. Unverified, fuzzy, display-name, account-country and
+exchange-based joins are forbidden; separately proved strong identities remain
+distinct. Fully modeled coverage is recomputed after late shared country/FX and
+identity checks, excluding affected positions and foreign cash consistently.
+
 Country crisis assumptions by AAA/AA/A/BBB/BB/B/CCC are respectively: local equity
 -35/-35/-40/-45/-55/-65/-75%; sovereign widening 100/150/200/300/500/800/1200bp;
 country currency -10/-10/-15/-20/-25/-35/-50%. Use documented economic exposure
@@ -86,6 +102,87 @@ calendar days cannot establish a complete current score; saving an old source
 observation does not refresh its as-of date. Static classification or cashflow
 terms do not expire solely because their source is old. Cash's zero nominal
 market stress is not a guarantee of deposit protection, access or purchasing power.
+
+### Numeric display with incomplete evidence
+
+The separate `portfolio-risk-provisional-v1` overlay keeps a numeric display
+available without changing the strict v3 `score`, `status`, ratings or raw facts.
+Complete verified scores take precedence, then complete explicit-assumption
+`estimated_score`, then `provisional_score`. An incomplete assessment displays
+`~N`, a warning symbol and a localized Partial data label. Any strict boundary
+score with remaining input gaps also retains the warning. The tooltip lists all
+missing inputs, value-weighted coverage and the provisional calculation basis;
+the expandable missing-input list and recovery actions remain available.
+
+With known positive current net equity, identify each top-level holding with
+missing model evidence. Remove all its prepared child exposures from the
+supported scenario calculation. Charge its absolute base-currency value once,
+regardless of the number of gaps, lots or fund children. Let that sum be `U`,
+and let `K` be the largest loss from common scenarios using only supported
+holdings and the known signed cash. Then
+`provisional_loss = K + U` and
+`provisional_score = round(min(100, 200 * (K + U) / E))`.
+The full-principal allowance is an explicit precautionary assumption, not a
+guessed rating, duration, forecast, confidence percentage or true maximum loss.
+For example, an unmodeled fund100 plus cash900 gives20; supported six-year AAA
+zero-coupon debt60 plus unmodeled debt40 gives95 at the synthetic 14/11/2026
+cutoff. An incomplete fund is replaced at its parent value once; supported
+children are not charged a second time.
+
+Unknown/stale/future valuations, missing conversion FX/cash, unscoped gaps or
+unmodeled short/nonlinear/leveraged payoffs use a precautionary display ceiling
+of100 with `provisional_basis=missing_valuation_ceiling` and
+`provisional_loss=null`. This does not establish insolvency or certain loss.
+Unknown current unmodeled gross is retained as null. Other provisional outputs
+use `provisional_basis=unmodeled_exposure_allowance` and retain `U` as
+`provisional_unmodeled_gross`. Known current nonpositive equity still follows
+the strict100 boundary; a known empty debt-free portfolio still scores0.
+
+New history records freeze the overlay's own version, basis, score and amounts
+alongside the strict null/complete result and original evidence. Older records
+are never retrospectively assigned a provisional score. Graphs distinguish
+provisional, explicit-assumption and verified observations and do not connect
+different status/method series. A displayed provisional score does not qualify
+as verified risk evidence for automatic trade sizing or risk-reduction ranking.
+
+### Completing missing inputs
+
+The expanded Missing risk inputs section retains its existing review actions
+and offers retrieval with API then AI (default), API only, or AI only. Public
+API adapters require no registration or provider key. Supported adapters resolve
+SEC issuer identity/exact dated filing leads and Treasury exact-CUSIP reference
+terms; they do not infer economic currency weights from reporting currency or
+economic country allocation from an address. Auction yields do not become a
+current discount yield or spread. Other fields proceed to bounded AI research
+when selected; unsupported or unverifiable evidence remains an explicit gap.
+
+`app/risk_input_retrieval.py` coordinates authenticated owner-bound jobs and
+schedules. One request selects at most three securities and shares the existing
+eight model/eight REST/eight web call limits across its single AI child.
+The public API stage makes at most two requests per selected security. Selection,
+remaining coverage, per-field outcomes and source links are visible. Null/all
+scope advances bounded batches; an explicit selected scope repeats that scope.
+Admin/Operator may run retrieval or save its schedule; Viewer can inspect.
+Scheduled execution rechecks its owner's current permissions, uses temporary
+scoped credentials and cleans them up. Ordinary scoring remains cache-only.
+
+Research planners receive only allowlisted authenticated REST tools and may
+select request-bound source/record IDs. Application publication validates the
+actual fetched primary source, exact security/issuer identity, evidence scope,
+observation date, publication cutoff and units. A company mention in another
+issuer's filing does not establish identity. Economic allocation evidence needs
+a dated source; a retrieval timestamp does not supply its observation date.
+Literal 100% allocation extraction requires whole affirmative current issuer
+statements. Negations, exceptions, intentions, hypotheticals, adjacent
+retractions/conflicting statements and historical headings do not become full
+current allocations. Explicit statement dates must match the bound report date;
+ambiguous prose stays missing. Dated economic allocations are active only within
+the declared 550-day evidence horizon.
+Static reference terms retain their own contract dates; current yield/spread
+expiry remains seven days. Store public evidence separately from manual local
+overrides. Editing notes or static terms must not refresh an inherited market
+observation date. Derived risk refreshes against the new evidence revision
+without discarding saved market quotes or changing the external import source.
 
 Funds require actual/declared underlying issuer, credit, country, rate and FX
 exposures. The pure engine can evaluate supplied complete look-through and rejects

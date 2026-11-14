@@ -17,7 +17,7 @@
     const rect = source.getBoundingClientRect();
     if (rect.bottom < 0 || rect.top > innerHeight) { hide(); return; }
     const viewportWidth = document.documentElement?.clientWidth || innerWidth;
-    popup.style.maxWidth = `${Math.max(0, viewportWidth - 24)}px`;
+    popup.style.maxWidth = `${Math.min(420, Math.max(0, viewportWidth - 24))}px`;
     const belowSpace = Math.max(0, innerHeight - rect.bottom - 20);
     const aboveSpace = Math.max(0, rect.top - 20);
     // Keep the score exposed so a second tap can close the explanation.

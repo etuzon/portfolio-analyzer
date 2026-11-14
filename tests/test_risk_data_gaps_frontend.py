@@ -151,7 +151,9 @@ for(const language of ['en','he']) {
  assert.ok(html.startsWith('<details'));assert.ok(html.includes('<summary>'));
  assert.ok(html.includes('UNKNOWN'));assert.ok(!html.includes('/5'));
  const tooltip=riskTooltip(risk);
- assert.ok(tooltip.includes(language==='he'?'אינה מלאה':'incomplete'));
+ assert.ok(tooltip.includes(language==='he'?'נתונים חלקיים':'Partial data'));
+ assert.ok(tooltip.includes('~'+risk.provisional_score));
+ assert.ok(tooltip.includes('UNKNOWN'));
  assert.ok(!tooltip.includes('NaN')&&!tooltip.includes('undefined'));
 }
 assert.equal(JSON.stringify([known,unknown]),before);

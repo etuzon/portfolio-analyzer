@@ -18,6 +18,25 @@ function stressRiskNumber(value, digits = 1) {
   }).format(value);
 }
 
+function stressRiskDisplay(risk) {
+  const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100;
+  const available = valid(risk?.score);
+  const estimated = !available && valid(risk?.estimated_score);
+  const provisional = !available && !estimated && valid(risk?.provisional_score);
+  const number = available ? risk.score : estimated ? risk.estimated_score : provisional ? risk.provisional_score : null;
+  const missing = provisional || (Array.isArray(risk?.gaps) && risk.gaps.length > 0) || risk?.coverage?.complete === false;
+  return { number, available, estimated, provisional, missing, ceiling: provisional && risk.provisional_basis === "missing_valuation_ceiling",
+    value: number === null ? stressRiskText("Incomplete") : `${estimated || provisional ? "~" : ""}${stressRiskNumber(number, 0)}`,
+    statusLabel: provisional ? stressRiskText("Partial data") : estimated ? stressRiskText("Estimate") : "" };
+}
+
+function stressRiskProvisionalExplanation(risk) {
+  if (risk?.provisional_basis === "unmodeled_exposure_allowance") {
+    return stressRiskText("This provisional score adds a precautionary allowance equal to 100% of unmodeled long exposure to supported scenario losses. No rating or bond terms are inferred.");
+  }
+  return stressRiskText("A precautionary ceiling is shown because valuation or payoff inputs prevent a complete loss calculation. A score of 100 here is not evidence of insolvency or certain loss.");
+}
+
 function stressRiskLossAmountText(risk) {
   if (risk?.intrinsic === true) return "";
   const completeAmount = typeof risk?.stress_loss === "number" && Number.isFinite(risk.stress_loss);
@@ -97,12 +116,24 @@ function stressRiskGapText(code) {
 }
 
 function stressRiskTooltip(risk) {
-  const available = typeof risk?.score === "number" && Number.isFinite(risk.score);
-  const estimated = !available && typeof risk?.estimated_score === "number" && Number.isFinite(risk.estimated_score);
+  const { available, estimated, provisional, missing } = stressRiskDisplay(risk);
   const lines = [available ? `${stressRiskText("Stress risk")}: ${stressRiskNumber(risk.score, 0)}/100`
-    : estimated ? `${stressRiskText("Estimated stress risk")}: ~${stressRiskNumber(risk.estimated_score, 0)}/100` : stressRiskText("Risk assessment incomplete"),
+    : estimated ? `${stressRiskText("Estimated stress risk")}: ~${stressRiskNumber(risk.estimated_score, 0)}/100`
+      : provisional ? `${stressRiskText("Provisional stress risk")}: ~${stressRiskNumber(risk.provisional_score, 0)}/100 · ${stressRiskText("Partial data")}`
+        : stressRiskText("Risk assessment incomplete"),
     stressRiskText("The score measures modeled stress-loss severity, not a probability or forecast.")];
   if (estimated) lines.push(stressRiskText("This estimate uses explicit assumptions. It is separate from a score supported by complete verified inputs."));
+  if (provisional) {
+    lines.push(stressRiskProvisionalExplanation(risk));
+    const currency = risk.base_currency || (typeof state !== "undefined" ? state.baseCurrency : "");
+    if (!risk.intrinsic && currency && typeof risk.provisional_loss === "number" && Number.isFinite(risk.provisional_loss)) {
+      lines.push(stressRiskText("Provisional loss including allowance: {amount} {currency}", { amount: stressRiskNumber(risk.provisional_loss, 2), currency }));
+    }
+    if (!risk.intrinsic && currency && typeof risk.provisional_unmodeled_gross === "number" && Number.isFinite(risk.provisional_unmodeled_gross)) {
+      lines.push(stressRiskText("Unmodeled exposure allowance: {amount} {currency}", { amount: stressRiskNumber(risk.provisional_unmodeled_gross, 2), currency }));
+    }
+  }
+  if (missing) lines.push(stressRiskText("Some risk inputs are missing. Review the details below."));
   if (typeof risk?.loss_pct === "number" && Number.isFinite(risk.loss_pct)) {
     lines.push(stressRiskText(!available && !estimated ? "Known partial modeled loss: {percent}%" : "Largest modeled loss: {percent}%", { percent: stressRiskNumber(risk.loss_pct) }));
     if (risk.worst_scenario) lines.push(`${stressRiskText("Binding scenario")}: ${stressRiskScenarioLabel(risk.worst_scenario)}`);
@@ -137,7 +168,6 @@ function stressRiskTooltip(risk) {
     if (seen.has(key)) continue;
     seen.add(key);
     lines.push(`• ${gap?.symbol ? `${gap.symbol}: ` : ""}${stressRiskGapText(gap?.code || gap)}`);
-    if (seen.size >= 6) break;
   }
   lines.push(stressRiskText("Scenario sizes and rating mappings are explicit assumptions. Liquidity, deposit protection and personal suitability are assessed separately."));
   return lines.join("\n");
@@ -146,8 +176,9 @@ function stressRiskTooltip(risk) {
 function stressRiskSummaryHtml(risk, options = {}) {
   if (!risk) return "";
   const escape = stressRiskEscape;
-  const unavailable = !(typeof risk.score === "number" && Number.isFinite(risk.score));
-  const estimate = unavailable && typeof risk.estimated_score === "number" && Number.isFinite(risk.estimated_score);
+  const display = stressRiskDisplay(risk);
+  const unavailable = !display.available;
+  const estimate = display.estimated;
   const loss = typeof risk.loss_pct === "number" && Number.isFinite(risk.loss_pct)
     ? `<span>${escape(stressRiskText(unavailable && !estimate ? "Known partial modeled loss: {percent}%" : "Largest modeled loss: {percent}%", { percent: stressRiskNumber(risk.loss_pct) }))}</span>` : "";
   const scenario = risk.worst_scenario ? `<small>${escape(stressRiskScenarioLabel(risk.worst_scenario))}</small>` : "";
@@ -155,10 +186,12 @@ function stressRiskSummaryHtml(risk, options = {}) {
   const amount = amountText ? `<span>${escape(amountText)}</span>` : "";
   const sensitivityText = stressRiskForwardSensitivityText(risk);
   const sensitivity = sensitivityText ? `<small>${escape(sensitivityText)}</small><small>${escape(stressRiskText("One rating-bucket downgrade assumption; baseline unchanged."))}</small>` : "";
-  const incomplete = unavailable ? `<span class="stress-risk-incomplete">${escape(stressRiskText(estimate ? "Estimate from explicit assumptions" : "Risk assessment incomplete"))}</span>` : "";
+  const provisional = display.provisional ? `<small class="stress-risk-provisional-note">${escape(stressRiskText(risk.provisional_basis === "unmodeled_exposure_allowance"
+    ? "Includes a precautionary allowance for unmodeled exposure." : "Precautionary ceiling; complete inputs are still needed."))}</small>` : "";
+  const incomplete = unavailable && !display.provisional ? `<span class="stress-risk-incomplete">${escape(stressRiskText(estimate ? "Estimate from explicit assumptions" : "Risk assessment incomplete"))}</span>` : "";
   const scope = risk.coverage?.whole_wealth_available === false || risk.coverage?.unmodeled_savings_count > 0
     ? `<small>${escape(stressRiskText("Savings without underlying allocations are excluded; this is securities and cash risk."))}</small>` : "";
-  return `<div class="stress-risk-summary${options.compact ? " is-compact" : ""}">${incomplete}${loss}${amount}${scenario}${sensitivity}${scope}</div>`;
+  return `<div class="stress-risk-summary${options.compact ? " is-compact" : ""}">${incomplete}${provisional}${loss}${amount}${scenario}${sensitivity}${scope}</div>`;
 }
 
 function stressRiskGapsHtml(risk) {
@@ -191,11 +224,11 @@ function stressRiskGapsHtml(risk) {
     }
     return `<li><div>${symbol ? `<bdi dir="ltr">${escape(symbol)}</bdi> · ` : ""}${escape(stressRiskGapText(gap?.code || gap))}</div>${action}</li>`;
   });
-  return `<details class="stress-risk-gaps"><summary>${escape(stressRiskText("Missing risk inputs"))}</summary><p>${escape(stressRiskText("Complete the missing evidence, then reload risk inputs. A partial calculation is not a complete portfolio score."))}</p><ul>${entries.join("")}</ul></details>`;
+  return `<details class="stress-risk-gaps"><summary>${escape(stressRiskText("Missing risk inputs"))}</summary><p>${escape(stressRiskText("Complete the missing evidence, then reload risk inputs. A partial calculation is not a complete portfolio score."))}</p><ul>${entries.join("")}</ul><div class="risk-retrieval-actions"><button type="button" class="secondary compact-button" data-open-risk-input-retrieval="run">${escape(stressRiskText("Find missing risk data"))}</button><button type="button" class="secondary compact-button" data-open-risk-input-retrieval="schedule">${escape(stressRiskText("Schedule risk data updates"))}</button></div></details>`;
 }
 
 (() => {
-  const session = { target: null, response: null, generation: 0, pending: false, actor: "" };
+  const session = { target: null, response: null, generation: 0, pending: false, actor: "", touched: new Set() };
   const element = id => document.getElementById(id);
   const actor = () => typeof currentUser === "function" ? String(currentUser()?.id || currentUser()?.username || "") : "";
   const writable = () => typeof canWrite === "function" && canWrite();
@@ -220,13 +253,16 @@ function stressRiskGapsHtml(risk) {
     const save = element("saveStressRiskInputs");
     const clear = element("clearStressRiskInputs");
     if (save) save.disabled = session.pending || !session.response || !writable();
-    if (clear) { clear.disabled = session.pending || !session.response || !writable(); clear.hidden = !Object.keys(session.response?.parameters || {}).length; }
+    if (clear) { clear.disabled = session.pending || !session.response || !writable(); clear.hidden = !Object.keys(session.response?.local_parameters ?? session.response?.parameters ?? {}).length; }
     if (element("reloadStressRiskInputs")) element("reloadStressRiskInputs").disabled = session.pending;
     if (element("stressRiskViewerNote")) element("stressRiskViewerNote").hidden = writable();
     element("stressRiskInputsModal")?.querySelector(".modal-card")?.setAttribute("aria-busy", String(session.pending));
   }
   function fill(response) {
-    const p = response.parameters || {};
+    // Public facts remain read-only context; a manual save must never copy them
+    // into a fresh user-entered parameter bag or replace their observation date.
+    const p = response.local_parameters ?? response.parameters ?? {};
+    session.touched.clear();
     assign("InstrumentKind", p.instrument_kind);
     assign("PricingModel", p.pricing_model);
     assign("Maturity", displayedDate(p.maturity_date));
@@ -245,6 +281,41 @@ function stressRiskGapsHtml(risk) {
     assign("Source", p.source_url); assign("Notes", p.notes);
     const sources = element("stressRiskRatingSources");
     if (sources) sources.textContent = text("Agency ratings are read from saved verified evidence. This editor does not create or verify an agency rating.");
+    const research = element("stressRiskResearchedInputs");
+    if (research) {
+      const labels = {instrument_kind:"Instrument type for risk",pricing_model:"Bond pricing model",maturity_date:"Contractual redemption date",cashflows:"Future bond payments",
+        continuous_yield:"Continuous discount yield (%)",current_spread_bps:"Current credit spread (basis points)",country_sensitivity:"Country spread sensitivity (0–1)",
+        sovereign_currency_basis:"Sovereign rating currency basis",country_code:"Country",country_currency:"Country crisis currency",country_basis:"Country exposure basis",
+        plain_nominal_noncallable:"Plain nominal noncallable bond",zero_coupon_confirmed:"Confirmed zero coupon",as_of:"Information date"};
+      const names = {equity:"Equity",fund:"Fund",corporate_bond:"Corporate bond",sovereign_bond:"Direct sovereign bond",
+        zero_coupon_continuous:"Confirmed zero-coupon redemption",cashflows_continuous:"Explicit future payment schedule",local_currency:"Local-currency debt",foreign_currency:"Foreign-currency debt",
+        economic_exposure:"Reported economic exposure",issuer_domicile_proxy:"Issuer domicile proxy"};
+      const show = (key, value) => {
+        if (typeof value === "boolean") return text(value ? "Yes" : "No");
+        if (["maturity_date","as_of"].includes(key)) return displayedDate(value);
+        if (key === "cashflows") return (value || []).map(row=>`${displayedDate(row.date)}, ${stressRiskNumber(row.amount,2)}`).join("; ");
+        if (key === "continuous_yield") return `${stressRiskNumber(value * 100,2)}%`;
+        if (key === "country_code" && typeof countryDisplayLabel === "function") return countryDisplayLabel(value);
+        if (key === "country_currency" && typeof currencyDisplayLabel === "function") return currencyDisplayLabel(value);
+        if (typeof value === "number") return stressRiskNumber(value,2);
+        return text(names[value] || String(value));
+      };
+      const rows = Object.entries(response.researched_parameters || {}).filter(([key])=>labels[key]);
+      research.hidden = !rows.length;
+      const seen = new Set();
+      const links = (response.source_evidence || []).filter(row => {
+        if (!row?.source_url || seen.has(row.source_url)) return false;
+        seen.add(row.source_url); return true;
+      }).map((row,index) => {
+        try {
+          const url = new URL(row.source_url);
+          if (!["https:","http:"].includes(url.protocol) || url.username || url.password) return "";
+          const dateText = row.as_of ? `${text("Information date")}: ${displayedDate(row.as_of)}` : "";
+          return `<li><a href="${stressRiskEscape(url.href)}" target="_blank" rel="noopener noreferrer">${stressRiskEscape(text("Source {number}",{number:index+1}))}</a>${dateText ? ` · ${stressRiskEscape(dateText)}` : ""}</li>`;
+        } catch { return ""; }
+      }).filter(Boolean);
+      research.innerHTML = rows.length ? `<h3>${stressRiskEscape(text("Researched risk evidence"))}</h3><p>${stressRiskEscape(text("These read-only researched values keep their source dates. The editable fields below contain local overrides only."))}</p><dl>${rows.map(([key,value])=>`<div><dt>${stressRiskEscape(text(labels[key]))}</dt><dd>${stressRiskEscape(show(key,value))}</dd></div>`).join("")}</dl>${links.length ? `<ul>${links.join("")}</ul>` : ""}` : "";
+    }
     refreshControls();
   }
   async function reload() {
@@ -270,6 +341,8 @@ function stressRiskGapsHtml(risk) {
   }
   function parameters() {
     const p = { instrument_kind: value("InstrumentKind") };
+    const local = session.response?.local_parameters ?? session.response?.parameters ?? {};
+    const supplied = (name, key) => session.touched.has(name) || Object.hasOwn(local, key);
     const fail = (message, name) => { input(name)?.focus(); throw Error(text(message)); };
     if (!p.instrument_kind) fail("Choose the instrument type.", "InstrumentKind");
     const optionalNumber = (name, key, scale = 1) => {
@@ -280,9 +353,9 @@ function stressRiskGapsHtml(risk) {
     };
     const isBond = ["corporate_bond", "sovereign_bond"].includes(p.instrument_kind);
     if (isBond) {
-      p.plain_nominal_noncallable = input("PlainBond")?.checked === true;
-      p.pricing_model = value("PricingModel");
-      if (p.pricing_model === "zero_coupon_continuous") p.zero_coupon_confirmed = input("ZeroConfirmed")?.checked === true;
+      if (supplied("PlainBond", "plain_nominal_noncallable")) p.plain_nominal_noncallable = input("PlainBond")?.checked === true;
+      if (value("PricingModel")) p.pricing_model = value("PricingModel");
+      if (p.pricing_model === "zero_coupon_continuous" && supplied("ZeroConfirmed", "zero_coupon_confirmed")) p.zero_coupon_confirmed = input("ZeroConfirmed")?.checked === true;
       if (p.pricing_model === "zero_coupon_continuous" && value("Maturity")) {
         p.maturity_date = date(value("Maturity"));
         if (!p.maturity_date) fail("Enter a valid date as dd/mm/yyyy.", "Maturity");
@@ -304,7 +377,7 @@ function stressRiskGapsHtml(risk) {
     if (value("CountryCode")) p.country_code = value("CountryCode").toUpperCase();
     if (value("CountryCurrency")) p.country_currency = value("CountryCurrency").toUpperCase();
     if (value("CountryBasis")) p.country_basis = value("CountryBasis");
-    p.assumptions_enabled = input("Assumptions")?.checked === true;
+    if (supplied("Assumptions", "assumptions_enabled")) p.assumptions_enabled = input("Assumptions")?.checked === true;
     if (p.current_spread_bps < 0) fail("Credit spread must be zero or positive.", "Spread");
     if (p.country_sensitivity < 0 || p.country_sensitivity > 1) fail("Country sensitivity must be between 0 and 1.", "CountrySensitivity");
     if (p.country_code && !/^[A-Z]{2}$/.test(p.country_code)) fail("Use a two-letter country ISO code.", "CountryCode");
@@ -372,7 +445,13 @@ function stressRiskGapsHtml(risk) {
     if (event.target.closest?.("#reloadStressRiskInputs")) reload();
   });
   document.addEventListener("change", event => {
+    const name = String(event.target.id || "").replace(/^stressRisk/, "");
+    if (fields.includes(name) && event.target.closest?.("#stressRiskInputsForm")) session.touched.add(name);
     if (["stressRiskInstrumentKind", "stressRiskPricingModel"].includes(event.target.id)) refreshControls();
+  });
+  document.addEventListener("input", event => {
+    const name = String(event.target.id || "").replace(/^stressRisk/, "");
+    if (fields.includes(name) && event.target.closest?.("#stressRiskInputsForm")) session.touched.add(name);
   });
   document.addEventListener("submit", event => {
     if (event.target.id !== "stressRiskInputsForm") return;

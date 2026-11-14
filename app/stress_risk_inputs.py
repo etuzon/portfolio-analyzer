@@ -21,6 +21,7 @@ from .sovereign_ratings import normalize_country
 
 MODEL = "portfolio-risk-v3"
 PREFIX = "stress-risk-inputs-v1:"
+EVIDENCE_PREFIX = "stress-risk-evidence-v1:"
 PARAMETERS = frozenset({"instrument_kind", "pricing_model", "maturity_date", "cashflows",
     "continuous_yield", "current_spread_bps", "country_sensitivity", "sovereign_currency_basis",
     "country_code", "country_currency", "country_basis", "plain_nominal_noncallable", "zero_coupon_confirmed",
@@ -196,13 +197,82 @@ class StressRiskInputs:
         saved = self._store().get_preference(self.preference_key(candidate))
         return saved if isinstance(saved, dict) and saved.get("identity_token") == self.identity(candidate) else {}
 
+    def evidence(self, candidate):
+        saved = self._store().get_preference(EVIDENCE_PREFIX + _digest(candidate["security_key"]))
+        return deepcopy(saved) if isinstance(saved, dict) and saved.get("identity_token") == self.identity(candidate) else {}
+
+    def publish_evidence(self, candidate, records, *, expected_revision=None):
+        """Application-only publication of independently validated source facts.
+
+        No public endpoint accepts free-form facts. Research workers submit only
+        request-bound source/record IDs; their application finalizer validates
+        the fetched source before reaching this method.
+        """
+        current = self.candidate(candidate["security_key"])
+        identity = self.identity(candidate)
+        if self.identity(current) != identity:
+            raise HTTPException(409, "risk_input_identity_changed")
+        evidence_key = EVIDENCE_PREFIX + _digest(candidate["security_key"])
+        manual_key = self.preference_key(current)
+        def transform(saved):
+            manual = saved.get(manual_key) or {}
+            if expected_revision is not None and int(manual.get("revision") or 0) != expected_revision:
+                raise HTTPException(409, "risk_input_revision_conflict")
+            prior = saved.get(evidence_key) or {}
+            prior = prior if prior.get("identity_token") == identity else {}
+            fields = deepcopy(prior.get("fields") or {})
+            for record in records:
+                field = record["field"]
+                previous = fields.get(field)
+                # A new read does not make an older observation newer.
+                if previous and (previous.get("as_of") or "") > (record.get("as_of") or ""):
+                    continue
+                fields[field] = deepcopy(record)
+            result = {"identity_token": identity, "fields": fields,
+                "revision": int(prior.get("revision") or 0) + 1,
+                "updated_at": datetime.now(timezone.utc).isoformat()}
+            return {manual_key: saved.get(manual_key), evidence_key: result}
+        self._store().update_preferences([manual_key, evidence_key], transform)
+        return self.evidence(current)
+
     def read(self, candidate, *, as_of=None):
         saved = self._saved(candidate)
-        params = deepcopy(saved.get("parameters") or {})
-        code = params.get("country_code")
+        evidence = self.evidence(candidate)
+        fields = evidence.get("fields") or {}
+        researched = {}
+        for key,row in fields.items():
+            # A literal allocation from an undated/old filing can be retained
+            # as evidence without becoming a current economic allocation.
+            if row.get("basis") in {"reported_investment_currency", "reported_allocation"}:
+                try:
+                    observed = date.fromisoformat(row.get("as_of") or "")
+                    if not 0 <= (date.today()-observed).days <= 550:
+                        continue
+                except ValueError:
+                    continue
+            researched[key] = deepcopy(row.get("value"))
+        supplied_params = deepcopy(saved.get("parameters") or {})
+        params = {key: value for key, value in researched.items() if key in PARAMETERS}
+        params.update(supplied_params)
+        market_dates = [supplied_params.get("as_of") if key in supplied_params and (key not in researched or supplied_params[key] != researched[key]) else fields.get(key, {}).get("as_of")
+                        for key in ("continuous_yield", "current_spread_bps") if key in params]
+        if market_dates:
+            # Editing notes/static terms cannot refresh an inherited old yield
+            # or spread. Only replacing that exact market field changes its date.
+            if all(isinstance(value,str) and value for value in market_dates):
+                params["as_of"] = min(market_dates)
+            else:
+                params.pop("as_of",None)
         country = self._countries(candidate) or {}
+        if (country.get("source_kind") == "manual" and "country_code" not in supplied_params
+                and params.get("country_basis") == "issuer_domicile_proxy"):
+            # A public address is the same domicile axis as this explicit
+            # association; it must not silently replace the user's override.
+            params.pop("country_code",None)
+        code = params.get("country_code")
         if code:
-            country = {**country, "country_code": code, "source_kind": "risk_input_assumption"}
+            country = {**country, "country_code": code, "source_kind": "risk_input_assumption" if "country_code" in supplied_params else fields.get("country_code", {}).get("source_kind"),
+                       "basis": params.get("country_basis") or "issuer_domicile_proxy"}
         code = country.get("country_code")
         public = self._credit(candidate) or {}
         sovereign = self._sovereign(code) if code else {}
@@ -212,7 +282,9 @@ class StressRiskInputs:
                               for basis in ("local_currency", "foreign_currency")}
         credit = select_rating(public, candidate)
         credit_estimate = select_rating(public, candidate, allow_manual=True)
-        issuer_id = _entity(candidate.get("issuer_name")) if candidate.get("issuer_identity_verified") else None
+        # Exact independently bound issuer IDs must group every matching
+        # holding consistently, regardless of earlier profile coverage.
+        issuer_id = researched.get("issuer_id") or (_entity(candidate.get("issuer_name")) if candidate.get("issuer_identity_verified") else None)
         if params.get("instrument_kind") == "sovereign_bond" and code:
             issuer_id = "sovereign:" + code
         basis = params.get("sovereign_currency_basis")
@@ -229,19 +301,25 @@ class StressRiskInputs:
             gaps.append({"code": "risk_parameters"})
         return {"model": MODEL, "security_key": candidate["security_key"], "identity_token": self.identity(candidate),
             "revision": int(saved.get("revision") or 0), "parameters": params,
-            "parameters_verification": "user_entered" if params else "not_available",
-            "parameter_provenance": {"source_kind": "user_entered", "verification_status": "user_entered", "as_of": params.get("as_of"),
+            "local_parameters": supplied_params,
+            "researched_parameters": {key:deepcopy(value) for key,value in researched.items() if key in PARAMETERS},
+            "parameters_verification": "user_entered" if supplied_params else "verified" if params else "not_available",
+            "parameter_provenance": {"source_kind": "user_entered" if supplied_params else "public_source", "verification_status": "user_entered" if supplied_params else "verified", "as_of": params.get("as_of"),
                 "source_url": params.get("source_url"), "notes": params.get("notes"),
                 "updated_at": saved.get("updated_at")},
-            "issuer_id": issuer_id, "issuer_name": candidate.get("issuer_name"),
-            "issuer_identity_verified": bool(candidate.get("issuer_identity_verified")),
+            "issuer_id": issuer_id, "issuer_name": candidate.get("issuer_name") or researched.get("issuer_name"),
+            "issuer_identity_verified": bool(candidate.get("issuer_identity_verified") or researched.get("issuer_id")),
+            "issuer_name_key": _entity(researched.get("issuer_name") or (candidate.get("issuer_name") if candidate.get("issuer_identity_verified") else None)) or None,
+            "currency_exposures": deepcopy(researched.get("currency_exposures")),
+            "unsupported_bond": researched.get("unsupported_bond") is True,
+            "source_evidence": deepcopy(list(fields.values())), "evidence_revision": evidence.get("revision", 0),
             "country": {**country, "basis": params.get("country_basis") or "issuer_domicile_proxy"},
             "credit_rating": credit, "sovereign_ratings": sovereign_ratings,
             "sovereign_rating": sovereign_selected, "country_rating": sovereign_ratings.get("foreign_currency"),
             "credit_rating_estimate": credit_estimate, "sovereign_ratings_estimate": sovereign_estimates,
             "sovereign_rating_estimate": sovereign_estimate, "country_rating_estimate": sovereign_estimates.get("foreign_currency"),
             "as_of": as_of or datetime.now(timezone.utc).date().isoformat(), "gaps": gaps,
-            "fingerprint": _digest([self.identity(candidate), saved, public.get("ratings", []), sovereign.get("ratings", []), country])}
+            "fingerprint": _digest([self.identity(candidate), saved, evidence, public.get("ratings", []), sovereign.get("ratings", []), country])}
 
     def update(self, payload, actor, *, clear=False):
         if not isinstance(payload, dict):
@@ -292,7 +370,7 @@ class StressRiskInputs:
             return ""
         data = store.export_data().get("data", {})
         preferences = [row for row in data.get("app_preferences", []) if str(row.get("key") or "").startswith(
-            (PREFIX, "manual-credit-ratings-v1:", "credit-rating-history-v1:", "sovereign-credit-ratings-v1:", "security-country-v1:"))]
+            (PREFIX, EVIDENCE_PREFIX, "manual-credit-ratings-v1:", "credit-rating-history-v1:", "sovereign-credit-ratings-v1:", "security-country-v1:"))]
         # Public rating service publication retains its canonical snapshot in these
         # preferences. Source annotations do not trigger market-data refetches.
         return _digest([preferences, data.get("security_exposure_profiles", []),

@@ -7,6 +7,11 @@
   text-align: center;
   max-width: 100%;
 }
+.risk-badge.has-missing-risk-data { gap: 6px; max-width: 100%; }
+.risk-badge .risk-data-warning { color: var(--ux-orange, #ffae18); flex: 0 0 auto; font-size: 14px; line-height: 1; }
+.risk-badge .risk-data-status { font-size: 10px; line-height: 1.25; white-space: normal; max-width: 10ch; text-align: start; }
+.risk-badge.has-missing-risk-data b { flex: 0 0 auto; }
+.stress-risk-summary > .stress-risk-provisional-note { color: var(--ux-orange, #ffae18); }
 .stress-risk-summary { display: grid; gap: 4px; min-width: 0; margin-block: 5px; line-height: 1.4; font-variant-numeric: tabular-nums; }
 .stress-risk-summary > span { font-size: 12px; }
 .stress-risk-summary > small { font-size: 11px; color: var(--ux-muted, #a6abb5); overflow-wrap: anywhere; }
@@ -18,9 +23,40 @@
 .stress-risk-gaps ul { display: grid; gap: 10px; margin-block: 8px; padding-inline-start: 18px; }
 .stress-risk-gaps li > div { overflow-wrap: anywhere; line-height: 1.5; }
 .stress-risk-gaps button { margin-block-start: 5px; white-space: normal; }
+.risk-retrieval-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-block: 10px; }
+.risk-retrieval-actions button { flex: 0 1 auto; width: auto; white-space: normal; }
+#riskRetrievalModal .risk-retrieval-card { width: min(840px, 100%); min-width: 0; }
+#riskRetrievalModal .section-head h2 { margin: 0; }
+.risk-retrieval-fields { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; }
+.risk-retrieval-fields .field { min-width: 0; margin: 0; }
+.risk-retrieval-fields select { min-width: 0; width: 100%; }
+.risk-retrieval-selected-field { grid-column: 1 / -1; min-width: 0; }
+.risk-retrieval-selected-field[hidden] { display: none; }
+.risk-retrieval-securities { display: grid; gap: 8px; max-height: 200px; overflow: auto; border: 1px solid var(--ux-stroke, #282a2f); padding: 10px; border-radius: 6px; }
+.risk-retrieval-securities label { display: flex; align-items: start; gap: 8px; font-size: 12px; line-height: 1.5; }
+.risk-retrieval-securities input { flex: 0 0 18px; width: 18px; height: 18px; margin-block-start: 1px; }
+.risk-retrieval-securities bdi { overflow-wrap: anywhere; }
+.risk-retrieval-results { display: grid; gap: 12px; list-style: none; padding: 0; }
+.risk-retrieval-results > li { border-block-start: 1px solid var(--ux-stroke, #282a2f); padding-block: 12px; min-width: 0; }
+.risk-retrieval-result-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; font-size: 13px; }
+.risk-retrieval-results p, .risk-retrieval-sources { margin-block: 6px; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.risk-retrieval-results button { margin-block-start: 7px; }
+.risk-retrieval-schedule { margin-block-start: 20px; border-block-start: 1px solid var(--ux-stroke, #282a2f); padding-block-start: 14px; }
+.risk-retrieval-schedule > summary { cursor: pointer; font-weight: 700; padding-block: 6px; }
+#riskRetrievalScheduleEditor { margin-block: 14px; }
+#riskRetrievalProgress { width: 100%; height: 8px; }
+#riskRetrievalProgress[hidden] { display: none; }
+#riskRetrievalModal :is(button, input, select, summary):focus-visible { outline: 2px solid var(--ux-blue, #21a7ff); outline-offset: 3px; }
 #stressRiskInputsModal .stress-risk-inputs-card { width: min(780px, 100%); min-width: 0; }
 #stressRiskInputsModal .section-head h2 { margin: 0; }
 #stressRiskInputsModal #stressRiskInputsSecurity { overflow-wrap: anywhere; margin-block: 8px; }
+.stress-risk-researched-inputs { margin-block: 12px; padding: 12px; border: 1px solid var(--ux-stroke, #282a2f); border-radius: 6px; }
+.stress-risk-researched-inputs[hidden] { display: none; }
+.stress-risk-researched-inputs h3 { margin: 0 0 6px; font-size: 14px; }
+.stress-risk-researched-inputs p { font-size: 12px; color: var(--ux-muted, #a6abb5); line-height: 1.5; }
+.stress-risk-researched-inputs dl { display: grid; gap: 8px; margin: 0; font-size: 12px; }
+.stress-risk-researched-inputs dl > div { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px; }
+.stress-risk-researched-inputs dd { margin: 0; overflow-wrap: anywhere; }
 .stress-risk-inputs-form { display: grid; gap: 14px; min-width: 0; }
 .stress-risk-inputs-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
 .stress-risk-inputs-fields > .field { min-width: 0; margin: 0; }
@@ -43,6 +79,8 @@
 .stress-risk-inputs-actions #saveStressRiskInputs { margin-inline-start: auto; }
 #stressRiskInputsModal :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--ux-blue, #21a7ff); outline-offset: 3px; }
 @media (max-width: 600px) {
+  .risk-retrieval-fields { grid-template-columns: minmax(0, 1fr); }
+  .risk-retrieval-actions button, .risk-retrieval-results button { min-height: 44px; }
   .stress-risk-inputs-fields { grid-template-columns: minmax(0, 1fr); }
   .stress-risk-inputs-fields .stress-risk-wide-field { grid-column: auto; }
   .stress-risk-inputs-actions #saveStressRiskInputs { margin-inline-start: 0; }

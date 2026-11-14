@@ -80,6 +80,7 @@ from .portfolio_refresh import PRICE_ANALYSIS_FIELDS, attach_market_analysis, pr
 from .report_pdf import build_portfolio_report_pdf
 from . import risk_history, risk_scenarios
 from .stress_risk_inputs import StressRiskInputs
+from .risk_input_retrieval import RiskEvidenceResearch, RiskInputRetrieval, RiskInputRetrievalSchedules
 from .dividend_summary_pdf import build_dividend_summary_pdf
 from .trade_planner import planner_security
 
@@ -102,6 +103,7 @@ async def application_lifespan(_app: FastAPI):
     configure_portfolio_refresh_job()
     configure_ai_enrichment_job()
     country_rating_schedules.configure()
+    risk_input_retrieval_schedules.configure()
     Thread(target=_refresh_portfolio_fx_history, name="portfolio-fx-history", daemon=True).start()
     if _mcp_session_context is None:
         _mcp_session_context = portfolio_mcp.session_manager.run()
@@ -5435,6 +5437,21 @@ sovereign_child_router = sovereign_rating_jobs.router()
 sovereign_coordinated_paths = {sovereign_rating_jobs.prefix + suffix for suffix in ("/ai", "/ai/{request_id}", "/status")}
 sovereign_child_router.routes[:] = [route for route in sovereign_child_router.routes if route.path not in sovereign_coordinated_paths]
 app.include_router(sovereign_child_router)
+
+risk_evidence_research = RiskEvidenceResearch(stress_risk_inputs, _credit_research_settings,
+    credit_service=credit_rating_service, sovereign_service=sovereign_rating_service,
+    changed=lambda: _portfolio_notifications.notify())
+risk_evidence_jobs = risk_evidence_research.manager(app, lambda: _enrichment_assistant_settings())
+risk_input_retrieval = RiskInputRetrieval(risk_evidence_research, risk_evidence_jobs,
+    credit_rating_jobs, country_rating_research)
+risk_input_retrieval_schedules = RiskInputRetrievalSchedules(
+    lambda: local_store.get_preference("risk_input_retrieval_schedule", {}),
+    lambda value: local_store.set_preference("risk_input_retrieval_schedule", value),
+    lambda: scheduler, auth_store, risk_input_retrieval,
+    timezone=str(config.alerts.get("timezone") or "UTC"))
+app.include_router(risk_evidence_jobs.router())
+app.include_router(risk_input_retrieval.router())
+app.include_router(risk_input_retrieval_schedules.router())
 
 
 AI_ENRICHMENT_JOB_ID = "ai-missing-data-enrichment"  # Legacy singleton, removed on reconciliation.

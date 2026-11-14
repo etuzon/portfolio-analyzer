@@ -3154,12 +3154,15 @@ function riskBadge(risk) {
   if (!risk) return "";
   if (Number.isFinite(risk.score) && (risk.score < 0 || risk.score > 100)) return "";
   if (risk.model !== "portfolio-risk-v3" && !Number.isFinite(risk.score)) return "";
+  const presentation = risk.model === "portfolio-risk-v3" && typeof stressRiskDisplay === "function" ? stressRiskDisplay(risk) : null;
   const estimate = !Number.isFinite(risk.score) && Number.isFinite(risk.estimated_score);
-  const number = Number.isFinite(risk.score) ? risk.score : estimate ? risk.estimated_score : null;
-  const band = riskBand(number);
-  const value = number === null ? optionLabel("Incomplete") : `${estimate ? "~" : ""}${number}`;
-  const label = `${optionLabel("Risk")}: ${value}${estimate ? ` · ${optionLabel("Estimate")}` : ""} · ${band.label}`;
-  return `<button class="risk-badge risk-${band.key}" type="button" data-risk-badge="${esc(risk.label || "Risk")}" data-risk-explanation="${esc(riskTooltip(risk))}" aria-label="${esc(label)}" aria-describedby="riskBadgeExplanation"><b>${esc(value)}</b>${estimate ? `<small>${esc(optionLabel("Estimate"))}</small>` : ""}</button>`;
+  const number = presentation ? presentation.number : Number.isFinite(risk.score) ? risk.score : estimate ? risk.estimated_score : null;
+  const band = presentation?.ceiling ? {key:"incomplete",label:optionLabel("Precautionary ceiling"),symbol:"⚠"} : riskBand(number);
+  const value = presentation ? presentation.value : number === null ? optionLabel("Incomplete") : `${estimate ? "~" : ""}${number}`;
+  const status = presentation ? presentation.statusLabel : estimate ? optionLabel("Estimate") : "";
+  const missing = presentation?.missing === true;
+  const label = `${optionLabel("Risk")}: ${value}${risk.model === "portfolio-risk-v3" && number !== null ? "/100" : ""}${status ? ` · ${status}` : ""}${missing && status !== optionLabel("Partial data") ? ` · ${optionLabel("Partial data")}` : ""} · ${band.label}`;
+  return `<button class="risk-badge risk-${band.key}${missing ? " has-missing-risk-data" : ""}" type="button" data-risk-badge="${esc(risk.label || "Risk")}" data-risk-explanation="${esc(riskTooltip(risk))}" aria-label="${esc(label)}" aria-describedby="riskBadgeExplanation"><b><bdi dir="ltr">${esc(value)}</bdi></b>${missing ? '<span class="risk-data-warning" aria-hidden="true">⚠</span>' : ""}${status ? `<small class="risk-data-status">${esc(status)}</small>` : ""}</button>`;
 }
 
 function riskTooltip(risk) {
@@ -3245,6 +3248,8 @@ function riskScoreForItems(items, options = {}) {
   const normalizeField = options.normalizeField || ((item, field) => riskStrictBaseValue(item.holding?.[field], item.holding?.currency, baseCurrency));
   const settings = { sourceRevision:state.riskRevision, ...options, baseCurrency, normalizeField, asOf: options.asOf || state.riskAsOf || new Date().toISOString() };
   if (!model) return { model:"portfolio-risk-v3", status:"incomplete", score:null, estimated_score:null,
+    provisional_model:"portfolio-risk-provisional-v1", provisional_score:100,
+    provisional_basis:"missing_valuation_ceiling", provisional_loss:null, provisional_unmodeled_gross:null,
     label:options.label || "Portfolio risk", gaps:[{code:"parameters_unavailable"}], components:{}, quality_details:[], position_risks:new Map() };
   const risk = model.calculate(items || [], settings);
   risk.position_risks = new Map((items || []).map(item => {
@@ -4004,9 +4009,10 @@ function renderPortfolioValueDashboard(items) {
     })
     .join("");
 
-  const totalRiskBand = riskBand(state.riskSnapshot.total.score ?? state.riskSnapshot.total.estimated_score);
+  const totalRiskDisplay = typeof stressRiskDisplay === "function" ? stressRiskDisplay(state.riskSnapshot.total) : null;
+  const totalRiskBand = totalRiskDisplay?.ceiling ? {key:"incomplete",label:optionLabel("Precautionary ceiling")} : riskBand(totalRiskDisplay?.number ?? state.riskSnapshot.total.score ?? state.riskSnapshot.total.estimated_score);
   const statsHtml = [
-    { label: "Risk", value: Number.isFinite(state.riskSnapshot.total.score) ? state.riskSnapshot.total.score : Number.isFinite(state.riskSnapshot.total.estimated_score) ? `~${state.riskSnapshot.total.estimated_score}` : t("Incomplete"), tooltip: riskTooltip(state.riskSnapshot.total), detail: totalRiskBand.label, className: `risk-${totalRiskBand.key}` },
+    { label: "Risk", content: riskBadge(state.riskSnapshot.total), tooltip: riskTooltip(state.riskSnapshot.total), detail: totalRiskBand.label, className: `risk-${totalRiskBand.key}` },
     { label: "Positions", value: items.length, tooltip: "Number of open positions shown after filters" },
     { label: "Securities", value: symbols, tooltip: "Unique security symbols" },
     { label: "Equities", value: equities, tooltip: "Open equity positions" },
@@ -4014,7 +4020,7 @@ function renderPortfolioValueDashboard(items) {
     { label: "Data gaps" },
   ].map((item) => item.label === "Data gaps" ? renderDataGapsStat(items, "portfolio") : `
     <div class="stat summary-stat ${esc(item.className || "")}" title="${esc(t(item.tooltip || ""))}">
-      <b>${esc(item.value)}</b>
+      ${item.content || `<b>${esc(item.value)}</b>`}
       <span>${esc(t(item.label))}</span>
       ${item.detail ? `<small>${esc(t(item.detail))}</small>` : ""}
     </div>
@@ -4211,7 +4217,7 @@ function preserveRenderedInteraction(root) {
   const active = root.contains(document.activeElement) ? document.activeElement : null;
   const rowKey = active?.closest("[data-portfolio-position]")?.dataset.portfolioPosition;
   const accountKey = active?.closest("[data-account-summary]")?.dataset.accountSummary;
-  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-update-account-cash|data-cash-entry|data-risk-badge|data-holdings-credit-info|data-edit-security|data-delete-security|data-open-risk-scenarios|data-open-(signal|risk|dividend|vesting|maturity)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
+  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-update-account-cash|data-cash-entry|data-risk-badge|data-holdings-credit-info|data-edit-security|data-delete-security|data-open-risk-scenarios|data-open-risk-input-retrieval|data-open-(signal|risk|dividend|vesting|maturity)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
   const detailKey = (node) => JSON.stringify([node.closest?.("[data-account-summary]")?.dataset.accountSummary || "", node.id, node.className]);
   const detailStates = new Map();
   root.querySelectorAll("details").forEach((node) => {
@@ -14918,9 +14924,13 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
     loadTradingJournal();
   }
   if (id === "xrayModal") loadXray();
-  if (id === "stressRiskInputsModal") {
-    const parent = document.activeElement?.closest?.(".modal:not([hidden])");
+  if (["stressRiskInputsModal", "riskRetrievalModal"].includes(id)) {
+    const parent = returnFocus?.closest?.(".modal:not([hidden])");
     if (parent && parent.id !== id) { modal.dataset.parentModalId=parent.id;parent.inert=true;parent.setAttribute("aria-hidden","true"); }
+    if (id === "riskRetrievalModal") {
+      modal.dataset.riskRetrievalOpener = returnFocus?.dataset?.openRiskInputRetrieval || "";
+      modal.dataset.riskRetrievalOpenerAccount = returnFocus?.closest?.("[data-account-summary]")?.dataset.accountSummary || "";
+    }
   }
   if (id === "securityDetailModal") {
     const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : null;
@@ -15071,13 +15081,20 @@ function closeModal(modal) {
   if (modal.id === "brokerEditorModal" && state.brokerSaving) return;
   if (modal.id === "instrumentEditorModal" && state.manualSecuritySaving && !state.manualSecuritySaved) return;
   if (modal.id === "assistantModal") saveAssistantDraft();
-  if (["stressRiskInputsModal", "securityDetailModal", "tradingJournalModal", "brokerEditorModal", "instrumentEditorModal", "alarmRiskModal", "accountCashModal", "priceEntryModal", "transactionEntryModal"].includes(modal.id) && modal.dataset.parentModalId) {
+  if (["stressRiskInputsModal", "riskRetrievalModal", "securityDetailModal", "tradingJournalModal", "brokerEditorModal", "instrumentEditorModal", "alarmRiskModal", "accountCashModal", "priceEntryModal", "transactionEntryModal"].includes(modal.id) && modal.dataset.parentModalId) {
     const parentModal = $(modal.dataset.parentModalId);
     if (parentModal) {
       parentModal.inert = false;
       parentModal.removeAttribute("aria-hidden");
     }
     delete modal.dataset.parentModalId;
+  }
+  if (modal.id === "riskRetrievalModal" && !modalReturnFocus.get(modal.id)?.isConnected) {
+    const accountKey = modal.dataset.riskRetrievalOpenerAccount;
+    const scope = accountKey ? [...document.querySelectorAll("[data-account-summary]")].find(node => node.dataset.accountSummary === accountKey) : document;
+    const current = [...(scope?.querySelectorAll("[data-open-risk-input-retrieval]") || [])]
+      .find(button => button.dataset.openRiskInputRetrieval === modal.dataset.riskRetrievalOpener);
+    modalReturnFocus.set(modal.id, current || document.querySelector("[data-open-risk-input-retrieval]"));
   }
   if (modal.id === "riskScenariosModal" && !modalReturnFocus.get(modal.id)?.isConnected) {
     const current = [...document.querySelectorAll("[data-open-risk-scenarios]")]

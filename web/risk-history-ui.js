@@ -12,7 +12,7 @@ function resetRiskHistory() {
 }
 function riskHistoryRiskRecord(risk) {
   if (risk.model === "portfolio-risk-v3") {
-    const fields=["model","status","score","estimated_score","loss_pct","stress_loss","worst_scenario","net_equity","cash_debt","cash_pct","components","quality_details","gaps","assumptions","coverage","funding","scenarios","rating_evidence","forward_sensitivity","as_of","source_revision"];
+    const fields=["model","status","score","estimated_score","provisional_model","provisional_score","provisional_basis","provisional_loss","provisional_unmodeled_gross","loss_pct","stress_loss","worst_scenario","net_equity","cash_debt","cash_pct","components","quality_details","gaps","assumptions","coverage","funding","scenarios","rating_evidence","forward_sensitivity","as_of","source_revision"];
     return Object.fromEntries(fields.filter(key=>risk[key] !== undefined).map(key=>[key,risk[key]]));
   }
   const result = { score:risk.score, components:risk.components || {}, quality_details:risk.quality_details || [], drivers:risk.drivers || [] };
@@ -84,7 +84,7 @@ function riskHistoryGraph(rows,label) {
   const times=rows.map(row=>Date.parse(`${row.date}T00:00:00Z`));
   const min=times[0],max=times.at(-1),span=max-min;
   const points=rows.map((row,index)=>{
-    const value=Number.isFinite(row.risk.score)?row.risk.score:row.risk.estimated_score;
+    const value=Number.isFinite(row.risk.score)?row.risk.score:Number.isFinite(row.risk.estimated_score)?row.risk.estimated_score:row.risk.provisional_score;
     return {...row,index,value,x:span?left+(times[index]-min)/span*(width-left-right):width/2,y:Number.isFinite(value)?top+(100-value)/100*(height-top-bottom):null};
   });
   if(!points.some(p=>p.y!==null))return "";
@@ -92,12 +92,14 @@ function riskHistoryGraph(rows,label) {
   points.forEach((point,index)=>{
     if(point.y===null)return;
     const previous=points[index-1];
-    const linked=previous?.y!==null && previous && point.model===previous.model && point.risk.status===previous.risk.status && times[index]-times[index-1]===86400000;
+    const linked=previous?.y!==null && previous && point.model===previous.model && point.risk.status===previous.risk.status
+      && point.risk.provisional_model===previous.risk.provisional_model && times[index]-times[index-1]===86400000;
     path+=`${linked?"L":"M"}${point.x.toFixed(2)},${point.y.toFixed(2)} `;
   });
   const ticks=[0,20,40,60,80,100].map(score=>{const y=top+(100-score)/100*(height-top-bottom);return `<line x1="${left}" x2="${width-right}" y1="${y}" y2="${y}" class="risk-history-grid"/><text x="${left-10}" y="${y+4}" text-anchor="end">${score}</text>`;}).join("");
   const dots=points.filter(p=>p.y!==null).map(point=>{
-    const description=`${formatDateTime(point.observed_at)}\n${riskHistoryText("Model")}: ${point.model}\n${riskHistoryText("Score")}: ${point.risk.status==="estimate"?"~":""}${point.value}/100`;
+    const provisional=!Number.isFinite(point.risk.score) && !Number.isFinite(point.risk.estimated_score) && Number.isFinite(point.risk.provisional_score);
+    const description=`${formatDateTime(point.observed_at)}\n${riskHistoryText("Model")}: ${point.model}\n${riskHistoryText("Score")}: ${point.risk.status==="estimate" || provisional?"~":""}${point.value}/100${provisional?` ⚠ ${riskHistoryText("Partial data")}`:""}`;
     return `<circle cx="${point.x}" cy="${point.y}" r="4" tabindex="0" aria-label="${esc(description)}"><title>${esc(description)}</title></circle>`;
   }).join("");
   const indices=[...new Set([0,Math.floor((points.length-1)/2),points.length-1])];

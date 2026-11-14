@@ -649,10 +649,12 @@ def test_browser_editor_ignores_out_of_order_and_old_user_responses(tmp_path, ch
     browser_wait(evaluate, "qa.reads.length===2")
     newest = deepcopy(saved)
     newest["parameters"]["notes"] = "Newest synthetic response"
+    newest["local_parameters"]["notes"] = "Newest synthetic response"
     evaluate("qa.reads[1](" + json.dumps(newest) + ")")
     browser_wait(evaluate, "$('stressRiskNotes').value==='Newest synthetic response'")
     stale = deepcopy(saved)
     stale["parameters"]["notes"] = "Stale synthetic response"
+    stale["local_parameters"]["notes"] = "Stale synthetic response"
     evaluate("qa.reads[0](" + json.dumps(stale) + ")")
     assert evaluate("$('stressRiskNotes').value") == "Newest synthetic response"
     evaluate("void openStressRiskInputs({security_key:'GOV|NYSE|ILS'})")
