@@ -48,7 +48,7 @@ def test_context_filters_known_noninvestment_sources_but_preserves_orphan_eviden
     # receives every original source item before investment-only filtering.
     assert [[{key:value for key,value in row.items() if key != "stress_risk"} for row in evidence]
             for evidence in looked_up] == [items]
-    assert all(row["stress_risk"]["model"] == "portfolio-risk-v3" for row in looked_up[0])
+    assert all(row["stress_risk"]["model"] == "portfolio-risk-v4" for row in looked_up[0])
     assert all(row["stress_risk"]["gaps"] for row in result["items"]), "identity-poor evidence remains incomplete"
     assert (accounts, transactions, items) == original
 
@@ -90,7 +90,7 @@ assert.equal(result.total.after.netValue,100000);
 ''')
 
 
-def test_unchanged_investment_accounts_stay_in_results_and_weighted_total():
+def test_unchanged_investment_accounts_stay_in_results_and_pooled_total():
     run_simulation('''
 const ctx=simulationContext();ctx.accounts.push(account('unchanged','USA',5000));
 ctx.accounts.push(account('bank','USA',999999,'USD','Bank'));
@@ -105,8 +105,9 @@ assert.equal(result.total.after.cash,103997);
 assert.equal(result.total.after.netValue,106997);
 const projected=[stock('NEW',1000),stock('UNCHANGED',2000,'unchanged','Finance')];
 const combined=adapters.risk(projected,{cash:103997,baseCurrency:'USD',horizonYears:20});
-const weighted=(result.accounts[0].after.risk.score*99997+result.accounts[1].after.risk.score*7000)/106997;
-assert.equal(result.total.after.risk.score,Math.round(.75*combined.score+.25*weighted));
+assert.equal(result.total.after.risk.score,combined.score);
+assert.equal(result.total.after.risk.stress_loss,1200);
+assert.ok(Math.abs(result.total.after.risk.loss_pct-100*1200/106997)<1e-9);
 ''')
 
 

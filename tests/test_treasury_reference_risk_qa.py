@@ -61,7 +61,7 @@ def test_exact_partial_reference_supports_only_labeled_government_and_maturity_p
     assert result["score"] is None and result["status"] == "incomplete"
     assert result["provisional_scope"] == "portfolio"
     assert result["provisional_loss"] == pytest.approx(expected_loss)
-    assert result["provisional_score"] == math.floor(expected_loss + .5)
+    assert result["provisional_score"] == math.floor(100 * expected_loss / 200 + .5 + 1e-10)
     assert result["provisional_worst_scenario"] == "inflation:fixed"
     assert result["provisional_net_equity"] == 200
     assert not any(r["name"].startswith("issuer_") for r in result["provisional_scenarios"])
@@ -304,9 +304,9 @@ console.log(JSON.stringify({whole:risk.provisional_score,loss:risk.provisional_l
  unchanged:JSON.stringify(original)===saved&&JSON.stringify(restored)===saved}));
 """)
     expected_loss = -100 * math.expm1(-BOUND * .03)
-    assert result["whole"] == math.floor(expected_loss + .5)
+    assert result["whole"] == math.floor(100 * expected_loss / 200 + .5 + 1e-10)
     assert result["loss"] == pytest.approx(expected_loss)
-    assert result["intrinsic"] == math.floor(2 * expected_loss + .5)
+    assert result["intrinsic"] == math.floor(expected_loss + .5 + 1e-10)
     assert any(r["code"] == "bond_duration_maturity_bound" for r in result["intrinsicAssumptions"])
     assert result["unchanged"]
 
@@ -323,7 +323,7 @@ def test_issued_contexts_preserve_reference_and_detect_reference_changes_before_
     assert context["items"][0]["market_data"] == scenario["items"][0]["market_data"] == bond["market_data"]
     assert json.loads(json.dumps(context))["items"][0]["market_data"] == bond["market_data"]
     risk = calculate(context["items"], baseCurrency="USD", cash=100)
-    assert risk["provisional_score"] == math.floor(-100 * math.expm1(-BOUND * .03) + .5)
+    assert risk["provisional_score"] == math.floor(100 * (-100 * math.expm1(-BOUND * .03)) / 200 + .5 + 1e-10)
     payload = {"token": context["token"], "total": risk,
                "accounts": [{"account_id": "synthetic-account", "risk": risk}]}
     saved = risk_history.save_observation(store, "qa-author", payload, capture, lambda: inputs["guard"])["observation"]
@@ -417,11 +417,11 @@ qa.render();PortfolioI18n.observe();qa.fixtureReady=true;
     risk = evaluate("state.riskSnapshot.accounts[0].risk")
     expected_loss = -100 * math.expm1(-BOUND * .03)
     assert risk["score"] is None and risk["provisional_loss"] == pytest.approx(expected_loss)
-    expected_score = math.floor(expected_loss + .5)
+    expected_score = math.floor(100 * expected_loss / 200 + .5 + 1e-10)
     assert risk["provisional_score"] == expected_score
     evaluate("qa.badge=document.querySelector('[data-account-summary=synthetic-account] .risk-badge');qa.badge.scrollIntoView({block:'center'});qa.badge.focus()")
     browser_wait(evaluate, "!$('riskBadgeExplanation').hidden")
-    assert evaluate("qa.badge.textContent").find("~" + str(expected_score)) >= 0
+    assert evaluate("qa.badge.textContent").find(f"~{100 * expected_loss / 200:.1f}%") >= 0
     assert "⚠" in evaluate("qa.badge.textContent")
     lines = evaluate("stressRiskProxyAssumptionLines(state.riskSnapshot.accounts[0].risk).join('\\n')")
     for text in ["Sensitivity proxy capped by verified remaining maturity", "This bound does not establish actual coupon duration.",

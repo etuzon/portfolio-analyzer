@@ -41,6 +41,7 @@ for the analyst, not a requirement to launch one agent per topic.
 
 | Question | Skill |
 |---|---|
+| Financial score meaning, anchors, plausibility and claim validation | [financial-score-validation](../financial-score-validation/SKILL.md) |
 | Portfolio allocation, performance, diversification, suitability | [investment-portfolio-analysis](../investment-portfolio-analysis/SKILL.md) |
 | Reports, peer comparisons, industry and supply-chain evidence | [company-report-industry-outlook](../company-report-industry-outlook/SKILL.md) |
 | Economic cycles, inflation, policy, rates, currencies | [macro-economic-analysis](../macro-economic-analysis/SKILL.md) |
@@ -81,6 +82,9 @@ See [agent-workflow.md](references/agent-workflow.md) for team relationships.
   macro revisions, or realized prices into historical decisions.
 - Distinguish business quality, valuation, expected return, and portfolio fit.
   A heuristic score is not a probability, forecast accuracy, or expected return.
+  For a numerical financial score, apply financial-score-validation before
+  publishing or changing it: validate its meaning and scale separately from
+  arithmetic, and explain material actual outputs against raw financial exposure.
 - Report meaningful uncertainty and alternative explanations. Scenario sizes
   can be user assumptions; probabilities require a defensible estimation method.
 - Preserve unknowns and scope. Missing prices, FX, cash, dates, or classifications

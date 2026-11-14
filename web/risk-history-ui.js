@@ -11,8 +11,8 @@ function resetRiskHistory() {
   riskHistoryCaptureTask = null;
 }
 function riskHistoryRiskRecord(risk) {
-  if (risk.model === "portfolio-risk-v3") {
-    const fields=["model","status","score","estimated_score","provisional_model","provisional_score","provisional_basis","provisional_loss","provisional_unmodeled_gross","provisional_net_equity","provisional_proxy_gross","provisional_assumptions","provisional_scope","provisional_range","provisional_worst_scenario","provisional_scenarios","loss_pct","stress_loss","worst_scenario","net_equity","cash_debt","cash_pct","components","quality_details","gaps","assumptions","coverage","funding","scenarios","rating_evidence","forward_sensitivity","as_of","source_revision"];
+  if (["portfolio-risk-v3", "portfolio-risk-v4"].includes(risk.model)) {
+    const fields=["model","score_unit","score_scale","scenario_horizon","status","score","estimated_score","provisional_model","provisional_score","provisional_basis","provisional_loss","provisional_loss_pct","provisional_known_loss_pct","provisional_unmodeled_gross","provisional_net_equity","provisional_proxy_gross","provisional_assumptions","provisional_scope","provisional_range","provisional_worst_scenario","provisional_scenarios","loss_pct","stress_loss","worst_scenario","net_equity","cash_debt","cash_pct","components","quality_details","gaps","assumptions","coverage","funding","scenarios","rating_evidence","forward_sensitivity","as_of","source_revision"];
     return Object.fromEntries(fields.filter(key=>risk[key] !== undefined).map(key=>[key,risk[key]]));
   }
   const result = { score:risk.score, components:risk.components || {}, quality_details:risk.quality_details || [], drivers:risk.drivers || [] };
@@ -80,14 +80,20 @@ function riskHistoryDailyRows(data,account) {
 }
 function riskHistoryGraph(rows,label) {
   if(!rows.length)return "";
+  const models=[...new Set(rows.map(row=>row.model))];
+  if(models.length>1)return models.map(model=>`<section class="risk-history-model"><h4>${esc(model)} · ${riskHistoryEsc(model === "portfolio-risk-v4" ? "Stress loss (%)" : "Legacy risk index (0–100)")}</h4>${riskHistoryGraph(rows.filter(row=>row.model===model),label)}</section>`).join("");
+  const current=models[0]==="portfolio-risk-v4";
   const width=920,height=300,left=48,right=20,top=20,bottom=48;
   const times=rows.map(row=>Date.parse(`${row.date}T00:00:00Z`));
   const min=times[0],max=times.at(-1),span=max-min;
   const points=rows.map((row,index)=>{
-    const ranged=row.risk.provisional_model==="portfolio-risk-provisional-v2" && row.risk.provisional_scope==="known_values";
-    const value=Number.isFinite(row.risk.score)?row.risk.score:Number.isFinite(row.risk.estimated_score)?row.risk.estimated_score:ranged?null:row.risk.provisional_score;
-    return {...row,index,value,x:span?left+(times[index]-min)/span*(width-left-right):width/2,y:Number.isFinite(value)?top+(100-value)/100*(height-top-bottom):null};
+    const ranged=["portfolio-risk-provisional-v2","portfolio-risk-provisional-v3"].includes(row.risk.provisional_model) && row.risk.provisional_scope==="known_values";
+    const point=Number.isFinite(row.risk.score)?row.risk.score:Number.isFinite(row.risk.estimated_score)?row.risk.estimated_score:ranged?null:row.risk.provisional_score;
+    const value=current ? Number.isFinite(point) ? Number.isFinite(row.risk.loss_pct) ? row.risk.loss_pct : !ranged ? row.risk.provisional_loss_pct : null : null : point;
+    return {...row,index,value,x:span?left+(times[index]-min)/span*(width-left-right):width/2};
   });
+  const ceiling=current ? Math.max(100,...points.map(point=>Number.isFinite(point.value)?Math.ceil(point.value/20)*20:0)) : 100;
+  points.forEach(point=>{point.y=Number.isFinite(point.value)?top+(ceiling-point.value)/ceiling*(height-top-bottom):null;});
   if(!points.some(p=>p.y!==null))return "";
   let path="";
   points.forEach((point,index)=>{
@@ -97,14 +103,14 @@ function riskHistoryGraph(rows,label) {
       && point.risk.provisional_model===previous.risk.provisional_model && times[index]-times[index-1]===86400000;
     path+=`${linked?"L":"M"}${point.x.toFixed(2)},${point.y.toFixed(2)} `;
   });
-  const ticks=[0,20,40,60,80,100].map(score=>{const y=top+(100-score)/100*(height-top-bottom);return `<line x1="${left}" x2="${width-right}" y1="${y}" y2="${y}" class="risk-history-grid"/><text x="${left-10}" y="${y+4}" text-anchor="end">${score}</text>`;}).join("");
+  const ticks=Array.from({length:6},(_,index)=>ceiling*index/5).map(score=>{const y=top+(ceiling-score)/ceiling*(height-top-bottom);return `<line x1="${left}" x2="${width-right}" y1="${y}" y2="${y}" class="risk-history-grid"/><text x="${left-10}" y="${y+4}" text-anchor="end">${Number(score.toFixed(1))}${current?"%":""}</text>`;}).join("");
   const dots=points.filter(p=>p.y!==null).map(point=>{
     const provisional=!Number.isFinite(point.risk.score) && !Number.isFinite(point.risk.estimated_score) && Number.isFinite(point.risk.provisional_score);
-    const description=`${formatDateTime(point.observed_at)}\n${riskHistoryText("Model")}: ${point.model}\n${riskHistoryText("Score")}: ${point.risk.status==="estimate" || provisional?"~":""}${point.value}/100${provisional?` ⚠ ${riskHistoryText("Partial data")}`:""}`;
+    const description=`${formatDateTime(point.observed_at)}\n${riskHistoryText("Model")}: ${point.model}\n${riskHistoryText(current?"Stress loss":"Legacy risk index")}: ${point.risk.status==="estimate" || provisional?"~":""}${current?point.value.toFixed(1):point.value}${current?"%":"/100"}${provisional?` ⚠ ${riskHistoryText("Partial data")}`:""}`;
     return `<circle cx="${point.x}" cy="${point.y}" r="4" tabindex="0" aria-label="${esc(description)}"><title>${esc(description)}</title></circle>`;
   }).join("");
   const indices=[...new Set([0,Math.floor((points.length-1)/2),points.length-1])];
-  return `<div class="risk-history-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(`${label}: ${riskHistoryText("Risk score (0–100)")}`)}"><g>${ticks}<path d="${path}" class="risk-history-line"/>${dots}${indices.map(index=>`<text x="${points[index].x}" y="${height-16}" text-anchor="middle">${esc(formatDate(points[index].date))}</text>`).join("")}</g></svg></div>`;
+  return `<div class="risk-history-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(`${label}: ${riskHistoryText(current?"Stress loss (%)":"Legacy risk index (0–100)")}`)}"><g>${ticks}<path d="${path}" class="risk-history-line"/>${dots}${indices.map(index=>`<text x="${points[index].x}" y="${height-16}" text-anchor="middle">${esc(formatDate(points[index].date))}</text>`).join("")}</g></svg></div>`;
 }
 function renderRiskHistory() {
   const target=$("riskHistoryContent");if(!target)return;
@@ -117,7 +123,7 @@ function renderRiskHistory() {
   const rows=riskHistoryDailyRows(data,selected);
   target.setAttribute("aria-busy",String(view.loading));
   target.innerHTML=`<div class="risk-history-controls"><label class="field"><span>${riskHistoryEsc("Account")}</span><select id="riskHistoryAccount"><option value="">${riskHistoryEsc("Total portfolio")}</option>${accounts.map(row=>`<option value="${esc(row.id)}"${selected===row.id?" selected":""}>${esc(row.label)}</option>`).join("")}</select></label><label class="field"><span>${riskHistoryEsc("Period")}</span><select id="riskHistoryDays">${[["30","Last 30 days"],["90","Last 90 days"],["365","Last year"],["0","All history"]].map(([value,text])=>`<option value="${value}"${view.days===value?" selected":""}>${riskHistoryEsc(text)}</option>`).join("")}</select></label><button id="riskHistoryReload" class="secondary" type="button"${view.loading?' aria-disabled="true"':""}>${riskHistoryEsc("Reload")}</button></div>
-    <p class="section-note">${riskHistoryEsc("Recorded model assessments, excluding employee equity. Holdings filters do not change this history.")}</p><p class="section-note">${riskHistoryEsc("Saved FX is used for recorded assessments. Current badges may use newer or different FX.")}</p><p class="section-note">${riskHistoryEsc("Base currency")}: ${esc(currencyDisplayLabel(data?.base_currency || state.baseCurrency))} · ${riskHistoryEsc("Model")}: ${esc(data?.model || "portfolio-risk-v3")} · ${esc(t("Models use different scales. Lines do not connect across models."))}</p>
+    <p class="section-note">${riskHistoryEsc("Recorded model assessments, excluding employee equity. Holdings filters do not change this history.")}</p><p class="section-note">${riskHistoryEsc("Saved FX is used for recorded assessments. Current badges may use newer or different FX.")}</p><p class="section-note">${riskHistoryEsc("Base currency")}: ${esc(currencyDisplayLabel(data?.base_currency || state.baseCurrency))} · ${riskHistoryEsc("Model")}: ${esc(data?.model || "portfolio-risk-v4")} · ${esc(t("Models use different scales. Lines do not connect across models."))}</p>
     <p class="status-line" role="status" aria-live="polite">${riskHistoryEsc(view.loading?"Loading risk history…":view.error || view.captureError)}</p>
     ${!rows.length?`<p class="empty">${riskHistoryEsc(data?.items?.length?"No observations for this account and period.":"No observations yet. Recording begins with the first saved dashboard assessment.")}</p>`:`${riskHistoryGraph(rows,label)}<p class="section-note">${riskHistoryEsc(rows.length===1?"Only one observation is available.":"Latest observation per day; days without observations remain gaps.")}</p><div class="table-wrap"><table><caption>${riskHistoryEsc("Daily observations")} · ${esc(label)}</caption><thead><tr><th>${riskHistoryEsc("Observed at")}</th><th>${riskHistoryEsc("Score")}</th><th>${riskHistoryEsc("Risk details")}</th></tr></thead><tbody>${rows.slice().reverse().map(row=>`<tr><td><bdi>${esc(formatDateTime(row.observed_at))}</bdi></td><td>${riskBadge({...row.risk,model:row.model,base_currency:row.base_currency})}<small>${esc(row.model)}</small></td><td><details><summary>${riskHistoryEsc("Risk details")}</summary><pre class="risk-history-details">${esc(riskTooltip({...row.risk,label,model:row.model,base_currency:row.base_currency}))}</pre></details>${typeof riskDataQualityHtml==="function"?riskDataQualityHtml({...row.risk,model:row.model}):""}</td></tr>`).join("")}</tbody></table></div>`}
     ${data?.invalid_records?`<p class="section-note">${riskHistoryEsc("Some stored observations could not be read.")}</p>`:""}${data?.truncated?`<p class="section-note">${riskHistoryEsc("Older observations are omitted from this view.")}</p>`:""}<p class="section-note">${riskHistoryEsc("The browser calculates the existing model. History is saved when an Admin or Operator loads a completed dashboard; Viewers can read saved history.")}</p>`;

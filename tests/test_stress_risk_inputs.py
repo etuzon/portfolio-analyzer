@@ -154,7 +154,7 @@ def test_input_routes_enforce_role_and_local_only(environment):
     assert client.get('/api/securities/risk-inputs'+query,headers={'x-role':'Viewer'}).json()['revision']==1
 
 
-def test_v3_incomplete_history_keeps_v2_immutable_and_new_rating_inputs(tmp_path):
+def test_v4_incomplete_history_keeps_v2_immutable_and_new_rating_inputs(tmp_path):
     store=LocalPortfolioStore(tmp_path/'history.sqlite3')
     account=dict(id='test',type='Investment',location='Israel',currency='ILS',initial_cash=100,account_id='test')
     old={'id':'old','observed_at':'2026-11-12T10:00:00Z','date':'2026-11-12','model':'portfolio-risk-v2',
@@ -165,7 +165,7 @@ def test_v3_incomplete_history_keeps_v2_immutable_and_new_rating_inputs(tmp_path
     inputs['guard']=('source',1,'credit-revision')
     capture=lambda _:deepcopy(inputs)
     context=risk_history.create_context(store,'writer','ILS',capture)
-    risk={'model':MODEL,'score':None,'status':'incomplete','components':{'stress_loss':0},
+    risk={'model':MODEL,**risk_history.SCORE_METADATA,'score':None,'status':'incomplete','components':{'stress_loss':0},
           'coverage':{'covered_value_percent':0,'complete':False},'gaps':[{'code':'credit_rating'}]}
     result=risk_history.save_observation(store,'writer',{'token':context['token'],'total':risk,'accounts':[{'account_id':account['id'],'risk':risk}]},capture,lambda:inputs['guard'])
     assert result['observation']['model']==MODEL and result['observation']['total']['score'] is None
@@ -175,11 +175,11 @@ def test_v3_incomplete_history_keeps_v2_immutable_and_new_rating_inputs(tmp_path
     assert store.get_preference(risk_history.PREFIX+'legacy')==old
 
 
-def test_v3_partial_never_becomes_numeric_and_nested_nonfinite_rejected():
+def test_v4_partial_never_becomes_numeric_and_nested_nonfinite_rejected():
     with pytest.raises(risk_history.RiskHistoryError):
-        risk_history._risk({'model':MODEL,'status':'incomplete','score':0},MODEL)
+        risk_history._risk({'model':MODEL,**risk_history.SCORE_METADATA,'status':'incomplete','score':0},MODEL)
     with pytest.raises(risk_history.RiskHistoryError):
-        risk_history._risk({'model':MODEL,'status':'ok','score':30,'scenarios':[{'pnl':float('nan')}]},MODEL)
+        risk_history._risk({'model':MODEL,**risk_history.SCORE_METADATA,'status':'ok','score':30,'scenarios':[{'pnl':float('nan')}]},MODEL)
 
 
 def test_portfolio_retries_changed_risk_inputs_before_publishing(monkeypatch):
@@ -242,7 +242,7 @@ process.stdout.write(JSON.stringify(result));"""
 
 
 def test_unknown_coverage_percentage_preserved_only_for_incomplete_results():
-    risk={'model':MODEL,'status':'incomplete','score':None,'components':{},
+    risk={'model':MODEL,**risk_history.SCORE_METADATA,'status':'incomplete','score':None,'components':{},
           'coverage':{'covered_value_percent':None,'complete':False},'gaps':[{'code':'valuation'}]}
     assert risk_history._risk(risk,MODEL)['coverage']['covered_value_percent'] is None
     assert risk_history._risk({**risk,'status':'unavailable'},MODEL)['score'] is None

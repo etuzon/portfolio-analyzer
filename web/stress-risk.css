@@ -1,3 +1,7 @@
+/* Revealing a scrollable explanation must not move its trigger between hover
+   and click when a classic viewport scrollbar appears. */
+html:has(#riskBadgeExplanation) { scrollbar-gutter: stable; }
+
 .risk-badge.risk-incomplete {
   color: var(--ux-orange, #ffae18);
   background: #302716;
@@ -11,6 +15,25 @@
 .risk-badge .risk-data-warning { color: var(--ux-orange, #ffae18); flex: 0 0 auto; font-size: 14px; line-height: 1; }
 .risk-badge .risk-data-status { font-size: 10px; line-height: 1.25; white-space: normal; max-width: 10ch; text-align: start; }
 .risk-badge.has-missing-risk-data b { flex: 0 0 auto; }
+.risk-badge.risk-stress {
+  flex-shrink: 0;
+  color: var(--ux-blue, #21a7ff);
+  background: #152a3a;
+  border-color: #2f617e;
+  max-width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+.risk-badge.risk-stress b { flex: 0 0 auto; white-space: nowrap; }
+.risk-badge.risk-funding-boundary {
+  flex-shrink: 0;
+  color: #ff9d9d;
+  background: #351b24;
+  border-color: #9b4b63;
+}
+.holdings-table-wrap .holding-risk-cell .risk-badge.risk-incomplete {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .stress-risk-summary > .stress-risk-provisional-note { color: var(--ux-orange, #ffae18); }
 .stress-risk-summary { display: grid; gap: 4px; min-width: 0; margin-block: 5px; line-height: 1.4; font-variant-numeric: tabular-nums; }
 .stress-risk-summary > span { font-size: 12px; }

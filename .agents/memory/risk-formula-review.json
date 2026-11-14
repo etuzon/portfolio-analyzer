@@ -2,6 +2,20 @@
   "topic": "Portfolio risk formula research",
   "saved_at": "2026-11-13",
   "purpose": "Preserve dated research findings and comparators at the user's explicit request. This is not an implemented model or authorization to change/deploy the application.",
+  "review_2026_11_14": {
+    "method_frozen_before_prior_comparison": true,
+    "contract": ".agents/skills/trade-simulation/references/portfolio-risk.md",
+    "model": "portfolio-risk-v4",
+    "automatic_estimate_model": "portfolio-risk-provisional-v3",
+    "meaning": "Unrounded, uncapped maximum common-scenario nominal capital-loss percentage, 100 * loss / positive net equity; the capped integer is compatibility only. This is instantaneous hypothetical repricing, not a calibrated general risk class or loss probability.",
+    "prior_implemented_comparator": "V3 doubled the loss percentage and capped at100; its arithmetic could be consistent while an ordinary foreign-equity sleeve approached98. Preserve old saved values as a legacy index, not current percentages.",
+    "prior_research_comparator": "F2's stress-loss approach remains useful as a method comparator. Its quality93 and portfolio52 were declared research-scale outputs, not forecast accuracy or directly comparable current loss percentages. The retained prior review explicitly had no chronological observed-loss holdout.",
+    "validation": "Fifty distinct synthetic economic simulations use frozen independent raw-money expectations; separate checks cover policy-unit conversions, actual saved balances, history and presentation. Synthetic simulations do not establish empirical calibration or forecast accuracy.",
+    "acceptance_cases": "tests/test_risk_scale_v4_independent_qa.py",
+    "skill": ".agents/skills/financial-score-validation/SKILL.md",
+    "historical_priority_note": "The current_priority object below archives the earlier ratings-first postponement. Subsequent explicit user requests resumed portfolio-risk work; do not treat that archived postponement as an active instruction.",
+    "missing_data": "Incomplete evidence changes confidence and scope, not economic loss. Unsupported/unknown whole scope stays Incomplete; an internal0-100 compatibility range is not a bound on leveraged loss percentages."
+  },
   "prior_review": {
     "artifact_directory": ".runtime/risk-formula-review-2026-11-13",
     "report": "output/pdf/portfolio-risk-formula-review-2026-11-13.pdf",

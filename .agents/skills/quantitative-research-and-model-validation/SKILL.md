@@ -5,6 +5,12 @@ description: Design and audit investment backtests, event studies, factor analys
 
 # Quantitative Research And Model Validation
 
+For financial score design or review, also use
+[financial-score-validation](../financial-score-validation/SKILL.md). Separate
+dimensional quantities and declared heuristics from empirically calibrated
+ratings. Count synthetic simulations, software checks and independent economic
+observations separately; none can silently substitute for another.
+
 Declare the question, target, horizon, information set, universe, benchmark,
 metric, and inclusion/exclusion rules before measuring success.
 

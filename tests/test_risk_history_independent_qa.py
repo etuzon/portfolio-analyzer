@@ -93,7 +93,7 @@ renderRiskHistory=()=>{};
 ''')
 
 
-def test_frozen_context_executes_v3_pooled_loss_and_borrowing_without_state_leak():
+def test_frozen_context_executes_v4_pooled_loss_and_borrowing_without_state_leak():
     functions=app_functions('portfolioRiskSnapshot','accountCashBalance','accountRiskCashValue',
         'riskAllocationForItems','riskAllocationBand','cleanSourceLabel','portfolioItems',
         'isEquityCompHolding','portfolioAccounts','isEquityCompAccount')
@@ -111,12 +111,14 @@ const before=JSON.stringify(state);
 const ctx={base_currency:'USD',observed_at:'2026-10-30T12:00:00Z',accounts:[account('us1','USA',-1000),account('surplus','USA',2000)],transactions:[],items:Array.from({length:20},(_,i)=>stock('HELD'+i,500)),fx:{quotes:[]}};
 const original=JSON.stringify(ctx);
 const snapshot=riskHistoryCalculate(ctx);
-// Recession loses4000 from10000 of diversified equity. E=11000 =>73.
-// Account A hasE9000 =>89; surpluscash hasnominalmarketstress0.
-assert.equal(snapshot.total.score,73);
+// Recession loses4000 from10000 of diversified equity. 100*4000/E11000 =36.36%.
+// Account A hasE9000 =>44.44%; surpluscash hasnominalmarketstress0.
+assert.equal(snapshot.total.score,36);
+assert.ok(Math.abs(snapshot.total.loss_pct-100*4000/11000)<1e-9);
 assert.equal(snapshot.total.cash_debt,1000);
 assert.equal(snapshot.total.net_equity,11000);
-assert.equal(snapshot.accounts.find(row=>row.key==='us1').risk.score,89);
+assert.equal(snapshot.accounts.find(row=>row.key==='us1').risk.score,44);
+assert.ok(Math.abs(snapshot.accounts.find(row=>row.key==='us1').risk.loss_pct-100*4000/9000)<1e-9);
 assert.equal(snapshot.accounts.find(row=>row.key==='surplus').risk.score,0);
 assert.equal(JSON.stringify(ctx),original);
 assert.equal(JSON.stringify(state),before);

@@ -9,7 +9,7 @@
   const upper = value => String(value || "").trim().toUpperCase();
   const number = value => typeof value === "number" && Number.isFinite(value) ? value : null;
   const fail = code => { throw new Error(code); };
-  const riskValue = risk => Number.isFinite(risk?.score) ? risk.score : risk?.status === "estimate" && Number.isFinite(risk.estimated_score) ? risk.estimated_score : null;
+  const riskValue = risk => planner.stressLossPercent(risk);
   const sign = { BUY:-1, SELL:1, SHORT:1, DIVIDEND:1, INTEREST:1, FEE:-1, CASH_IN:1, CASH_OUT:-1 };
   const securityActions = new Set(["ADD", "REMOVE", "BUY", "SELL", "SHORT"]);
   function rateToBase(context, currency) {
@@ -41,7 +41,7 @@
     return cash;
   }
   function validate(context) {
-    if (context?.model !== "portfolio-risk-v3" || !Array.isArray(context.items) || !Array.isArray(context.accounts)
+    if (context?.model !== "portfolio-risk-v4" || !Array.isArray(context.items) || !Array.isArray(context.accounts)
         || !Number.isFinite(Date.parse(context.observed_at)) || !/^[A-Z]{3}$/.test(context.base_currency || "")) fail("context_unavailable");
     const accounts = new Map(context.accounts.map(row => [String(row.id), row]));
     for (const account of context.accounts) {
@@ -82,7 +82,7 @@
   function accountRisk(snapshot, id) {
     const risk = snapshot.accounts.find(row => String(row.key) === String(id))?.risk;
     // An empty zero-cash account is absent from the existing dashboard rollup.
-    return risk || { score:0, components:{}, cash_debt:0, net_equity:0 };
+    return risk || { model:"portfolio-risk-v4", status:"ok", score:0, loss_pct:0, stress_loss:0, components:{}, cash_debt:0, net_equity:0 };
   }
   function checkedSnapshot(calculate, context) {
     // Freeze derived ages on the capture day, rather than the live slider clock.
@@ -125,10 +125,11 @@
     const accountBefore = accountRisk(baseline, row.accountId), accountAfter = accountRisk(after, row.accountId);
     const totalBefore = baseline.total, totalAfter = after.total;
     const scores=[accountBefore,accountAfter,totalBefore,totalAfter].map(riskValue);
-    const improves = scores.every(Number.isFinite) && scores[1] <= scores[0] && scores[3] <= scores[2]
-      && (scores[1] < scores[0] || scores[3] < scores[2]);
+    const epsilon = 1e-9;
+    const improves = scores.every(Number.isFinite) && scores[1] <= scores[0] + epsilon && scores[3] <= scores[2] + epsilon
+      && (scores[1] < scores[0] - epsilon || scores[3] < scores[2] - epsilon);
     const reasons = Object.keys(accountBefore.components || {}).filter(key => key !== "data_quality")
-      .map(key => [key, (accountBefore.components[key] || 0) - (accountAfter.components?.[key] || 0)])
+      .map(key => [key, key === "stress_loss" ? scores[0] - scores[1] : (accountBefore.components[key] || 0) - (accountAfter.components?.[key] || 0)])
       .filter(([, delta]) => delta > .01).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([key]) => key);
     return { ...row, amount, quantity, proceedsAccount, cashAfter:row.cashBefore + proceedsAccount,
       accountBefore, accountAfter, totalBefore, totalAfter, reasons, improves };

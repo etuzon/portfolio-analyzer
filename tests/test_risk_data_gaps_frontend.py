@@ -1,4 +1,4 @@
-"""Preserve v2 historical gap evidence; verify v3 gaps are incomplete inputs, not penalties."""
+"""Preserve v2 historical gap evidence; verify v4 gaps are incomplete inputs, not penalties."""
 from pathlib import Path
 import re
 import subprocess
@@ -27,7 +27,7 @@ const window={};const document={addEventListener:()=>{}};
 const optionLabel=text=>window.PortfolioI18n.translate(text,state.language);
 const stock=(symbol,value=100,currency='USD',asset_class='EQUITY')=>({holding:{symbol,market_value:value,currency,asset_class,stock_market:'NASDAQ',account_id:'account-one',quantity:1,industry:'Technology',sector:'Technology'},industry:'Technology',missing:[],price_ranges:{'1y':{current:100,min:80,high:120}},stress_risk:{valuation_date:'2026-11-14',security_key:symbol+'|NASDAQ|'+currency,issuer_id:symbol,instrument_kind:'equity',country:{country_code:'US',basis:'economic_exposure'},country_rating:{status:'rated',rating:'AAA',scope:'sovereign',scale:'global',term:'long_term',verified:true,source_kind:'agency_public'},currency_exposures:{[currency]:1},parameters:{country_currency:'USD'}}});
 // Saved v2 observations carry their own historical component value. This fixture
-// exercises the preserved detail renderer, not the current v3 score calculator.
+// exercises the preserved detail renderer, not the current v4 score calculator.
 const legacyRisk=(items,{cash=0,dataQuality=0}={})=>({model:'portfolio-risk-v2',score:45,
  components:{data_quality:dataQuality},quality_details:riskMissingDataDetails(items,{totalValue:items.reduce((n,item)=>n+Math.abs(item.holding.market_value),0)+Math.max(0,cash)})});
 ''' + (ROOT / 'web/stress-risk-ui.js').read_text() + '\n' + body
@@ -47,7 +47,7 @@ const withoutDetails=riskScoreForItems([good,unrelated],{cash:100,horizonYears:2
 riskMissingDataDetails=helper;
 assert.equal(prior.score,withoutDetails.score);
 assert.deepEqual(prior.components,withoutDetails.components);
-assert.equal(prior.model,'portfolio-risk-v3');assert.ok(Number.isFinite(prior.score));assert.equal(prior.components.data_quality,undefined);
+assert.equal(prior.model,'portfolio-risk-v4');assert.ok(Number.isFinite(prior.score));assert.equal(prior.components.data_quality,undefined);
 assert.equal(prior.quality_details.length,0);
 const zero=stock('ZERO',0);zero.missing=['price history'];zero.holding.currency='';zero.holding.asset_class='';
 assert.deepEqual(riskMissingDataDetails([zero]),[]);
@@ -134,13 +134,13 @@ assert.equal(riskDataQualityHtml(null),'');
 
 
 
-def test_v3_missing_inputs_preserve_value_coverage_without_a_missing_data_penalty():
+def test_v4_missing_inputs_preserve_value_coverage_without_a_missing_data_penalty():
     run_risk(r'''
 const known=stock('KNOWN',100),unknown=stock('UNKNOWN',100);
 delete unknown.stress_risk.issuer_id;
 const before=JSON.stringify([known,unknown]);
 const risk=riskScoreForItems([known,unknown],{cash:100,horizonYears:20});
-assert.equal(risk.model,'portfolio-risk-v3');assert.equal(risk.score,null);
+assert.equal(risk.model,'portfolio-risk-v4');assert.equal(risk.score,null);
 assert.equal(risk.estimated_score,null);assert.equal(risk.coverage.complete,false);
 assert.ok(Math.abs(risk.coverage.covered_value_percent-200/3)<1e-9);
 assert.ok(risk.gaps.some(gap=>gap.code==='issuer_identity'&&gap.symbol==='UNKNOWN'));
@@ -152,8 +152,8 @@ for(const language of ['en','he']) {
  assert.ok(html.includes('UNKNOWN'));assert.ok(!html.includes('/5'));
  const tooltip=riskTooltip(risk);
  assert.ok(tooltip.includes(language==='he'?'אומדן':'Estimate'));
- assert.equal(risk.provisional_model,'portfolio-risk-provisional-v2');
- assert.ok(tooltip.includes('~'+risk.provisional_score));
+ assert.equal(risk.provisional_model,'portfolio-risk-provisional-v3');
+ assert.ok(tooltip.includes('~'+stressRiskNumber(risk.provisional_loss_pct)+'%'));
  assert.ok(tooltip.includes('UNKNOWN'));
  assert.ok(!tooltip.includes('NaN')&&!tooltip.includes('undefined'));
 }

@@ -192,7 +192,7 @@ class _VisibleEnglishParser(HTMLParser):
 
 
 TECHNICAL_UI_VALUES = {
-    "risk = round(min(100, 200 × largest_modeled_loss / positive_net_equity))",
+    "stress_loss_pct = 100 × largest_modeled_loss / positive_net_equity",
     "1M", "6M", "1Y", "3Y", "5Y",
     "MA 7", "MA 10", "MA 15", "MA 30",
     "AMEX", "NASDAQ", "NYSE", "TASE", "US", "RSU",
@@ -396,8 +396,8 @@ def test_populated_dashboard_values_are_localized_at_composition_time():
     assert '? `${optionLabel("Risk")} ${band.label} · ${risk.score}`' in script
     assert 'optionLabel("Main reasons:")' in script
     assert 'optionLabel("Components:")' in script
-    assert 'optionLabel("Total portfolio risk")' in script
-    assert 'optionLabel("Industry risk")' in script
+    assert 'optionLabel("Total portfolio stress loss")' in script
+    assert 'optionLabel("Industry stress loss")' in script
     assert 'optionLabel("No single factor stands out")' in script
     assert 'const missingField = text.slice(8).trim()' in script
     assert '`היעדר נתוני ${optionLabel(missingField)} מקטין את ודאות האומדן`' in script
@@ -407,8 +407,8 @@ def test_populated_dashboard_values_are_localized_at_composition_time():
     assert 'optionLabel("units")' in script
     assert 'optionLabel(isImportedAccount(account) ? "Imported" : "Manual")' in script
     assert '"Investment risk formula": "נוסחת סיכון ההשקעות"' in i18n
-    assert '"Total portfolio risk": "סיכון כולל בתיק"' in i18n
-    assert '"Industry risk": "סיכון ענפי"' in i18n
+    assert '"Total portfolio stress loss": "הפסד כלל התיק בתרחיש קיצון"' in i18n
+    assert '"Industry stress loss": "הפסד הענף בתרחיש קיצון"' in i18n
     assert '"Elevated": "מוגבר"' in i18n
     assert '"Price swings could cause meaningful losses.": "תנודות מחירים עלולות לגרום להפסדים משמעותיים."' in i18n
     assert '"Main reasons:": "הסיבות העיקריות:"' in i18n

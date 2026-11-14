@@ -630,12 +630,12 @@ def test_risk_explanation_separates_intrinsic_holding_risk_from_issuer_grouping_
     run_current_risk_ui(r'''
 const rows=Array.from({length:20},(_,i)=>stock('SECURITY'+i,5));
 const pooled=riskScoreForItems(rows);
-assert.equal(pooled.score,80);
-assert.equal(pooled.position_risks.get(rows[0]).score,100);
+assert.equal(pooled.score,40);
+assert.equal(pooled.position_risks.get(rows[0]).score,60);
 assert.equal(pooled.position_risks.get(rows[0]).contribution.loss_contribution_pct,2);
 // Two symbols of one legal issuer have the same issuer-distress concentration.
 const same=rows.map(item=>({...item,stress_risk:{...item.stress_risk,issuer_id:'SAME_LEGAL_ENTITY'}}));
-assert.equal(riskScoreForItems(same).score,100);
+assert.equal(riskScoreForItems(same).score,60);
 const split=Array.from({length:100},()=>stock('ONE',1,'ONE'));
 assert.equal(riskScoreForItems(split).score,riskScoreForItems([stock('ONE',100,'ONE')]).score);
 ''')
@@ -646,19 +646,19 @@ def test_total_and_industry_risk_are_visible_and_help_documents_the_stress_formu
     script = (ROOT / "web/app.js").read_text()
     styles = (ROOT / "web/styles.css").read_text()
     assert 'class="portfolio-risk-summary"' in script
-    assert 'optionLabel("Total portfolio risk")' in script
+    assert 'optionLabel("Total portfolio stress loss")' in script
     assert 'group.risk = riskScoreForItems(group.items' in script
-    assert 'optionLabel("Industry risk")' in script
+    assert 'optionLabel("Industry stress loss")' in script
     assert 'const allocatedCash = total ? combinedCash * (group.value / total) : 0' in script
     snapshot = script.split('function portfolioRiskSnapshot(items)',1)[1].split('\n}',1)[0]
     assert 'riskScoreForItems(items || []' in snapshot
     assert '0.75' not in snapshot and 'weightedAccountScore' not in snapshot
     assert '<h3>Investment risk formula</h3>' in html
-    assert 'risk = round(min(100, 200 × largest_modeled_loss / positive_net_equity))' in html
+    assert 'stress_loss_pct = 100 × largest_modeled_loss / positive_net_equity' in html
     assert 'negative cash reduces net equity' in html
     assert 'Credit is counted once' in html
-    assert 'account scores are calculated independently and are not blended into the total' in html
-    assert 'industry scores are comparisons and must not be added together' in html
+    assert 'account percentages are calculated independently and are not blended into the total' in html
+    assert 'industry percentages are comparisons and must not be added together' in html
     assert '.portfolio-risk-summary {' in styles
     assert '.industry-split-metrics {' in styles
 

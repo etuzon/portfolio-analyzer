@@ -8,14 +8,14 @@ from app.risk_history import RiskHistoryError, _stress_risk
 from test_stress_risk_model import run_js
 
 
-@pytest.mark.parametrize("cash,expected", [(0, 33), (400, 7), (900, 3)])
+@pytest.mark.parametrize("cash,expected", [(0, 16), (400, 3), (900, 2)])
 def test_missing_bond_rating_retains_number_without_inventing_credit(cash, expected):
     output = run_js(f"""
 const item=bond('BBB','sovereign_bond');delete item.stress_risk.sovereign_rating;
 delete item.stress_risk.credit_rating;
 const r=calculate([item],{{cash:{cash}}});
 assert.equal(r.status,'incomplete');assert.equal(r.score,null);
-assert.equal(r.provisional_model,'portfolio-risk-provisional-v2');
+assert.equal(r.provisional_model,'portfolio-risk-provisional-v3');
 assert.equal(r.provisional_score,{expected});
 assert.equal(r.provisional_basis,'asset_aware_scenarios');
 assert.equal(r.provisional_scope,'portfolio');
@@ -39,7 +39,7 @@ console.log(JSON.stringify(calculate([known,missing])));
     loss = (60 * (1 - math.exp(-(2192 / 365.25) * .0225))
             + 40 * (1 - math.exp(-5 * .0275)))
     assert result["provisional_loss"] == pytest.approx(loss)
-    assert result["provisional_score"] == math.floor(200 * loss / 100 + .5)
+    assert result["provisional_score"] == math.floor(100 * loss / 100 + .5 + 1e-10)
     assert result["score"] is None
     assert result["net_equity"] == 100
 
@@ -53,7 +53,7 @@ const missing=stock('MISSING',50);delete missing.stress_risk.country_rating;
 fund.stress_risk.lookthrough=[{weight:.5,item:stock('KNOWN',50)},
  {weight:.5,item:missing}];
 const r=calculate([fund],{cash:400});
-assert.equal(r.provisional_score,16);assert.equal(r.provisional_loss,40);
+assert.equal(r.provisional_score,8);assert.equal(r.provisional_loss,40);
 assert.equal(r.provisional_proxy_gross,100);assert.equal(r.score,null);
 """)
 
@@ -65,7 +65,7 @@ const fund=stock('FUND',40);fund.holding.asset_class='ETF';
 fund.stress_risk.parameters.instrument_kind='fund';
 const r=calculate([...known,fund],{cash:100});
 assert.equal(r.net_equity,200);assert.ok(Math.abs(r.provisional_loss-40)<1e-10);
-assert.equal(r.provisional_score,40);assert.equal(r.score,null);
+assert.equal(r.provisional_score,20);assert.equal(r.score,null);
 """)
 
 
@@ -127,9 +127,9 @@ console.log(JSON.stringify(calculate([item],{{cash:400}})));
     assert result["score"] is None and result["net_equity"] is None
     assert result["provisional_scope"] == "portfolio"
     assert result["provisional_net_equity"] == 500
-    assert result["provisional_score"] == 5
+    assert result["provisional_score"] == 3
     assert any(row["code"] == code for row in result["provisional_assumptions"])
-    assert _stress_risk(result)["provisional_score"] == 5
+    assert _stress_risk(result)["provisional_score"] == 3
 
 
 def test_short_plain_bond_keeps_signed_rally_exposure_instead_of_ceiling():
@@ -141,7 +141,7 @@ console.log(JSON.stringify(calculate([item],{cash:500})));
     assert result["provisional_scope"] == "portfolio"
     assert result["provisional_net_equity"] == 400
     assert result["provisional_loss"] == pytest.approx(loss)
-    assert result["provisional_score"] == math.floor(200 * loss / 400 + .5)
+    assert result["provisional_score"] == math.floor(100 * loss / 400 + .5 + 1e-10)
 
 
 def test_distinct_gaps_do_not_charge_same_holding_multiple_times_or_per_lot():
@@ -151,24 +151,24 @@ delete missing.stress_risk.sovereign_rating;
 delete missing.stress_risk.credit_rating;
 delete missing.stress_risk.parameters.maturity_date;
 delete missing.stress_risk.parameters.current_spread_bps;
-const r=calculate([missing],{cash:900});assert.equal(r.provisional_score,3);
+const r=calculate([missing],{cash:900});assert.equal(r.provisional_score,1);
 const duplicate=clone(missing);duplicate.holding.market_value=50;
 const duplicateResult=calculate([duplicate,clone(duplicate)],{cash:900});
-assert.equal(duplicateResult.provisional_score,3);
+assert.equal(duplicateResult.provisional_score,1);
 assert.equal(duplicateResult.provisional_proxy_gross,100);
-assert.equal(calculate([duplicate,duplicate],{cash:900}).provisional_score,3);
+assert.equal(calculate([duplicate,duplicate],{cash:900}).provisional_score,1);
 const lots=Array.from({length:10},(_,i)=>{
  const item=clone(missing);item.holding.account_id='A'+i;
  item.holding.market_value=10;return item;
 });
-assert.equal(calculate(lots,{cash:900}).provisional_score,3);
+assert.equal(calculate(lots,{cash:900}).provisional_score,1);
 assert.equal(r.provisional_proxy_gross,100);
 """)
 
 
 def test_verified_boundaries_and_explicit_estimates_keep_original_contract():
     run_js("""
-assert.equal(calculate([bond('BBB','sovereign_bond')]).score,33);
+assert.equal(calculate([bond('BBB','sovereign_bond')]).score,16);
 const missing=bond();delete missing.stress_risk.credit_rating;
 const boundary=calculate([missing],{cash:-200});
 assert.equal(boundary.score,100);assert.equal(boundary.provisional_score,undefined);
@@ -176,7 +176,7 @@ assert.equal(calculate([],{cash:0}).score,0);
 const estimate=bond('BBB','sovereign_bond');
 estimate.stress_risk.sovereign_rating.manual_override=true;
 estimate.stress_risk.parameters.assumptions_enabled=true;
-const r=calculate([estimate]);assert.equal(r.estimated_score,33);
+const r=calculate([estimate]);assert.equal(r.estimated_score,16);
 assert.equal(r.score,null);assert.equal(r.provisional_score,undefined);
 """)
 

@@ -1,4 +1,4 @@
-"""Financial behavior of the actual v3 browser engine, with explicit raw facts."""
+"""Financial behavior of the v4 stress-loss engine, with explicit raw facts."""
 import json
 import math
 from pathlib import Path
@@ -31,13 +31,19 @@ def run_js(body):
     return process.stdout
 
 
-@pytest.mark.parametrize("grade,kind,expected", [
-    ("AAA", "corporate_bond", 25), ("BBB", "corporate_bond", 30), ("BB", "corporate_bond", 38),
-    ("AAA", "sovereign_bond", 25), ("BBB", "sovereign_bond", 33), ("BB", "sovereign_bond", 52),
+@pytest.mark.parametrize("grade,kind", [
+    ("AAA", "corporate_bond"), ("BBB", "corporate_bond"), ("BB", "corporate_bond"),
+    ("AAA", "sovereign_bond"), ("BBB", "sovereign_bond"), ("BB", "sovereign_bond"),
 ])
-def test_credit_and_sovereign_repricing_oracles(grade, kind, expected):
+def test_credit_and_sovereign_repricing_oracles(grade, kind):
     # Twenty separate corporate issuers make the one-issuer scenario smaller;
     # 20 sovereign issues of the same country retain the single sovereign risk.
+    t = 2192 / 365.25  # Declared ACT/365.25 between fixture dates; no maturity-as-duration shortcut.
+    widen = {"AAA": .005, "BBB": .015, "BB": .03}[grade]
+    rate_loss = 1 - math.exp(-t * (.02 + .5 * widen))
+    country_loss = 1 - math.exp(-t * ({"AAA": .01, "BBB": .03, "BB": .05}[grade] if kind == "sovereign_bond" else max(widen, .01)))
+    loss_pct = max(rate_loss, country_loss) * 100
+    expected = math.floor(loss_pct + .5 + 1e-10)
     out = run_js(f'''
 const items=Array.from({{length:20}},(_,i)=>bond({json.dumps(grade)},{json.dumps(kind)},5,'ISSUER'+i));
 const result=calculate(items);assert.equal(result.status,'ok');
@@ -45,11 +51,7 @@ assert.equal(result.score,{expected},JSON.stringify(result));
 assert.ok(!result.scenarios.some(s=>s.name.startsWith('issuer_')) || {json.dumps(kind)}!=='sovereign_bond');
 console.log(JSON.stringify({{loss:result.loss_pct}}));
 ''')
-    t = 2192 / 365.25  # Declared ACT/365.25 between fixture dates; no maturity-as-duration shortcut.
-    widen = {"AAA": .005, "BBB": .015, "BB": .03}[grade]
-    rate_loss = 1 - math.exp(-t * (.02 + .5 * widen))
-    country_loss = 1 - math.exp(-t * ({"AAA": .01, "BBB": .03, "BB": .05}[grade] if kind == "sovereign_bond" else max(widen, .01)))
-    assert json.loads(out)["loss"] == pytest.approx(max(rate_loss, country_loss) * 100)
+    assert json.loads(out)["loss"] == pytest.approx(loss_pct)
 
 
 def test_missing_bond_information_never_implies_zero_duration_or_zero_credit():
@@ -69,14 +71,14 @@ const same=[clone(item),clone(item)];assert.equal(calculate(same).score,null);
 def test_same_issuer_lots_accounts_scaling_cash_and_borrowing():
     run_js(r'''
 const diversified=Array.from({length:20},(_,i)=>stock('S'+i,5));
-assert.equal(calculate(diversified).score,80);
-assert.equal(calculate(diversified.map(i=>({...i,holding:{...i.holding,market_value:2.5}})),{cash:50}).score,40);
-assert.equal(calculate(diversified.map(i=>({...i,holding:{...i.holding,market_value:6.25}})),{cash:-25}).score,100);
-assert.equal(calculate([stock()]).score,100);
+assert.equal(calculate(diversified).score,40);
+assert.equal(calculate(diversified.map(i=>({...i,holding:{...i.holding,market_value:2.5}})),{cash:50}).score,20);
+assert.equal(calculate(diversified.map(i=>({...i,holding:{...i.holding,market_value:6.25}})),{cash:-25}).score,50);
+assert.equal(calculate([stock()]).score,60);
 const split=Array.from({length:100},(_,i)=>stock('ONE',1,'ONE'));
-assert.equal(calculate(split).score,100);
+assert.equal(calculate(split).score,60);
 split.forEach((item,i)=>{item.holding.account_id=String(i);});
-assert.equal(calculate(split).score,100);
+assert.equal(calculate(split).score,60);
 const original=JSON.stringify(split);calculate(split);assert.equal(JSON.stringify(split),original);
 const scaled=diversified.map(item=>({...item,holding:{...item.holding,market_value:item.holding.market_value*1000}}));
 assert.equal(calculate(scaled).score,calculate(diversified).score);
@@ -85,10 +87,10 @@ assert.equal(calculate(scaled).score,calculate(diversified).score);
 
 def test_signed_short_and_foreign_cash_are_not_ignored():
     run_js(r'''
-assert.equal(calculate([stock('SHORT',-50)],{cash:150}).score,100);
-assert.equal(calculate([],{cashAccounts:[{value:100,currency:'EUR'}]}).score,30);
+assert.equal(calculate([stock('SHORT',-50)],{cash:150}).score,50);
+assert.equal(calculate([],{cashAccounts:[{value:100,currency:'EUR'}]}).score,15);
 const r=calculate([],{cashAccounts:[{value:200,currency:'USD'},{value:-100,currency:'EUR'}]});
-assert.equal(r.cash_debt,100);assert.equal(r.net_equity,100);assert.equal(r.score,30);
+assert.equal(r.cash_debt,100);assert.equal(r.net_equity,100);assert.equal(r.score,15);
 assert.equal(calculate([],{cash:-1}).score,100);
 assert.equal(calculate([],{cash:0}).score,0);
 assert.equal(calculate([],{cash:100}).score,0);
@@ -128,8 +130,8 @@ const government=bond('AAA','sovereign_bond');
 government.stress_risk.sovereign_ratings={local_currency:government.stress_risk.sovereign_rating};
 const small=stock('EQUITY',.000001);small.stress_risk.country_rating=rating('BB','sovereign');
 small.stress_risk.country_rating.currency_basis='foreign_currency';
-assert.equal(calculate([government]).score,25);
-assert.equal(calculate([government,small]).score,25);
+assert.equal(calculate([government]).score,13);
+assert.equal(calculate([government,small]).score,13);
 ''')
 
 
@@ -154,9 +156,9 @@ const item=bond('BBB','sovereign_bond');
 item.stress_risk.sovereign_rating.manual_override=true;
 assert.equal(calculate([item]).score,null);
 item.stress_risk.parameters.assumptions_enabled=true;
-const estimate=calculate([item]);assert.equal(estimate.score,null);assert.equal(estimate.status,'estimate');assert.equal(estimate.estimated_score,33);
+const estimate=calculate([item]);assert.equal(estimate.score,null);assert.equal(estimate.status,'estimate');assert.equal(estimate.estimated_score,16);
 const verified=bond('BBB','sovereign_bond');verified.stress_risk.sovereign_rating.negative_signal=true;
-const result=calculate([verified]);assert.equal(result.score,33);assert.ok(result.forward_sensitivity.score>=result.score);
+const result=calculate([verified]);assert.equal(result.score,16);assert.ok(result.forward_sensitivity.score>=result.score);
 assert.equal(verified.stress_risk.sovereign_rating.rating,'BBB');
 ''')
 
@@ -168,5 +170,5 @@ item.stress_risk.credit_rating=rating('AAA');
 assert.equal(calculate([item]).score,null);
 item.stress_risk.lookthrough_verified=true;
 item.stress_risk.lookthrough=Array.from({length:20},(_,i)=>({weight:.05,item:stock('S'+i,5)}));
-assert.equal(calculate([item]).score,80);
+assert.equal(calculate([item]).score,40);
 ''')

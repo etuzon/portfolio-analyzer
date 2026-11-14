@@ -1,4 +1,4 @@
-/* portfolio-risk-v3: signed, common-scenario capital-loss severity.
+/* portfolio-risk-v4: signed, common-scenario capital-loss percent.
  * Pure calculation; no network, storage or application state. See the maintained
  * portfolio-risk.md contract. Scenario sizes are assumptions, not probabilities.
  */
@@ -9,8 +9,9 @@
   else root.PortfolioStressRisk = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function (estimate) {
   "use strict";
-  const MODEL = "portfolio-risk-v3";
-  const PROVISIONAL_MODEL = "portfolio-risk-provisional-v2";
+  const MODEL = "portfolio-risk-v4";
+  const PROVISIONAL_MODEL = "portfolio-risk-provisional-v3";
+  const SCALE = Object.freeze({score_unit:"percent_capital_loss", score_scale:"stress-loss-percent-v1", scenario_horizon:"instantaneous_revaluation"});
   const BUCKETS = ["AAA", "AA", "A", "BBB", "BB", "B", "CCC"];
   const SPREAD = [.005, .0075, .01, .015, .03, .05, .08];
   const COUNTRY = [
@@ -34,7 +35,9 @@
     return Number.isFinite(value) && new Date(value).toISOString().slice(0, 10) === x.slice(0, 10) ? value : null;
   };
   const years = (date, asOf) => (day(date) - day(asOf)) / (365.25 * 86400000);
-  const scoreOf = fraction => Math.round(Math.min(100, Math.max(0, 200 * fraction)));
+  // Monetary compounding can put an exact x.5 tie a few ulps below x.5.
+  // This tolerance affects only the compatibility integer, never loss/policies.
+  const scoreOf = fraction => Math.round(Math.min(100, Math.max(0, 100 * fraction)) + 1e-10);
 
   function ratingBucket(grade) {
     const g = String(grade || "").trim();
@@ -378,7 +381,7 @@
     }
     const coverage = inputCoverage();
     const result = {
-      model: MODEL, base_currency: base, source_revision: options.sourceRevision || "", label: options.label || "Portfolio risk", status: gaps.length ? "incomplete" : "ok", score: null,
+      model: MODEL, ...SCALE, base_currency: base, source_revision: options.sourceRevision || "", label: options.label || "Stress loss", status: gaps.length ? "incomplete" : "ok", score: null,
       estimated_score: null, loss_pct: null, stress_loss: null, worst_scenario: null,
       net_equity: equity, cash_debt: debt, cash_pct: gross ? positiveCash / gross * 100 : 0,
       components: {}, quality_details: [], gaps, assumptions, coverage,
@@ -450,6 +453,8 @@
     result.scenarios = evaluateScenarios();
     result.coverage = inputCoverage();
     const worst = result.scenarios.reduce((a, b) => a.loss >= b.loss ? a : b, { name: "none", loss: 0, pnl: 0 });
+    const lossPct = equity > 0 ? worst.loss / equity * 100 : null;
+    if (equity > 0 && !finite(lossPct)) gap("valuation", null);
     if (gaps.length || !(equity > 0)) {
       result.status = "incomplete";
       result.partial_stress_loss = worst.loss;
@@ -470,12 +475,11 @@
           return ids.size !== 1 || jurisdictions.size > 1 || fact.jurisdiction && jurisdictions.size && !jurisdictions.has(fact.jurisdiction) ? null : id;
         },
       }) : {provisional_model:PROVISIONAL_MODEL,provisional_basis:"asset_aware_scenarios",provisional_score:null,
-        provisional_loss:null,provisional_net_equity:null,provisional_proxy_gross:null,provisional_assumptions:[],
+        provisional_loss:null,provisional_loss_pct:null,provisional_known_loss_pct:null,provisional_net_equity:null,provisional_proxy_gross:null,provisional_assumptions:[],
         provisional_scope:"known_values",provisional_range:{min:0,max:100}});
       result.coverage = inputCoverage();
       return result;
     }
-    const lossPct = worst.loss / equity * 100;
     const number = scoreOf(worst.loss / equity);
     result.status = assumptions.length ? "estimate" : "ok";
     result.score = assumptions.length ? null : number;
@@ -502,5 +506,5 @@
     }
     return result;
   }
-  return Object.freeze({ MODEL, PROVISIONAL_MODEL, calculate, ratingBucket, parameters: Object.freeze({ buckets: BUCKETS, spread: SPREAD, country: COUNTRY, global: GLOBAL }) });
+  return Object.freeze({ MODEL, PROVISIONAL_MODEL, SCALE, calculate, ratingBucket, parameters: Object.freeze({ buckets: BUCKETS, spread: SPREAD, country: COUNTRY, global: GLOBAL }) });
 });

@@ -1,21 +1,46 @@
-# Shared portfolio risk: portfolio-risk-v3
+# Shared portfolio stress loss: portfolio-risk-v4
 
 The current dashboard, industry/holding/account badges, trade planner, simulator
 and risk-reduction alternatives use `web/stress-risk.js` through the wrappers in
-`web/app.js`. This is severe modeled capital-loss **severity**, not a probability,
+`web/app.js`. The current measure is **stress capital-loss percent** under fixed
+hypothetical scenarios, not a probability,
 VaR, expected shortfall, forecast, broker margin rule or exhaustive maximum loss.
 Company-outlook scores and personal suitability remain separate.
 
 For positive net equity `E = signed securities + signed account cash`, calculate
-each common scenario's signed base-currency P&L, then
-`round(min(100, 200 * max(0, largest modeled loss) / E))`. Score 60 means a 30%
-modeled loss; keep uncapped loss amount/percent visible above the display cap.
-Known nonpositive equity with securities/debt scores 100; debt-only scores 100;
-known empty debt-free portfolios score 0. Unknown valuations/cash/FX never imply
+each common scenario's signed base-currency P&L. Let
+`L = max(0, max_s(-pooled_P&L_s))`, then `loss_pct = 100 * L / E` and
+`score = round(min(100, loss_pct))`. The factor 100 converts a fraction to percent;
+it is not empirical calibration. The primary result is the unrounded, uncapped
+`loss_pct`; the integer `score` is only a capped compatibility field. Recompute
+from money P&L and equity, never halve a previously rounded v3 score. Display
+**Stress loss / הפסד בתרחיש קיצון**, normally to one decimal, with `%`, without
+`/100` or uncalibrated Low/Moderate/Elevated/High/Extreme bands. A 36.4% result
+means 36.4% modeled included-equity loss. Preserve money loss and percentages
+above 100%; the compatibility cap must not hide losses exceeding net equity.
+For v4 compatibility rounding only, allow a `1e-10` percentage-point tie tolerance
+before rounding the clamped percentage. This removes binary floating-point
+misrounding such as mathematical 44.5 represented as 44.49999999999999. Use the
+same tolerance in the v4 history validator. Raw money, loss percentages and
+financial policy comparisons remain unrounded; historical v3 rounding is unchanged.
+
+New assessments carry `score_unit=percent_capital_loss`,
+`score_scale=stress-loss-percent-v1` and
+`scenario_horizon=instantaneous_revaluation`. These shocks instantly reprice the
+captured positions; they have no event timing, annual holding period, confidence
+level, or occurrence probability. A benchmark-normalized score or statistical
+VaR/volatility measure requires a separate justified method and validation;
+do not choose a scale merely to produce desired benchmark rankings.
+
+Known current nonpositive equity with securities/debt retains score 100 only as
+a funding-boundary sentinel; debt-only does likewise. Keep `loss_pct=null`, a
+separate `nonpositive_equity` reason and visible nonpositive-equity language;
+never present that sentinel as a measured 100% loss or whole-wealth insolvency.
+Known empty debt-free portfolios score 0. Unknown valuations/cash/FX never imply
 insolvency or zero risk. Positive cash dilutes market exposure; borrowing reduces
 equity and remains separately summed by account even when consolidated cash is
 positive. There is no ten-component sum, excess/insufficient cash penalty,
-horizon penalty, borrowing-point multiplier or 75/25 account blend in v3.
+horizon penalty, borrowing-point multiplier or 75/25 account blend in v4.
 
 ## Scenario and instrument contract
 
@@ -105,8 +130,8 @@ market stress is not a guarantee of deposit protection, access or purchasing pow
 
 ### Asset-aware estimates with incomplete evidence
 
-The automatic overlay is `portfolio-risk-provisional-v2`, with
-`provisional_basis=asset_aware_scenarios`. It leaves the strict v3 `score`,
+The automatic overlay is `portfolio-risk-provisional-v3`, with
+`provisional_basis=asset_aware_scenarios`. It leaves the strict v4 `score`,
 `status`, ratings and raw facts unchanged. Display precedence is a verified
 score, then a complete explicit-assumption `estimated_score`, then an automatic
 estimate. Incomplete estimates display `~N`, a warning and a localized Estimate
@@ -115,7 +140,12 @@ Tooltips retain every missing input, value-weighted coverage, source dates and
 explicit proxy assumptions. Completeness adds no loss or score points.
 
 Automatic estimates use the same signed common-scenario P&L, positive-equity
-denominator and `round(min(100, 200 * loss / E))` severity scale as strict v3.
+denominator and `round(min(100, 100 * loss / E))` compatibility scale as strict
+v4. A fully scoped estimate also supplies unrounded, uncapped
+`provisional_loss_pct=100*provisional_loss/provisional_net_equity`. With incomplete
+scope that field stays null; a separate `provisional_known_loss_pct` may describe
+supported known positions with a positive estimated denominator, clearly as a
+secondary result. It is not the whole portfolio or a verified loss bound.
 Known cash has zero local price shock, dilutes exposure and retains signed FX
 shocks; borrowing reduces equity. Fund classification requires an explicit
 instrument/profile classification, not a name, broker, listing currency or a
@@ -169,7 +199,7 @@ the default duration proxy at remaining ACT/365.25 years. Label this
 sensitivity proxy, not actual coupon duration. User-entered maturity alone,
 including enabled manual assumptions, does not establish this verified bound.
 Keep reference retrieval dates distinct from quote observation dates. These
-reference aids leave strict v3 completeness requirements unchanged and perform
+reference aids leave strict v4 completeness requirements unchanged and perform
 no network lookup or data write while calculating risk.
 For direct securities, an explicitly labelled issuer-domicile proxy may support
 country scenarios. A fund's manager domicile does not establish its underlying
@@ -185,12 +215,15 @@ currency proxy. Compound all local/FX returns and apply FX to signed cash too.
 Finite reported saved values may support a last-known estimate when valuation
 dates are stale or absent, with dates/assumptions visible. Future-dated values are
 excluded. Missing monetary values, conversion FX, cash, supported exposure or
-pricing models set `provisional_scope=known_values` and display the 0–100 range
-from `provisional_range`, never a forced100 or an arbitrary midpoint. A secondary
+pricing models set `provisional_scope=known_values` and display Incomplete,
+never a forced 100 or an arbitrary midpoint. Any stored 0–100
+`provisional_range` describes the capped compatibility index, not an economic
+loss-percent bound: borrowing and shorts can lose more than net equity. A secondary
 point may describe supported known positions only; it is not the whole-portfolio
 score and is not plotted as one. With fully scoped values/exposures, use
 `provisional_scope=portfolio`. Known current nonpositive equity retains the
-strict100 boundary; stale nonpositive equity can only establish an explicitly
+funding boundary with null loss percentage; stale nonpositive equity can only
+establish an explicitly
 estimated funding boundary, not verified insolvency. Empty known debt-free scope
 retains0.
 
@@ -211,11 +244,13 @@ performing LC/base-LC obligation. Fund-manager domicile/default is not underlyin
 country/credit evidence. Applicable unresolved recovery models produce scoped
 ranges, not a guessed100 or fabricated recovery amount.
 
-For example, fund452,599.35 plus cash38,819.65 in ILS, if all the fund exposure is
-an identified unleveraged ILS money-market fund, produces loss4,525.9935 and
-score2 on equity491,419. This is a conditional example, not a verified account
-valuation. All-native cash100 scores0; foreign cash100 versus ILS scores30;
-unleveraged native money-market exposure100 scores2, or32 when fully foreign.
+For example, fund 452,599.35 plus cash 38,819.65 in ILS, if all the fund exposure
+is an identified unleveraged ILS money-market fund, produces loss 4,525.9935 on
+equity 491,419 (about 0.921% loss; compatibility score 1). This is a conditional
+example, not a verified account valuation. All-native cash 100 has loss 0%;
+foreign cash 100 versus ILS has loss 15%; unleveraged native money-market exposure
+100 has estimated loss 1%, or 15.85% when fully foreign (compatibility scores 1
+and 16). These examples assume no larger country stress.
 These shocks are declared scenario assumptions, not guarantees or probabilities.
 
 History freezes `provisional_model`, basis, scope/range, point, loss, estimated
@@ -293,8 +328,8 @@ without verified recovery, and personal investment horizon are separate issues.
 
 ## Versioned history and simulations
 
-New observed records carry v3, score/estimate/incomplete status, input/rating
-evidence, source revision, assumptions and actual captured FX. Old v2 observations
+New observed records carry v4, score/estimate/incomplete status, input/rating
+evidence, source revision, assumptions and actual captured FX. Old v2/v3 observations
 remain immutable and retain their heuristic explanations. History does not connect
 lines across model versions or estimate statuses and never plots a null as zero.
 Observed days are not retrospectively backfilled. Scenarios use their coherent
@@ -311,7 +346,7 @@ equity before fees. Reserved collateral remains an asset and constrains only the
 planner's separate spending policy. Projected trades mutate only the exact
 symbol, normalized market, currency and asset class; other listings remain
 separate, while legal-issuer risk aggregation remains shared. Holdings Risk
-sorting follows the displayed numeric score/estimate; a range or a secondary
+sorting follows the displayed raw loss percentage when available; a range or a secondary
 known-position point is not a sortable whole-exposure score.
 
 Regression evidence includes `tests/test_stress_risk_model.py`,
@@ -324,15 +359,89 @@ validate financial forecast accuracy.
 Financial QA must reconcile the actual holdings, signed ledger cash, valuation
 dates and base-currency FX, then independently derive scenario loss in money and
 percent before accepting the displayed score. Explain the result using asset mix,
-concentration, currency and funding. Challenge an extreme score against known
+concentration, currency and funding. Challenge ceiling-like results against known
 unleveraged native cash or money-market exposure: missing evidence does not
-establish a 50% capital-loss scenario. A genuine100 needs a qualifying modeled
-loss or known nonpositive-equity boundary. Positive native cash dilutes market
+establish any capital-loss scenario. A compatibility score 100 needs enough
+supported loss to round/cap at 100, or the separately labelled known
+nonpositive-equity funding boundary. Positive native cash dilutes market
 loss; foreign cash retains currency exposure. The combined score must use one
 pooled scenario, since different accounts can have different worst scenarios.
 Passing software tests or repeating a prior formula is not financial sign-off.
 Keep proxy assumptions, incomplete coverage and stale saved marks visible in
 the explanation and independently recheck actual account outputs after changes.
+
+Before changing this model again, freeze the financial question, denominator,
+units, horizon, scenario set, evidence rules, policy controls, intended score
+claim and raw monetary examples before viewing prior preferred rankings. Compare
+native cash, foreign cash, money-market funds, diversified/concentrated equities,
+duration/credit bonds, borrowing and shorts. Missing-data confidence never becomes
+capital loss. Run an independently owned, predeclared experiment set including
+at least 50 distinct economic cases when reassessing the formula; retain exact
+inputs, independent calculations, execution script, results and differences.
+Scenario simulations test arithmetic and plausibility, not forecast calibration.
+Audit every display, history, ranking, alert and sizing consumer when units change.
+Do not lower shock severity, add a nonlinear score curve, or normalize to a chosen
+benchmark merely to get a desired number. Version any justified change and keep
+prior observations immutable.
+
+## Declared application controls in v4 units
+
+These are application policies, not empirically calibrated risk or suitability
+categories. Compare unrounded raw stress-loss percentages; display rounding must
+not relax controls. For an existing v3 policy expressed in doubled-loss points,
+divide its loss thresholds/deltas by two and preserve its relative ranking weights.
+Removing integer-score rounding can slightly alter a boundary; this is an explicit
+switch to the stated unrounded economic units.
+
+* Planner maximum stress loss: 37.5%; maximum increase: 2.5 percentage points
+  with existing positions, 12.5 points for the first position. Existing 60/40
+  sizing bands become 30%/20%; the greater-reserve threshold becomes 30%.
+* Preserve candidate ranking's financial weight relative to concentration/request
+  terms: `2*after_loss_pct + 4*max(0, after_loss_pct-before_loss_pct)`, followed by
+  the unchanged non-risk terms. These coefficients preserve the old relative
+  ordering before integer rounding; they do not calibrate the result.
+* Stress-loss watch above 20%, alert above 30%; known nonpositive equity has a
+  separate funding alert. Name the threshold and observed percentage instead
+  of assigning general High/Extreme risk labels. Keep incomplete/estimated
+  evidence visible and never treat a provisional estimate as verified sizing.
+* Risk-reduction alternatives compare raw loss-percent changes in one common
+  pooled scenario model, with numerical tolerance, without a forced minimum
+  integer-point improvement. Gains/losses across accounts pool before the max;
+  do not add independent account worst losses.
+
+Conditional anchors: diversified foreign equity 63 plus foreign cash 37 against
+ILS loses `63*0.49+37*0.15=36.42` per equity 100 (display 36.4%; score 36).
+Equity 94 plus cash 6 loses `94*0.49+6*0.15=46.96` (47.0%; score 47).
+Broad native equities 100 lose 40%; broad foreign equities lose 49%; a concentrated
+direct issuer retains its separate fixed-FX 60% distress assumption. These
+examples require that no larger country/other common scenario governs.
+
+## Primary methodology evidence (reviewed 14/11/2026)
+
+The [BCBS stress testing principles](https://www.bis.org/publications/201810-guidelines-stress-testing-principles)
+(17/10/2018) support documented scenarios and independent validation. The
+[BIS executive summary](https://www.bis.org/publications/fsi-summary-stress-testing-executive-summary)
+explains that stress scenarios do not establish their occurrence probabilities.
+Neither source calibrates this application's shocks or scalar.
+
+[SEC margin guidance](https://www.investor.gov/introduction-investing/general-resources/news-alerts/alerts-bulletins/investor-bulletins-29)
+(10/06/2021) supports the borrowing and greater-than-invested-capital loss
+distinction. [SEC fixed-income guidance](https://www.investor.gov/introduction-investing/general-resources/news-alerts/alerts-bulletins/investor-bulletins-86)
+(26/06/2013) explains rate, coupon and maturity sensitivity, including sovereign
+market-price risk. [SEC money-market fund guidance](https://www.investor.gov/introduction-investing/general-resources/news-alerts/alerts-bulletins/investor-bulletins/updated-12)
+(04/11/2024) supports the distinction between short-term liquid investments and
+remaining NAV/liquidity/inflation risk. The 1% MMF proxy remains an analyst
+assumption; no cited authority guarantees that ceiling.
+
+## Historical v3 and provisional-v2 scales (immutable observations only)
+
+Saved `portfolio-risk-v3` and `portfolio-risk-provisional-v2` observations use
+`round(min(100, 200 * L/E))` with their original scenario/proxy evidence. Score
+60 meant 30% modeled loss. Their integer points are not v4 loss percentages and
+must not be relabelled or numerically halved after rounding. Old observations,
+raw losses, source facts, estimates and validity states remain unchanged. V4
+preserves the repricing/scenario assumptions and changes the scalar's declared
+meaning; history must break across that model transition.
 
 ## Historical v2 contract (immutable observations only)
 

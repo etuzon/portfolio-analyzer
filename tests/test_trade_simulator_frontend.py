@@ -20,7 +20,7 @@ const formatDate=value=>value.slice(0,10).split('-').reverse().join('/');
 const formatDateTime=formatDate;
 const riskBadge=r=>`<span>${r.score}</span>`;
 const tradePlannerAccountName=a=>a.account_id;
-const riskScoreForItems=()=>({score:10});
+const riskScoreForItems=()=>({model:"portfolio-risk-v4",status:"ok",score:10,loss_pct:10});
 const accountHorizonYears=()=>20;
 const derivativeHolding=()=>false;
 const nodes={};

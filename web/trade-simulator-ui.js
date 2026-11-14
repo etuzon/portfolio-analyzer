@@ -115,7 +115,7 @@ function tradeSimulatorSnapshotHtml(snapshot, currency, accountNames = new Map()
   const borrowingReason = snapshot?.risk && snapshot?.cashDeficit > 0 && snapshot?.reason !== "negative_cash"
     ? `<p class="signal-missing">${esc(tradeSimulatorReason("negative_cash"))}</p>` : "";
   return `<dl class="trade-simulator-facts">
-    ${fact("Risk", snapshot?.risk ? riskBadge(snapshot.risk) + (typeof stressRiskSummaryHtml === "function" ? stressRiskSummaryHtml(snapshot.risk,{compact:true}) : "") + (typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(snapshot.risk) : "") : missing("risk"), "trade-simulator-risk-fact")}
+    ${fact("Stress loss", snapshot?.risk ? riskBadge(snapshot.risk) + (typeof stressRiskSummaryHtml === "function" ? stressRiskSummaryHtml(snapshot.risk,{compact:true}) : "") + (typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(snapshot.risk) : "") : missing("risk"), "trade-simulator-risk-fact")}
     ${fact("Recorded cash", cash("cash"))}
     ${fact("Net account value", cash("netValue"))}
     ${fact("Gross security exposure", cash("grossExposure"))}

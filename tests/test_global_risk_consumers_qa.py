@@ -6,7 +6,6 @@ a spending reservation. No runtime portfolio or corrected live score is inferred
 """
 from copy import deepcopy
 import json
-import math
 from pathlib import Path
 import subprocess
 
@@ -63,7 +62,7 @@ const state={baseCurrency:ctx.base_currency,riskAsOf:ctx.calculated_at,fxRates:{
 const calls=[];
 const adapters={horizon:()=>20,industry:item=>item.industry,volatility:()=>20,derivative:()=>false,
  risk:(items,options)=>{const result=riskScoreForItems(items,options);calls.push({items:JSON.parse(JSON.stringify(items)),
- cash:options.cash,equity:result.net_equity,score:result.score,loss:result.stress_loss,
+ cash:options.cash,equity:result.net_equity,score:result.score,loss_pct:result.loss_pct,loss:result.stress_loss,
  provisional:result.provisional_score});return result;}};
 const before=JSON.stringify(ctx),plan=planner.plan(ctx,request,adapters),planCalls=calls.splice(0);
 let simulation=null;
@@ -95,7 +94,8 @@ def test_planner_projection_preserves_equity_except_fee_and_matches_simulator(ac
     assert after["cash"] == pytest.approx(ledger_cash * rate)
     assert after["equity"] == pytest.approx(expected_equity)
     assert rec["feeAllowance"] == fee
-    assert rec["riskBefore"] == rec["riskAfter"] == 72
+    assert rec["riskBefore"] == pytest.approx(36)
+    assert rec["riskAfter"] == pytest.approx(100 * 36000 * rate / expected_equity)
     assert after["loss"] == pytest.approx(60000 * .6 * rate)
     # Spending policy keeps collateral aside; the shared risk denominator uses
     # the full ledger assets and signed short liability.
@@ -108,7 +108,7 @@ def test_planner_projection_preserves_equity_except_fee_and_matches_simulator(ac
     projected = simulation["accounts"][0]["after"]
     assert projected["cash"] == pytest.approx(ledger_cash)
     assert projected["risk"]["net_equity"] == pytest.approx(expected_equity)
-    assert projected["risk"]["score"] == rec["riskAfter"]
+    assert projected["risk"]["loss_pct"] == rec["riskAfter"]
     assert result["sourceUnchanged"] and ctx == original
 
 
@@ -121,12 +121,14 @@ def test_actual_issuer_risk_triggers_quantity_halving_and_recomputes_its_fee():
     result = execute(ctx, amount=10000)
     assert result["plan"]["status"] == "ok", result
     rec = result["plan"]["recommendation"]
-    # Initial50shares=5000: loss18000/E99950 =>36, exceeding30+5.
-    # Halved25shares=2500: loss16500/E99975 =>33, so the fee is25.
+    # Initial50shares=5000: 100*18000/E99950 =18.009%, exceeding15%+2.5pp.
+    # Halved25shares=2500: 100*16500/E99975 =16.504%, so the fee is25.
     assert rec["quantity"] == 25 and rec["amount"] == 2500 and rec["feeAllowance"] == 25
     assert [row["equity"] for row in result["planCalls"]] == [100000, 99950, 99975]
-    assert [row["score"] for row in result["planCalls"]] == [30, 36, 33]
-    assert rec["riskAfter"] == math.floor(200 * 16500 / 99975 + .5) == 33
+    assert [row["score"] for row in result["planCalls"]] == [15, 18, 17]
+    assert rec["riskAfter"] == pytest.approx(100 * 16500 / 99975)
+    assert rec["riskBefore"] == 15
+    assert rec["riskAfter"] <= rec["riskBefore"] + 2.5
     assert rec["cashRemaining"] == 72475
     assert result["simulation"]["accounts"][0]["after"]["risk"]["net_equity"] == 99975
     assert result["sourceUnchanged"]
@@ -161,7 +163,7 @@ def test_projection_keeps_distinct_listings_currencies_assets_and_symbols_separa
     simulation = result["simulation"]
     assert simulation["status"] == "ok"
     assert simulation["accounts"][0]["after"]["risk"]["net_equity"] == pytest.approx(after["equity"])
-    assert simulation["accounts"][0]["after"]["risk"]["score"] == rec["riskAfter"]
+    assert simulation["accounts"][0]["after"]["risk"]["loss_pct"] == rec["riskAfter"]
     assert result["sourceUnchanged"]
 
 
@@ -191,10 +193,10 @@ const window={},document={addEventListener(){}},cleanSourceLabel=x=>x,holdingsSt
 let holdingsTableSort={key:'risk',direction:DIRECTION};
 """.replace("LANGUAGE", json.dumps(language)).replace("DIRECTION", json.dumps(direction))
     result = node(boot + (ROOT / "web/stress-risk-ui.js").read_text() + app_functions("sortHoldingsRows") + """
-const auto=n=>({model:'portfolio-risk-v3',score:null,status:'incomplete',provisional_model:'portfolio-risk-provisional-v2',provisional_scope:'portfolio',provisional_score:n});
+const auto=n=>({model:'portfolio-risk-v4',score:null,status:'incomplete',provisional_model:'portfolio-risk-provisional-v3',provisional_scope:'portfolio',provisional_score:n,provisional_loss_pct:n});
 const risks={A83:auto(83),RANGE:{...auto(0),provisional_scope:'known_values',provisional_range:{min:0,max:100}},
- EX25:{...auto(99),status:'estimate',estimated_score:25},A7a:auto(7),V30:{...auto(99),status:'ok',score:30},
- A7b:auto(7),ZERO:{...auto(99),score:0,status:'ok'},MISSING:{model:'portfolio-risk-v3',score:null,status:'incomplete'},LEGACY10:{score:10}};
+ EX25:{...auto(99),status:'estimate',estimated_score:25,loss_pct:25},A7a:auto(7),V30:{...auto(99),status:'ok',score:30,loss_pct:30},
+ A7b:auto(7),ZERO:{...auto(99),score:0,loss_pct:0,status:'ok'},MISSING:{model:'portfolio-risk-v4',score:null,status:'incomplete'},LEGACY10:{score:10}};
 const rows=Object.keys(risks).map(symbol=>({holding:{symbol}})),before=JSON.stringify({risks,rows});
 rows.forEach(row=>state.riskSnapshot.total.position_risks.set(row,risks[row.holding.symbol]));
 console.log(JSON.stringify({order:sortHoldingsRows(rows).map(row=>row.holding.symbol),unchanged:JSON.stringify({risks,rows})===before}));

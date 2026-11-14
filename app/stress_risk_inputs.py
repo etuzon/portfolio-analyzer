@@ -19,7 +19,7 @@ from .security_enrichment import security_key
 from .sovereign_ratings import normalize_country
 
 
-MODEL = "portfolio-risk-v3"
+MODEL = "portfolio-risk-v4"
 PREFIX = "stress-risk-inputs-v1:"
 EVIDENCE_PREFIX = "stress-risk-evidence-v1:"
 PARAMETERS = frozenset({"instrument_kind", "pricing_model", "maturity_date", "cashflows",

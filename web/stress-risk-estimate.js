@@ -5,11 +5,11 @@
   else root.PortfolioStressEstimate = api;
 })(typeof globalThis !== "undefined" ? globalThis : this, function() {
   "use strict";
-  const MODEL = "portfolio-risk-provisional-v2";
+  const MODEL = "portfolio-risk-provisional-v3";
   const finite = value => typeof value === "number" && Number.isFinite(value);
   const upper = value => String(value || "").trim().toUpperCase();
   const sum = values => values.reduce((total, value) => total + value, 0);
-  const score = fraction => Math.round(Math.min(100, Math.max(0, 200 * fraction)));
+  const score = fraction => Math.round(Math.min(100, Math.max(0, 100 * fraction)) + 1e-10);
   const day = value => {
     if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}/.test(value)) return null;
     const date = Date.parse(value.slice(0, 10) + "T00:00:00Z");
@@ -341,11 +341,16 @@
     const worst = scenarios.reduce((old, current) => old.loss >= current.loss ? old : current, {name:"none", loss:0});
     const debt = sum(cash.map(account => Math.max(0, -account.value)));
     const nonpositive = netEquity <= 0 && (knownGross > 0 || debt > 0);
-    const point = !base || day(asOf) === null || !finite(netEquity) ? null : netEquity > 0 ? score(worst.loss / netEquity) : nonpositive ? 100 : knownGross === 0 && wholeScope ? 0 : null;
+    const percentageKnown = netEquity <= 0 || finite(worst.loss / netEquity * 100);
+    if (!percentageKnown) wholeScope = false;
+    const point = !base || day(asOf) === null || !finite(netEquity) || !percentageKnown ? null : netEquity > 0 ? score(worst.loss / netEquity) : nonpositive ? 100 : knownGross === 0 && wholeScope ? 0 : null;
+    const lossPercent = point === null || nonpositive ? null : netEquity > 0 ? worst.loss / netEquity * 100 : 0;
     const proxyGross = sum([...proxyRoots].map(item => Math.abs(values.get(item) || 0)));
     return {
       provisional_model:MODEL, provisional_basis:"asset_aware_scenarios", provisional_score:point,
       provisional_loss:nonpositive ? null : worst.loss,
+      provisional_loss_pct:wholeScope ? lossPercent : null,
+      provisional_known_loss_pct:wholeScope ? null : lossPercent,
       provisional_net_equity:finite(netEquity) && (knownGross || cash.some(account => account.value !== 0) || wholeScope) ? netEquity : null,
       provisional_proxy_gross:finite(proxyGross) ? proxyGross : null,
       provisional_assumptions:assumptions, provisional_scope:wholeScope ? "portfolio" : "known_values",

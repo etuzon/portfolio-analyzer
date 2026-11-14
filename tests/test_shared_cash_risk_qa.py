@@ -1,4 +1,4 @@
-"""Independent behavioral checks of signed cash in the shared 0–100 model.
+"""Independent behavioral checks of signed cash in the shared stress-loss model.
 
 Model checks execute the actual dashboard risk function and simulator. Static
 tooltip checks execute actual localization; these do not establish browser QA.
@@ -51,18 +51,18 @@ assert.equal(adapters.risk([short],{cash:500,horizonYears:20}).score,100);
 ''')
 
 
-def test_declared_v3_borrowing_uses_signed_equity_and_keeps_funding_separate():
+def test_declared_v4_borrowing_uses_signed_equity_and_keeps_funding_separate():
     run_simulation(r'''
 const items=Array.from({length:20},(_,i)=>stock('HELD'+i,500));
 const ordinary=adapters.risk(items,{cash:0});
 const borrowed=adapters.risk(items,{cash:-1000});
-assert.equal(ordinary.score,80);
-assert.equal(borrowed.model,'portfolio-risk-v3');
+assert.equal(ordinary.score,40);
+assert.equal(borrowed.model,'portfolio-risk-v4');
 assert.equal(borrowed.cash_debt,1000);assert.equal(borrowed.net_equity,9000);
-assert.equal(borrowed.stress_loss,4000);assert.equal(borrowed.score,89);
+assert.equal(borrowed.stress_loss,4000);assert.equal(borrowed.score,44);
 const combined=adapters.risk(items,{cashAccounts:[{value:2000,currency:'USD'},{value:-1000,currency:'USD'}]});
 assert.equal(combined.cash_debt,1000);assert.equal(combined.net_equity,11000);
-assert.ok(Math.abs(combined.cash_pct-100/6)<1e-10);assert.equal(combined.score,73);
+assert.ok(Math.abs(combined.cash_pct-100/6)<1e-10);assert.equal(combined.score,36);
 assert.equal(combined.funding.positive_cash,2000);
 assert.ok(!('borrowing' in combined.components));
 ''')
@@ -194,7 +194,7 @@ const risk=adapters.risk(Array.from({length:20},(_,i)=>stock('HELD'+i,500)),{cas
 for(const language of ['en','he','en']) {
  state.language=language;
  const tooltip=riskTooltip(risk);
- assert.ok(tooltip.split('\n')[0].includes('89'),tooltip);
+ assert.ok(tooltip.split('\n')[0].includes('44.4%'),tooltip);
  assert.ok(!/undefined|NaN|null/.test(tooltip),tooltip);
  if(language==='en') {
   assert.ok(/borrow|debt/i.test(tooltip),tooltip);

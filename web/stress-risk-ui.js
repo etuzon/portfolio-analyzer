@@ -18,28 +18,53 @@ function stressRiskNumber(value, digits = 1) {
   }).format(value);
 }
 
+function stressRiskLossPercent(risk) {
+  const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0;
+  const automatic = ["portfolio-risk-provisional-v2", "portfolio-risk-provisional-v3"].includes(risk?.provisional_model);
+  if (automatic && !Number.isFinite(risk?.score) && !Number.isFinite(risk?.estimated_score)) {
+    if (risk?.provisional_scope === "known_values" || risk?.provisional_range) return null;
+    if (valid(risk?.provisional_loss_pct)) return risk.provisional_loss_pct;
+    return risk?.provisional_net_equity > 0 && valid(risk?.provisional_loss)
+      ? risk.provisional_loss / risk.provisional_net_equity * 100 : null;
+  }
+  return valid(risk?.loss_pct) ? risk.loss_pct : null;
+}
+
 function stressRiskDisplay(risk) {
   const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 100;
+  const current = risk?.model === "portfolio-risk-v4";
   const available = valid(risk?.score);
   const estimated = !available && valid(risk?.estimated_score);
-  const automatic = !available && !estimated && risk?.provisional_model === "portfolio-risk-provisional-v2";
+  const automatic = !available && !estimated && ["portfolio-risk-provisional-v2", "portfolio-risk-provisional-v3"].includes(risk?.provisional_model);
   const unknownScope = Boolean(automatic && (risk?.provisional_scope === "known_values" || risk?.provisional_range));
   const range = unknownScope ? {min:valid(risk?.provisional_range?.min) ? risk.provisional_range.min : 0,
     max:valid(risk?.provisional_range?.max) ? risk.provisional_range.max : 100} : null;
   const provisional = !available && !estimated && !unknownScope && valid(risk?.provisional_score);
-  const number = available ? risk.score : estimated ? risk.estimated_score : provisional ? risk.provisional_score : null;
+  const compatibilityScore = available ? risk.score : estimated ? risk.estimated_score : provisional ? risk.provisional_score : null;
+  const equity = automatic ? risk?.provisional_net_equity : risk?.net_equity;
+  const nonpositiveEquity = current && !unknownScope && compatibilityScore === 100
+    && typeof equity === "number" && Number.isFinite(equity) && equity <= 0;
+  const rawLossPct = current && compatibilityScore !== null && !unknownScope && !nonpositiveEquity ? stressRiskLossPercent(risk) : null;
+  const number = current ? compatibilityScore === null ? null : rawLossPct : compatibilityScore;
   const missing = provisional || unknownScope || (Array.isArray(risk?.gaps) && risk.gaps.length > 0) || risk?.coverage?.complete === false;
+  const unit = number === null ? "" : current ? "%" : "/100";
+  const value = nonpositiveEquity ? `${estimated || provisional ? "~" : ""}${stressRiskText("Nonpositive equity")}`
+    : range && !current ? `${stressRiskNumber(range.min,0)}–${stressRiskNumber(range.max,0)}`
+      : number === null ? stressRiskText("Incomplete") : `${estimated || provisional ? "~" : ""}${stressRiskNumber(number, current ? 1 : 0)}`;
   return { number, available, estimated, provisional, automatic, unknownScope, range, missing,
+    current, legacy: !current, rawLossPct, compatibilityScore, nonpositiveEquity, unit, value, fullValue: `${value}${unit}`,
+    metricLabel: stressRiskText(current ? "Stress loss" : "Legacy stress score"),
     ceiling: provisional && !automatic && risk.provisional_basis === "missing_valuation_ceiling",
-    value: range ? `${stressRiskNumber(range.min,0)}–${stressRiskNumber(range.max,0)}`
-      : number === null ? stressRiskText("Incomplete") : `${estimated || provisional ? "~" : ""}${stressRiskNumber(number, 0)}`,
     statusLabel: unknownScope ? stressRiskText("Uncertain scope") : (automatic && provisional || estimated) ? stressRiskText("Estimate") : provisional ? stressRiskText("Partial data") : "" };
 }
 
 function stressRiskProvisionalExplanation(risk) {
-  if (stressRiskDisplay(risk).automatic) {
+  const display = stressRiskDisplay(risk);
+  if (display.automatic) {
     return stressRiskText(risk?.provisional_scope === "known_values" || risk?.provisional_range
-      ? "Incomplete exposure or pricing inputs prevent a whole-portfolio point estimate. The range reflects unresolved scope; known-position estimates are shown separately."
+      ? display.current
+        ? "Incomplete exposure or pricing inputs prevent a whole-portfolio percentage. Known-position estimates are shown separately."
+        : "Incomplete exposure or pricing inputs prevent a whole-portfolio point estimate. The range reflects unresolved scope; known-position estimates are shown separately."
       : "This estimate uses asset-class scenarios where complete inputs are unavailable. Cash reduces market exposure, and foreign-currency cash still carries currency risk. Missing data does not add a capital-loss penalty.");
   }
   if (risk?.provisional_basis === "unmodeled_exposure_allowance") {
@@ -69,8 +94,11 @@ function stressRiskLossAmountText(risk) {
 
 function stressRiskForwardSensitivityText(risk) {
   const sensitivity = risk?.forward_sensitivity;
-  if (!(typeof sensitivity?.score === "number" && Number.isFinite(sensitivity.score)
-      && typeof sensitivity?.loss_pct === "number" && Number.isFinite(sensitivity.loss_pct))) return "";
+  if (!(typeof sensitivity?.loss_pct === "number" && Number.isFinite(sensitivity.loss_pct))) return "";
+  if (risk?.model === "portfolio-risk-v4") return stressRiskText("Negative rating sensitivity: {percent}% scenario loss", {
+    percent: stressRiskNumber(sensitivity.loss_pct),
+  });
+  if (!(typeof sensitivity?.score === "number" && Number.isFinite(sensitivity.score))) return "";
   return stressRiskText("Negative rating sensitivity: {score}/100 · {percent}% modeled loss", {
     score: stressRiskNumber(sensitivity.score, 0), percent: stressRiskNumber(sensitivity.loss_pct),
   });
@@ -194,14 +222,22 @@ function stressRiskProxyAssumptionLines(risk) {
 }
 
 function stressRiskTooltip(risk) {
-  const { available, estimated, provisional, automatic, unknownScope, range, missing } = stressRiskDisplay(risk);
-  const lines = [available ? `${stressRiskText("Stress risk")}: ${stressRiskNumber(risk.score, 0)}/100`
+  const display = stressRiskDisplay(risk);
+  const { available, estimated, provisional, automatic, unknownScope, range, missing, current } = display;
+  const lines = current ? [`${display.metricLabel}: ${display.fullValue}${display.statusLabel ? ` · ${display.statusLabel}` : ""}`,
+    stressRiskText(risk?.intrinsic === true
+      ? "The percentage is the largest scenario loss relative to standalone instrument value, independent of position size."
+      : "The percentage is the largest scenario loss relative to positive net equity."),
+    stressRiskText("Fixed hypothetical shocks revalue current exposures immediately. These are assumptions, not forecasts, loss probabilities or a validated general risk rating.")]
+    : [available ? `${stressRiskText("Legacy stress score")}: ${stressRiskNumber(risk.score, 0)}/100`
     : estimated ? `${stressRiskText("Estimated stress risk")}: ~${stressRiskNumber(risk.estimated_score, 0)}/100`
       : unknownScope ? `${stressRiskText("Risk range")}: ${stressRiskNumber(range.min,0)}–${stressRiskNumber(range.max,0)} · ${stressRiskText("Uncertain scope")}`
       : automatic && provisional ? `${stressRiskText("Estimated stress risk")}: ~${stressRiskNumber(risk.provisional_score, 0)}/100 · ${stressRiskText("Estimate")}`
       : provisional ? `${stressRiskText("Provisional stress risk")}: ~${stressRiskNumber(risk.provisional_score, 0)}/100 · ${stressRiskText("Partial data")}`
         : stressRiskText("Risk assessment incomplete"),
-    stressRiskText("The score measures modeled stress-loss severity, not a probability or forecast.")];
+    stressRiskText("Legacy scale: twice the modeled loss percentage, capped at 100. Compare only matching model versions and currencies.")];
+  if (current && unknownScope) lines.push(stressRiskText("The whole-portfolio loss percentage is unavailable. A capped index range is not an economic loss bound; leveraged or short positions can lose more than net equity."));
+  if (display.nonpositiveEquity) lines.push(stressRiskText("A loss percentage is undefined when net equity is nonpositive and exposure or borrowing remains. The saved boundary flag is not a measured 100% loss or a verified insolvency finding."));
   if (estimated) lines.push(stressRiskText("This estimate uses explicit assumptions. It is separate from a score supported by complete verified inputs."));
   if (provisional || unknownScope) {
     lines.push(stressRiskProvisionalExplanation(risk));
@@ -210,10 +246,14 @@ function stressRiskTooltip(risk) {
       if (!unknownScope && risk.provisional_score === 100 && typeof risk.provisional_net_equity === "number"
           && risk.provisional_net_equity <= 0) lines.push(stressRiskText("Reported values imply nonpositive net equity with exposure or borrowing. This is an estimate using the stated saved values, not a verified insolvency finding."));
       if (!unknownScope && risk.provisional_net_equity > 0 && typeof risk.provisional_loss === "number" && Number.isFinite(risk.provisional_loss)) {
-        lines.push(stressRiskText("Largest estimated scenario loss: {percent}%", {percent:stressRiskNumber(100*risk.provisional_loss/risk.provisional_net_equity)}));
+        lines.push(stressRiskText("Largest estimated scenario loss: {percent}%", {percent:stressRiskNumber(risk.provisional_loss/risk.provisional_net_equity*100)}));
       }
       const knownScore = risk.provisional_known_score ?? (unknownScope ? risk.provisional_score : null);
-      if (unknownScope && typeof knownScore === "number" && Number.isFinite(knownScore)) lines.push(stressRiskText("Supported known positions only: ~{score}/100", {score:stressRiskNumber(knownScore,0)}));
+      if (current && unknownScope && typeof risk.provisional_known_loss_pct === "number" && Number.isFinite(risk.provisional_known_loss_pct)) {
+        lines.push(stressRiskText("Known positions only: ~{percent}% scenario loss", {percent:stressRiskNumber(risk.provisional_known_loss_pct)}));
+      } else if (!current && unknownScope && typeof knownScore === "number" && Number.isFinite(knownScore)) {
+        lines.push(stressRiskText("Supported known positions only: ~{score}/100", {score:stressRiskNumber(knownScore,0)}));
+      }
       if (!risk.intrinsic && currency && typeof risk.provisional_proxy_gross === "number" && Number.isFinite(risk.provisional_proxy_gross)) {
         lines.push(stressRiskText("Value using asset-class proxies: {amount} {currency}", {amount:stressRiskNumber(risk.provisional_proxy_gross,2),currency}));
       }
@@ -239,7 +279,9 @@ function stressRiskTooltip(risk) {
     lines.push(stressRiskText("This separate sensitivity assumes one broad rating-bucket downgrade. Published grades and the baseline score are unchanged."));
   }
   if (typeof risk?.contribution?.loss_contribution_pct === "number" && Number.isFinite(risk.contribution.loss_contribution_pct)) {
-    lines.push(stressRiskText("Contribution to portfolio stress loss: {percent}%", { percent: stressRiskNumber(risk.contribution.loss_contribution_pct) }));
+    lines.push(stressRiskText(current
+      ? "Contribution to portfolio loss: {percent} percentage points of net equity"
+      : "Contribution to portfolio stress loss: {percent}%", { percent: stressRiskNumber(risk.contribution.loss_contribution_pct) }));
     lines.push(stressRiskText("The holding score describes standalone instrument exposure. Its signed portfolio contribution is shown separately."));
     lines.push(stressRiskText("Contribution uses the portfolio's binding scenario; a negative value offsets modeled loss."));
   }
@@ -247,14 +289,15 @@ function stressRiskTooltip(risk) {
   if (typeof risk?.coverage?.covered_value_percent === "number" && Number.isFinite(risk.coverage.covered_value_percent)) {
     lines.push(stressRiskText(automatic ? "Full-model input coverage: {percent}% of gross securities and positive cash" : "Input coverage: {percent}% of gross securities and positive cash", { percent: stressRiskNumber(risk.coverage.covered_value_percent) }));
   }
-  if (risk?.coverage?.whole_wealth_available === false || risk?.coverage?.unmodeled_savings_count > 0) lines.push(stressRiskText("Savings without underlying allocations are excluded; this is securities and cash risk."));
+  if (current && !risk?.intrinsic) lines.push(stressRiskText("Employee equity and savings without underlying allocations are excluded; this is not a whole-wealth assessment."));
+  else if (risk?.coverage?.whole_wealth_available === false || risk?.coverage?.unmodeled_savings_count > 0) lines.push(stressRiskText("Savings without underlying allocations are excluded; this is securities and cash risk."));
   const debt = risk?.funding?.cash_debt ?? risk?.cash_debt;
   if (typeof debt === "number" && debt > 0) {
     const currency = risk.base_currency || (typeof state !== "undefined" ? state.baseCurrency : "");
     lines.push(`${stressRiskText("Modeled borrowing")}: ${stressRiskNumber(debt, 2)} ${currency}`.trim());
     lines.push(stressRiskText("Borrowing reduces net equity. Cash in another account does not establish transferable funding."));
   }
-  if (risk?.net_equity <= 0 && available && risk.score === 100) lines.push(stressRiskText("Exposure or borrowing with nonpositive net equity is scored 100."));
+  if (!current && risk?.net_equity <= 0 && available && risk.score === 100) lines.push(stressRiskText("Exposure or borrowing with nonpositive net equity is scored 100."));
   const seen = new Set();
   for (const gap of Array.isArray(risk?.gaps) ? risk.gaps : []) {
     const key = `${gap?.code || gap}:${gap?.symbol || ""}`;
@@ -262,7 +305,9 @@ function stressRiskTooltip(risk) {
     seen.add(key);
     lines.push(`• ${gap?.symbol ? `${gap.symbol}: ` : ""}${stressRiskGapText(gap?.code || gap)}`);
   }
-  lines.push(stressRiskText("Scenario sizes and rating mappings are explicit assumptions. Liquidity, deposit protection and personal suitability are assessed separately."));
+  lines.push(stressRiskText(current
+    ? "Scenario sizes and rating mappings are explicit assumptions. Liquidity, custody, deposit protection, purchasing power and personal suitability are assessed separately."
+    : "Scenario sizes and rating mappings are explicit assumptions. Liquidity, deposit protection and personal suitability are assessed separately."));
   return lines.join("\n");
 }
 
@@ -272,9 +317,15 @@ function stressRiskSummaryHtml(risk, options = {}) {
   const display = stressRiskDisplay(risk);
   const unavailable = !display.available;
   const estimate = display.estimated;
-  const loss = !display.automatic && typeof risk.loss_pct === "number" && Number.isFinite(risk.loss_pct)
-    ? `<span>${escape(stressRiskText(unavailable && !estimate ? "Known partial modeled loss: {percent}%" : "Largest modeled loss: {percent}%", { percent: stressRiskNumber(risk.loss_pct) }))}</span>` : "";
-  const scenarioCode = display.automatic ? risk.provisional_worst_scenario : risk.worst_scenario;
+  const percent = display.current ? display.rawLossPct : !display.automatic ? risk.loss_pct : null;
+  const lossText = typeof percent === "number" && Number.isFinite(percent)
+    ? stressRiskText(display.current
+      ? risk.intrinsic ? "Standalone scenario loss: {percent}%" : "Largest scenario loss: {percent}% of net equity"
+      : unavailable && !estimate ? "Known partial modeled loss: {percent}%" : "Largest modeled loss: {percent}%", { percent: stressRiskNumber(percent) })
+    : display.current && display.unknownScope && typeof risk.provisional_known_loss_pct === "number" && Number.isFinite(risk.provisional_known_loss_pct)
+      ? stressRiskText("Known positions only: ~{percent}% scenario loss", {percent:stressRiskNumber(risk.provisional_known_loss_pct)}) : "";
+  const loss = lossText ? `<span>${escape(lossText)}</span>` : "";
+  const scenarioCode = display.nonpositiveEquity ? "" : display.automatic ? risk.provisional_worst_scenario : risk.worst_scenario;
   const scenario = scenarioCode ? `<small>${escape(stressRiskScenarioLabel(scenarioCode))}</small>` : "";
   const amountText = stressRiskLossAmountText(risk);
   const amount = amountText ? `<span>${escape(amountText)}</span>` : "";
@@ -284,9 +335,12 @@ function stressRiskSummaryHtml(risk, options = {}) {
     ? "Incomplete exposure or pricing inputs; review missing risk data." : "Estimate using asset-class scenarios; data quality is shown separately."))}</small>`
     : display.provisional ? `<small class="stress-risk-provisional-note">${escape(stressRiskText(risk.provisional_basis === "unmodeled_exposure_allowance"
       ? "Includes a precautionary allowance for unmodeled exposure." : "Precautionary ceiling; complete inputs are still needed."))}</small>` : "";
-  const incomplete = unavailable && !display.provisional && !display.unknownScope ? `<span class="stress-risk-incomplete">${escape(stressRiskText(estimate ? "Estimate from explicit assumptions" : "Risk assessment incomplete"))}</span>` : "";
+  const incomplete = display.nonpositiveEquity ? `<span class="stress-risk-incomplete">${escape(stressRiskText("Loss percentage undefined with nonpositive equity."))}</span>`
+    : unavailable && !display.provisional && !display.unknownScope ? `<span class="stress-risk-incomplete">${escape(stressRiskText(estimate ? "Estimate from explicit assumptions" : "Risk assessment incomplete"))}</span>` : "";
   const scope = risk.coverage?.whole_wealth_available === false || risk.coverage?.unmodeled_savings_count > 0
-    ? `<small>${escape(stressRiskText("Savings without underlying allocations are excluded; this is securities and cash risk."))}</small>` : "";
+    ? `<small>${escape(stressRiskText(display.current
+      ? "Employee equity and savings without underlying allocations are excluded."
+      : "Savings without underlying allocations are excluded; this is securities and cash risk."))}</small>` : "";
   return `<div class="stress-risk-summary${options.compact ? " is-compact" : ""}">${incomplete}${provisional}${loss}${amount}${scenario}${sensitivity}${scope}</div>`;
 }
 

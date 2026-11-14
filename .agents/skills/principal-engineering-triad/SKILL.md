@@ -168,6 +168,10 @@ Proceed when contracts are implemented, migrations and side effects are safe, te
 
 For financial work also obtain the financial owner's evidence that outputs match
 the declared model, source cutoff, units, missing-data rules, and claim boundaries.
+For financial scores, the [financial-score-validation](../financial-score-validation/SKILL.md)
+gate must also establish economically meaningful units, scale/anchors, plausible
+reference-portfolio behavior and honest presentation. Numerical implementation
+parity alone does not satisfy that gate.
 Independent QA still follows; this evidence is not its verdict.
 
 ### QA Sign-Off Gate

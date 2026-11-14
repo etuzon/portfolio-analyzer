@@ -10,6 +10,14 @@ function alarmAppearance(alarm) {
     }[alarm.signalType];
     return alarm.incomplete && alarm.signalType !== "sell" ? { ...appearance, tone: "amber", icon: "?" } : appearance;
   }
+  if (alarm.kind === "risk" && alarm.risk?.model === "portfolio-risk-v4") {
+    const current = {
+      stress_alert: {tone:"red",icon:"!",label:"Stress-loss alert"},
+      stress_watch: {tone:"amber",icon:"▲",label:"Stress-loss watch"},
+      funding: {tone:"red",icon:"!",label:"Nonpositive equity"},
+    }[alarm.level];
+    if (current) return current;
+  }
   if (alarm.kind === "risk") return {
     high: { tone: "red", icon: "!", label: "High risk" },
     extreme: { tone: "red", icon: "!", label: "Extreme risk" },
@@ -68,11 +76,28 @@ function portfolioRiskAlarms() {
     || checkedAccountShareAmount(accountCashBalance(account), account.currency) === null);
   if (invalid) return notice("unavailable", "Complete missing valuations, quantities or currency conversion data before assessing risk.");
   const snapshot = portfolioRiskSnapshot(items);
-  const scopes = [{ key: "total", label: t("Total portfolio risk"), risk: snapshot.total },
+  const scopes = [{ key: "total", label: t(snapshot.total.model === "portfolio-risk-v4" ? "Total portfolio stress loss" : "Total portfolio risk"), risk: snapshot.total },
     ...snapshot.accounts.map((entry) => ({ key: entry.key, label: entry.account, risk: entry.risk }))];
   const warnings = scopes.flatMap(({ key, label, risk }) => {
     const estimated = !Number.isFinite(risk?.score) && risk?.status === "estimate" && Number.isFinite(risk.estimated_score);
     const score = Number.isFinite(risk?.score) ? risk.score : estimated ? risk.estimated_score : null;
+    if (risk?.model === "portfolio-risk-v4") {
+      if (score === 100 && Number.isFinite(risk.net_equity) && risk.net_equity <= 0 && risk.worst_scenario === "nonpositive_equity") {
+        return [{kind:"risk",key:`risk:${key}`,level:"funding",risk,title:label,
+          body:t("Recorded net equity is nonpositive. A loss percentage is undefined. Review borrowing and security liabilities."),meta:t("View risk details")}];
+      }
+      const loss = Number.isFinite(risk.loss_pct) && risk.loss_pct >= 0 ? risk.loss_pct : null;
+      if (score === null || loss === null) return [{kind:"risk",key:`risk:${key}:assessment`,level:"unavailable",risk,title:label,
+        body:Number.isFinite(risk.provisional_loss_pct) && risk.provisional_scope === "portfolio"
+          ? alarmText("Automatic estimated stress loss: ~{loss}%. Complete missing evidence before using stress-loss sizing.",{loss:risk.provisional_loss_pct.toFixed(1)})
+          : t("Complete missing risk evidence in Risk inputs and Ratings before assessing this scope."),meta:t("View risk details")}];
+      const level = loss > 30 ? "stress_alert" : loss > 20 ? "stress_watch"
+        : estimated ? "limited" : key !== "total" && risk.cash_debt > 0 ? "borrowing" : "";
+      if (!level) return [];
+      return [{kind:"risk",key:`risk:${key}`,level,risk,title:label,
+        body:alarmText(estimated ? "Estimated stress loss: ~{loss}%. Review the explicit assumptions." : "Modeled stress loss: {loss}%. Review the stress scenarios.",{loss:loss.toFixed(1)}),
+        meta:t("View risk details")}];
+    }
     if (score === null || score < 0 || score > 100) return [{kind:"risk",key:`risk:${key}:assessment`,level:"unavailable",risk,title:label,
       body:Number.isFinite(risk?.provisional_score) && risk?.provisional_scope !== "known_values"
         ? alarmText("Provisional stress risk: ~{score}/100. Complete missing evidence before using risk-based sizing.",{score:risk.provisional_score})
@@ -170,8 +195,9 @@ function riskAlarmDismissalId(alarm) {
   const risk = alarm.risk || {};
   const evidence = JSON.stringify(alarmStableEvidence({ key: alarm.key, level: alarm.level,
     source_state: state.portfolioSourceState, pending: Boolean(state.portfolioRefreshPending),
-    model: alarmModelEvidence({ version:risk.model,status:risk.status,estimated_score:risk.estimated_score,loss_pct:risk.loss_pct,worst_scenario:risk.worst_scenario,gaps:risk.gaps,score: risk.score, components: risk.components, quality_details: risk.quality_details,
+    model: alarmModelEvidence({ version:risk.model,score_unit:risk.score_unit,score_scale:risk.score_scale,scenario_horizon:risk.scenario_horizon,status:risk.status,estimated_score:risk.estimated_score,loss_pct:risk.loss_pct,worst_scenario:risk.worst_scenario,gaps:risk.gaps,score: risk.score, components: risk.components, quality_details: risk.quality_details,
       provisional_model:risk.provisional_model,provisional_score:risk.provisional_score,provisional_basis:risk.provisional_basis,provisional_loss:risk.provisional_loss,
+      provisional_loss_pct:risk.provisional_loss_pct,provisional_known_loss_pct:risk.provisional_known_loss_pct,
       provisional_scope:risk.provisional_scope,provisional_range:risk.provisional_range,
       cash_debt: risk.cash_debt, net_equity: risk.net_equity, unlevered_score: risk.unlevered_score }),
     base_currency: state.baseCurrency, holdings, accounts }));

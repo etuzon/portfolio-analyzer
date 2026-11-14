@@ -108,7 +108,7 @@ function riskMissingDataTooltipLines(details, language = "en", options = {}) {
 
 
 function riskDataQualityHtml(risk) {
-  if (risk?.model === "portfolio-risk-v3") return typeof stressRiskGapsHtml === "function" ? stressRiskGapsHtml(risk) : "";
+  if (["portfolio-risk-v3", "portfolio-risk-v4"].includes(risk?.model)) return typeof stressRiskGapsHtml === "function" ? stressRiskGapsHtml(risk) : "";
   const points = risk?.components?.data_quality;
   const details = risk?.quality_details;
   if (!Number.isFinite(points) || (!(points > 0) && !details?.length)) return "";

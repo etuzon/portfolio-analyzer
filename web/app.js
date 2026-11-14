@@ -3104,6 +3104,7 @@ function accountHorizonYears(account) {
 }
 
 function riskBand(score) {
+  // Frozen legacy index bands. Current v4 assessments display capital-loss %.
   if (!Number.isFinite(score)) return {key:"incomplete",label:optionLabel("Incomplete"),symbol:"—"};
   let band;
   if (score <= 20) band = { key: "low", label: "Low", symbol: "●" };
@@ -3153,21 +3154,24 @@ function riskAllocationForItems(items, options = {}) {
 function riskBadge(risk) {
   if (!risk) return "";
   if (Number.isFinite(risk.score) && (risk.score < 0 || risk.score > 100)) return "";
-  if (risk.model !== "portfolio-risk-v3" && !Number.isFinite(risk.score)) return "";
-  const presentation = risk.model === "portfolio-risk-v3" && typeof stressRiskDisplay === "function" ? stressRiskDisplay(risk) : null;
+  if (!["portfolio-risk-v3", "portfolio-risk-v4"].includes(risk.model) && !Number.isFinite(risk.score)) return "";
+  const current = risk.model === "portfolio-risk-v4";
+  const presentation = ["portfolio-risk-v3", "portfolio-risk-v4"].includes(risk.model) && typeof stressRiskDisplay === "function" ? stressRiskDisplay(risk) : null;
   const estimate = !Number.isFinite(risk.score) && Number.isFinite(risk.estimated_score);
-  const number = presentation ? presentation.number : Number.isFinite(risk.score) ? risk.score : estimate ? risk.estimated_score : null;
-  const band = presentation?.unknownScope ? {key:"incomplete",label:optionLabel("Uncertain scope"),symbol:"⚠"}
+  const number = presentation ? presentation.number : current ? (Number.isFinite(risk.score) || estimate) && Number.isFinite(risk.loss_pct) ? risk.loss_pct : null : Number.isFinite(risk.score) ? risk.score : estimate ? risk.estimated_score : null;
+  const metricLabel = presentation?.metricLabel || optionLabel(current ? "Stress loss" : "Risk");
+  const band = current ? {key:Number.isFinite(number) ? "stress" : "incomplete",label:metricLabel,symbol:presentation?.nonpositiveEquity ? "!" : ""}
+    : presentation?.unknownScope ? {key:"incomplete",label:optionLabel("Uncertain scope"),symbol:"⚠"}
     : presentation?.ceiling ? {key:"incomplete",label:optionLabel("Precautionary ceiling"),symbol:"⚠"} : riskBand(number);
-  const value = presentation ? presentation.value : number === null ? optionLabel("Incomplete") : `${estimate ? "~" : ""}${number}`;
+  const value = presentation ? presentation.fullValue : number === null ? optionLabel("Incomplete") : `${estimate ? "~" : ""}${current ? `${fmt(number,1)}%` : number}`;
   const status = presentation ? presentation.statusLabel : estimate ? optionLabel("Estimate") : "";
-  const missing = presentation?.missing === true;
-  const label = `${optionLabel("Risk")}: ${value}${risk.model === "portfolio-risk-v3" && number !== null ? "/100" : ""}${status ? ` · ${status}` : ""}${missing && status !== optionLabel("Partial data") ? ` · ${optionLabel("Partial data")}` : ""} · ${band.label}`;
-  return `<button class="risk-badge risk-${band.key}${missing ? " has-missing-risk-data" : ""}" type="button" data-risk-badge="${esc(risk.label || "Risk")}" data-risk-explanation="${esc(riskTooltip(risk))}" aria-label="${esc(label)}" aria-describedby="riskBadgeExplanation"><b><bdi dir="ltr">${esc(value)}</bdi></b>${missing ? '<span class="risk-data-warning" aria-hidden="true">⚠</span>' : ""}${status ? `<small class="risk-data-status">${esc(status)}</small>` : ""}</button>`;
+  const missing = presentation?.missing === true || current && ((risk.gaps || []).length > 0 || risk.coverage?.complete === false);
+  const label = `${metricLabel}: ${value}${status ? ` · ${status}` : ""}${missing && status !== optionLabel("Partial data") ? ` · ${optionLabel("Partial data")}` : ""}${current ? "" : ` · ${band.label}`}`;
+  return `<button class="risk-badge risk-${band.key}${missing ? " has-missing-risk-data" : ""}${presentation?.nonpositiveEquity ? " risk-funding-boundary" : ""}" type="button" data-risk-badge="${esc(risk.label || presentation?.metricLabel || "Risk")}" data-risk-explanation="${esc(riskTooltip(risk))}" aria-label="${esc(label)}" aria-describedby="riskBadgeExplanation"><b><bdi dir="ltr">${esc(value)}</bdi></b>${missing ? '<span class="risk-data-warning" aria-hidden="true">⚠</span>' : ""}${status ? `<small class="risk-data-status">${esc(status)}</small>` : ""}</button>`;
 }
 
 function riskTooltip(risk) {
-  if (risk?.model === "portfolio-risk-v3" && typeof stressRiskTooltip === "function") return stressRiskTooltip(risk);
+  if (["portfolio-risk-v3", "portfolio-risk-v4"].includes(risk?.model) && typeof stressRiskTooltip === "function") return stressRiskTooltip(risk);
   const band = riskBand(risk.score);
   const meaning = "This is a model-based risk estimate, not a probability or forecast of loss.";
   const componentSpecs = [
@@ -3248,9 +3252,9 @@ function riskScoreForItems(items, options = {}) {
   const baseCurrency = options.baseCurrency || state.baseCurrency;
   const normalizeField = options.normalizeField || ((item, field) => riskStrictBaseValue(item.holding?.[field], item.holding?.currency, baseCurrency));
   const settings = { sourceRevision:state.riskRevision, ...options, baseCurrency, normalizeField, asOf: options.asOf || state.riskAsOf || new Date().toISOString() };
-  if (!model) return { model:"portfolio-risk-v3", status:"incomplete", score:null, estimated_score:null,
-    provisional_model:"portfolio-risk-provisional-v2", provisional_score:null,
-    provisional_basis:"asset_aware_scenarios", provisional_loss:null, provisional_net_equity:null,
+  if (!model) return { model:"portfolio-risk-v4", score_unit:"percent_capital_loss", score_scale:"stress-loss-percent-v1", scenario_horizon:"instantaneous_revaluation", status:"incomplete", score:null, estimated_score:null,
+    provisional_model:"portfolio-risk-provisional-v3", provisional_score:null,
+    provisional_basis:"asset_aware_scenarios", provisional_loss:null, provisional_loss_pct:null, provisional_known_loss_pct:null, provisional_net_equity:null,
     provisional_proxy_gross:null, provisional_assumptions:[], provisional_scope:"known_values", provisional_range:{min:0,max:100},
     label:options.label || "Portfolio risk", gaps:[{code:"parameters_unavailable"}], components:{}, quality_details:[], position_risks:new Map() };
   const risk = model.calculate(items || [], settings);
@@ -3287,7 +3291,7 @@ function portfolioRiskSnapshot(items) {
       risk:riskScoreForItems(rows, {label:`${label} risk`,cash:cash.value,cashCurrency:cash.currency,cashAccounts:[cash]}),
       allocation:riskAllocationForItems(rows, {cash:cash.value,cashCurrency:cash.currency}) };
   });
-  const totalRisk = riskScoreForItems(items || [], {label:"Total portfolio risk",cashAccounts});
+  const totalRisk = riskScoreForItems(items || [], {label:"Total portfolio stress loss",cashAccounts});
   totalRisk.scope = "securities_and_cash";
   totalRisk.coverage ||= {complete:false,covered_value_percent:null};
   totalRisk.coverage.unmodeled_savings_count = (state.localFunds || []).length;
@@ -3999,23 +4003,24 @@ function renderPortfolioValueDashboard(items) {
           ${cashSummary}
         </div>
         <div class="account-summary-metrics">
-          ${accountRisk ? `<div><span class="account-summary-metric-label">${esc(optionLabel("Risk"))}</span>${riskBadge(accountRisk)}${typeof stressRiskSummaryHtml === "function" ? stressRiskSummaryHtml(accountRisk,{compact:true}) : ""}</div>` : ""}
+          ${accountRisk ? `<div><span class="account-summary-metric-label">${esc(optionLabel(accountRisk.model === "portfolio-risk-v4" ? "Stress loss" : "Risk"))}</span>${riskBadge(accountRisk)}${typeof stressRiskSummaryHtml === "function" ? stressRiskSummaryHtml(accountRisk,{compact:true}) : ""}</div>` : ""}
           <div><span class="account-summary-metric-label">${esc(optionLabel("Portfolio share"))}</span>${accountShareBadge(share)}</div>
         </div>
         <div class="account-summary-allocation"${segments ? ` title="${esc(optionLabel("Allocation shows asset categories. Credit, interest-rate and currency risks are assessed in the stress score; cash and money-market holdings are not guaranteed risk-free."))}"` : ' aria-hidden="true"'}>${segments ? `
           <div class="account-risk-allocation-bar" role="img" aria-label="${esc(`${optionLabel("Asset allocation")}: ${allocation.bands.map((band) => `${optionLabel(band.label)} ${fmt(band.percent, 1)}%`).join(", ")}`)}">${segments}</div>
           <div class="account-risk-allocation-labels">${labels}</div>
         ` : ""}</div>
-        <div class="account-summary-footer">${accountRisk && typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(accountRisk) : ""}<button class="secondary compact-button" type="button" data-open-risk-scenarios="${esc(accountKey)}">${esc(t("Explore lower risk"))}</button></div>
+        <div class="account-summary-footer">${accountRisk && typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(accountRisk) : ""}<button class="secondary compact-button" type="button" data-open-risk-scenarios="${esc(accountKey)}">${esc(t("Explore lower stress loss"))}</button></div>
       </article>`;
     })
     .join("");
 
   const totalRiskDisplay = typeof stressRiskDisplay === "function" ? stressRiskDisplay(state.riskSnapshot.total) : null;
-  const totalRiskBand = totalRiskDisplay?.unknownScope ? {key:"incomplete",label:optionLabel("Uncertain scope")}
+  const totalRiskBand = totalRiskDisplay?.current ? {key:Number.isFinite(totalRiskDisplay.number) ? "stress" : "incomplete",label:""}
+    : totalRiskDisplay?.unknownScope ? {key:"incomplete",label:optionLabel("Uncertain scope")}
     : totalRiskDisplay?.ceiling ? {key:"incomplete",label:optionLabel("Precautionary ceiling")} : riskBand(totalRiskDisplay?.number ?? state.riskSnapshot.total.score ?? state.riskSnapshot.total.estimated_score);
   const statsHtml = [
-    { label: "Risk", content: riskBadge(state.riskSnapshot.total), tooltip: riskTooltip(state.riskSnapshot.total), detail: totalRiskBand.label, className: `risk-${totalRiskBand.key}` },
+    { label: totalRiskDisplay?.current ? "Stress loss" : "Risk", content: riskBadge(state.riskSnapshot.total), tooltip: riskTooltip(state.riskSnapshot.total), detail: totalRiskBand.label, className: `risk-${totalRiskBand.key}` },
     { label: "Positions", value: items.length, tooltip: "Number of open positions shown after filters" },
     { label: "Securities", value: symbols, tooltip: "Unique security symbols" },
     { label: "Equities", value: equities, tooltip: "Open equity positions" },
@@ -4042,10 +4047,10 @@ function renderPortfolioValueDashboard(items) {
             <div class="delta ${profitClass}" title="Holding profit converted to ${esc(state.baseCurrency)} using displayed FX rates when available">${signedMoney(primaryProfit, state.baseCurrency)}</div>
           </div>
           <div class="portfolio-risk-summary">
-            <span>${esc(optionLabel("Total portfolio risk"))}</span>
+            <span>${esc(optionLabel("Total portfolio stress loss"))}</span>
             ${riskBadge(state.riskSnapshot.total)}
             ${typeof stressRiskSummaryHtml === "function" ? stressRiskSummaryHtml(state.riskSnapshot.total) : ""}
-            <button class="secondary compact-button" type="button" data-open-risk-scenarios="">${esc(t("Explore lower risk"))}</button>
+            <button class="secondary compact-button" type="button" data-open-risk-scenarios="">${esc(t("Explore lower stress loss"))}</button>
             ${typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(state.riskSnapshot.total) : ""}
           </div>
         </div>
@@ -4274,7 +4279,7 @@ function sortHoldingsRows(items) {
     account: (holding) => cleanSourceLabel(holding.account), status: holdingsStatusSortLabel,
     risk: (item) => {
       const risk = state.riskSnapshot?.total?.position_risks?.get(item);
-      return risk?.model === "portfolio-risk-v3" && typeof stressRiskDisplay === "function"
+      return ["portfolio-risk-v3", "portfolio-risk-v4"].includes(risk?.model) && typeof stressRiskDisplay === "function"
         ? stressRiskDisplay(risk).number : risk?.score;
     },
     amount: (value, currency) => reportAmount(value, currency, state.baseCurrency) });
@@ -5107,10 +5112,10 @@ function renderIndustrySplit(items) {
       <div class="chart-header">
         <div>
           <div class="chart-title">Industry split</div>
-          <span class="chart-subtitle">${state.language === "he" ? `${groups.length} ענפים · ציון הסיכון של כל ענף מחושב בנפרד ואינו מתחבר לציון הכולל` : `${groups.length} industries · each industry risk is calculated separately and does not add up to the total`}</span>
+          <span class="chart-subtitle">${state.language === "he" ? `${groups.length} ענפים · ההפסד בתרחיש לחץ לכל ענף מחושב בנפרד ואחוזיו אינם מתחברים להפסד הכולל` : `${groups.length} industries · each industry stress loss is assessed separately; percentages do not add to the total`}</span>
         </div>
         <div class="industry-total-risk">
-          <small>${esc(optionLabel("Total portfolio risk"))}</small>
+          <small>${esc(optionLabel("Total portfolio stress loss"))}</small>
           ${riskBadge(totalRisk)}
         </div>
       </div>
@@ -5126,7 +5131,7 @@ function renderIndustrySplit(items) {
                 </div>
                 <div class="industry-split-metrics">
                   <span>${money(group.value, state.baseCurrency, 0)} · ${fmt(percent, 1)}%</span>
-                  <small>${esc(optionLabel("Industry risk"))}</small>
+                  <small>${esc(optionLabel("Industry stress loss"))}</small>
                   ${riskBadge(group.risk)}
                 </div>
               </div>

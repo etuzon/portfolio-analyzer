@@ -1,4 +1,4 @@
-"""Numeric-only risk badges retain their meaning and accessible interactions."""
+"""Legacy index badges retain their frozen meaning and accessible interactions."""
 from pathlib import Path
 import re
 import subprocess
@@ -11,7 +11,7 @@ def run_node(script):
     assert result.returncode == 0, result.stderr
 
 
-def test_all_risk_bands_show_only_the_number_and_keep_localized_accessible_details():
+def test_legacy_risk_bands_show_only_the_number_and_keep_localized_accessible_details():
     source = (ROOT / 'web/app.js').read_text()
     functions = []
     for name in ('locale', 'esc', 'fmt', 'optionLabel', 'riskBand', 'riskTooltip', 'riskBadge'):
@@ -24,7 +24,7 @@ const cases=[[0,'low','Low'],[20,'low','Low'],[21,'moderate','Moderate'],[40,'mo
 for(const language of ['en','he']){
  state.language=language;
  for(const [score,key,label] of cases){
-  const risk={score,label:'Account "A" <test>',drivers:[],components:{}};
+  const risk={model:'portfolio-risk-v2',score,label:'Account "A" <test>',drivers:[],components:{}};
   const original=JSON.stringify(risk),html=riskBadge(risk),tooltip=riskTooltip(risk);
   assert.equal(html.replace(/<[^>]*>/g,'').trim(),String(score));
   assert.ok(html.startsWith('<button')&&html.includes(`risk-${key}`));

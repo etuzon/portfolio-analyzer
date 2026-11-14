@@ -21,7 +21,7 @@ const nodes = {suggestTradeAccount:{disabled:false}};
 const $ = id => nodes[id];
 const handlers = {};
 const document = {querySelectorAll:()=>[],addEventListener:(event,handler)=>handlers[event]=handler};
-const riskScoreForItems = () => ({score:10});
+const riskScoreForItems = () => ({model:"portfolio-risk-v4",status:"ok",score:10,loss_pct:10});
 const accountHorizonYears = () => 20;
 const industryLabel = () => 'Technology';
 const volatilityProxy = () => 20;

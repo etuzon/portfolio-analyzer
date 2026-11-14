@@ -59,7 +59,7 @@ def calculate(items, *, js_options="", **options):
 
 
 def severity(loss, equity):
-    return math.floor(min(100, 200 * max(0, loss) / equity) + .5)
+    return math.floor(min(100, 100 * max(0, loss) / equity) + .5 + 1e-10)
 
 
 def test_conditional_psagot_values_use_nav_loss_and_full_cash_denominator():
@@ -69,9 +69,9 @@ def test_conditional_psagot_values_use_nav_loss_and_full_cash_denominator():
     original = deepcopy(fund)
     result = calculate([fund], cash=cash)
     assert result["status"] == "incomplete" and result["score"] is None
-    assert result["provisional_model"] == "portfolio-risk-provisional-v2"
+    assert result["provisional_model"] == "portfolio-risk-provisional-v3"
     assert result["provisional_scope"] == "portfolio"
-    assert result["provisional_score"] == severity(fund_value * .01, fund_value + cash) == 2
+    assert result["provisional_score"] == severity(fund_value * .01, fund_value + cash) == 1
     assert result["provisional_loss"] == pytest.approx(fund_value * .01)
     assert result["provisional_net_equity"] == fund_value + cash
     assert result["provisional_proxy_gross"] == fund_value
@@ -103,7 +103,7 @@ def test_bond_proxy_amounts_follow_duration_and_credit_without_fake_agency_grade
         assert not any(row["name"].startswith("issuer_") for row in result["provisional_scenarios"])
 
 
-@pytest.mark.parametrize("cash,expected", [(0, 2), (100, 1), (-90, 20), (-99, 100)])
+@pytest.mark.parametrize("cash,expected", [(0, 1), (100, 1), (-90, 10), (-99, 100)])
 def test_mmf_cash_dilution_and_debt_change_equity_not_missing_evidence_points(cash, expected):
     result = calculate([item(focus="money_market")], cash=cash)
     assert result["provisional_net_equity"] == 100 + cash
@@ -114,11 +114,11 @@ def test_mmf_cash_dilution_and_debt_change_equity_not_missing_evidence_points(ca
 
 def test_foreign_cash_and_mmf_use_compounded_fx_and_nav_shocks():
     cash = calculate([], cashAccounts=[dict(value=100, currency="USD")])
-    assert cash["score"] == 30 and cash["stress_loss"] == 15
+    assert cash["score"] == 15 and cash["stress_loss"] == 15
     fund = calculate([item(currency="USD", focus="money_market")])
     loss = 100 * (1 - (1 - .01) * (1 - .15))
     assert fund["provisional_loss"] == pytest.approx(loss)
-    assert fund["provisional_score"] == severity(loss, 100) == 32
+    assert fund["provisional_score"] == severity(loss, 100) == 16
 
 
 def test_mixed_usd_allocation_is_a_joint_scenario_not_a_principal_wipeout():
@@ -129,7 +129,7 @@ def test_mixed_usd_allocation_is_a_joint_scenario_not_a_principal_wipeout():
                  + 29.9 * (.6 * .85 - 1) + 36.5 * -.15)
     assert result["provisional_net_equity"] == pytest.approx(100)
     assert result["provisional_loss"] == pytest.approx(expected)
-    assert result["provisional_score"] == severity(expected, 100) == 57
+    assert result["provisional_score"] == severity(expected, 100) == 29
 
 
 def test_known_weak_country_is_retained_for_money_fund_and_currency():
@@ -139,7 +139,7 @@ def test_known_weak_country_is_retained_for_money_fund_and_currency():
     result = calculate([fund])
     expected = 100 * (1 - (1 - .25 * .08) * (1 - .35))
     assert result["provisional_loss"] == pytest.approx(expected)
-    assert result["provisional_score"] == severity(expected, 100) == 73
+    assert result["provisional_score"] == severity(expected, 100) == 36
 
 
 @pytest.mark.parametrize("focus,expected_loss", [(None, 40), ("broad_equity", 40), ("sector_equity", 50)])
@@ -154,7 +154,7 @@ def test_security_key_concentration_survives_lot_and_account_splitting():
     whole = calculate([item(kind="equity")], cash=100)
     split = calculate([item(value=25, kind="equity", account=str(i)) for i in range(4)], cash=100)
     assert whole["provisional_loss"] == split["provisional_loss"] == pytest.approx(60)
-    assert whole["provisional_score"] == split["provisional_score"] == 60
+    assert whole["provisional_score"] == split["provisional_score"] == 30
 
 
 def test_signed_short_and_matched_hedge_keep_directional_risk():
@@ -243,7 +243,7 @@ def test_a_conflicting_fund_profile_never_removes_direct_stock_issuer_risk(focus
     # its issuer-distress scenario vanish or establish money-market exposure.
     assert result["provisional_scope"] == "portfolio"
     assert result["provisional_loss"] == pytest.approx(60)
-    assert result["provisional_score"] == 60
+    assert result["provisional_score"] == 30
     assert any(row["name"].startswith("issuer_distress:") for row in result["provisional_scenarios"])
 
 
@@ -251,7 +251,7 @@ def test_names_and_custodian_labels_do_not_establish_a_money_market_class():
     asset = item("CASH-BROKER", issuer_id="manager:Bank")
     asset["holding"].update(name="Money market cash account", account="Bank money market", broker="Cash Broker")
     result = calculate([asset])
-    assert result["provisional_loss"] == 40 and result["provisional_score"] == 80
+    assert result["provisional_loss"] == 40 and result["provisional_score"] == 40
     assert not any(row["code"] == "money_market_proxy" for row in result["provisional_assumptions"])
 
 
@@ -272,7 +272,7 @@ def test_fund_manager_domicile_is_not_underlying_economic_country_evidence():
                 country={"country_code": "QA", "basis": "issuer_domicile_proxy"}, country_rating=opinion("CCC"))
     fund["stress_risk"]["parameters"]["country_currency"] = "ILS"
     result = calculate([fund], cash=100)
-    assert result["provisional_loss"] == 40 and result["provisional_score"] == 40
+    assert result["provisional_loss"] == 40 and result["provisional_score"] == 20
     assert any(row["code"] == "country_stress_proxy" for row in result["provisional_assumptions"])
 
 
@@ -285,7 +285,7 @@ def test_fund_wrapper_bond_terms_are_not_the_underlying_bond_fund_duration():
     result = calculate([fund], cash=100)
     loss = -100 * math.expm1(-4 * .05)
     assert result["provisional_loss"] == pytest.approx(loss)
-    assert result["provisional_score"] == severity(loss, 200) == 18
+    assert result["provisional_score"] == severity(loss, 200) == 9
     assert any(row["code"] == "bond_duration_proxy" and row["duration_years"] == 4 for row in result["provisional_assumptions"])
 
 
@@ -300,10 +300,10 @@ def test_flat_verified_fund_children_keep_same_issuer_alias_when_parent_mark_bec
                 currency_exposures={"ILS": 1}, parameters={"instrument_kind": "equity", "country_currency": "ILS"})))
     fund["stress_risk"].update(lookthrough_verified=True, lookthrough=children)
     verified = calculate([fund], cash=100)
-    assert verified["score"] == 60 and verified["stress_loss"] == 60
+    assert verified["score"] == 30 and verified["stress_loss"] == 60
     fund["stress_risk"]["valuation_date"] = "2026-10-01"
     provisional = calculate([fund], cash=100)
-    assert provisional["score"] is None and provisional["provisional_score"] == 60
+    assert provisional["score"] is None and provisional["provisional_score"] == 30
     assert provisional["provisional_loss"] == 60
 
 
@@ -341,7 +341,7 @@ def test_unenabled_manual_country_sensitivity_cannot_silently_reduce_direct_bond
     result = calculate([bond])
     loss = -100 * math.expm1(-5 * .12)
     assert result["provisional_loss"] == pytest.approx(loss)
-    assert result["provisional_score"] == severity(loss, 100) == 90
+    assert result["provisional_score"] == severity(loss, 100) == 45
     assert any(row["code"] == "country_sensitivity_proxy" for row in result["provisional_assumptions"])
 
 
@@ -351,7 +351,7 @@ def test_fund_wrapper_country_sensitivity_cannot_override_underlying_category_pr
     result = calculate([fund], cash=100)
     loss = -100 * math.expm1(-4 * .12)
     assert result["provisional_loss"] == pytest.approx(loss)
-    assert result["provisional_score"] == severity(loss, 200) == 38
+    assert result["provisional_score"] == severity(loss, 200) == 19
     assert any(row["code"] == "country_sensitivity_proxy" for row in result["provisional_assumptions"])
 
 
@@ -369,7 +369,7 @@ def test_fund_manager_default_does_not_become_underlying_bond_fund_default():
     loss = -100 * math.expm1(-4 * .05)
     assert result["provisional_scope"] == "portfolio"
     assert result["provisional_loss"] == pytest.approx(loss)
-    assert result["provisional_score"] == 18
+    assert result["provisional_score"] == severity(loss, 200) == 9
 
 
 @pytest.mark.parametrize("state_", ["current", "stale", "national", "short_term", "future", "withdrawn"])
@@ -440,7 +440,7 @@ def test_sovereign_recovery_attachment_keeps_obligation_and_systemic_currency_ax
         loss = -100 * math.expm1(-5 * (.02 + .5 * .005))
         assert result["provisional_scope"] == "portfolio"
         assert result["provisional_loss"] == pytest.approx(loss)
-        assert result["provisional_score"] == severity(loss, 200) == 11
+        assert result["provisional_score"] == severity(loss, 200) == 5
 
 
 @pytest.mark.parametrize("opt_in", [False, True])
@@ -556,7 +556,7 @@ def test_unenabled_manual_plain_bond_checkbox_does_not_establish_verified_nonpla
         loss = -100 * math.expm1(-5 * .05)
         assert result["provisional_scope"] == "portfolio"
         assert result["provisional_loss"] == pytest.approx(loss)
-        assert result["provisional_score"] == severity(loss, 200) == 22
+        assert result["provisional_score"] == severity(loss, 200) == 11
 
 
 def test_dashboard_wrappers_preserve_bank_cash_exclude_employee_cash_and_disclose_savings_scope():
@@ -658,13 +658,13 @@ def test_actual_dashboard_risk_meaning_recovery_and_reading_context(tmp_path, ch
     assert evaluate("qa.errors") == []
     settle(command)
     result = evaluate("state.riskSnapshot.accounts.map(row=>({key:row.key,risk:row.risk}))")
-    assert next(row["risk"]["provisional_score"] for row in result if row["key"] == "qa-ils") == 2
-    assert next(row["risk"]["provisional_score"] for row in result if row["key"] == "qa-usd") == 57
+    assert next(row["risk"]["provisional_score"] for row in result if row["key"] == "qa-ils") == 1
+    assert next(row["risk"]["provisional_score"] for row in result if row["key"] == "qa-usd") == 29
     total = evaluate("state.riskSnapshot.total")
     loss = -(336 * (math.exp(-5 * .025) * .85 - 1) + 299 * (.6 * .85 - 1) + 365 * -.15)
     assert total["provisional_net_equity"] == pytest.approx(2000)
     assert total["provisional_loss"] == pytest.approx(loss)
-    assert total["provisional_score"] == severity(loss, 2000) == 29
+    assert total["provisional_score"] == severity(loss, 2000) == 14
     evaluate("qa.badge=document.querySelector('[data-account-summary=qa-ils] .risk-badge');qa.badge.scrollIntoView({block:'center'});qa.badge.focus()")
     browser_wait(evaluate, "!$('riskBadgeExplanation').hidden")
     tooltip = evaluate("$('riskBadgeExplanation').textContent")

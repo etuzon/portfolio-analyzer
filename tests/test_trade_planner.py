@@ -58,7 +58,7 @@ assert.equal(result.status,'ok',JSON.stringify(result));
 const rec=result.recommendation;
 assert.ok(rec.amount>0 && rec.amount<=2000);
 assert.ok(rec.cashRemaining>=rec.reserve);
-assert.ok(rec.riskAfter<=75);
+assert.ok(rec.riskAfter<=37.5);
 assert.equal(rec.quantity*100,rec.amount);
 ''')
 

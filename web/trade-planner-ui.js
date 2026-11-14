@@ -65,8 +65,8 @@ function tradePlannerResultHtml(view) {
   const cash = (amount) => `<bdi>${esc(money(amount, rec.currency))}</bdi>`;
   const fact = (label, value) => `<div><dt>${esc(t(label))}</dt><dd>${value}</dd></div>`;
   const limit = t({ cash_reserve: "Cash reserve", stock_account_limit: "Account stock limit", stock_portfolio_limit: "Portfolio stock limit",
-    sector_account_limit: "Account sector limit", sector_portfolio_limit: "Portfolio sector limit", risk_sizing: "Risk-adjusted sizing", requested_amount: "Requested amount", risk_limit: "Projected risk" }[rec.limit]);
-  const alternatives = (result.alternatives || []).map((item) => `<li><bdi>${esc(tradePlannerAccountName(item.account))}</bdi>: <bdi>${esc(money(item.amount, item.currency))}</bdi> · ${esc(t("Projected risk"))} <bdi>${item.riskAfter}/100</bdi></li>`).join("");
+    sector_account_limit: "Account sector limit", sector_portfolio_limit: "Portfolio sector limit", risk_sizing: "Risk-adjusted sizing", requested_amount: "Requested amount", risk_limit: "Projected stress loss" }[rec.limit]);
+  const alternatives = (result.alternatives || []).map((item) => `<li><bdi>${esc(tradePlannerAccountName(item.account))}</bdi>: <bdi>${esc(money(item.amount, item.currency))}</bdi> · ${esc(t("Projected stress loss"))} <bdi>${esc(fmt(item.riskAfter, 1))}%</bdi></li>`).join("");
   return `<div class="trade-plan-heading" role="status"><span>${esc(t(short ? "Conditional short estimate" : "Suggested purchase"))}</span>
     <dl class="trade-plan-summary">
       <div class="trade-plan-summary-amount"><dt>${esc(t("Recommended trade amount"))}</dt><dd><strong>${cash(rec.amount)}</strong></dd></div>
@@ -83,17 +83,17 @@ function tradePlannerResultHtml(view) {
     <dl class="trade-plan-facts">
       ${fact("Recorded cash", cash(rec.cash))}${fact("Cash reserve", cash(rec.reserve))}
       ${fact(short ? "Cash after modeled collateral and fee buffer" : "Cash after purchase and fee buffer", cash(rec.cashRemaining))}
-      ${fact("Account risk before → after", `<bdi dir="ltr">${rec.riskBefore}/100 → ${rec.riskAfter}/100</bdi>`)}
+      ${fact("Account stress loss before → after", `<bdi dir="ltr">${esc(fmt(rec.riskBefore, 1))}% → ${esc(fmt(rec.riskAfter, 1))}%</bdi>`)}
       ${fact("Stock weight before → after", `<bdi dir="ltr">${esc(fmt(rec.weightBefore, 1))}% → ${esc(fmt(rec.weightAfter, 1))}%</bdi>`)}
       ${short ? fact("Modeled collateral", cash(rec.collateral)) : ""}
     </dl>
-    <p>${esc(t("Amount limited by"))}: ${esc(limit)}. ${esc(t("Accounts are ranked by projected risk, stock and sector exposure, and fit to the requested amount."))}</p>
+    <p>${esc(t("Amount limited by"))}: ${esc(limit)}. ${esc(t("Accounts are ranked by projected stress loss, stock and sector exposure, and fit to the requested amount."))}</p>
     ${short ? `<p class="signal-missing">${esc(t("Broker short permission, share availability, and margin requirements are unverified. The model reserves 200% of short exposure from existing cash and does not spend short-sale proceeds."))}</p>` : ""}
     <details><summary>${esc(t("Sizing rules and other accounts"))}</summary>
       <p>${esc(t("Model defaults: keep at least 10% of account value and 20% of current cash; raise the value reserve to 20% for shorts, higher risk or a short horizon. Allow 1% of trade value for fees and slippage."))}</p>
       <p>${esc(t("Buy limits: stock 10% per account and 5% of the liquid portfolio. Short limits: 2.5% and 2%. Sector limits: 30% per account and 25% of the liquid portfolio. Retirement and ESOP assets are excluded from this sizing base."))}</p>
-      <p>${esc(t("Starting trade size is the smallest of 5% of account value, 2% of portfolio value and 25% of cash. Higher risk, volatility, shorts, unknown sector or missing/short retirement horizon reduce it. Modeled risk may rise by at most 5 points and may not exceed 75/100."))}</p>
-      <p>${esc(t("The shared score measures scenario loss severity. For a cash-only account, sizing policy allows up to 25 points of increase when opening the first position; the 75/100 ceiling still applies."))}</p>
+      <p>${esc(t("Starting trade size is the smallest of 5% of account value, 2% of portfolio value and 25% of cash. Stress loss, volatility, shorts, unknown sector or missing/short retirement horizon reduce it. Unrounded modeled stress loss may rise by at most 2.5 percentage points and may not exceed 37.5%."))}</p>
+      <p>${esc(t("For a cash-only account, sizing policy allows up to 12.5 percentage points of stress-loss increase when opening the first position; the 37.5% ceiling still applies. These are application sizing limits, not calibrated risk classes."))}</p>
       <p>${esc(t("Retirement horizon is a proxy, not your stated investment goal or risk tolerance. Recorded cash is not confirmed broker buying power. Quotes and FX are saved estimates; taxes and actual broker fees are not modeled."))}</p>
       <p>${esc(t("Holdings are valued using their latest available saved quotes for this estimate; the recorded portfolio is unchanged."))}</p>
       ${rec.unknownSector ? `<p class="signal-missing">${esc(t("Sector is unknown; the proposed amount was reduced."))}</p>` : ""}

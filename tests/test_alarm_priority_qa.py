@@ -134,11 +134,11 @@ for(const [score,expected] of [[0,'low'],[20,'low'],[21,'moderate'],[40,'moderat
 }
 state.localAccounts=[account()];state.allPortfolioItems=[stock()];state.items=[];
 let alarms=portfolioRiskAlarms();
-assert.equal(alarms.length,2);assert.ok(alarms.every(x=>x.risk.score===100&&x.level==='extreme'));
+assert.equal(alarms.length,2);assert.ok(alarms.every(x=>x.risk.score===60&&x.risk.loss_pct===60&&x.level==='stress_alert'));
 state.localAccounts[0].initial_cash=-1000;
-alarms=portfolioRiskAlarms();assert.ok(alarms.every(x=>x.risk.score===100));
+alarms=portfolioRiskAlarms();assert.ok(alarms.every(x=>x.risk.score===67&&Math.abs(x.risk.loss_pct-100*6000/9000)<1e-9));
 state.localAccounts[0].initial_cash=-10000;
-alarms=portfolioRiskAlarms();assert.ok(alarms.every(x=>x.risk.score===100&&alarmAppearance(x).tone==='red'));
+alarms=portfolioRiskAlarms();assert.ok(alarms.every(x=>x.risk.score===100&&x.risk.loss_pct===null&&x.level==='funding'&&alarmAppearance(x).tone==='red'));
 state.allPortfolioItems.push({...stock('ESOP',100000000,'esop'),analytics_state:'pending'});
 state.localAccounts.push(account('esop',-10000000,'ESOP'));
 assert.deepEqual(portfolioRiskAlarms().map(x=>x.risk.score),[100,100]);
@@ -169,9 +169,9 @@ state.allPortfolioItems=[original];state.portfolioRefreshPending=true;
 assert.equal(portfolioRiskAlarms()[0].level,'updating');
 state.portfolioRefreshPending=false;state.portfolioSourceState='failed';
 assert.equal(portfolioRiskAlarms()[0].level,'unavailable');
-state.portfolioSourceState='ready';assert.ok(portfolioRiskAlarms().every(x=>x.level==='extreme'));
+state.portfolioSourceState='ready';assert.ok(portfolioRiskAlarms().every(x=>x.level==='stress_alert'));
 delete state.allPortfolioItems[0].analytics_state;
-assert.ok(portfolioRiskAlarms().every(x=>x.level==='extreme')); // Manual rows omit this optional field.
+assert.ok(portfolioRiskAlarms().every(x=>x.level==='stress_alert')); // Manual rows omit this optional field.
 state.allPortfolioItems=[];state.localAccounts=[];
 for(const flag of ['alarmsLoadFailed','alarmSignalsLoadFailed','portfolioAlarmLoadFailed']){
  state[flag]=true;renderAlarms();assert.equal(nodes.alarmsButton.dataset.alarmTone,'amber');
@@ -466,9 +466,9 @@ def test_browser_header_modal_navigation_viewer_and_keyboard(tmp_path, width, la
             assert evaluate("$('alarmsModal').inert") is True
             assert evaluate("$('alarmRiskModal').contains(document.activeElement)") is True
             evaluate("state.localAccounts[0].initial_cash=-1000;renderAlarms()")
-            assert '100' in evaluate("$('alarmRiskDetails').textContent")
+            assert '66.7%' in evaluate("$('alarmRiskDetails').textContent")
             evaluate("state.localAccounts[0].initial_cash=-10000;renderAlarms()")
-            assert '100' in evaluate("$('alarmRiskDetails').textContent")
+            assert evaluate("$('alarmRiskDetails').textContent.includes(t('Nonpositive equity'))")
             key('Escape');time.sleep(.1)
             assert evaluate("$('alarmRiskModal').hidden") is True
             assert evaluate("$('alarmsModal').inert") is False

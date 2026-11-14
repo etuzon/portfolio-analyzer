@@ -9,9 +9,15 @@
   // margin rules. Background: https://www.investor.gov/introduction-investing/investing-basics/asset-allocation
   const POLICY = Object.freeze({ reserve: 0.10, feeBuffer: 0.01, stockAccount: 0.10,
     stockPortfolio: 0.05, sectorAccount: 0.30, sectorPortfolio: 0.25,
-    shortCollateral: 2, maxRisk: 75, maxRiskIncrease: 5, firstPositionRiskIncrease: 25, maxPriceAgeDays: 7 });
+    shortCollateral: 2, riskUnit: "percent_capital_loss", maxRisk: 37.5, maxRiskIncrease: 2.5, firstPositionRiskIncrease: 12.5, maxPriceAgeDays: 7 });
   const number = (value) => ["number", "string"].includes(typeof value) && String(value).trim() !== "" && Number.isFinite(Number(value)) ? Number(value) : null;
   const upper = (value) => String(value || "").trim().toUpperCase();
+  // Policy quantities are uncapped, unrounded capital-loss percentages. An
+  // automatic estimate with missing evidence is not eligible for sizing.
+  const stressLossPercent = (risk) => {
+    const eligible = Number.isFinite(risk?.score) || risk?.status === "estimate" && Number.isFinite(risk.estimated_score);
+    return eligible && typeof risk.loss_pct === "number" && Number.isFinite(risk.loss_pct) && risk.loss_pct >= 0 ? risk.loss_pct : null;
+  };
   const total = (values) => values.reduce((sum, value) => sum + value, 0);
   const key = (value) => upper(value).replace(/[\s_.-]/g, "");
   const listingIdentity = (item) => {
@@ -181,15 +187,16 @@
       const horizon = adapters.horizon(account);
       const before = adapters.risk(positions, { cash: cashBase, cashCurrency: currency, horizonYears: horizon, asOf:context.calculated_at,
         baseCurrency: base, normalizeField: (item, field) => convert(item.holding[field], item.holding.currency) });
-      if (!Number.isFinite(before.score)) { reject("risk_inputs_incomplete"); continue; }
-      if (before.score >= POLICY.maxRisk) { reject("risk_limit"); continue; }
-      let scale = before.score >= 60 ? 0.5 : before.score >= 40 ? 0.75 : 1;
+      const beforeLoss = stressLossPercent(before);
+      if (beforeLoss === null) { reject("risk_inputs_incomplete"); continue; }
+      if (beforeLoss >= POLICY.maxRisk) { reject("risk_limit"); continue; }
+      let scale = beforeLoss >= 30 ? 0.5 : beforeLoss >= 20 ? 0.75 : 1;
       if (horizon === null || horizon < 7) scale *= 0.5;
       if (horizon !== null && horizon < 3) scale *= 0.5;
       if (!sector) scale *= 0.5;
       if (adapters.volatility(security) > 60) scale *= 0.5;
       if (action === "SHORT") scale *= 0.5;
-      const reserveFraction = (horizon !== null && horizon < 7) || before.score >= 60 || action === "SHORT" ? 0.20 : POLICY.reserve;
+      const reserveFraction = (horizon !== null && horizon < 7) || beforeLoss >= 30 || action === "SHORT" ? 0.20 : POLICY.reserve;
       const reserve = Math.max(accountNav * reserveFraction, cashBase * 0.20);
       const collateral = action === "SHORT" ? POLICY.shortCollateral : 1;
       const positionLimit = action === "SHORT" ? 0.025 : POLICY.stockAccount;
@@ -208,7 +215,7 @@
       let quantity = Math.floor(Math.max(0, limits[0].value) / unitBase);
       // Sizing policy is separate from the shared severe-loss calculation.
       const riskIncreaseLimit = positions.length ? POLICY.maxRiskIncrease : POLICY.firstPositionRiskIncrease;
-      let after, projected, costBase, riskReduced = false;
+      let after, afterLoss, projected, costBase, riskReduced = false;
       while (quantity > 0) {
         const notional = quantity * current.price;
         costBase = quantity * unitBase;
@@ -224,20 +231,22 @@
         after = adapters.risk(projected, { cash: projectedCashBase,
           cashCurrency: currency, horizonYears: horizon, baseCurrency: base, asOf:context.calculated_at,
           normalizeField: (item, field) => convert(item.holding[field], item.holding.currency) });
-        if (Number.isFinite(after.score) && after.score <= Math.min(POLICY.maxRisk, before.score + riskIncreaseLimit)) break;
+        afterLoss = stressLossPercent(after);
+        if (afterLoss !== null && afterLoss <= Math.min(POLICY.maxRisk, beforeLoss + riskIncreaseLimit)) break;
         riskReduced = true;
         quantity = Math.floor(quantity / 2);
       }
-      if (!quantity) { reject(after && !Number.isFinite(after.score) ? "risk_inputs_incomplete" : limits[0].value < unitBase ? limits[0].reason : "risk_limit"); continue; }
+      if (!quantity) { reject(after && afterLoss === null ? "risk_inputs_incomplete" : limits[0].value < unitBase ? limits[0].reason : "risk_limit"); continue; }
       const amount = quantity * current.price;
       const cashUsed = amount * (collateral + POLICY.feeBuffer);
       const stockBefore = exposure(positions, sameSymbol);
-      const score = after.score + Math.max(0, after.score - before.score) * 2
+      // Preserve the previous economic ranking weights when changing units.
+      const score = 2 * afterLoss + 4 * Math.max(0, afterLoss - beforeLoss)
         + (stockBefore + costBase) / accountNav * 100 + (sector ? exposure(positions, sameSector) / accountNav * 10 : 5)
         + (requested !== null ? (requested - amount) / requested * 25 : 0);
       candidates.push({ account, amount, quantity, currency, cash, reserve: convert(reserve, base, currency),
         cashRemaining: cash - cashUsed, collateral: action === "SHORT" ? amount * collateral : null,
-        feeAllowance: amount * POLICY.feeBuffer, riskBefore: before.score, riskAfter: after.score,
+        feeAllowance: amount * POLICY.feeBuffer, riskBefore: beforeLoss, riskAfter: afterLoss, riskUnit: POLICY.riskUnit,
         weightBefore: stockBefore / accountNav * 100, weightAfter: (stockBefore + costBase) / accountNav * 100,
         limit: riskReduced ? "risk_limit" : limits[0].reason, horizon, riskIncreaseLimit, unknownSector: !sector, score });
     }
@@ -247,5 +256,5 @@
       action, requested, policy: POLICY, symbol, quote: current, warnings, calculatedAt: context.calculated_at,
       refreshPending: context.refresh_pending };
   }
-  return { plan, converter, quote, cashBalance, ledgerCutoff, listingCountry, POLICY };
+  return { plan, converter, quote, cashBalance, ledgerCutoff, listingCountry, stressLossPercent, POLICY };
 });

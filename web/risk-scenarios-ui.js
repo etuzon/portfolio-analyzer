@@ -119,15 +119,15 @@ async function regenerateRiskScenarios() {
   }
 }
 function riskScenarioScore(risk) {
-  const value = typeof risk === "number" ? risk : Number.isFinite(risk?.score) ? risk.score : risk?.status === "estimate" ? risk.estimated_score : null;
+  const value = typeof risk === "number" ? null : window.PortfolioTradePlanner?.stressLossPercent(risk);
   return Number.isFinite(value) ? value : null;
 }
 function riskScenarioComparison(label, beforeRisk, afterRisk) {
   const before = riskScenarioScore(beforeRisk), after = riskScenarioScore(afterRisk);
   if (before === null || after === null) return `<div class="risk-scenario-comparison"><span>${esc(t(label))}</span><strong>${esc(t("Not available"))}</strong></div>`;
   const delta = after - before;
-  const deltaLabel = riskScenarioText("{change} points", { change: `${delta > 0 ? "+" : ""}${fmt(delta, 0)}` });
-  return `<div class="risk-scenario-comparison"><span>${esc(t(label))}</span><div class="risk-scenario-scores"><bdi>${beforeRisk?.status === "estimate" ? "~" : ""}${esc(fmt(before, 0))}</bdi><span aria-hidden="true">${state.language === "he" ? "←" : "→"}</span><strong dir="ltr"><bdi>${afterRisk?.status === "estimate" ? "~" : ""}${esc(fmt(after, 0))}</bdi><small>/100</small></strong><small class="${delta < 0 ? "down" : delta > 0 ? "up" : "neutral"}"><bdi>${esc(deltaLabel)}</bdi></small></div></div>`;
+  const deltaLabel = riskScenarioText("{change} percentage points", { change: `${delta > 0 ? "+" : ""}${fmt(delta, 2)}` });
+  return `<div class="risk-scenario-comparison"><span>${esc(t(label))}</span><div class="risk-scenario-scores"><bdi>${beforeRisk?.status === "estimate" ? "~" : ""}${esc(fmt(before, 1))}%</bdi><span aria-hidden="true">${state.language === "he" ? "←" : "→"}</span><strong dir="ltr"><bdi>${afterRisk?.status === "estimate" ? "~" : ""}${esc(fmt(after, 1))}%</bdi></strong><small class="${delta < 0 ? "down" : delta > 0 ? "up" : "neutral"}"><bdi>${esc(deltaLabel)}</bdi></small></div></div>`;
 }
 function riskScenarioProjection(scenario) {
   const reasons = {
@@ -137,14 +137,14 @@ function riskScenarioProjection(scenario) {
   };
   const changes = (scenario.reasons || []).filter(key => reasons[key]).map(key => t(reasons[key]));
   const rationale = scenario.improves
-    ? changes.length ? riskScenarioText("Lower modeled components: {components}", { components: changes.join(", ") }) : t("This amount lowers at least one modeled risk score.")
-    : t("This amount raises at least one risk score or leaves both unchanged.");
+    ? changes.length ? riskScenarioText("Lower modeled components: {components}", { components: changes.join(", ") }) : t("This amount lowers modeled stress loss in at least one scope without increasing the other.")
+    : t("This amount raises modeled stress loss in at least one scope or leaves both unchanged.");
   const quantity = Number.isFinite(scenario.quantity) ? fmt(scenario.quantity, 8) : t("Not available");
   const cash = Number.isFinite(scenario.cashBefore) && Number.isFinite(scenario.cashAfter)
     ? `${money(scenario.cashBefore, scenario.accountCurrency)} ${state.language === "he" ? "←" : "→"} ${money(scenario.cashAfter, scenario.accountCurrency)}` : t("Not available");
   const proceeds = Number.isFinite(scenario.proceedsAccount) ? money(scenario.proceedsAccount, scenario.accountCurrency) : t("Not available");
   return `<p class="risk-scenario-rationale${scenario.improves ? "" : " signal-missing"}">${esc(rationale)}</p>
-    <div class="risk-scenario-comparisons">${riskScenarioComparison("Account risk", scenario.accountBefore, scenario.accountAfter)}${riskScenarioComparison("Total portfolio risk", scenario.totalBefore, scenario.totalAfter)}</div>
+    <div class="risk-scenario-comparisons">${riskScenarioComparison("Account stress loss", scenario.accountBefore, scenario.accountAfter)}${riskScenarioComparison("Total portfolio stress loss", scenario.totalBefore, scenario.totalAfter)}</div>
     <dl class="risk-scenario-facts"><div><dt>${esc(t("Quantity to sell"))}</dt><dd><bdi>${esc(quantity)}</bdi></dd></div><div><dt>${esc(t("Estimated proceeds to account"))}</dt><dd><bdi>${esc(proceeds)}</bdi></dd></div><div><dt>${esc(t("Account cash before and after"))}</dt><dd><bdi>${esc(cash)}</bdi></dd></div></dl>
     ${scenario.converted ? `<p class="section-note">${esc(t("Proceeds are converted to the account currency using the captured exchange rate."))}</p>` : ""}`;
 }

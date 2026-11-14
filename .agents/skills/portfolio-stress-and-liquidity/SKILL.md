@@ -40,6 +40,12 @@ Investment-account-only scope; follow the product's actual contract.
 - In portfolio-analyzer use the shared maintained portfolio-risk model for the
   displayed score. Scenario loss is separate from risk-score weights, loss
   probability, and broker permission.
+- Before endorsing a displayed financial score, apply
+  [financial-score-validation](../financial-score-validation/SKILL.md). Reconcile
+  the raw money loss and percentage, and check score meaning and downstream
+  policy units independently. A simulation pass does not validate a generic risk
+  adjective or a probability; keep funding boundaries and unknown scope distinct
+  from measured loss percentages.
 
 Return baseline reconciliation, scenarios, position/account P&L, post-shock equity,
 concentration, liquidity/funding needs, missing coverage, and approximation limits.

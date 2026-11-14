@@ -19,8 +19,11 @@ from zoneinfo import ZoneInfo
 
 from .local_portfolio import _cash_delta
 
-MODEL = "portfolio-risk-v3"
+MODEL = "portfolio-risk-v4"
+LEGACY_STRESS_MODEL = "portfolio-risk-v3"
 LEGACY_MODEL = "portfolio-risk-v2"
+SCORE_METADATA = {"score_unit": "percent_capital_loss", "score_scale": "stress-loss-percent-v1",
+                  "scenario_horizon": "instantaneous_revaluation"}
 SOURCE = "dashboard_client_calculated"
 PREFIX = "risk_history_v1:"
 CONTEXT_TTL = timedelta(minutes=10)
@@ -136,11 +139,15 @@ def create_context(store, user_id: str, base_currency: str, capture: Callable[[s
     return deepcopy({key: value for key, value in {**context, "token": token, "source": SOURCE}.items() if key != "guard"})
 
 
-def _asset_aware_estimate(value: dict, status: str) -> dict:
+def _asset_aware_estimate(value: dict, status: str, model: str = MODEL) -> dict:
     fields = {"provisional_model", "provisional_basis", "provisional_score", "provisional_loss",
               "provisional_net_equity", "provisional_proxy_gross", "provisional_assumptions", "provisional_scope"}
+    current = model == MODEL
+    expected_model = "portfolio-risk-provisional-v3" if current else "portfolio-risk-provisional-v2"
+    if current:
+        fields |= {"provisional_loss_pct", "provisional_known_loss_pct"}
     if (not fields.issubset(value) or status not in {"incomplete", "unavailable"}
-            or value["provisional_model"] != "portfolio-risk-provisional-v2"
+            or value["provisional_model"] != expected_model
             or value["provisional_basis"] != "asset_aware_scenarios"
             or not isinstance(value["provisional_scope"], str) or value["provisional_scope"] not in {"portfolio", "known_values"}):
         raise RiskHistoryError("risk_history_invalid_metadata")
@@ -163,7 +170,7 @@ def _asset_aware_estimate(value: dict, status: str) -> dict:
         if equity is None:
             raise RiskHistoryError("risk_history_invalid_metadata")
         if equity > 0:
-            if loss is None or point != math.floor(min(100, 200 * (loss / equity)) + .5):
+            if loss is None or point != math.floor(min(100, (100 if current else 200) * (loss / equity)) + .5 + (1e-10 if current else 0)):
                 raise RiskHistoryError("risk_history_invalid_metadata")
         elif point == 100:
             if value.get("provisional_worst_scenario") != "nonpositive_estimated_equity" or loss is not None:
@@ -172,6 +179,16 @@ def _asset_aware_estimate(value: dict, status: str) -> dict:
             raise RiskHistoryError("risk_history_invalid_metadata")
     elif scope == "portfolio":
         raise RiskHistoryError("risk_history_invalid_metadata")
+    if current:
+        percent = (loss / equity * 100 if point is not None and equity is not None and equity > 0 and loss is not None
+                   else 0 if point == 0 and equity == 0 and loss == 0 else None)
+        for key, expected in (("provisional_loss_pct", percent if scope == "portfolio" else None),
+                              ("provisional_known_loss_pct", percent if scope == "known_values" else None)):
+            actual = _number(value[key])
+            if (expected is None and value[key] is not None
+                    or expected is not None and (actual is None or actual < 0
+                                                 or not math.isclose(actual, expected, rel_tol=1e-10, abs_tol=1e-8))):
+                raise RiskHistoryError("risk_history_invalid_metadata")
     for key in ("provisional_assumptions", "provisional_scenarios"):
         rows = value.get(key, [])
         if not isinstance(rows, list) or len(rows) > 1000 or any(not isinstance(row, dict) for row in rows):
@@ -195,9 +212,9 @@ def _asset_aware_estimate(value: dict, status: str) -> dict:
     return {key: deepcopy(value[key]) for key in keys if key in value}
 
 
-def _stress_risk(value: Any) -> dict:
+def _stress_risk(value: Any, model: str = MODEL) -> dict:
     """Validate versioned severe-loss records without promoting partial results."""
-    if not isinstance(value, dict) or value.get("model", MODEL) != MODEL:
+    if model not in {MODEL, LEGACY_STRESS_MODEL} or not isinstance(value, dict) or value.get("model", model) != model:
         raise RiskHistoryError("risk_history_invalid_score")
     status = value.get("status")
     score = value.get("score")
@@ -208,7 +225,11 @@ def _stress_risk(value: Any) -> dict:
             raise RiskHistoryError("risk_history_invalid_score")
     elif score is not None:
         raise RiskHistoryError("risk_history_invalid_score")
-    result = {"model": MODEL, "status": status, "score": score}
+    result = {"model": model, "status": status, "score": score}
+    if model == MODEL:
+        if any(value.get(key) != expected for key, expected in SCORE_METADATA.items()):
+            raise RiskHistoryError("risk_history_invalid_metadata")
+        result.update(SCORE_METADATA)
     for field in ("estimated_score", "loss_pct", "stress_loss", "net_equity", "cash_debt", "cash_pct", "unlevered_score"):
         if field not in value or value[field] is None:
             continue
@@ -224,10 +245,11 @@ def _stress_risk(value: Any) -> dict:
             raise RiskHistoryError("risk_history_invalid_metadata")
         result[field] = deepcopy(data)
     provisional_fields = {"provisional_model", "provisional_score", "provisional_basis", "provisional_loss", "provisional_unmodeled_gross"}
-    if value.get("provisional_model") == "portfolio-risk-provisional-v2":
-        result.update(_asset_aware_estimate(value, status))
+    if value.get("provisional_model") in {"portfolio-risk-provisional-v2", "portfolio-risk-provisional-v3"}:
+        result.update(_asset_aware_estimate(value, status, model))
     elif provisional_fields.intersection(value):
         if (not provisional_fields.issubset(value) or status not in {"incomplete", "unavailable"}
+                or model == MODEL
                 or value["provisional_model"] != "portfolio-risk-provisional-v1"
                 or type(value["provisional_score"]) is not int or not 0 <= value["provisional_score"] <= 100):
             raise RiskHistoryError("risk_history_invalid_metadata")
@@ -264,6 +286,23 @@ def _stress_risk(value: Any) -> dict:
         and any(_number(amount) is not None and amount > 0 for amount in exposure_numbers))
     if status == "ok" and coverage.get("complete") is not True and not insolvency_boundary:
         raise RiskHistoryError("risk_history_invalid_metadata")
+    if model == MODEL:
+        point = score if status == "ok" else result.get("estimated_score")
+        if result.get("estimated_score") is not None and status != "estimate":
+            raise RiskHistoryError("risk_history_invalid_metadata")
+        if status == "estimate" and point is None:
+            raise RiskHistoryError("risk_history_invalid_metadata")
+        if point is None and (value.get("loss_pct") is not None or value.get("stress_loss") is not None):
+            raise RiskHistoryError("risk_history_invalid_metadata")
+        if point is not None and not insolvency_boundary:
+            loss, percent = _number(result.get("stress_loss")), _number(result.get("loss_pct"))
+            empty = known_equity == 0 and point == 0 and loss == 0 and percent == 0
+            if not empty and (known_equity is None or known_equity <= 0 or loss is None or percent is None
+                    or not math.isclose(percent, loss / known_equity * 100, rel_tol=1e-10, abs_tol=1e-8)
+                    or point != math.floor(min(100, percent) + .5 + 1e-10)):
+                raise RiskHistoryError("risk_history_invalid_metadata")
+        if insolvency_boundary and (value.get("loss_pct") is not None or value.get("stress_loss") is not None):
+            raise RiskHistoryError("risk_history_invalid_metadata")
     for field, limit in (("gaps", 1000), ("scenarios", 1000), ("quality_details", 1000), ("assumptions", 1000), ("rating_evidence", 1000), ("drivers", 30)):
         rows = value.get(field, [])
         if not isinstance(rows, list) or len(rows) > limit:
@@ -303,8 +342,8 @@ def _stress_risk(value: Any) -> dict:
 
 
 def _risk(value: Any, model: str = LEGACY_MODEL) -> dict:
-    if model == MODEL:
-        return _stress_risk(value)
+    if model in {MODEL, LEGACY_STRESS_MODEL}:
+        return _stress_risk(value, model)
     if not isinstance(value, dict) or type(value.get("score")) is not int or not 0 <= value["score"] <= 100:
         raise RiskHistoryError("risk_history_invalid_score")
     components = value.get("components")
@@ -407,9 +446,9 @@ def list_observations(store, base_currency: str, days: int = 90) -> dict:
     with store._connect() as connection:
         # SQL caps the read, but old observations remain in the local database.
         rows = connection.execute("""select value from app_preferences where key glob ? and json_valid(value)
-            and json_extract(value,'$.model') in (?,?) and json_extract(value,'$.base_currency')=?
+            and json_extract(value,'$.model') in (?,?,?) and json_extract(value,'$.base_currency')=?
             and json_extract(value,'$.date')>=? order by updated_at desc,key desc limit ?""",
-            (PREFIX + "*", MODEL, LEGACY_MODEL, base_currency, cutoff, MAX_READ + 1)).fetchall()
+            (PREFIX + "*", MODEL, LEGACY_STRESS_MODEL, LEGACY_MODEL, base_currency, cutoff, MAX_READ + 1)).fetchall()
         malformed_json = connection.execute("select count(*) from app_preferences where key glob ? and not json_valid(value)", (PREFIX + "*",)).fetchone()[0]
     observations = []
     invalid_records = int(malformed_json)
@@ -434,7 +473,7 @@ def list_observations(store, base_currency: str, days: int = 90) -> dict:
         except (TypeError, ValueError):
             invalid_records += 1
             continue
-        if value.get("model") in {MODEL, LEGACY_MODEL} and value.get("base_currency") == base_currency and value.get("date", "") >= cutoff:
+        if value.get("model") in {MODEL, LEGACY_STRESS_MODEL, LEGACY_MODEL} and value.get("base_currency") == base_currency and value.get("date", "") >= cutoff:
             observations.append(value)
     observations.sort(key=lambda value: (value["observed_at"], value["id"]))
     labels = {}
@@ -444,5 +483,5 @@ def list_observations(store, base_currency: str, days: int = 90) -> dict:
     for account in store.list_accounts():
         if str(account.get("type") or "").upper() != "ESOP":
             labels[str(account["id"])] = account_label(account)
-    return {"model": MODEL, "models": [LEGACY_MODEL, MODEL], "base_currency": base_currency, "source": SOURCE, "items": observations[-MAX_READ:],
+    return {"model": MODEL, "models": [LEGACY_MODEL, LEGACY_STRESS_MODEL, MODEL], "base_currency": base_currency, "source": SOURCE, "items": observations[-MAX_READ:],
             "accounts": [{"id": key, "label": labels[key]} for key in sorted(labels)], "truncated": len(rows) > MAX_READ, "invalid_records": invalid_records}

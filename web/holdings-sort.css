@@ -31,10 +31,10 @@
 @media (min-width: 761px) {
   /* Fixed-layout tables need real column widths. Keep labels readable before
      cards start; the existing wrapper supplies horizontal scrolling. */
-  .holdings-table-wrap .holdings-table { min-width: 1650px; }
+  .holdings-table-wrap .holdings-table { min-width: 1720px; }
   .holdings-table-wrap .holdings-table th[data-holdings-sort-column="security"] { width: 220px; }
   .holdings-table-wrap .holdings-table th[data-holdings-sort-column="account"] { width: 145px; }
-  .holdings-table-wrap .holdings-table th[data-holdings-sort-column="risk"] { width: 88px; }
+  .holdings-table-wrap .holdings-table th[data-holdings-sort-column="risk"] { width: 160px; }
   .holdings-table-wrap .holdings-table th[data-holdings-sort-column="value"] { width: 145px; }
   .holdings-table-wrap .holdings-table th[data-holdings-sort-column="range"] { width: 145px; }
   .holdings-table-wrap .holdings-table th[data-holdings-sort-column="income"] { width: 150px; }

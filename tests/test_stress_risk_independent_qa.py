@@ -81,7 +81,7 @@ def elapsed(payment):
 
 def severity(loss_fraction):
     # Positive values use ordinary nearest-integer rounding, including .5 up.
-    return math.floor(min(100, max(0, 200 * loss_fraction)) + .5)
+    return math.floor(min(100, max(0, 100 * loss_fraction)) + .5 + 1e-10)
 
 
 @pytest.mark.parametrize("grade,widen,country_widen", [("AAA", .005, .01), ("BBB", .015, .03), ("BB", .03, .05)])
@@ -210,7 +210,7 @@ def test_user_parameters_and_manual_grade_never_become_verified_headline():
     assert result["score"] is None and result["estimated_score"] is None
     item["stress_risk"]["parameters"]["assumptions_enabled"] = True
     result = calculate([item])
-    assert result["score"] is None and result["estimated_score"] == 33
+    assert result["score"] is None and result["estimated_score"] == 16
     assert result["status"] == "estimate"
     assert {a["code"] for a in result["assumptions"]} >= {"manual_rating", "user_parameters"}
     assert all(row.get("verification_status") == "user_entered" for row in result["rating_evidence"]
@@ -242,7 +242,7 @@ def test_signed_foreign_cash_debt_and_multiplicative_fx_use_same_scenario():
     assert result["stress_loss"] == pytest.approx(expected_loss)
     assert result["score"] == severity(expected_loss / 150)
     assert result["funding"]["cash_debt"] == 50
-    assert calculate([], cashAccounts=[{"value": 100, "currency": "EUR"}])["score"] == 30
+    assert calculate([], cashAccounts=[{"value": 100, "currency": "EUR"}])["score"] == 15
     # An exactly hedged long/short exposure has no market P&L. Its signed net
     # equity is the separately recorded cash rather than gross security value.
     long = security("HEDGE", 50)
@@ -306,7 +306,7 @@ def test_intrinsic_badge_uses_hypothetical_long_for_short_and_ignores_weight():
     script += app_functions("riskStrictBaseValue", "riskScoreForItems")
     script += "const rows=" + json.dumps(items) + ";console.log(JSON.stringify(rows.map(item=>riskScoreForItems([item],{cash:200}).position_risks.get(item).score)));"
     scores = node(script)
-    assert scores == [25, 25, 25]
+    assert scores == [13, 13, 13]
 
 
 @pytest.fixture
@@ -448,11 +448,11 @@ def test_history_preserves_old_model_estimate_and_raw_evidence_and_rejects_race(
     assert str(error.value) == "risk_context_stale"
     observation = risk_history.save_observation(store, "qa", payload, lambda _: deepcopy(raw), lambda: raw["guard"])["observation"]
     assert observation["total"]["status"] == "estimate" and observation["total"]["score"] is None
-    assert observation["total"]["estimated_score"] == 25
+    assert observation["total"]["estimated_score"] == 13
     frozen = deepcopy(observation)
     raw["items"][0]["stress_risk"]["parameters"]["maturity_date"] = "2040-01-01"
     listed = risk_history.list_observations(store, "USD", 0)
-    assert next(row for row in listed["items"] if row["model"] == "portfolio-risk-v3") == frozen
+    assert next(row for row in listed["items"] if row["model"] == "portfolio-risk-v4") == frozen
     assert store.get_preference(risk_history.PREFIX + "legacy") == old
 
 
@@ -477,7 +477,7 @@ def test_known_nonpositive_equity_boundary_can_be_saved_without_fake_coverage(tm
                                ("worst_scenario", "inflation:fixed")):
         malformed = {**result, field: replacement}
         with pytest.raises(risk_history.RiskHistoryError):
-            risk_history._risk(malformed, "portfolio-risk-v3")
+            risk_history._risk(malformed, "portfolio-risk-v4")
 
 
 @pytest.mark.parametrize("valuation_date", [None, "2020-01-01", "2026-11-15"])
@@ -682,8 +682,9 @@ def test_browser_loss_amount_sensitivity_and_signed_holding_contribution(tmp_pat
     assert "USD" in portfolio_text
     long_tip, short_tip = evaluate("[stressRiskTooltip(qa.longRisk),stressRiskTooltip(qa.shortRisk)]")
     short_contribution = -20 * (1 - math.exp(-elapsed(MATURITY) * .03))
-    assert f"{short_contribution:.1f}%" in short_tip
-    assert "52/100" in long_tip
+    assert f"{short_contribution:.1f}" in short_tip
+    assert "25.9%" in long_tip
+    assert "/100" not in long_tip + short_tip
     assert evaluate("stressRiskLossAmountText(qa.shortRisk)") == ""
     assert evaluate("stressRiskLossAmountText(qa.longRisk)") == ""
     assert evaluate("qa.shortRisk.intrinsic") is True
@@ -692,7 +693,8 @@ def test_browser_loss_amount_sensitivity_and_signed_holding_contribution(tmp_pat
             assert english not in portfolio_text + long_tip + short_tip
     else:
         assert not re.search(r"[\u0590-\u05ff]", portfolio_text + long_tip + short_tip)
-        assert "Contribution to portfolio stress loss" in short_tip
+        assert "Contribution to portfolio loss" in short_tip
+        assert "percentage points of net equity" in short_tip
         assert "Negative rating sensitivity" in long_tip
     assert evaluate("qa.errors") == []
 
@@ -718,7 +720,7 @@ def test_browser_risk_alarms_distinguish_estimates_gaps_and_known_insolvency(tmp
     assert evaluate("qa.alarms.length") == 2
     assert evaluate("qa.alarms.every(a=>a.level==='unavailable'&&a.risk.score===null&&a.risk.estimated_score===null)") is True
     evaluate("state.localAccounts[0].initial_cash=-200;qa.alarms=portfolioRiskAlarms()")
-    assert evaluate("qa.alarms.every(a=>a.level==='extreme'&&a.risk.score===100&&a.risk.coverage.complete===false)") is True
+    assert evaluate("qa.alarms.every(a=>a.level==='funding'&&a.risk.score===100&&a.risk.loss_pct===null&&a.risk.coverage.complete===false)") is True
     evaluate("state.allPortfolioItems[0].stress_risk.valuation_date='2020-01-01';qa.alarms=portfolioRiskAlarms()")
     assert evaluate("qa.alarms.every(a=>a.level==='unavailable'&&a.risk.score===null)") is True
     evaluate("$('alarmsList').innerHTML=qa.alarms.map(renderAlarmListItem).join('')")
