@@ -9,6 +9,7 @@
   const upper = value => String(value || "").trim().toUpperCase();
   const number = value => typeof value === "number" && Number.isFinite(value) ? value : null;
   const fail = code => { throw new Error(code); };
+  const riskValue = risk => Number.isFinite(risk?.score) ? risk.score : risk?.status === "estimate" && Number.isFinite(risk.estimated_score) ? risk.estimated_score : null;
   const sign = { BUY:-1, SELL:1, SHORT:1, DIVIDEND:1, INTEREST:1, FEE:-1, CASH_IN:1, CASH_OUT:-1 };
   const securityActions = new Set(["ADD", "REMOVE", "BUY", "SELL", "SHORT"]);
   function rateToBase(context, currency) {
@@ -40,7 +41,7 @@
     return cash;
   }
   function validate(context) {
-    if (context?.model !== "portfolio-risk-v2" || !Array.isArray(context.items) || !Array.isArray(context.accounts)
+    if (context?.model !== "portfolio-risk-v3" || !Array.isArray(context.items) || !Array.isArray(context.accounts)
         || !Number.isFinite(Date.parse(context.observed_at)) || !/^[A-Z]{3}$/.test(context.base_currency || "")) fail("context_unavailable");
     const accounts = new Map(context.accounts.map(row => [String(row.id), row]));
     for (const account of context.accounts) {
@@ -95,8 +96,7 @@
       if (days >= 0) person.age = Math.round(days / 365.2425 * 100) / 100;
     }
     const result = calculate(context);
-    if (!result?.total || !Number.isFinite(result.total.score) || !Array.isArray(result.accounts)
-        || result.accounts.some(row => !Number.isFinite(row.risk?.score))) fail("context_unavailable");
+    if (!result?.total || !Array.isArray(result.accounts)) fail("context_unavailable");
     return result;
   }
   function project(context, source, amount, options) {
@@ -124,8 +124,9 @@
     const after = amount === 0 ? baseline : checkedSnapshot(options.calculate, projected);
     const accountBefore = accountRisk(baseline, row.accountId), accountAfter = accountRisk(after, row.accountId);
     const totalBefore = baseline.total, totalAfter = after.total;
-    const improves = accountAfter.score <= accountBefore.score && totalAfter.score <= totalBefore.score
-      && (accountAfter.score < accountBefore.score || totalAfter.score < totalBefore.score);
+    const scores=[accountBefore,accountAfter,totalBefore,totalAfter].map(riskValue);
+    const improves = scores.every(Number.isFinite) && scores[1] <= scores[0] && scores[3] <= scores[2]
+      && (scores[1] < scores[0] || scores[3] < scores[2]);
     const reasons = Object.keys(accountBefore.components || {}).filter(key => key !== "data_quality")
       .map(key => [key, (accountBefore.components[key] || 0) - (accountAfter.components?.[key] || 0)])
       .filter(([, delta]) => delta > .01).sort((a, b) => b[1] - a[1]).slice(0, 2).map(([key]) => key);
@@ -138,6 +139,7 @@
     const maximum = options.maxScenarios ?? 5;
     if (!Number.isInteger(maximum) || maximum < 1 || maximum > 20) fail("invalid_maximum");
     const baseline = checkedSnapshot(options.calculate, clone(context));
+    if (riskValue(baseline.total) === null || baseline.accounts.some(row=>riskValue(row.risk) === null)) return {status:"incomplete",baseline,scenarios:[],excluded:[],eligibleCount:0,observed_at:context.observed_at};
     const config = { ...options, baseline }, scenarios = [], excluded = [];
     const seen = new Set();
     for (let index = 0; index < context.items.length; index++) {
@@ -151,12 +153,12 @@
         if (seen.has(key)) continue;
         seen.add(key);
         const choices = [.1, .25, .5].map(fraction => project(context, row, row.maxAmount * fraction, config)).filter(choice => choice.improves);
-        choices.sort((a, b) => (a.totalAfter.score - b.totalAfter.score) || (a.accountAfter.score - b.accountAfter.score) || (a.amount - b.amount));
+        choices.sort((a, b) => (riskValue(a.totalAfter) - riskValue(b.totalAfter)) || (riskValue(a.accountAfter) - riskValue(b.accountAfter)) || (a.amount - b.amount));
         if (choices.length) scenarios.push(choices[0]);
       } catch (error) { excluded.push({ symbol:h.symbol, accountId:String(h.account_id), code:error.message }); }
     }
-    scenarios.sort((a, b) => ((b.totalBefore.score - b.totalAfter.score) - (a.totalBefore.score - a.totalAfter.score))
-      || ((b.accountBefore.score - b.accountAfter.score) - (a.accountBefore.score - a.accountAfter.score)) || String(a.symbol).localeCompare(String(b.symbol)));
+    scenarios.sort((a, b) => ((riskValue(b.totalBefore) - riskValue(b.totalAfter)) - (riskValue(a.totalBefore) - riskValue(a.totalAfter)))
+      || ((riskValue(b.accountBefore) - riskValue(b.accountAfter)) - (riskValue(a.accountBefore) - riskValue(a.accountAfter))) || String(a.symbol).localeCompare(String(b.symbol)));
     return { baseline, scenarios:scenarios.slice(0, maximum), excluded, eligibleCount:scenarios.length, observed_at:context.observed_at };
   }
   return Object.freeze({ generate, project, rateToBase });

@@ -1,5 +1,7 @@
 from html.parser import HTMLParser
 from pathlib import Path
+import re
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -601,66 +603,92 @@ def test_saved_security_history_is_visible_in_status_and_settings():
     assert '/^Saved local history:' in i18n
 
 
-def test_risk_explanation_distinguishes_single_holding_from_symbol_concentration():
-    script = (ROOT / "web/app.js").read_text()
+def run_current_risk_ui(body):
+    source = (ROOT / "web/app.js").read_text()
+    functions = []
+    for name in ("riskStrictBaseValue", "riskScoreForItems", "riskAllocationBand", "riskAllocationForItems"):
+        start = source.index(f"function {name}(")
+        end = re.search(r"^}", source[start:], re.M).end()
+        functions.append(source[start:start + end])
+    script = "\n".join(functions) + r'''
+const assert=require('node:assert/strict');
+const PortfolioStressRisk=require('./web/stress-risk.js');
+const state={language:'en',baseCurrency:'USD',fxRates:{},riskAsOf:'2026-11-14'};
+const sum=values=>values.reduce((a,b)=>a+b,0);
+const normalizedField=(item,key)=>item.holding[key];
+const stock=(symbol,value,issuer=symbol)=>({holding:{symbol,quantity:value/100,market_value:value,currency:'USD',asset_class:'EQUITY',account_id:'a'},stress_risk:{security_key:symbol+'|NASDAQ|USD',valuation_date:'2026-11-14',issuer_id:issuer,instrument_kind:'equity',country:{country_code:'US',basis:'economic_exposure'},country_rating:{status:'rated',rating:'AAA',scope:'sovereign',scale:'global',term:'long_term',verified:true,source_kind:'agency_public'},currency_exposures:{USD:1},parameters:{country_currency:'USD'}}});
+''' + body
+    result = subprocess.run(["node"], input=script, text=True, capture_output=True, cwd=ROOT)
+    assert result.returncode == 0, result.stderr
 
-    assert 'return `the largest single holding is ${text.slice(12)} of total value, including cash`' in script
-    assert 'return `after combining holdings with the same symbol, one security is ${text.slice(21)} of securities value, excluding cash`' in script
-    assert "const issuerRiskTotals = rows.reduce" in script
-    assert "const symbolTotals = rows.reduce" in script
-    assert "const largestIssuerRiskPct =" in script
-    assert "const largestSymbolPct =" in script
-    assert 'largestSymbolPct > 25 ? `Symbol concentration ${fmt(largestSymbolPct, 1)}%`' in script
+
+def test_risk_explanation_separates_intrinsic_holding_risk_from_issuer_grouping_and_contribution():
+    ui = (ROOT / "web/stress-risk-ui.js").read_text()
+    assert 'risk?.contribution?.loss_contribution_pct' in ui
+    assert 'The holding score describes standalone instrument exposure.' in ui
+    assert 'Contribution uses the portfolio' in ui
+    run_current_risk_ui(r'''
+const rows=Array.from({length:20},(_,i)=>stock('SECURITY'+i,5));
+const pooled=riskScoreForItems(rows);
+assert.equal(pooled.score,80);
+assert.equal(pooled.position_risks.get(rows[0]).score,100);
+assert.equal(pooled.position_risks.get(rows[0]).contribution.loss_contribution_pct,2);
+// Two symbols of one legal issuer have the same issuer-distress concentration.
+const same=rows.map(item=>({...item,stress_risk:{...item.stress_risk,issuer_id:'SAME_LEGAL_ENTITY'}}));
+assert.equal(riskScoreForItems(same).score,100);
+const split=Array.from({length:100},()=>stock('ONE',1,'ONE'));
+assert.equal(riskScoreForItems(split).score,riskScoreForItems([stock('ONE',100,'ONE')]).score);
+''')
 
 
-def test_total_and_industry_risk_are_visible_and_help_documents_the_formula():
+def test_total_and_industry_risk_are_visible_and_help_documents_the_stress_formula():
     html = (ROOT / "web/index.html").read_text()
     script = (ROOT / "web/app.js").read_text()
     styles = (ROOT / "web/styles.css").read_text()
-
     assert 'class="portfolio-risk-summary"' in script
     assert 'optionLabel("Total portfolio risk")' in script
     assert 'group.risk = riskScoreForItems(group.items' in script
     assert 'optionLabel("Industry risk")' in script
     assert 'const allocatedCash = total ? combinedCash * (group.value / total) : 0' in script
-    assert 'const cashScore = cashPct >= 5 && cashPct <= 20 ? 0 : cashPct < 5 ? (5 - cashPct) / 5 * 7' in script
-    assert '0.75 * combinedRisk.score + 0.25 * weightedAccountScore' in script
-    assert 'optionLabel("Components:")' in script
-
+    snapshot = script.split('function portfolioRiskSnapshot(items)',1)[1].split('\n}',1)[0]
+    assert 'riskScoreForItems(items || []' in snapshot
+    assert '0.75' not in snapshot and 'weightedAccountScore' not in snapshot
     assert '<h3>Investment risk formula</h3>' in html
-    assert 'S = C + A + FX + I + B + D + V + H + IC + Q; risk = clamp(round(S + L), 0, 100)' in html
-    assert 'Negative cash is modeled as borrowing.' in html
-    assert 'Industry HHI contributes up to 7 points' in html
-    assert 'Total portfolio risk is 75% of the combined-holdings score plus 25%' in html
-    assert 'Industry scores are comparisons and must not be added together.' in html
+    assert 'risk = round(min(100, 200 × largest_modeled_loss / positive_net_equity))' in html
+    assert 'negative cash reduces net equity' in html
+    assert 'Credit is counted once' in html
+    assert 'account scores are calculated independently and are not blended into the total' in html
+    assert 'industry scores are comparisons and must not be added together' in html
     assert '.portfolio-risk-summary {' in styles
     assert '.industry-split-metrics {' in styles
-    assert '.help-risk-components {' in styles
 
 
-def test_each_account_has_a_value_weighted_four_band_risk_allocation_that_totals_100_percent():
+def test_each_account_has_value_weighted_asset_categories_that_total_100_percent():
     script = (ROOT / "web/app.js").read_text()
     styles = (ROOT / "web/styles.css").read_text()
-
-    assert 'function riskAllocationForItems(items, options = {})' in script
-    assert '{ key: "no-risk", label: "No risk"' in script
-    assert '{ key: "low", label: "Low risk"' in script
-    assert '{ key: "medium", label: "Medium risk"' in script
-    assert '{ key: "high", label: "High risk"' in script
-    assert 'allocation: riskAllocationForItems(rows, { cash, cashCurrency: account?.currency })' in script
-    assert 'optionLabel("Account risk allocation")' in script
-    assert '.account-risk-allocations-grid {' in styles
+    assert 'optionLabel("Asset allocation")' in script
+    assert 'cash and money-market holdings are not guaranteed risk-free' in script
     assert '.account-risk-allocation-bar {' in styles
+    run_current_risk_ui(r'''
+const equity=stock('EQUITY',20),bond=stock('BOND',30),fund=stock('FUND',10),money=stock('MONEY',10);
+bond.holding.asset_class='BOND';fund.holding.asset_class='ETF';money.holding.asset_class='MUTUALFUND';money.exposure_profile={asset_focus:'money_market'};
+const result=riskAllocationForItems([equity,bond,fund,money],{cash:30});
+assert.equal(result.total,100);
+assert.deepEqual(result.bands.map(b=>[b.label,b.value,b.percent]),[['Cash and money market',40,40],['Bonds',30,30],['Funds',10,10],['Shares and other assets',20,20]]);
+assert.equal(result.bands.reduce((n,b)=>n+b.percent,0),100);
+assert.ok(!result.bands.some(b=>/No risk|Low risk|Medium risk|High risk/.test(b.label)));
+''')
 
 
-def test_foreign_currency_cash_and_money_market_holdings_are_low_risk_in_account_allocation():
-    script = (ROOT / "web/app.js").read_text()
-
-    assert 'const foreignCurrencyExposure = economicCurrencyExposure(item).allocations' in script
-    assert 'if (factor <= 0.12) return foreignCurrencyExposure ? "low" : "no-risk";' in script
-    assert 'cashCurrency === baseCurrency ? cash : 0' in script
-    assert 'cashCurrency === baseCurrency ? 0 : cash' in script
-    assert 'riskAllocationForItems(rows, { cash, cashCurrency: account?.currency })' in script
+def test_foreign_currency_cash_and_money_market_remain_asset_types_not_safety_ratings():
+    run_current_risk_ui(r'''
+const money=stock('MONEY',50);money.holding.asset_class='MUTUALFUND';money.exposure_profile={asset_focus:'money_market'};
+const base=riskAllocationForItems([money],{cash:50,cashCurrency:'USD'});
+money.holding.currency='EUR';money.exposure_profile.currency_exposures=[{currency:'EUR',percent:100}];
+const foreign=riskAllocationForItems([money],{cash:50,cashCurrency:'EUR'});
+assert.deepEqual(foreign.bands,base.bands);
+assert.equal(foreign.bands[0].label,'Cash and money market');assert.equal(foreign.bands[0].percent,100);
+''')
 
 
 def test_employee_option_workflow_filters_to_esop_accounts_and_employee_grants():

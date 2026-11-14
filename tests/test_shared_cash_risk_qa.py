@@ -22,7 +22,7 @@ def app_functions(*names):
 
 def test_fixed_holdings_risk_increases_as_cash_crosses_into_borrowing():
     run_simulation(r'''
-const items=[stock('HELD',10000)];
+const items=Array.from({length:20},(_,i)=>stock('HELD'+i,500));
 const original=JSON.stringify(items);
 const balances=[10000,2500,1000,500,100,0,-1,-100,-1000,-3000,-8000,-10000,-12000];
 const scores=balances.map(cash=>adapters.risk(items,{cash,horizonYears:20}).score);
@@ -51,30 +51,21 @@ assert.equal(adapters.risk([short],{cash:500,horizonYears:20}).score,100);
 ''')
 
 
-def test_declared_v2_borrowing_adjustment_uses_net_equity_and_keeps_gross_cash():
+def test_declared_v3_borrowing_uses_signed_equity_and_keeps_funding_separate():
     run_simulation(r'''
-const items=[stock('HELD',10000)];
-// One USD equity: 16 concentration + 9.1 asset mix + 7 industry +
-// 7 low-cash + 6 2/3 volatility + 4 issuer, with a 20-year horizon.
-const ordinary=adapters.risk(items,{cash:0,horizonYears:20});
-const borrowed=adapters.risk(items,{cash:-1000,horizonYears:20});
-assert.equal(ordinary.score,50);
-assert.equal(borrowed.model,'portfolio-risk-v2');
-assert.equal(borrowed.cash_debt,1000);
-assert.equal(borrowed.net_equity,9000);
-assert.ok(Math.abs(borrowed.unlevered_score-49.766666666666666)<1e-10);
-assert.ok(Math.abs(borrowed.components.borrowing-(49.766666666666666/9))<1e-10);
-assert.equal(borrowed.score,55);
-// Net 1000 comprises 2000 positive cash and 1000 debt in separate accounts.
-const combined=adapters.risk(items,{cash:1000,cashDebt:1000,horizonYears:20});
-assert.equal(combined.cash_debt,1000);
-assert.equal(combined.net_equity,11000);
-assert.ok(Math.abs(combined.cash_pct-100/6)<1e-10);
-assert.equal(combined.score,45);
-// A supplied aggregate cannot understate an actual negative balance.
-assert.equal(adapters.risk(items,{cash:-1000,cashDebt:100,horizonYears:20}).score,55);
+const items=Array.from({length:20},(_,i)=>stock('HELD'+i,500));
+const ordinary=adapters.risk(items,{cash:0});
+const borrowed=adapters.risk(items,{cash:-1000});
+assert.equal(ordinary.score,80);
+assert.equal(borrowed.model,'portfolio-risk-v3');
+assert.equal(borrowed.cash_debt,1000);assert.equal(borrowed.net_equity,9000);
+assert.equal(borrowed.stress_loss,4000);assert.equal(borrowed.score,89);
+const combined=adapters.risk(items,{cashAccounts:[{value:2000,currency:'USD'},{value:-1000,currency:'USD'}]});
+assert.equal(combined.cash_debt,1000);assert.equal(combined.net_equity,11000);
+assert.ok(Math.abs(combined.cash_pct-100/6)<1e-10);assert.equal(combined.score,73);
+assert.equal(combined.funding.positive_cash,2000);
+assert.ok(!('borrowing' in combined.components));
 ''')
-
 
 def test_simulator_cash_deficit_preserves_numeric_account_and_total_risk():
     run_simulation(r'''
@@ -110,14 +101,14 @@ const clean=JSON.parse(JSON.stringify(ctx));clean.accounts[0].initial_cash=0;cle
 const unborrowed=simulator.simulate(clean,[trade({quantity:1})],adapters);
 assert.equal(unborrowed.total.before.cash,borrowed.total.before.cash);
 assert.equal(unborrowed.total.before.netValue,borrowed.total.before.netValue);
-assert.ok(borrowed.total.before.risk.score>unborrowed.total.before.risk.score,
+assert.equal(borrowed.total.before.risk.score,unborrowed.total.before.risk.score,
  JSON.stringify({borrowed:borrowed.total.before.risk,unborrowed:unborrowed.total.before.risk}));
 ''')
 
 
 def test_higher_execution_cost_keeps_valuation_fixed_and_raises_simulated_risk():
     run_simulation(r'''
-const ctx=simulationContext();ctx.accounts[0].initial_cash=1000;ctx.items=[stock('HELD',10000)];
+const ctx=simulationContext();ctx.accounts[0].initial_cash=1000;ctx.items=Array.from({length:20},(_,i)=>stock('HELD'+i,500));
 const costs=[100,500,1000,1500,3000,8000,12000];
 const results=costs.map(priceInput=>simulator.simulate(ctx,[trade({quantity:1,priceInput})],adapters));
 const risks=results.map(result=>result.accounts[0].after.risk.score);
@@ -160,7 +151,7 @@ def test_dashboard_and_simulator_use_same_account_and_total_scores():
 const portfolioAccounts=()=>state.localAccounts;
 const accountRecordForHolding=h=>state.localAccounts.find(a=>a.id===h.account_id);
 const accountHorizonYears=()=>20;
-const normalizedAmount=(value,currency)=>currency==='ILS'?value/4:value;
+const normalizedAmount=(value,currency)=>currency==='ILS'?value/4:value;state.fxRates={'ILS/USD':.25};
 const transactionCashImpact=()=>{throw new Error('This fixture has no transactions');};
 for(const balances of [[1000,2000],[0,2000],[-1000,2000],[-10000,1000]]) {
  const ctx=simulationContext();ctx.accounts[0].initial_cash=balances[0];
@@ -197,20 +188,20 @@ assert.equal(convertedDashboard.total.score,convertedSimulation.total.before.ris
 def test_actual_risk_tooltip_explains_borrowing_in_both_languages():
     functions = app_functions("riskTooltip", "riskBand")
     i18n = (ROOT / "web/i18n.js").read_text()
-    run_simulation("const window={};\n" + i18n + "\n" + functions + r'''
+    run_simulation("const window={};\n" + i18n + "\n" + (ROOT / "web/stress-risk-ui.js").read_text().split("(() => {")[0] + "\n" + functions + r'''
 const optionLabel=text=>window.PortfolioI18n.translate(text,state.language);
-const risk=adapters.risk([stock('HELD',10000)],{cash:-1000,horizonYears:20});
+const risk=adapters.risk(Array.from({length:20},(_,i)=>stock('HELD'+i,500)),{cash:-1000,horizonYears:20});
 for(const language of ['en','he','en']) {
  state.language=language;
  const tooltip=riskTooltip(risk);
- assert.ok(tooltip.split('\n')[0].includes('55')&&!tooltip.split('\n')[0].includes('/100'),tooltip);
+ assert.ok(tooltip.split('\n')[0].includes('89'),tooltip);
  assert.ok(!/undefined|NaN|null/.test(tooltip),tooltip);
  if(language==='en') {
   assert.ok(/borrow|debt/i.test(tooltip),tooltip);
   assert.ok(!/[א-ת]/.test(tooltip),tooltip);
  } else {
   assert.ok(/אשראי|הלווא|חוב/.test(tooltip),tooltip);
-  assert.ok(!/[a-z]/i.test(tooltip),tooltip);
+  assert.ok(!/borrow|modeled|risk score|probability/i.test(tooltip),tooltip);
  }
 }
 ''')

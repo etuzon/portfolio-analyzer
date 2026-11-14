@@ -1,4 +1,4 @@
-"""Risk gap explanations preserve actual model masks, exposure weights and score."""
+"""Preserve v2 historical gap evidence; verify v3 gaps are incomplete inputs, not penalties."""
 from pathlib import Path
 import re
 import subprocess
@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def run_risk(body):
     source = (ROOT / 'web/app.js').read_text()
-    names = ('riskScoreForItems', 'assetRiskFactor', 'derivativeHolding', 'diversifiedFund', 'industryLabel', 'issuerLabel', 'countryLabel', 'economicCurrencyExposure', 'volatilityProxy', 'riskTooltip', 'riskBand')
+    names = ('riskStrictBaseValue', 'riskScoreForItems', 'assetRiskFactor', 'derivativeHolding', 'diversifiedFund', 'industryLabel', 'issuerLabel', 'countryLabel', 'economicCurrencyExposure', 'volatilityProxy', 'riskTooltip', 'riskBand')
     functions = []
     for name in names:
         start = source.index(f'function {name}(')
@@ -16,16 +16,21 @@ def run_risk(body):
         functions.append(source[start:start+end])
     script = '\n'.join(functions) + '\n' + (ROOT / 'web/risk-data-gaps-ui.js').read_text() + r'''
 const assert=require('node:assert/strict');
-const state={language:'en',baseCurrency:'USD'};
+const PortfolioStressRisk=require('./web/stress-risk.js');
+const state={language:'en',baseCurrency:'USD',fxRates:{},riskAsOf:'2026-11-14'};
 const sum=values=>values.reduce((a,b)=>a+b,0);
 const fmt=value=>String(value);
 const clamp=(value,min,max)=>Math.min(max,Math.max(min,value));
 const normalizedField=(item,key)=>item.holding[key];
-const window={};
+const window={};const document={addEventListener:()=>{}};
 ''' + (ROOT / 'web/i18n.js').read_text() + r'''
 const optionLabel=text=>window.PortfolioI18n.translate(text,state.language);
-const stock=(symbol,value=100,currency='USD',asset_class='EQUITY')=>({holding:{symbol,market_value:value,currency,asset_class,stock_market:'NASDAQ',account_id:'account-one',quantity:1,industry:'Technology',sector:'Technology'},industry:'Technology',missing:[],price_ranges:{'1y':{current:100,min:80,high:120}}});
-''' + body
+const stock=(symbol,value=100,currency='USD',asset_class='EQUITY')=>({holding:{symbol,market_value:value,currency,asset_class,stock_market:'NASDAQ',account_id:'account-one',quantity:1,industry:'Technology',sector:'Technology'},industry:'Technology',missing:[],price_ranges:{'1y':{current:100,min:80,high:120}},stress_risk:{valuation_date:'2026-11-14',security_key:symbol+'|NASDAQ|'+currency,issuer_id:symbol,instrument_kind:'equity',country:{country_code:'US',basis:'economic_exposure'},country_rating:{status:'rated',rating:'AAA',scope:'sovereign',scale:'global',term:'long_term',verified:true,source_kind:'agency_public'},currency_exposures:{[currency]:1},parameters:{country_currency:'USD'}}});
+// Saved v2 observations carry their own historical component value. This fixture
+// exercises the preserved detail renderer, not the current v3 score calculator.
+const legacyRisk=(items,{cash=0,dataQuality=0}={})=>({model:'portfolio-risk-v2',score:45,
+ components:{data_quality:dataQuality},quality_details:riskMissingDataDetails(items,{totalValue:items.reduce((n,item)=>n+Math.abs(item.holding.market_value),0)+Math.max(0,cash)})});
+''' + (ROOT / 'web/stress-risk-ui.js').read_text() + '\n' + body
     result = subprocess.run(['node'], input=script, text=True, capture_output=True, cwd=ROOT)
     assert result.returncode == 0, result.stderr
 
@@ -42,19 +47,20 @@ const withoutDetails=riskScoreForItems([good,unrelated],{cash:100,horizonYears:2
 riskMissingDataDetails=helper;
 assert.equal(prior.score,withoutDetails.score);
 assert.deepEqual(prior.components,withoutDetails.components);
+assert.equal(prior.model,'portfolio-risk-v3');assert.ok(Number.isFinite(prior.score));assert.equal(prior.components.data_quality,undefined);
 assert.equal(prior.quality_details.length,0);
 const zero=stock('ZERO',0);zero.missing=['price history'];zero.holding.currency='';zero.holding.asset_class='';
 assert.deepEqual(riskMissingDataDetails([zero]),[]);
 ''')
 
 
-def test_gap_weights_masks_and_metadata_match_data_quality_component():
+def test_saved_v2_gap_weights_masks_and_metadata_match_frozen_component():
     run_risk(r'''
 const a=stock('AAA',60);a.missing=['price history'];a.industry='';a.holding.industry='';a.holding.sector='';
 const b=stock('BBB',40);b.holding.asset_class='';b.holding.currency='';
 b.exposure_profile={fx_basis:'reported',currency_exposures:[{currency:'USD',percent:25}]};
 const original=JSON.stringify([a,b]);
-const risk=riskScoreForItems([a,b],{cash:100,horizonYears:20});
+const risk=legacyRisk([a,b],{cash:100,dataQuality:2.925});
 const entries=Object.fromEntries(risk.quality_details.map(detail=>[detail.code,detail]));
 assert.equal(entries.price_history.weight_percent,60);assert.equal(entries.price_history.points_before_cap,1.2);
 assert.equal(entries.industry.weight_percent,60);assert.ok(Math.abs(entries.industry.points_before_cap-.9)<1e-12);
@@ -78,7 +84,7 @@ const missing=stock('BOTH',100);missing.holding.currency='';missing.holding.asse
 const detail=riskMissingDataDetails([missing]).find(detail=>detail.code==='holding_metadata');
 assert.equal(detail.weight_percent,100);assert.equal(detail.points_before_cap,1.5);
 const all=stock('ALL',100);all.missing=['price history'];all.industry='';all.holding.industry='';all.holding.sector='';all.holding.currency='';all.exposure_profile={fx_basis:'unknown'};
-const capped=riskScoreForItems([all],{cash:0,horizonYears:20});
+const capped=legacyRisk([all],{cash:0,dataQuality:5});
 assert.equal(capped.components.data_quality,5);
 assert.ok(capped.quality_details.reduce((total,d)=>total+d.points_before_cap,0)>5);
 ''')
@@ -87,7 +93,7 @@ assert.ok(capped.quality_details.reduce((total,d)=>total+d.points_before_cap,0)>
 def test_tooltip_gives_localized_symbol_specific_recovery_and_legacy_safety():
     run_risk(r'''
 const item=stock('AAA',100);item.missing=['price history'];item.industry='';item.holding.industry='';item.holding.sector='';item.holding.currency='';item.exposure_profile={fx_basis:'unknown'};
-const risk=riskScoreForItems([item],{cash:100,horizonYears:20});
+const risk=legacyRisk([item],{cash:100,dataQuality:5});
 for(const language of ['en','he','en']){
 state.language=language;
 const lines=riskMissingDataTooltipLines(risk.quality_details,language).join('\n');
@@ -110,7 +116,7 @@ def test_visible_disclosure_is_keyboard_native_safe_and_keeps_all_symbols():
     run_risk(r'''
 const items=Array.from({length:14},(_,index)=>{const item=stock('SYM'+index,100);item.missing=['price history'];return item;});
 items[0].holding.symbol='<img src=x onerror=evil()>"';
-const risk=riskScoreForItems(items,{cash:0,horizonYears:20});
+const risk=legacyRisk(items,{cash:0,dataQuality:2});
 for(const language of ['en','he']){
  state.language=language;
  const html=riskDataQualityHtml(risk);
@@ -124,4 +130,29 @@ for(const language of ['en','he']){
 }
 assert.equal(riskDataQualityHtml({components:{data_quality:0}}),'');
 assert.equal(riskDataQualityHtml(null),'');
+''')
+
+
+
+def test_v3_missing_inputs_preserve_value_coverage_without_a_missing_data_penalty():
+    run_risk(r'''
+const known=stock('KNOWN',100),unknown=stock('UNKNOWN',100);
+delete unknown.stress_risk.issuer_id;
+const before=JSON.stringify([known,unknown]);
+const risk=riskScoreForItems([known,unknown],{cash:100,horizonYears:20});
+assert.equal(risk.model,'portfolio-risk-v3');assert.equal(risk.score,null);
+assert.equal(risk.estimated_score,null);assert.equal(risk.coverage.complete,false);
+assert.ok(Math.abs(risk.coverage.covered_value_percent-200/3)<1e-9);
+assert.ok(risk.gaps.some(gap=>gap.code==='issuer_identity'&&gap.symbol==='UNKNOWN'));
+assert.equal(risk.components.data_quality,undefined);assert.deepEqual(risk.quality_details,[]);
+for(const language of ['en','he']) {
+ state.language=language;
+ const html=riskDataQualityHtml(risk);
+ assert.ok(html.startsWith('<details'));assert.ok(html.includes('<summary>'));
+ assert.ok(html.includes('UNKNOWN'));assert.ok(!html.includes('/5'));
+ const tooltip=riskTooltip(risk);
+ assert.ok(tooltip.includes(language==='he'?'אינה מלאה':'incomplete'));
+ assert.ok(!tooltip.includes('NaN')&&!tooltip.includes('undefined'));
+}
+assert.equal(JSON.stringify([known,unknown]),before);
 ''')

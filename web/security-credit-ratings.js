@@ -303,7 +303,7 @@ function acceptCreditRatingsJob(entry, job) {
   entry.message = entry.pending ? "" : job.status === "failed" ? "Rating research could not finish. Saved evidence is retained; refresh ratings to retry."
     : "Rating check finished. Unverified agency information remains unknown.";
   renderSecurityCreditRatings();
-  if (!entry.pending) loadSecurityCreditRatings(entry, { force: true });
+  if (!entry.pending) { document.dispatchEvent(new CustomEvent("stress-risk-inputs-changed"));loadSecurityCreditRatings(entry, { force: true }); }
 }
 
 function scheduleCreditRatingsPoll(entry) {

@@ -29,9 +29,9 @@ def raw_context():
         items.append(dict(holding=dict(symbol=symbol, account_id=account, quantity=quantity,
                                        market_value=quantity * 100, currency='USD', stock_market='NASDAQ',
                                        asset_class='EQUITY', industry=industry), industry=industry,
-                          missing=[], price_ranges={'1y': dict(current=100, high=120, min=80,
+                          missing=[], stress_risk=dict(security_key=symbol+'|NASDAQ|USD',issuer_id='issuer:'+symbol,country=dict(country_code='US',basis='economic_exposure'),country_rating=dict(status='rated',rating='AAA',scope='sovereign',scale='global',term='long_term',verified=True,source_kind='agency_public',currency_basis='foreign_currency'),currency_exposures={'USD':1},parameters=dict(country_currency='USD')), price_ranges={'1y': dict(current=100, high=120, min=80,
                                                                current_date='2026-11-12')}))
-    return dict(accounts=accounts, items=items, model='portfolio-risk-v2', base_currency='USD',
+    return dict(accounts=accounts, items=items, model='portfolio-risk-v3', base_currency='USD',
                 observed_at='2026-11-12T12:00:00Z', date='2026-11-12', transactions=[], fx={'quotes': []})
 
 
@@ -44,26 +44,25 @@ const accountHorizonYears=()=>20;
 const accountRiskCashValue=a=>a.initial_cash;
 const riskAllocationForItems=()=>({});
 const accountRecordForHolding=h=>state.localAccounts.find(a=>a.id===h.account_id);
-const calculate=c=>{state.localAccounts=c.accounts;return portfolioRiskSnapshot(portfolioItems(c.items));};
+const calculate=c=>{state.riskAsOf=c.observed_at;state.baseCurrency=c.base_currency;state.localAccounts=c.accounts;state.localTransactions=c.transactions;state.fxRates=Object.fromEntries((c.fx?.quotes||[]).map(q=>[q.pair,q.quote.rate]));return portfolioRiskSnapshot(portfolioItems(c.items));};
 (async()=>{
 ''' + body + r'''
 })().catch(error=>{console.error(error);process.exitCode=1;});
 ''')
 
 
-def test_independent_raw_sale_oracle_includes_unchanged_bank_and_nonlinear_rollup():
+def test_independent_raw_sale_oracle_includes_unchanged_bank_and_pooled_stress_loss():
     scenario_js(r'''
 const original=JSON.stringify(raw),result=await engine.generate(raw,{calculate});
 assert.equal(result.baseline.accounts.length,3);
-assert.equal(result.baseline.accounts.find(a=>a.key==='bank').risk.score,8);
-assert.equal(result.baseline.total.score,41);
+assert.equal(result.baseline.accounts.find(a=>a.key==='bank').risk.score,0);
+assert.equal(result.baseline.total.score,63);
 assert.equal(result.scenarios.length,2); // Fewer than default five; no invented holdings.
 const source=result.scenarios.find(s=>s.symbol==='AAA');assert.ok(source);
 assert.equal(source.amount,5000);
-// Derived independently from the ten declared weights and 75/25 rollup:
-// gross weights A10000:B6000:Bank3000. At $1000 the combined risk remains41,
-// but round(.75*41+.25*(42*10000+41*6000+8*3000)/19000) is40.
-const oracle=[[0,50,41],[1000,42,40],[2000,41,39],[2500,41,39],[5000,41,34],[10000,8,29]];
+// Pooled severity from worst common market/issuer scenario; unchangedBank cash3000
+// stays inE19000. Largestissuer distress60% competes with pooled equity-40%.
+const oracle=[[0,100,63],[1000,100,57],[2000,96,51],[2500,90,48],[5000,60,38],[10000,0,25]];
 for(const [amount,account,total] of oracle){
  const projected=engine.project(raw,source,amount,{calculate});
  assert.equal(projected.accountAfter.score,account,JSON.stringify({amount,projected}));
@@ -91,7 +90,7 @@ for(const maximum of [0,21,1.5,'5',null]){
 }
 const scoped=await engine.generate(raw,{calculate,accountId:'b'});
 assert.equal(scoped.scenarios.length,1);assert.equal(scoped.scenarios[0].symbol,'BBB');
-assert.equal(scoped.baseline.total.score,41);assert.equal(scoped.baseline.accounts.length,3);
+assert.equal(scoped.baseline.total.score,63);assert.equal(scoped.baseline.accounts.length,3);
 for(const change of [c=>c.accounts[2].initial_cash=null,c=>delete c.items[1].holding.quantity,c=>delete c.items[1].holding.market_value,c=>delete c.items[1].holding.asset_class]){
  const missing=structuredClone(raw);change(missing);await assert.rejects(engine.generate(missing,{calculate}));
 }
@@ -101,8 +100,8 @@ assert.ok(!denied.scenarios.some(row=>row.symbol==='AAA'));
 assert.equal(denied.excluded.find(row=>row.symbol==='AAA').code,'valuation_mismatch');
 const stale=structuredClone(raw);stale.items[0].price_ranges['1y'].current_date='2026-01-01';
 const dated=await engine.generate(stale,{calculate});
-assert.equal(dated.scenarios.find(row=>row.symbol==='AAA').stale,true);
-assert.equal(dated.scenarios.find(row=>row.symbol==='AAA').quoteDate,'2026-01-01');
+assert.equal(dated.status,'incomplete');assert.equal(dated.baseline.total.score,null);
+assert.ok(dated.baseline.total.gaps.some(row=>row.code==='valuation_stale'));
 ''')
 
 
@@ -224,7 +223,7 @@ def test_browser_actual_model_interaction_localization_keyboard_and_layout(tmp_p
     browser_wait(evaluate,"document.querySelectorAll('[data-risk-scenario-id]').length===2")
     assert evaluate("$('riskScenariosMax').value")=='5'
     assert evaluate("$('riskScenariosConvert').checked") is False
-    assert evaluate('riskScenariosView.result.baseline.total.score')==41
+    assert evaluate('riskScenariosView.result.baseline.total.score')==63
     browser_wait(evaluate,"document.activeElement.id==='riskScenariosTitle'")
     # Keyboard edits execute actual input events and preserve the editor node/focus.
     evaluate("document.querySelector('[data-risk-scenario-id=\"0\"] [data-risk-scenario-amount]').focus()")
@@ -232,8 +231,8 @@ def test_browser_actual_model_interaction_localization_keyboard_and_layout(tmp_p
     command('Input.dispatchKeyEvent',{'type':'keyUp','key':'a','code':'KeyA','modifiers':2,'windowsVirtualKeyCode':65})
     command('Input.insertText',{'text':'1000'})
     browser_wait(evaluate,"riskScenariosView.result.scenarios.find(s=>s.id==='0').amount===1000")
-    assert evaluate("riskScenariosView.result.scenarios.find(s=>s.id==='0').accountAfter.score")==42
-    assert evaluate("riskScenariosView.result.scenarios.find(s=>s.id==='0').totalAfter.score")==40
+    assert evaluate("riskScenariosView.result.scenarios.find(s=>s.id==='0').accountAfter.score")==100
+    assert evaluate("riskScenariosView.result.scenarios.find(s=>s.id==='0').totalAfter.score")==57
     assert evaluate("document.activeElement.matches('[data-risk-scenario-amount]')")
     # Background dashboard replacement cannot affect the frozen coherent context.
     evaluate("state.items[0].holding.market_value=999999;state.localAccounts[0].initial_cash=-99999;state.fxRates={'USD/ILS':99};renderRiskScenarios()")
@@ -247,8 +246,8 @@ def test_browser_actual_model_interaction_localization_keyboard_and_layout(tmp_p
     assert evaluate("document.querySelector('[data-risk-scenario-id=\"0\"] [data-risk-scenario-amount]').getAttribute('aria-invalid')")=='true'
     assert evaluate("document.querySelector('[data-risk-scenario-id=\"0\"] [data-risk-scenario-projection]').hidden")
     evaluate("(()=>{const n=document.querySelector('[data-risk-scenario-id=\"0\"] [data-risk-scenario-slider]');n.value='100';n.dispatchEvent(new Event('input',{bubbles:true}));})()")
-    assert evaluate("riskScenariosView.result.scenarios.find(s=>s.id==='0').accountAfter.score")==8
-    assert evaluate("riskScenariosView.result.scenarios.find(s=>s.id==='0').totalAfter.score")==29
+    assert evaluate("riskScenariosView.result.scenarios.find(s=>s.id==='0').accountAfter.score")==0
+    assert evaluate("riskScenariosView.result.scenarios.find(s=>s.id==='0').totalAfter.score")==25
     text=evaluate("$('riskScenariosModal').innerText")
     assert '12/11/2026' in text and '2026-11-12' not in text
     assert '12/11/2026' in evaluate("$('riskScenariosMeta').textContent")
@@ -269,14 +268,14 @@ def test_browser_actual_model_interaction_localization_keyboard_and_layout(tmp_p
     browser_wait(evaluate,"!riskScenariosView.loading&&document.querySelectorAll('[data-risk-scenario-id]').length===1")
     evaluate("$('riskScenariosAccount').value='b';$('riskScenariosAccount').dispatchEvent(new Event('change',{bubbles:true}))")
     browser_wait(evaluate,"!riskScenariosView.loading&&riskScenariosView.result.scenarios[0]?.symbol==='BBB'")
-    assert evaluate('riskScenariosView.result.baseline.total.score')==41
+    assert evaluate('riskScenariosView.result.baseline.total.score')==63
     assert evaluate('riskScenariosView.context.accounts.length')==3
     assert evaluate('qa.calls.every(path=>path.startsWith("/api/portfolio/risk-scenarios/context"))')
     assert evaluate('qa.errors')==[]
     # An actual background dashboard redraw replaces the original launch node.
     evaluate("qa.oldOpener=document.querySelector('[data-open-risk-scenarios=\"\"]');$('analyticsBoard').innerHTML=renderPortfolioValueDashboard(state.items)")
     assert evaluate('qa.oldOpener.isConnected') is False
-    assert evaluate('riskScenariosView.result.baseline.total.score')==41
+    assert evaluate('riskScenariosView.result.baseline.total.score')==63
     # Escape closes, and the modal returns focus to its replacement launch button.
     command('Input.dispatchKeyEvent',{'type':'keyDown','key':'Escape','code':'Escape','windowsVirtualKeyCode':27})
     command('Input.dispatchKeyEvent',{'type':'keyUp','key':'Escape','code':'Escape','windowsVirtualKeyCode':27})

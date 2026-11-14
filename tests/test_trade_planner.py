@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def run_planner_js(body):
     source = (ROOT / "web/app.js").read_text()
-    names = ("riskScoreForItems", "assetRiskFactor", "derivativeHolding", "diversifiedFund", "industryLabel", "issuerLabel", "countryLabel", "economicCurrencyExposure", "volatilityProxy")
+    names = ("riskScoreForItems", "riskStrictBaseValue", "assetRiskFactor", "derivativeHolding", "diversifiedFund", "industryLabel", "issuerLabel", "countryLabel", "economicCurrencyExposure", "volatilityProxy")
     functions = []
     for name in names:
         start = source.index(f"function {name}(")
@@ -25,15 +25,19 @@ def run_planner_js(body):
     script = "\n".join(functions) + r'''
 const assert = require('node:assert/strict');
 const planner = require('./web/trade-planner.js');
-const state = {baseCurrency:'USD'};
+const PortfolioStressRisk = require('./web/stress-risk.js');
+const state = {baseCurrency:'USD',riskAsOf:'2026-10-30T12:00:00Z',fxRates:{}};
 const sum = values => values.reduce((a,b)=>a+b,0);
 const fmt = n => String(n);
 const clamp = (v,a,b) => Math.max(a,Math.min(v,b));
 const normalizedField = (item,field) => item.holding[field];
+const accountLabel = account => account.account_id || account.id;
+function accountNativeCashBalance(account) { return typeof account?.initial_cash === 'number' ? account.initial_cash : null; }
 const stock = (symbol, value=0, account='us1', sector='Technology', currency='USD') => ({
  holding:{symbol, account_id:account, quantity:value/100, market_value:value,
    currency, stock_market:'NASDAQ', asset_class:'EQUITY', sector, industry:sector},
  exchange:'NASDAQ', industry:sector, missing:[],
+ stress_risk:{security_key:symbol+'|NASDAQ|'+currency,issuer_id:'issuer:'+symbol,country:{country_code:'US',basis:'economic_exposure'},country_rating:{status:'rated',rating:'AAA',scope:'sovereign',scale:'global',term:'long_term',verified:true,source_kind:'agency_public',currency_basis:'foreign_currency'},currency_exposures:{[currency]:1},parameters:{country_currency:'USD'}},
  price_ranges:{'1m':{current:100,current_date:'2026-10-29'},'1y':{current:100,high:120,min:80,current_date:'2026-10-29'}}});
 const account = (id='us1', location='USA', cash=100000, currency='USD', type='Investment') =>
  ({id, account_id:id, location, initial_cash:cash, currency, type});
@@ -125,24 +129,19 @@ assert.deepEqual(updated.warnings,[]);
 ''')
 
 
-def test_stale_target_price_supports_buy_and_short_estimates_without_mutating_saved_data():
+def test_stale_target_prices_preserve_warning_but_cannot_establish_complete_risk_sizing():
     run_planner_js('''
 for(const action of ['BUY','SHORT']) {
  const ctx=context();
  for(const range of Object.values(ctx.security.price_ranges))range.current_date='2026-07-31';
  const before=JSON.stringify(ctx);
  const result=planner.plan(ctx,{action,amount:1000},adapters);
- assert.equal(result.status,'ok',JSON.stringify(result));
- assert.equal(result.quote.date,'2026-07-31');
- assert.equal(result.recommendation.quantity*result.quote.price,result.recommendation.amount);
- assert.ok(result.recommendation.amount>0&&result.recommendation.amount<=1000);
- assert.ok(result.recommendation.cashRemaining>=result.recommendation.reserve);
- assert.equal(result.warnings.length,1);
- assert.equal(result.warnings[0].symbol,'NEW');
+ assert.equal(result.status,'unavailable');
+ assert.equal(result.excluded[0].reason,'risk_inputs_incomplete');
+ assert.equal(result.warnings[0].reason,'price_stale');
  assert.equal(JSON.stringify(ctx),before);
 }
 ''')
-
 
 def test_quote_uses_latest_valid_saved_price_and_future_or_undated_prices_still_block():
     run_planner_js('''

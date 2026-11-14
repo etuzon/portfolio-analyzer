@@ -1,4 +1,4 @@
-/* Presentation of existing rule matches and portfolio-risk-v2 assessments. */
+/* Presentation of existing rule matches and versioned portfolio stress assessments. */
 const ALARM_PRIORITY = Object.freeze({ red: 0, amber: 1, green: 2, blue: 3, purple: 4, neutral: 5 });
 
 function alarmAppearance(alarm) {
@@ -70,22 +70,19 @@ function portfolioRiskAlarms() {
   const snapshot = portfolioRiskSnapshot(items);
   const scopes = [{ key: "total", label: t("Total portfolio risk"), risk: snapshot.total },
     ...snapshot.accounts.map((entry) => ({ key: entry.key, label: entry.account, risk: entry.risk }))];
-  if (scopes.some(({ risk }) => typeof risk?.score !== "number" || !Number.isFinite(risk.score) || risk.score < 0 || risk.score > 100)) {
-    return notice("unavailable", "Complete missing valuations, quantities or currency conversion data before assessing risk.");
-  }
   const warnings = scopes.flatMap(({ key, label, risk }) => {
-    const band = riskBand(risk.score);
+    const estimated = !Number.isFinite(risk?.score) && risk?.status === "estimate" && Number.isFinite(risk.estimated_score);
+    const score = Number.isFinite(risk?.score) ? risk.score : estimated ? risk.estimated_score : null;
+    if (score === null || score < 0 || score > 100) return [{kind:"risk",key:`risk:${key}:assessment`,level:"unavailable",risk,title:label,
+      body:t("Complete missing risk evidence in Risk inputs and Ratings before assessing this scope."),meta:t("View risk details")}];
+    const band = riskBand(score);
     const level = ["high", "extreme", "elevated"].includes(band.key) ? band.key
-      : key !== "total" && Number.isFinite(risk.cash_debt) && risk.cash_debt > 0 ? "borrowing" : "";
+      : estimated ? "limited" : key !== "total" && Number.isFinite(risk.cash_debt) && risk.cash_debt > 0 ? "borrowing" : "";
     if (!level) return [];
-    return [{ kind: "risk", key: `risk:${key}`, level, risk, title: label,
-      body: alarmText("Existing risk model: {score}/100. Review the contributing factors.", { score: risk.score }),
-      meta: t("View risk details") }];
+    return [{ kind:"risk",key:`risk:${key}`,level,risk,title:label,
+      body:alarmText(estimated ? "Estimated stress risk: ~{score}/100. Review the explicit assumptions." : "Modeled stress risk: {score}/100. Review the stress scenarios.",{score}),
+      meta:t("View risk details") }];
   });
-  if (snapshot.total.quality_details?.length || snapshot.total.components?.data_quality > 0) {
-    warnings.push({ kind: "risk", key: "risk:quality", level: "limited", risk: snapshot.total,
-      title: t("Total portfolio risk"), body: t("Some model inputs are missing. The calculated score uses the existing data-quality penalty."), meta: t("View risk details") });
-  }
   return warnings;
 }
 
@@ -160,6 +157,7 @@ function riskAlarmDismissalId(alarm) {
       analytics_state: item.analytics_state, missing: item.missing || [],
       industry: industryLabel(item), country: countryLabel(item), issuer: issuerLabel(item),
       asset_factor: assetRiskFactor(item), volatility: volatilityProxy(item),
+      stress_inputs: item.stress_risk ? { fingerprint:item.stress_risk.fingerprint,parameters:item.stress_risk.parameters,credit_rating:item.stress_risk.credit_rating,sovereign_rating:item.stress_risk.sovereign_rating,country_rating:item.stress_risk.country_rating } : null,
       exposure: item.exposure_profile ? Object.fromEntries(["asset_focus", "geography", "sector_exposure", "fx_basis", "fx_reference_currency", "currency_exposures", "fx_policy_limit_percent", "as_of"].map((key) => [key, item.exposure_profile[key]])) : null,
     };
   });
@@ -170,7 +168,7 @@ function riskAlarmDismissalId(alarm) {
   const risk = alarm.risk || {};
   const evidence = JSON.stringify(alarmStableEvidence({ key: alarm.key, level: alarm.level,
     source_state: state.portfolioSourceState, pending: Boolean(state.portfolioRefreshPending),
-    model: alarmModelEvidence({ score: risk.score, components: risk.components, quality_details: risk.quality_details,
+    model: alarmModelEvidence({ version:risk.model,status:risk.status,estimated_score:risk.estimated_score,loss_pct:risk.loss_pct,worst_scenario:risk.worst_scenario,gaps:risk.gaps,score: risk.score, components: risk.components, quality_details: risk.quality_details,
       cash_debt: risk.cash_debt, net_equity: risk.net_equity, unlevered_score: risk.unlevered_score }),
     base_currency: state.baseCurrency, holdings, accounts }));
   // Two independent 32-bit accumulators keep local dismissal IDs compact.

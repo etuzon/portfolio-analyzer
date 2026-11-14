@@ -44,7 +44,12 @@ def test_context_filters_known_noninvestment_sources_but_preserves_orphan_eviden
     assert [account["id"] for account in result["accounts"]] == ["investment"]
     assert [row["account_db_id"] for row in result["transactions"]] == ["investment"]
     assert [item["holding"]["symbol"] for item in result["items"]] == ["INVESTMENT", "ORPHAN"]
-    assert looked_up == [items]
+    # New model metadata is attached to a detached capture. Listing lookup still
+    # receives every original source item before investment-only filtering.
+    assert [[{key:value for key,value in row.items() if key != "stress_risk"} for row in evidence]
+            for evidence in looked_up] == [items]
+    assert all(row["stress_risk"]["model"] == "portfolio-risk-v3" for row in looked_up[0])
+    assert all(row["stress_risk"]["gaps"] for row in result["items"]), "identity-poor evidence remains incomplete"
     assert (accounts, transactions, items) == original
 
 
@@ -188,7 +193,9 @@ assert.equal(deficit.cashDeficit,1000);
 assert.equal(deficit.unavailableReasons.cash,null);
 assert.equal(deficit.unavailableReasons.risk,null);
 assert.ok(Number.isFinite(deficit.risk.score));
-assert.ok(deficit.risk.components.borrowing>0);
+assert.equal(deficit.risk.funding.cash_debt,1000);
+assert.ok(deficit.risk.loss_pct>100);
+assert.ok(!("borrowing" in deficit.risk.components));
 assert.equal(result.total.after.cash,49000);
 assert.equal(result.total.after.netValue,51000);
 assert.ok(Number.isFinite(result.total.after.risk.score));

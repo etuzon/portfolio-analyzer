@@ -81,7 +81,7 @@ def test_viewer_reads_full_dashboard_context_without_mutation_or_history_registr
     response = client.get('/api/portfolio/risk-scenarios/context?base_currency=ILS')
     assert response.status_code == 200, response.text
     context = response.json()
-    assert context['model'] == 'portfolio-risk-v2'
+    assert context['model'] == 'portfolio-risk-v3'
     assert context['source'] == 'saved_evidence'
     assert context['observed_at'] == '2026-11-11T22:30:00Z'
     assert context['date'] == '2026-11-12', 'date follows the same captured instant in Jerusalem'

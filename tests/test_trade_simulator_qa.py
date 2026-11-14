@@ -345,7 +345,10 @@ def test_coherent_backend_snapshot_survives_later_ledger_changes(monkeypatch, ch
     assert result["signature"] == "captured-ledger"
     assert result["accounts"][0]["initial_cash"] == 1000
     assert result["transactions"] == []
-    assert result["items"] == snapshot["items"]
+    assert [{key:value for key,value in row.items() if key != "stress_risk"} for row in result["items"]] == snapshot["items"]
+    assert result["items"][0]["stress_risk"]["model"] == "portfolio-risk-v3"
+    assert result["items"][0]["stress_risk"]["gaps"] == [{"code":"risk_input_security_identity"}]
+    assert "stress_risk" not in snapshot["items"][0], "risk evidence must not mutate the saved source"
     assert result["refresh_pending"] is True
     assert datetime.fromisoformat(result["calculated_at"]) <= entered_lookup[0]
     assert result["fx_quotes"][0]["quote"]["rate"] == 4

@@ -170,9 +170,10 @@
       const cashBase = convert(cash, currency);
       const accountNav = total(positions.map(value)) + cashBase;
       const horizon = adapters.horizon(account);
-      const before = adapters.risk(positions, { cash: cashBase, cashCurrency: currency, horizonYears: horizon,
+      const before = adapters.risk(positions, { cash: cashBase, cashCurrency: currency, horizonYears: horizon, asOf:context.calculated_at,
         baseCurrency: base, normalizeField: (item, field) => convert(item.holding[field], item.holding.currency) });
-      if (!Number.isFinite(before.score) || before.score >= POLICY.maxRisk) { reject("risk_limit"); continue; }
+      if (!Number.isFinite(before.score)) { reject("risk_inputs_incomplete"); continue; }
+      if (before.score >= POLICY.maxRisk) { reject("risk_limit"); continue; }
       let scale = before.score >= 60 ? 0.5 : before.score >= 40 ? 0.75 : 1;
       if (horizon === null || horizon < 7) scale *= 0.5;
       if (horizon !== null && horizon < 3) scale *= 0.5;
@@ -196,9 +197,7 @@
       if (requested !== null) limits.push({ reason: "requested_amount", value: convert(requested, currency) });
       limits.sort((a, b) => a.value - b.value);
       let quantity = Math.floor(Math.max(0, limits[0].value) / unitBase);
-      // The existing risk model adds industry/issuer/volatility components on the first
-      // holding even for a tiny starter position. Allow that discontinuity
-      // without changing the portfolio's shared risk formula.
+      // Sizing policy is separate from the shared severe-loss calculation.
       const riskIncreaseLimit = positions.length ? POLICY.maxRiskIncrease : POLICY.firstPositionRiskIncrease;
       let after, projected, costBase, riskReduced = false;
       while (quantity > 0) {
@@ -211,13 +210,13 @@
         if (!existing) projected.push({ ...security, holding: { ...h, account_id: account.id,
           quantity: action === "SHORT" ? -quantity : quantity, market_value: action === "SHORT" ? -notional : notional } });
         after = adapters.risk(projected, { cash: Math.max(0, cashBase - costBase * (collateral + POLICY.feeBuffer)),
-          cashCurrency: currency, horizonYears: horizon, baseCurrency: base,
+          cashCurrency: currency, horizonYears: horizon, baseCurrency: base, asOf:context.calculated_at,
           normalizeField: (item, field) => convert(item.holding[field], item.holding.currency) });
         if (Number.isFinite(after.score) && after.score <= Math.min(POLICY.maxRisk, before.score + riskIncreaseLimit)) break;
         riskReduced = true;
         quantity = Math.floor(quantity / 2);
       }
-      if (!quantity) { reject(limits[0].value < unitBase ? limits[0].reason : "risk_limit"); continue; }
+      if (!quantity) { reject(after && !Number.isFinite(after.score) ? "risk_inputs_incomplete" : limits[0].value < unitBase ? limits[0].reason : "risk_limit"); continue; }
       const amount = quantity * current.price;
       const cashUsed = amount * (collateral + POLICY.feeBuffer);
       const stockBefore = exposure(positions, sameSymbol);

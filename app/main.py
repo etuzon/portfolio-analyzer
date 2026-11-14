@@ -79,6 +79,7 @@ from .providers import MarketDataHub, ProviderError
 from .portfolio_refresh import PRICE_ANALYSIS_FIELDS, attach_market_analysis, prefer_recorded_prices, refresh_positions, revalue_holding, security_key
 from .report_pdf import build_portfolio_report_pdf
 from . import risk_history, risk_scenarios
+from .stress_risk_inputs import StressRiskInputs
 from .dividend_summary_pdf import build_dividend_summary_pdf
 from .trade_planner import planner_security
 
@@ -3396,7 +3397,7 @@ def clear_assistant_context(request: Request):
 
 
 def _risk_history_guard():
-    return (portfolio_cache_signature(), _portfolio_cache_generation)
+    return (portfolio_cache_signature(), _portfolio_cache_generation, stress_risk_inputs.revision())
 
 
 def _risk_history_saved_fx(base_currency: str, items: list, accounts: list):
@@ -3425,7 +3426,7 @@ def _risk_history_saved_fx(base_currency: str, items: list, accounts: list):
 def _risk_history_inputs(base_currency: str, *, saved_only: bool = False):
     # All three paths use the same lock order. Stored history is excluded from
     # financial change_token so recording never invalidates its own context.
-    with _portfolio_cache_lock, local_store._sync_lock:
+    with _portfolio_cache_lock, credit_rating_service._lock, sovereign_rating_service._lock, local_store._sync_lock:
         before = _risk_history_guard()
         if saved_only:
             # Scenario reads must not let a stale/missing cache start a provider
@@ -3442,13 +3443,15 @@ def _risk_history_inputs(base_currency: str, *, saved_only: bool = False):
         if (payload.get("refresh_pending") or payload.get("refresh_state", "ready") != "ready"
                 or any(item.get("analytics_state", "ready") != "ready" for item in payload.get("items", []))):
             raise risk_history.RiskHistoryError("risk_context_not_ready", 409)
+        payload["items"] = stress_risk_inputs.enrich(payload.get("items", []))
         accounts = local_store.list_accounts()
         transactions = local_store.list_transactions()
         fx_data = _risk_history_saved_fx(base_currency, payload.get("items", []), accounts)
         after = _risk_history_guard()
         if not before[0] or before != after or fx_data != _risk_history_saved_fx(base_currency, payload.get("items", []), accounts):
             raise risk_history.RiskHistoryError("risk_context_stale", 409)
-        return {**risk_history.canonical_inputs(payload.get("items", []), accounts, transactions, fx_data, base_currency), "guard": before}
+        return {**risk_history.canonical_inputs(payload.get("items", []), accounts, transactions, fx_data, base_currency),
+                "unmodeled_funds": [{"id": row["id"]} for row in local_store.list_funds()], "guard": before}
 
 
 def _risk_history_error(exc):
@@ -3458,7 +3461,7 @@ def _risk_history_error(exc):
 @app.get("/api/portfolio/risk-scenarios/context")
 def risk_scenarios_context(base_currency: str = "ILS"):
     try:
-        with _portfolio_cache_lock, local_store._sync_lock:
+        with _portfolio_cache_lock, credit_rating_service._lock, sovereign_rating_service._lock, local_store._sync_lock:
             return risk_scenarios.create_context(base_currency, lambda currency: _risk_history_inputs(currency, saved_only=True))
     except risk_history.RiskHistoryError as exc:
         raise _risk_history_error(exc) from exc
@@ -3467,7 +3470,7 @@ def risk_scenarios_context(base_currency: str = "ILS"):
 @app.get("/api/portfolio/risk-history/context")
 def risk_history_context(request: Request, base_currency: str = "ILS"):
     try:
-        with _portfolio_cache_lock, local_store._sync_lock:
+        with _portfolio_cache_lock, credit_rating_service._lock, sovereign_rating_service._lock, local_store._sync_lock:
             return risk_history.create_context(local_store, request.state.auth_user["id"], base_currency, _risk_history_inputs)
     except risk_history.RiskHistoryError as exc:
         raise _risk_history_error(exc) from exc
@@ -3476,7 +3479,7 @@ def risk_history_context(request: Request, base_currency: str = "ILS"):
 @app.post("/api/portfolio/risk-history")
 def record_risk_history(request: Request, payload: dict[str, Any]):
     try:
-        with _portfolio_cache_lock, local_store._sync_lock:
+        with _portfolio_cache_lock, credit_rating_service._lock, sovereign_rating_service._lock, local_store._sync_lock:
             return risk_history.save_observation(local_store, request.state.auth_user["id"], payload, _risk_history_inputs, _risk_history_guard,
                 lambda context: _risk_history_saved_fx(context["base_currency"], context["items"], context["accounts"]))
     except risk_history.RiskHistoryError as exc:
@@ -3497,6 +3500,19 @@ def portfolio(refresh: bool = False):
     # Refresh starts a worker; notifications announce its completed snapshot.
     revision = _portfolio_notifications.revision
     payload = portfolio_payload(force_refresh=refresh, defer_enrichment=True)
+    # Ratings/country/parameter edits can happen independently of valuation
+    # refresh. Attach only a coherent fresh cache-only risk revision.
+    for attempt in range(2):
+        risk_revision = stress_risk_inputs.revision()
+        items = stress_risk_inputs.enrich(payload.get("items", []))
+        if risk_revision == stress_risk_inputs.revision():
+            payload["items"] = items
+            payload["risk_model"] = risk_history.MODEL
+            payload["risk_revision"] = risk_revision
+            payload["risk_as_of"] = datetime.now(timezone.utc).date().isoformat()
+            break
+    else:
+        raise HTTPException(status_code=409, detail="portfolio_changed")
     # A change during payload assembly must remain observable on subscription.
     payload["update_revision"] = revision
     return payload
@@ -4654,11 +4670,46 @@ sovereign_rating_service = SovereignRatingService(cache=lambda: hub().cache,
 app.include_router(sovereign_rating_service.router())
 
 
+def _stress_risk_inventory():
+    """Exact registered/held identities; profiles and bond references stay cache-only."""
+    if not all(hasattr(local_store, key) for key in ("list_manual_securities", "holdings")):
+        return []
+    records = {row["security_key"]: row for row in _credit_rating_inventory()}
+    holdings = [to_dict(row.holding) for row in local_store.holdings(include_closed=True)]
+    for holding in [*local_store.list_manual_securities(), *holdings]:
+        key = enrichment_security_key(holding)
+        if key in records or not all(holding.get(field) for field in ("symbol", "stock_market", "currency")):
+            continue
+        profile = hub().cached_profile(holding["symbol"], stock_market=holding["stock_market"],
+            secondary_symbol=holding.get("secondary_symbol") or "") if hasattr(hub(), "cached_profile") else {}
+        records[key] = {**deepcopy(holding), "security_key": key, "issuer_name": profile.get("name") or "",
+            "issuer_country": profile.get("country") or "", "issuer_identity_verified": False}
+    return sorted(records.values(), key=lambda row: row["security_key"])
+
+
+def _stress_credit_read(candidate):
+    if str(candidate.get("asset_class") or "").upper() in {"ETF", "MUTUALFUND", "FUND"}:
+        return {}
+    return credit_rating_service.read(candidate)
+
+
+def _stress_sovereign_read(code):
+    candidate = sovereign_rating_service.candidate(code) if code else None
+    return sovereign_rating_service.read(candidate) if candidate else {}
+
+
+stress_risk_inputs = StressRiskInputs(store=lambda: local_store, inventory=_stress_risk_inventory,
+    credit=_stress_credit_read, sovereign=_stress_sovereign_read, countries=lambda candidate: security_countries.read(candidate))
+app.include_router(stress_risk_inputs.router())
+
+
 @app.get("/api/countries/credit-ratings/risk-context")
 def sovereign_risk_context(request: Request, country_scope: str = "accounts"):
     catalog = sovereign_countries(request, country_scope)
     return {"country_scope": country_scope, "country_basis": "account_location",
-            "risk_formula_applied": False, "unknown_account_countries": catalog["unknown_account_countries"],
+            "risk_formula_applied": False, "rating_aware_scoring_enabled": True, "risk_model": risk_history.MODEL,
+            "risk_calculation": "browser", "risk_country_basis": "issuer_or_underlying_exposure",
+            "unknown_account_countries": catalog["unknown_account_countries"],
             "items": [{**row, "credit_ratings": sovereign_rating_service.read(row)} for row in catalog["items"]],
             "security_countries": [security_countries.read(row) for row in _credit_rating_inventory()]}
 
@@ -6573,11 +6624,17 @@ def trade_planner_context(
         raise HTTPException(status_code=422, detail="unsupported_listing")
     signature = portfolio_cache_signature()
     payload = portfolio_payload(defer_enrichment=True)
+    risk_revision = stress_risk_inputs.revision()
+    payload["items"] = stress_risk_inputs.enrich(payload.get("items") or [])
     accounts = local_store.list_accounts()
     transactions = local_store.list_transactions()
     target, reason = planner_security(symbol, market, payload.get("items") or [], hub(), _stock_market_key, US_STOCK_MARKETS, local_store)
     quotes = fx()["quotes"]
+    if target:
+        target = stress_risk_inputs.enrich([target])[0]
     if signature != portfolio_cache_signature():
+        raise HTTPException(status_code=409, detail="portfolio_changed")
+    if risk_revision != stress_risk_inputs.revision():
         raise HTTPException(status_code=409, detail="portfolio_changed")
     return {"accounts": accounts, "transactions": transactions, "items": payload.get("items") or [],
             "security": target, "reason": reason, "fx_quotes": quotes,
@@ -6606,6 +6663,8 @@ def trade_simulator_context(payload: dict[str, Any]):
             listings.append((symbol, market))
     signature = portfolio_cache_signature()
     snapshot = deepcopy(portfolio_payload(defer_enrichment=True))
+    risk_revision = stress_risk_inputs.revision()
+    snapshot["items"] = stress_risk_inputs.enrich(snapshot.get("items") or [])
     accounts = deepcopy(local_store.list_accounts())
     transactions = deepcopy(local_store.list_transactions())
     # Freeze one coherent local snapshot before potentially slow listing/FX
@@ -6620,8 +6679,12 @@ def trade_simulator_context(payload: dict[str, Any]):
         security, reason = planner_security(symbol, market, snapshot.get("items") or [], hub(),
                                             _stock_market_key, US_STOCK_MARKETS, local_store,
                                             {"EQUITY", "RSU", "ETF", "BOND", "MUTUALFUND"})
+        if security:
+            security = stress_risk_inputs.enrich([security])[0]
         securities.append({"symbol": symbol, "stock_market": market, "security": security, "reason": reason})
     quotes = deepcopy(fx()["quotes"])
+    if risk_revision != stress_risk_inputs.revision():
+        raise HTTPException(status_code=409, detail="portfolio_changed")
     all_account_ids = {str(account["id"]) for account in accounts}
     investment_accounts = [account for account in accounts if str(account.get("type") or "").upper() == "INVESTMENT"]
     investment_ids = {str(account["id"]) for account in investment_accounts}
@@ -6633,6 +6696,7 @@ def trade_simulator_context(payload: dict[str, Any]):
             "transactions": [row for row in transactions if str(row.get("account_db_id")) in investment_ids], "items": investment_items,
             "securities": securities, "fx_quotes": quotes, "signature": signature,
             "base_currency": base_currency,
+            "risk_model": risk_history.MODEL, "risk_revision": risk_revision,
             "calculated_at": captured_at,
             "refresh_pending": snapshot.get("refresh_pending", False)}
 

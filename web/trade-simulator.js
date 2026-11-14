@@ -157,7 +157,8 @@
       const shortExposure = valued ? Math.max(0, -sum(localValues.filter((v) => v < 0))) : null;
       const hasLiability = positions.some((p) => p.holding.quantity < 0 || adapters.derivative(p));
       const risk = !reason ? adapters.risk(positions, { cash: cashBase, cashCurrency: currency,
-        horizonYears: adapters.horizon(book.account), baseCurrency: base,
+        horizonYears: adapters.horizon(book.account), baseCurrency: base, asOf:context.calculated_at,
+        cashAccounts:[{account_id:String(book.account.id),value:cashBase,currency}],
         normalizeField: (item, field) => convert(item.holding[field], item.holding.currency) }) : null;
       const availableCash = book.cash !== null && !hasLiability ? book.cash : null;
       const valueReason = book.issue || (missingValuation ? "valuation_unavailable" : null)
@@ -194,12 +195,11 @@
         const horizons = accounts.map((a) => adapters.horizon(a.account)).filter((v) => v != null);
         const combinedRisk = adapters.risk(rows.flatMap((r) => r._positions), { cash, baseCurrency: base,
           cashDebt: sum(rows.map((r) => Math.max(0, -r._cashBase))),
+          cashAccounts:accounts.map(a=>({account_id:String(a.account.id),value:a[phase]._cashBase,currency:a.account.currency})),
+          asOf:context.calculated_at,
           horizonYears: horizons.length ? Math.min(...horizons) : null,
           normalizeField: (item, name) => convert(item.holding[name], item.holding.currency) });
-        const denominator = sum(rows.map((r) => r._riskWeight));
-        const weighted = denominator ? sum(rows.map((r) => r.risk.score * r._riskWeight)) / denominator : 0;
-        const insolvent = combinedRisk.net_equity <= 0 && (grossExposure > 0 || combinedRisk.cash_debt > 0);
-        risk = { ...combinedRisk, score: insolvent ? 100 : Math.min(100, Math.max(0, Math.round(0.75 * combinedRisk.score + 0.25 * weighted))) };
+        risk = combinedRisk;
       }
       const availableCash = field("availableCash");
       const unavailableReasons = {};

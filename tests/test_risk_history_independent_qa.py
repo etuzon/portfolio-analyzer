@@ -24,6 +24,7 @@ const riskBand=()=>({label:state.language==='he'?'בינוני':'Moderate'});
 const target={innerHTML:'',setAttribute(){}};
 const $=id=>id==='riskHistoryContent'?target:null;
 const riskTooltip=risk=>`score ${risk.score}/100`;
+const riskBadge=risk=>Number.isFinite(risk.score)?risk.score+'/100':'Incomplete';
 ''' + (ROOT/'web/risk-history-ui.js').read_text() + '\n' + body
     result=subprocess.run(['node'], input=script, text=True, capture_output=True, cwd=ROOT)
     assert result.returncode == 0, result.stderr
@@ -92,7 +93,7 @@ renderRiskHistory=()=>{};
 ''')
 
 
-def test_frozen_context_executes_v2_borrowing_and_rollup_arithmetic_without_state_leak():
+def test_frozen_context_executes_v3_pooled_loss_and_borrowing_without_state_leak():
     functions=app_functions('portfolioRiskSnapshot','accountCashBalance','accountRiskCashValue',
         'riskAllocationForItems','riskAllocationBand','cleanSourceLabel','portfolioItems',
         'isEquityCompHolding','portfolioAccounts','isEquityCompAccount')
@@ -107,17 +108,16 @@ state.language='he';state.localAccounts=[account('original')];state.localTransac
 state.coreFxRates={old:1};state.bannerFxRates={banner:2};state.fxRates={old:1,banner:2};
 const before=JSON.stringify(state);
 ''' + (ROOT/'web/risk-history-ui.js').read_text()+r'''
-const ctx={base_currency:'USD',accounts:[account('us1','USA',-1000),account('surplus','USA',2000)],transactions:[],items:[stock('HELD',10000)],fx:{quotes:[]}};
+const ctx={base_currency:'USD',observed_at:'2026-10-30T12:00:00Z',accounts:[account('us1','USA',-1000),account('surplus','USA',2000)],transactions:[],items:Array.from({length:20},(_,i)=>stock('HELD'+i,500)),fx:{quotes:[]}};
 const original=JSON.stringify(ctx);
 const snapshot=riskHistoryCalculate(ctx);
-// Raw v2 arithmetic: combined unlevered S=41.3666667, D/E=1000/11000;
-// combined rounds to 45. Account scores 55 and 8, weighted by 10000:2000,
-// then total round(.75*45+.25*(55*5/6+8/6)) = 46.
-assert.equal(snapshot.total.score,46);
+// Recession loses4000 from10000 of diversified equity. E=11000 =>73.
+// Account A hasE9000 =>89; surpluscash hasnominalmarketstress0.
+assert.equal(snapshot.total.score,73);
 assert.equal(snapshot.total.cash_debt,1000);
 assert.equal(snapshot.total.net_equity,11000);
-assert.equal(snapshot.accounts.find(row=>row.key==='us1').risk.score,55);
-assert.equal(snapshot.accounts.find(row=>row.key==='surplus').risk.score,8);
+assert.equal(snapshot.accounts.find(row=>row.key==='us1').risk.score,89);
+assert.equal(snapshot.accounts.find(row=>row.key==='surplus').risk.score,0);
 assert.equal(JSON.stringify(ctx),original);
 assert.equal(JSON.stringify(state),before);
 ''')

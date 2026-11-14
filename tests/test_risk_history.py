@@ -12,12 +12,15 @@ from app.local_portfolio import LocalPortfolioStore
 
 
 def fixture_inputs():
-    return risk_history.canonical_inputs(
+    inputs = risk_history.canonical_inputs(
         [{'holding': {'account_id': 'a', 'asset_class': 'EQUITY', 'currency': 'USD', 'quantity': 1, 'market_value': 100}}],
         [{'id': 'a', 'account_id': 'Account 1', 'type': 'Investment', 'currency': 'USD', 'initial_cash': 10},
          {'id': 'esop', 'type': 'ESOP', 'currency': 'USD', 'initial_cash': 500},
          {'id': 'empty', 'type': 'Bank', 'currency': 'ILS', 'initial_cash': 0}], [],
         {'quotes': [{'pair': 'USD/ILS', 'quote': {'rate': 3.5, 'date': '2026-11-06'}}]}, 'ILS')
+    # Retained v2 observations and their original strict validator remain valid
+    # after the model upgrade; v3 records have separate coverage/status tests.
+    return {**inputs, 'model': risk_history.LEGACY_MODEL}
 
 
 def score(value=30):

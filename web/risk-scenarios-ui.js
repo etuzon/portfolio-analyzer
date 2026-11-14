@@ -119,7 +119,7 @@ async function regenerateRiskScenarios() {
   }
 }
 function riskScenarioScore(risk) {
-  const value = typeof risk === "number" ? risk : risk?.score;
+  const value = typeof risk === "number" ? risk : Number.isFinite(risk?.score) ? risk.score : risk?.status === "estimate" ? risk.estimated_score : null;
   return Number.isFinite(value) ? value : null;
 }
 function riskScenarioComparison(label, beforeRisk, afterRisk) {
@@ -127,11 +127,11 @@ function riskScenarioComparison(label, beforeRisk, afterRisk) {
   if (before === null || after === null) return `<div class="risk-scenario-comparison"><span>${esc(t(label))}</span><strong>${esc(t("Not available"))}</strong></div>`;
   const delta = after - before;
   const deltaLabel = riskScenarioText("{change} points", { change: `${delta > 0 ? "+" : ""}${fmt(delta, 0)}` });
-  return `<div class="risk-scenario-comparison"><span>${esc(t(label))}</span><div class="risk-scenario-scores"><bdi>${esc(fmt(before, 0))}</bdi><span aria-hidden="true">${state.language === "he" ? "←" : "→"}</span><strong dir="ltr"><bdi>${esc(fmt(after, 0))}</bdi><small>/100</small></strong><small class="${delta < 0 ? "down" : delta > 0 ? "up" : "neutral"}"><bdi>${esc(deltaLabel)}</bdi></small></div></div>`;
+  return `<div class="risk-scenario-comparison"><span>${esc(t(label))}</span><div class="risk-scenario-scores"><bdi>${beforeRisk?.status === "estimate" ? "~" : ""}${esc(fmt(before, 0))}</bdi><span aria-hidden="true">${state.language === "he" ? "←" : "→"}</span><strong dir="ltr"><bdi>${afterRisk?.status === "estimate" ? "~" : ""}${esc(fmt(after, 0))}</bdi><small>/100</small></strong><small class="${delta < 0 ? "down" : delta > 0 ? "up" : "neutral"}"><bdi>${esc(deltaLabel)}</bdi></small></div></div>`;
 }
 function riskScenarioProjection(scenario) {
   const reasons = {
-    concentration: "Concentration", asset_mix: "Asset mix", currency: "Currency exposure", industry: "Industry concentration",
+    stress_loss: "Modeled stress loss", concentration: "Concentration", asset_mix: "Asset mix", currency: "Currency exposure", industry: "Industry concentration",
     cash: "Cash buffer", derivatives: "Options, futures and leverage", volatility: "Volatility", horizon: "Investment horizon",
     issuer_country: "Issuer and country concentration", data_quality: "Missing data", borrowing: "Borrowing adjustment",
   };
@@ -189,8 +189,9 @@ function renderRiskScenarios() {
     target.innerHTML = view.loading || view.error ? "" : `<p class="empty">${esc(t("Refresh scenarios to explore changes to the recorded portfolio."))}</p>`;
   } else {
     const scenarios = result.scenarios || [];
+    if (result.status === "incomplete") { target.innerHTML = `${typeof stressRiskSummaryHtml === "function" ? stressRiskSummaryHtml(result.baseline?.total) : ""}${typeof stressRiskGapsHtml === "function" ? stressRiskGapsHtml(result.baseline?.total) : ""}`;restore();return; }
     const baseline = riskScenarioScore(result.baseline?.total);
-    target.innerHTML = `${baseline === null ? "" : `<p class="risk-scenario-baseline">${esc(t("Captured total portfolio risk"))}: <bdi>${esc(fmt(baseline, 0))}/100</bdi></p>`}
+    target.innerHTML = `${baseline === null ? "" : `<p class="risk-scenario-baseline">${esc(t("Captured total portfolio risk"))}: <bdi>${result.baseline?.total?.status === "estimate" ? "~" : ""}${esc(fmt(baseline, 0))}/100</bdi>${result.baseline?.total?.status === "estimate" ? ` · ${esc(t("Estimate"))}` : ""}</p>`}
       <p class="section-note">${esc(riskScenarioText("Scenarios shown: {count}. Maximum: {maximum}.", { count: fmt(scenarios.length, 0), maximum: fmt(view.maxScenarios, 0) }))}</p>
       ${scenarios.length ? scenarios.map(riskScenarioCard).join("") : `<p class="empty">${esc(t(selectedKnown ? "No supported sell scenario lowers the modeled risk for this scope." : "The selected account is unavailable. Choose another account."))}</p>`}
       ${result.excluded?.length ? `<details class="risk-scenario-exclusions"><summary>${esc(t("Holdings without a supported scenario"))} (${esc(fmt(result.excluded.length, 0))})</summary><ul>${result.excluded.map(row => `<li><bdi dir="auto">${esc(row.symbol || t("Security"))}</bdi>: ${esc(riskScenarioExclusion(row.code))}</li>`).join("")}</ul></details>` : ""}`;

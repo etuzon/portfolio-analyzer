@@ -256,7 +256,7 @@ const accountHorizonYears=()=>20;
 const normalizedAmount=value=>value;
 const ctx=simulationContext();ctx.accounts=rawAccounts;ctx.transactions=rawTransactions;
 ctx.calculated_at=new Date().toISOString();
-state.localAccounts=ctx.accounts;state.localTransactions=ctx.transactions;
+state.localAccounts=ctx.accounts;state.localTransactions=ctx.transactions;state.riskAsOf=ctx.calculated_at;
 const owner=rawAccounts[0];
 assert.equal(accountCashBalance(owner),-125.5);
 assert.equal(accountNativeCashBalance(owner),-125.5);

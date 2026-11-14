@@ -26,7 +26,7 @@ FUNCTIONS = (
     "dividendAlarmMessage", "dividendAlarms", "vestingAlarms", "alarmDismissalId",
     "currentAlarms", "clearAlarms", "renderAlarms", "isEquityCompAccount",
     "isEquityCompHolding", "portfolioItems", "portfolioAccounts", "checkedAccountShareAmount",
-    "riskBand", "riskScoreForItems", "assetRiskFactor", "derivativeHolding", "diversifiedFund",
+    "riskBand", "riskScoreForItems", "riskStrictBaseValue", "accountNativeCashBalance", "accountLabel", "assetRiskFactor", "derivativeHolding", "diversifiedFund",
     "industryLabel", "issuerLabel", "countryLabel", "economicCurrencyExposure", "volatilityProxy",
     "portfolioRiskSnapshot", "accountCashBalance", "accountRiskCashValue", "accountHorizonYears",
     "personHorizonYears", "cleanSourceLabel", "accountRecordForHolding",
@@ -35,12 +35,12 @@ FUNCTIONS = (
 
 
 def source_js():
-    return app_functions(*FUNCTIONS) + "\n" + (ROOT / "web/alarm-priority-ui.js").read_text()
+    return (ROOT / "web/stress-risk.js").read_text() + "\nconst PortfolioStressRisk=globalThis.PortfolioStressRisk || module.exports;\n" + (ROOT / "web/stress-risk-ui.js").read_text().split("(() => {")[0] + "\n" + app_functions(*FUNCTIONS) + "\n" + (ROOT / "web/alarm-priority-ui.js").read_text()
 
 
 SETUP = r'''
 const TRANSLATIONS={en:{},he:{}};
-const state={language:'en',baseCurrency:'USD',localEvents:[],items:[],allPortfolioItems:[],
+const state={language:'en',baseCurrency:'USD',riskAsOf:'2026-11-06T12:00:00Z',localEvents:[],items:[],allPortfolioItems:[],
  localAccounts:[],localTransactions:[],fxRates:{},dismissedAlarmIds:[],vestingAlertDays:30,
  auth:{user:{role:'Operator'}},portfolioReady:true,portfolioRefreshPending:false,portfolioSourceState:'ready',
  alarmsEventsLoaded:true,alertData:{active_signals:[]},alertClientDismissals:[]};
@@ -65,6 +65,7 @@ const stock=(symbol='QA',value=10000,account='qa')=>({
  analytics_state:'ready',holding:{symbol,account_id:account,quantity:value/100,market_value:value,
  currency:'USD',stock_market:'NASDAQ',asset_class:'EQUITY',sector:'Technology',industry:'Technology'},
  exchange:'NASDAQ',industry:'Technology',missing:[],
+ stress_risk:{security_key:symbol+'|NASDAQ|USD',issuer_id:'issuer:'+symbol,country:{country_code:'US',basis:'economic_exposure'},country_rating:{status:'rated',rating:'AAA',scope:'sovereign',scale:'global',term:'long_term',verified:true,currency_basis:'foreign_currency'},currency_exposures:{USD:1},parameters:{country_currency:'USD'}},
  price_ranges:{'1m':{current:100,current_date:'2026-11-06'},'1y':{current:100,high:120,min:80,current_date:'2026-11-06'}}});
 const account=(id='qa',cash=0,type='Investment')=>({id,account_id:id,initial_cash:cash,currency:'USD',type,
  persons:[{age:47,retire_age:67}]});
@@ -127,9 +128,9 @@ for(const [score,expected] of [[0,'low'],[20,'low'],[21,'moderate'],[40,'moderat
 }
 state.localAccounts=[account()];state.allPortfolioItems=[stock()];state.items=[];
 let alarms=portfolioRiskAlarms();
-assert.equal(alarms.length,2);assert.ok(alarms.every(x=>x.risk.score===50&&x.level==='elevated'));
+assert.equal(alarms.length,2);assert.ok(alarms.every(x=>x.risk.score===100&&x.level==='extreme'));
 state.localAccounts[0].initial_cash=-1000;
-alarms=portfolioRiskAlarms();assert.ok(alarms.every(x=>x.risk.score===55));
+alarms=portfolioRiskAlarms();assert.ok(alarms.every(x=>x.risk.score===100));
 state.localAccounts[0].initial_cash=-10000;
 alarms=portfolioRiskAlarms();assert.ok(alarms.every(x=>x.risk.score===100&&alarmAppearance(x).tone==='red'));
 state.allPortfolioItems.push({...stock('ESOP',100000000,'esop'),analytics_state:'pending'});
@@ -162,9 +163,9 @@ state.allPortfolioItems=[original];state.portfolioRefreshPending=true;
 assert.equal(portfolioRiskAlarms()[0].level,'updating');
 state.portfolioRefreshPending=false;state.portfolioSourceState='failed';
 assert.equal(portfolioRiskAlarms()[0].level,'unavailable');
-state.portfolioSourceState='ready';assert.ok(portfolioRiskAlarms().every(x=>x.level==='elevated'));
+state.portfolioSourceState='ready';assert.ok(portfolioRiskAlarms().every(x=>x.level==='extreme'));
 delete state.allPortfolioItems[0].analytics_state;
-assert.ok(portfolioRiskAlarms().every(x=>x.level==='elevated')); // Manual rows omit this optional field.
+assert.ok(portfolioRiskAlarms().every(x=>x.level==='extreme')); // Manual rows omit this optional field.
 state.allPortfolioItems=[];state.localAccounts=[];
 for(const flag of ['alarmsLoadFailed','alarmSignalsLoadFailed','portfolioAlarmLoadFailed']){
  state[flag]=true;renderAlarms();assert.equal(nodes.alarmsButton.dataset.alarmTone,'amber');
@@ -459,7 +460,7 @@ def test_browser_header_modal_navigation_viewer_and_keyboard(tmp_path, width, la
             assert evaluate("$('alarmsModal').inert") is True
             assert evaluate("$('alarmRiskModal').contains(document.activeElement)") is True
             evaluate("state.localAccounts[0].initial_cash=-1000;renderAlarms()")
-            assert '55' in evaluate("$('alarmRiskDetails').textContent")
+            assert '100' in evaluate("$('alarmRiskDetails').textContent")
             evaluate("state.localAccounts[0].initial_cash=-10000;renderAlarms()")
             assert '100' in evaluate("$('alarmRiskDetails').textContent")
             key('Escape');time.sleep(.1)
@@ -477,7 +478,7 @@ def test_browser_header_modal_navigation_viewer_and_keyboard(tmp_path, width, la
             assert evaluate("$('alarmsButton').dataset.alarmTone") == 'amber'
             evaluate("state.localAccounts[0].initial_cash=0;state.portfolioRefreshPending=false;renderAlarms()")
             assert evaluate("$('alarmsCount').textContent") == '3'
-            assert evaluate("$('alarmsButton').dataset.alarmTone") == 'amber'
+            assert evaluate("$('alarmsButton').dataset.alarmTone") == 'red'
             evaluate("state.alarmSignalsLoadFailed=true;state.alarmsLoadFailed=true;renderAlarms()")
             assert evaluate("$('alarmsCount').textContent") == '3'
             status = evaluate("$('alarmsStatus').textContent")

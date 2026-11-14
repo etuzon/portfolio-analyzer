@@ -19,7 +19,8 @@ from zoneinfo import ZoneInfo
 
 from .local_portfolio import _cash_delta
 
-MODEL = "portfolio-risk-v2"
+MODEL = "portfolio-risk-v3"
+LEGACY_MODEL = "portfolio-risk-v2"
 SOURCE = "dashboard_client_calculated"
 PREFIX = "risk_history_v1:"
 CONTEXT_TTL = timedelta(minutes=10)
@@ -135,7 +136,93 @@ def create_context(store, user_id: str, base_currency: str, capture: Callable[[s
     return deepcopy({key: value for key, value in {**context, "token": token, "source": SOURCE}.items() if key != "guard"})
 
 
-def _risk(value: Any) -> dict:
+def _stress_risk(value: Any) -> dict:
+    """Validate versioned severe-loss records without promoting partial results."""
+    if not isinstance(value, dict) or value.get("model", MODEL) != MODEL:
+        raise RiskHistoryError("risk_history_invalid_score")
+    status = value.get("status")
+    score = value.get("score")
+    if status not in {"ok", "incomplete", "estimate", "unavailable"}:
+        raise RiskHistoryError("risk_history_invalid_score")
+    if status == "ok":
+        if type(score) is not int or not 0 <= score <= 100:
+            raise RiskHistoryError("risk_history_invalid_score")
+    elif score is not None:
+        raise RiskHistoryError("risk_history_invalid_score")
+    result = {"model": MODEL, "status": status, "score": score}
+    for field in ("estimated_score", "loss_pct", "stress_loss", "net_equity", "cash_debt", "cash_pct", "unlevered_score"):
+        if field not in value or value[field] is None:
+            continue
+        number = _number(value[field])
+        if number is None or (field != "net_equity" and number < 0):
+            raise RiskHistoryError("risk_history_invalid_metadata")
+        if field == "estimated_score" and (type(value[field]) is not int or number > 100):
+            raise RiskHistoryError("risk_history_invalid_metadata")
+        result[field] = value[field]
+    for field in ("components", "coverage", "funding"):
+        data = value.get(field, {})
+        if not isinstance(data, dict):
+            raise RiskHistoryError("risk_history_invalid_metadata")
+        result[field] = deepcopy(data)
+    coverage = result["coverage"]
+    if "covered_value_percent" in coverage:
+        percent = coverage["covered_value_percent"]
+        unknown_coverage = percent is None and status in {"incomplete", "unavailable"} and coverage.get("complete") is False
+        if not unknown_coverage and (_number(percent) is None or not 0 <= percent <= 100):
+            raise RiskHistoryError("risk_history_invalid_metadata")
+    if "complete" in coverage and type(coverage["complete"]) is not bool:
+        raise RiskHistoryError("risk_history_invalid_metadata")
+    # Known insolvency is a separate boundary result. Missing instrument-model
+    # facts remain visible and do not invalidate known exposure/debt and equity.
+    known_equity = _number(value.get("net_equity"))
+    exposure_numbers = [result["funding"].get("gross_short"), result["funding"].get("cash_debt"),
+                        value.get("cash_debt"), coverage.get("known_gross_value")]
+    insolvency_boundary = (score == 100 and known_equity is not None and known_equity <= 0
+        and value.get("worst_scenario") == "nonpositive_equity"
+        and any(_number(amount) is not None and amount > 0 for amount in exposure_numbers))
+    if status == "ok" and coverage.get("complete") is not True and not insolvency_boundary:
+        raise RiskHistoryError("risk_history_invalid_metadata")
+    for field, limit in (("gaps", 1000), ("scenarios", 1000), ("quality_details", 1000), ("assumptions", 1000), ("rating_evidence", 1000), ("drivers", 30)):
+        rows = value.get(field, [])
+        if not isinstance(rows, list) or len(rows) > limit:
+            raise RiskHistoryError("risk_history_invalid_metadata")
+        result[field] = deepcopy(rows)
+    for field in ("worst_scenario", "as_of", "source_revision"):
+        if field in value and value[field] is not None:
+            if not isinstance(value[field], str) or len(value[field]) > 1000:
+                raise RiskHistoryError("risk_history_invalid_metadata")
+            result[field] = value[field]
+    if isinstance(value.get("forward_sensitivity"), dict):
+        # Store one detached sensitivity object; nested sensitivities are not
+        # meaningful and must not create unbounded recursive records.
+        sensitivity = deepcopy(value["forward_sensitivity"])
+        sensitivity.pop("forward_sensitivity", None)
+        result["forward_sensitivity"] = sensitivity
+    # Every nested financial numeric value must also be finite. JSON forbids
+    # NaN/Infinity, but the explicit walk prevents booleans standing in for money.
+    def check(data, key=""):
+        if isinstance(data, dict):
+            for name, item in data.items():
+                check(item, name)
+        elif isinstance(data, list):
+            for item in data:
+                check(item, key)
+        elif type(data) is float and not math.isfinite(data):
+            raise RiskHistoryError("risk_history_invalid_metadata")
+        elif type(data) is bool and key in {"pnl", "loss", "stress_loss", "cash_debt", "positive_cash", "gross_short", "covered_value_percent"}:
+            raise RiskHistoryError("risk_history_invalid_metadata")
+    check(result)
+    try:
+        if len(json.dumps(result, allow_nan=False)) > 262144:
+            raise RiskHistoryError("risk_history_invalid_metadata")
+    except (TypeError, ValueError):
+        raise RiskHistoryError("risk_history_invalid_metadata") from None
+    return result
+
+
+def _risk(value: Any, model: str = LEGACY_MODEL) -> dict:
+    if model == MODEL:
+        return _stress_risk(value)
     if not isinstance(value, dict) or type(value.get("score")) is not int or not 0 <= value["score"] <= 100:
         raise RiskHistoryError("risk_history_invalid_score")
     components = value.get("components")
@@ -198,7 +285,8 @@ def save_observation(store, user_id: str, payload: Any, capture: Callable[[str],
         current = capture(context["base_currency"])
         if current.get("guard") != context.get("guard") or _digest({key: value for key, value in current.items() if key != "guard"}) != context["fingerprint"]:
             raise RiskHistoryError("risk_context_stale", 409)
-        total = _risk(payload.get("total"))
+        model = context.get("model", MODEL)
+        total = _risk(payload.get("total"), model)
         raw_accounts = payload.get("accounts")
         if not isinstance(raw_accounts, list) or len(raw_accounts) != len(context["account_ids"]):
             raise RiskHistoryError("risk_history_invalid_accounts")
@@ -206,7 +294,7 @@ def save_observation(store, user_id: str, payload: Any, capture: Callable[[str],
         if len(ids) != len(raw_accounts) or any(not isinstance(value, str) for value in ids) or len(set(ids)) != len(ids) or set(ids) != set(context["account_ids"]):
             raise RiskHistoryError("risk_history_invalid_accounts")
         by_id = {account["id"]: account for account in context["accounts"]}
-        accounts = [{"account_id": row["account_id"], "account_label": account_label(by_id[row["account_id"]]), "risk": _risk(row.get("risk"))} for row in raw_accounts]
+        accounts = [{"account_id": row["account_id"], "account_label": account_label(by_id[row["account_id"]]), "risk": _risk(row.get("risk"), model)} for row in raw_accounts]
         # A SQLite write reservation prevents local financial writes from racing
         # the final revision check and immutable observation publication.
         with store._connect() as connection:
@@ -218,11 +306,13 @@ def save_observation(store, user_id: str, payload: Any, capture: Callable[[str],
             existing = connection.execute("select value from app_preferences where key=?", (key,)).fetchone()
             if existing:
                 return {"saved": False, "observation": json.loads(existing["value"])}
-            observation = {"id": str(uuid4()), "observed_at": context["observed_at"], "date": context["date"], "model": MODEL,
+            observation = {"id": str(uuid4()), "observed_at": context["observed_at"], "date": context["date"], "model": model,
                            "source": SOURCE, "base_currency": context["base_currency"], "fingerprint": context["fingerprint"], "total": total, "accounts": accounts,
                            "evidence": {"fx": deepcopy(context["fx"]), "position_count": len(context["items"]),
                                         "source_signature": context["guard"][0], "generation": context["guard"][1],
-                                        "scope": "canonical_non_esop"}}
+                                        "scope": "canonical_non_esop", "risk_revision": context["guard"][2] if len(context["guard"]) > 2 else None,
+                                        "stress_inputs": [{"security_key": (item.get("stress_risk") or {}).get("security_key"),
+                                            "inputs": deepcopy(item.get("stress_risk"))} for item in context["items"] if item.get("stress_risk")]}}
             connection.execute("insert into app_preferences(key,value,updated_at) values(?,?,?)", (key, json.dumps(observation, allow_nan=False), context["observed_at"]))
         return {"saved": True, "observation": observation}
 
@@ -235,9 +325,9 @@ def list_observations(store, base_currency: str, days: int = 90) -> dict:
     with store._connect() as connection:
         # SQL caps the read, but old observations remain in the local database.
         rows = connection.execute("""select value from app_preferences where key glob ? and json_valid(value)
-            and json_extract(value,'$.model')=? and json_extract(value,'$.base_currency')=?
+            and json_extract(value,'$.model') in (?,?) and json_extract(value,'$.base_currency')=?
             and json_extract(value,'$.date')>=? order by updated_at desc,key desc limit ?""",
-            (PREFIX + "*", MODEL, base_currency, cutoff, MAX_READ + 1)).fetchall()
+            (PREFIX + "*", MODEL, LEGACY_MODEL, base_currency, cutoff, MAX_READ + 1)).fetchall()
         malformed_json = connection.execute("select count(*) from app_preferences where key glob ? and not json_valid(value)", (PREFIX + "*",)).fetchone()[0]
     observations = []
     invalid_records = int(malformed_json)
@@ -254,15 +344,15 @@ def list_observations(store, base_currency: str, days: int = 90) -> dict:
                 raise ValueError()
             datetime.fromisoformat(value["observed_at"].replace("Z", "+00:00"))
             datetime.strptime(value["date"], "%Y-%m-%d")
-            _risk(value.get("total"))
+            _risk(value.get("total"), value.get("model"))
             for account in value["accounts"]:
                 if not isinstance(account, dict) or not isinstance(account.get("account_id"), str) or not isinstance(account.get("account_label"), str):
                     raise ValueError()
-                _risk(account.get("risk"))
+                _risk(account.get("risk"), value.get("model"))
         except (TypeError, ValueError):
             invalid_records += 1
             continue
-        if value.get("model") == MODEL and value.get("base_currency") == base_currency and value.get("date", "") >= cutoff:
+        if value.get("model") in {MODEL, LEGACY_MODEL} and value.get("base_currency") == base_currency and value.get("date", "") >= cutoff:
             observations.append(value)
     observations.sort(key=lambda value: (value["observed_at"], value["id"]))
     labels = {}
@@ -272,5 +362,5 @@ def list_observations(store, base_currency: str, days: int = 90) -> dict:
     for account in store.list_accounts():
         if str(account.get("type") or "").upper() != "ESOP":
             labels[str(account["id"])] = account_label(account)
-    return {"model": MODEL, "base_currency": base_currency, "source": SOURCE, "items": observations[-MAX_READ:],
+    return {"model": MODEL, "models": [LEGACY_MODEL, MODEL], "base_currency": base_currency, "source": SOURCE, "items": observations[-MAX_READ:],
             "accounts": [{"id": key, "label": labels[key]} for key in sorted(labels)], "truncated": len(rows) > MAX_READ, "invalid_records": invalid_records}

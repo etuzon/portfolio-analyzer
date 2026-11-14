@@ -12,6 +12,7 @@ def run_ui(body):
 const assert=require('node:assert/strict');
 const state={language:'en',portfolioLoadVersion:1,auth:{user:{id:'viewer',role:'Viewer'},csrfToken:'session-one'},
  securityDetail:{symbol:'ACME',market_key:'NASDAQ',currency:'USD',asset_class:'EQUITY'}};
+const CustomEvent=class{constructor(type,options){this.type=type;this.detail=options?.detail}};
 const currentUser=()=>state.auth.user;const canWrite=()=>['Admin','Operator'].includes(currentUser()?.role);
 const t=text=>window.PortfolioI18n.translate(text,state.language);
 const esc=value=>String(value??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;');
@@ -22,7 +23,7 @@ const nodes=new Map(),buttons=[],listeners=[];
 const makeNode=()=>({innerHTML:'',textContent:'',hidden:false,disabled:false,dataset:{},attributes:{},
  setAttribute(name,value){this.attributes[name]=value},querySelectorAll(){return []},querySelector(){return null}});
 const $=id=>{if(!nodes.has(id))nodes.set(id,makeNode());return nodes.get(id)};
-const document={activeElement:null,querySelectorAll:selector=>selector==='[data-holdings-credit-key]'?buttons:[],addEventListener(type,callback){listeners.push(callback)}};
+const document={dispatchEvent(){},activeElement:null,querySelectorAll:selector=>selector==='[data-holdings-credit-key]'?buttons:[],addEventListener(type,callback){listeners.push(callback)}};
 const requests=[];const api=(path,options={})=>new Promise((resolve,reject)=>requests.push({path,options,resolve,reject}));
 const timers=new Map();let nextTimer=0;const setTimeout=callback=>{timers.set(++nextTimer,callback);return nextTimer};const clearTimeout=id=>timers.delete(id);
 const flush=()=>new Promise(setImmediate);

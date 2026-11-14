@@ -201,6 +201,7 @@ async function persistManualCreditRating(clear = false) {
       clear ? { method: "DELETE" } : { method: "PUT", body: JSON.stringify(payload) });
     if (!creditRatingsEntryActive(entry) || entry.manual !== editor) return;
     if (context.security_key !== entry.context.security_key || !context.identity_token) throw new Error("invalid_manual_response");
+    document.dispatchEvent(new CustomEvent("stress-risk-inputs-changed"));
     entry.version += 1; entry.readRevision = (entry.readRevision || 0) + 1; entry.context = context; entry.loading = false;
     if (typeof updateHoldingsCreditRatingsFromOverview === "function") updateHoldingsCreditRatingsFromOverview(context);
     if (clear) { delete entry.manualDrafts?.[editor.agency]; entry.manual = null; entry.message = "Manual override cleared. Retrieved agency evidence is shown."; }

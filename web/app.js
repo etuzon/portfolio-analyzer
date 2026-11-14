@@ -2941,7 +2941,7 @@ function accountNativeCashBalance(account) {
   const currency = String(account?.currency || "").trim().toUpperCase();
   if (!currency || !validNumber(account?.initial_cash)) return null;
   const parts = Object.fromEntries(new Intl.DateTimeFormat("en", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit" })
-    .formatToParts(new Date()).map((part) => [part.type, part.value]));
+    .formatToParts(new Date(state.riskAsOf || Date.now())).map((part) => [part.type, part.value]));
   const today = `${parts.year}-${parts.month}-${parts.day}`;
   for (const tx of state.localTransactions || []) {
     if (String(tx.account_db_id || "") !== String(account.id || "")) continue;
@@ -3104,6 +3104,7 @@ function accountHorizonYears(account) {
 }
 
 function riskBand(score) {
+  if (!Number.isFinite(score)) return {key:"incomplete",label:optionLabel("Incomplete"),symbol:"—"};
   let band;
   if (score <= 20) band = { key: "low", label: "Low", symbol: "●" };
   else if (score <= 40) band = { key: "moderate", label: "Moderate", symbol: "◆" };
@@ -3114,13 +3115,11 @@ function riskBand(score) {
 }
 
 function riskAllocationBand(item) {
-  const factor = assetRiskFactor(item);
-  const foreignCurrencyExposure = economicCurrencyExposure(item).allocations
-    .some(({ currency, percent }) => String(currency || "").toUpperCase() !== String(state.baseCurrency || "").toUpperCase() && Number(percent || 0) > 0);
-  if (factor <= 0.12) return foreignCurrencyExposure ? "low" : "no-risk";
-  if (factor <= 0.35) return "low";
-  if (factor <= 0.65) return "medium";
-  return "high";
+  const asset=String(item.holding?.asset_class || "").toUpperCase();
+  const focus=item.exposure_profile?.asset_focus;
+  if (focus === "money_market") return "no-risk";
+  if (asset === "BOND" || ["government_bond","investment_grade_bond","high_yield_bond"].includes(focus)) return "low";
+  return ["ETF","MUTUALFUND"].includes(asset) ? "medium" : "high";
 }
 
 function riskAllocationForItems(items, options = {}) {
@@ -3128,10 +3127,10 @@ function riskAllocationForItems(items, options = {}) {
   const cashCurrency = String(options.cashCurrency || state.baseCurrency || "").toUpperCase();
   const baseCurrency = String(state.baseCurrency || "").toUpperCase();
   const bands = [
-    { key: "no-risk", label: "No risk", value: cashCurrency === baseCurrency ? cash : 0 },
-    { key: "low", label: "Low risk", value: cashCurrency === baseCurrency ? 0 : cash },
-    { key: "medium", label: "Medium risk", value: 0 },
-    { key: "high", label: "High risk", value: 0 },
+    { key: "no-risk", label: "Cash and money market", value: cash },
+    { key: "low", label: "Bonds", value: 0 },
+    { key: "medium", label: "Funds", value: 0 },
+    { key: "high", label: "Shares and other assets", value: 0 },
   ];
   const byKey = Object.fromEntries(bands.map((band) => [band.key, band]));
   (items || []).forEach((item) => {
@@ -3152,13 +3151,19 @@ function riskAllocationForItems(items, options = {}) {
 }
 
 function riskBadge(risk) {
-  if (!risk || !Number.isFinite(risk.score) || risk.score < 0 || risk.score > 100) return "";
-  const band = riskBand(risk.score);
-  const label = `${optionLabel("Risk")}: ${risk.score} · ${band.label}`;
-  return `<button class="risk-badge risk-${band.key}" type="button" data-risk-badge="${esc(risk.label || "Risk")}" data-risk-explanation="${esc(riskTooltip(risk))}" aria-label="${esc(label)}" aria-describedby="riskBadgeExplanation"><b>${esc(risk.score)}</b></button>`;
+  if (!risk) return "";
+  if (Number.isFinite(risk.score) && (risk.score < 0 || risk.score > 100)) return "";
+  if (risk.model !== "portfolio-risk-v3" && !Number.isFinite(risk.score)) return "";
+  const estimate = !Number.isFinite(risk.score) && Number.isFinite(risk.estimated_score);
+  const number = Number.isFinite(risk.score) ? risk.score : estimate ? risk.estimated_score : null;
+  const band = riskBand(number);
+  const value = number === null ? optionLabel("Incomplete") : `${estimate ? "~" : ""}${number}`;
+  const label = `${optionLabel("Risk")}: ${value}${estimate ? ` · ${optionLabel("Estimate")}` : ""} · ${band.label}`;
+  return `<button class="risk-badge risk-${band.key}" type="button" data-risk-badge="${esc(risk.label || "Risk")}" data-risk-explanation="${esc(riskTooltip(risk))}" aria-label="${esc(label)}" aria-describedby="riskBadgeExplanation"><b>${esc(value)}</b>${estimate ? `<small>${esc(optionLabel("Estimate"))}</small>` : ""}</button>`;
 }
 
 function riskTooltip(risk) {
+  if (risk?.model === "portfolio-risk-v3" && typeof stressRiskTooltip === "function") return stressRiskTooltip(risk);
   const band = riskBand(risk.score);
   const meaning = "This is a model-based risk estimate, not a probability or forecast of loss.";
   const componentSpecs = [
@@ -3223,218 +3228,64 @@ function riskTooltip(risk) {
   ].join("\n");
 }
 
+
+function riskStrictBaseValue(value, currency, baseCurrency = state.baseCurrency) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return null;
+  const source = String(currency || "").toUpperCase(), base = String(baseCurrency || "").toUpperCase();
+  if (!source || !base) return value === 0 ? 0 : null;
+  if (source === base || value === 0) return value;
+  const direct = state.fxRates?.[`${source}/${base}`], reverse = state.fxRates?.[`${base}/${source}`];
+  const rate = Number.isFinite(direct) && direct > 0 ? direct : Number.isFinite(reverse) && reverse > 0 ? 1/reverse : null;
+  return rate === null ? null : value * rate;
+}
+
 function riskScoreForItems(items, options = {}) {
-  const rows = items || [];
-  const valueOfHolding = options.normalizeField || normalizedField;
+  const model = typeof PortfolioStressRisk !== "undefined" ? PortfolioStressRisk : globalThis.PortfolioStressRisk;
   const baseCurrency = options.baseCurrency || state.baseCurrency;
-  const label = options.label || "Portfolio risk";
-  const signedCash = Number(options.cash || 0);
-  const cashDebt = Math.max(0, -signedCash, Number(options.cashDebt || 0));
-  const cash = Math.max(0, signedCash + cashDebt);
-  const horizonYears = options.horizonYears ?? null;
-  const values = rows.map((item) => Math.abs(valueOfHolding(item, "market_value"))).filter((value) => value > 0);
-  const holdingsValue = sum(values);
-  const netEquity = sum(rows.map((item) => valueOfHolding(item, "market_value"))) + signedCash;
-  const totalValue = holdingsValue + cash;
-  if (totalValue <= 0) {
-    return { model: "portfolio-risk-v2", label, score: cashDebt > 0 ? 100 : 0,
-      components: cashDebt > 0 ? { borrowing: 100 } : {}, drivers: [cashDebt > 0 ? "Non-positive net equity" : "No account value"],
-      cash_debt: cashDebt, net_equity: netEquity, unlevered_score: 0, position_risks: new Map(), cash_pct: 0 };
-  }
-
-  const topPositionPct = values.length ? Math.max(...values) / totalValue * 100 : 0;
-  const hhi = rows.reduce((total, item) => {
-    const pct = Math.abs(valueOfHolding(item, "market_value")) / totalValue * 100;
-    return total + pct * pct;
-  }, 0);
-  const concentration = Math.min(topPositionPct / 40, 1) * 10 + Math.min(hhi / 2500, 1) * 6;
-
-  const weightedAsset = rows.reduce((total, item) => total + Math.abs(valueOfHolding(item, "market_value")) * assetRiskFactor(item), cash * 0.05);
-  const assetMix = totalValue ? weightedAsset / totalValue * 14 : 0;
-
-  const currencyTotals = rows.reduce((totals, item) => {
-    const value = Math.abs(valueOfHolding(item, "market_value"));
-    economicCurrencyExposure(item).allocations.forEach(({ currency, percent }) => {
-      totals[currency] = (totals[currency] || 0) + value * Number(percent || 0) / 100;
-    });
-    return totals;
-  }, {});
-  const unknownCurrencyValue = rows.reduce((total, item) => total
-    + Math.abs(valueOfHolding(item, "market_value")) * economicCurrencyExposure(item).unknownPercent / 100, 0);
-  if (cash) {
-    const cashCurrency = options.cashCurrency || baseCurrency;
-    currencyTotals[cashCurrency] = (currencyTotals[cashCurrency] || 0) + cash;
-  }
-  const foreignValues = Object.entries(currencyTotals).filter(([currency]) => currency !== baseCurrency).map(([, value]) => value);
-  const nonBaseCurrencyPct = sum(foreignValues) / totalValue * 100;
-  const largestForeignCurrencyPct = (foreignValues.length ? Math.max(...foreignValues) : 0) / totalValue * 100;
-  const currency = Math.min(nonBaseCurrencyPct / 80, 1) * 7 + Math.min(largestForeignCurrencyPct / 60, 1) * 3;
-
-  const industryRows = rows.filter((item) => Math.abs(valueOfHolding(item, "market_value")) > 0
-    && ["EQUITY", "RSU", "ETF", "MUTUALFUND"].includes(String(item.holding.asset_class || "").toUpperCase())
-    && !["money_market", "government_bond", "investment_grade_bond", "high_yield_bond"].includes(item.exposure_profile?.asset_focus));
-  const industryTotals = industryRows.reduce((totals, item) => {
-    const industry = industryLabel(item);
-    if (!industry) return totals;
-    totals[industry] = (totals[industry] || 0) + Math.abs(valueOfHolding(item, "market_value"));
-    return totals;
-  }, {});
-  const industryHhi = Object.values(industryTotals).reduce((total, value) => {
-    const pct = Number(value || 0) / Math.max(holdingsValue, 1) * 100;
-    return total + pct * pct;
-  }, 0);
-  const missingIndustryPct = holdingsValue ? industryRows
-    .filter((item) => !industryLabel(item))
-    .reduce((total, item) => total + Math.abs(valueOfHolding(item, "market_value")), 0) / holdingsValue * 100 : 0;
-  const industry = Math.min(industryHhi / 3000, 1) * 7 + missingIndustryPct / 100 * 3;
-
-  const cashPct = cash / totalValue * 100;
-  const cashScore = cashPct >= 5 && cashPct <= 20 ? 0 : cashPct < 5 ? (5 - cashPct) / 5 * 7 : Math.min((cashPct - 20) / 50, 1) * 4;
-
-  const derivativesValue = rows
-    .filter(derivativeHolding)
-    .reduce((total, item) => total + Math.abs(valueOfHolding(item, "market_value")), 0);
-  const derivativePct = derivativesValue / totalValue * 100;
-  const hasShort = rows.some((item) => Number(item.holding.quantity || 0) < 0);
-  const derivatives = Math.min(derivativePct / 25, 1) * 8 + (hasShort ? 2 : 0);
-
-  const weightedVolatility = rows.reduce((total, item) => total + Math.abs(valueOfHolding(item, "market_value")) * volatilityProxy(item), 0);
-  const avgVolatilityPct = holdingsValue ? weightedVolatility / holdingsValue : 0;
-  const volatility = Math.min(avgVolatilityPct / 60, 1) * 10;
-
-  const riskyAssetPct = totalValue ? rows
-    .filter((item) => assetRiskFactor(item) >= 0.65 || derivativeHolding(item))
-    .reduce((total, item) => total + Math.abs(valueOfHolding(item, "market_value")), 0) / totalValue * 100 : 0;
-  let horizon = 0;
-  if (horizonYears !== null && horizonYears !== undefined) {
-    const shortHorizonPressure = horizonYears < 3 ? 1 : horizonYears < 7 ? (7 - horizonYears) / 4 : 0;
-    const longHorizonUnderRisk = horizonYears > 15 && riskyAssetPct < 35 ? Math.min((35 - riskyAssetPct) / 35, 1) * 0.35 : 0;
-    horizon = Math.min((shortHorizonPressure * (riskyAssetPct / 100) + longHorizonUnderRisk) * 10, 10);
-  }
-
-  const issuerRiskTotals = rows.reduce((totals, item) => {
-    const issuer = issuerLabel(item);
-    const fundLookThroughWeight = diversifiedFund(item) ? 0.35 : 1;
-    totals[issuer] = (totals[issuer] || 0) + Math.abs(valueOfHolding(item, "market_value")) * fundLookThroughWeight;
-    return totals;
-  }, {});
-  const symbolTotals = rows.reduce((totals, item) => {
-    const symbol = issuerLabel(item);
-    totals[symbol] = (totals[symbol] || 0) + Math.abs(valueOfHolding(item, "market_value"));
-    return totals;
-  }, {});
-  const countryTotals = rows.reduce((totals, item) => {
-    const country = countryLabel(item);
-    if (!country) return totals;
-    totals[country] = (totals[country] || 0) + Math.abs(valueOfHolding(item, "market_value"));
-    return totals;
-  }, {});
-  const largestIssuerRiskPct = holdingsValue ? Math.max(0, ...Object.values(issuerRiskTotals)) / holdingsValue * 100 : 0;
-  const largestSymbolPct = holdingsValue ? Math.max(0, ...Object.values(symbolTotals)) / holdingsValue * 100 : 0;
-  const largestCountryPct = holdingsValue ? Math.max(0, ...Object.values(countryTotals)) / holdingsValue * 100 : 0;
-  const issuerCountry = Math.min(largestIssuerRiskPct / 35, 1) * 4 + Math.max(0, Math.min((largestCountryPct - 55) / 35, 1)) * 4;
-
-  const missingPricePct = holdingsValue ? rows.filter((item) => (item.missing || []).includes("price history")).reduce((total, item) => total + Math.abs(valueOfHolding(item, "market_value")), 0) / holdingsValue * 100 : 0;
-  const missingClassPct = holdingsValue ? rows.filter((item) => !item.holding.asset_class || !item.holding.currency).reduce((total, item) => total + Math.abs(valueOfHolding(item, "market_value")), 0) / holdingsValue * 100 : 0;
-  const dataQuality = Math.min(missingPricePct / 100 * 2 + missingIndustryPct / 100 * 1.5
-    + missingClassPct / 100 * 1.5 + unknownCurrencyValue / totalValue * 1.5, 5);
-
-  const components = {
-    concentration,
-    asset_mix: assetMix,
-    currency,
-    industry,
-    cash: cashScore,
-    derivatives,
-    volatility,
-    horizon,
-    issuer_country: issuerCountry,
-    data_quality: dataQuality,
-  };
-  const unleveredScore = sum(Object.values(components));
-  const nonPositiveEquity = netEquity <= 0 && (holdingsValue > 0 || cashDebt > 0);
-  const borrowing = nonPositiveEquity ? Math.max(0, 100 - unleveredScore)
-    : cashDebt > 0 ? Math.max(0, Math.min(100 - unleveredScore, unleveredScore * cashDebt / netEquity)) : 0;
-  components.borrowing = borrowing;
-  const score = Math.min(Math.max(Math.round(unleveredScore + borrowing), 0), 100);
-  const drivers = [
-    topPositionPct > 25 ? `Top holding ${fmt(topPositionPct, 1)}%` : "",
-    nonBaseCurrencyPct > 40 ? `Foreign currency ${fmt(nonBaseCurrencyPct, 1)}%` : "",
-    unknownCurrencyValue / totalValue > 0.1 ? `Unknown FX exposure ${fmt(unknownCurrencyValue / totalValue * 100, 1)}%` : "",
-    derivativePct > 0 ? `Options/futures/leverage ${fmt(derivativePct, 1)}%` : "",
-    avgVolatilityPct > 35 ? `1Y volatility proxy ${fmt(avgVolatilityPct, 1)}%` : "",
-    horizonYears !== null && horizonYears !== undefined ? `Horizon ${fmt(horizonYears, 1)} years` : "",
-    largestSymbolPct > 25 ? `Symbol concentration ${fmt(largestSymbolPct, 1)}%` : "",
-    largestCountryPct > 70 ? `Country concentration ${fmt(largestCountryPct, 1)}%` : "",
-    cashPct < 5 ? `Low cash ${fmt(cashPct, 1)}%` : cashPct > 20 ? `High cash ${fmt(cashPct, 1)}%` : "",
-    missingIndustryPct > 20 ? `Missing industry ${fmt(missingIndustryPct, 1)}%` : "",
-  ].filter(Boolean);
-  const positionRisks = new Map(rows.map((item) => {
-    const valuePct = Math.abs(valueOfHolding(item, "market_value")) / totalValue * 100;
-    const itemVolatility = volatilityProxy(item);
-    const itemScore = Math.min(Math.round(valuePct * 0.65 + assetRiskFactor(item) * 20 + itemVolatility / 120 * 15 + (derivativeHolding(item) ? 15 : 0) + ((item.missing || []).length ? 6 : 0)), 100);
-    return [item, {
-      label: `${item.holding.symbol} holding risk`,
-      score: nonPositiveEquity ? 100 : Math.min(100, Math.round(itemScore * (1 + (cashDebt > 0 ? cashDebt / netEquity : 0)))),
-      cash_debt: cashDebt,
-      net_equity: netEquity,
-      components,
-      show_component_breakdown: false,
-      drivers: [
-        `Holding weight ${fmt(valuePct, 1)}%`,
-        `Asset factor ${fmt(assetRiskFactor(item), 2)}`,
-        `1Y volatility proxy ${fmt(itemVolatility, 1)}%`,
-        diversifiedFund(item) ? "ETF/fund treated as diversified proxy" : "",
-        derivativeHolding(item) ? "Option/future/leveraged instrument" : "",
-        ...(item.missing || []).slice(0, 2).map((label) => `Missing ${label}`),
-      ].filter(Boolean),
-    }];
+  const normalizeField = options.normalizeField || ((item, field) => riskStrictBaseValue(item.holding?.[field], item.holding?.currency, baseCurrency));
+  const settings = { sourceRevision:state.riskRevision, ...options, baseCurrency, normalizeField, asOf: options.asOf || state.riskAsOf || new Date().toISOString() };
+  if (!model) return { model:"portfolio-risk-v3", status:"incomplete", score:null, estimated_score:null,
+    label:options.label || "Portfolio risk", gaps:[{code:"parameters_unavailable"}], components:{}, quality_details:[], position_risks:new Map() };
+  const risk = model.calculate(items || [], settings);
+  risk.position_risks = new Map((items || []).map(item => {
+    const intrinsic={...item,holding:{...item.holding,market_value:Math.abs(item.holding?.market_value),quantity:Math.abs(item.holding?.quantity)}};
+    const contribution=risk.position_contributions?.find(row=>row.security_key === (item.stress_risk?.security_key || "") && row.symbol === (item.holding?.symbol || "") && String(row.account_id) === String(item.holding?.account_id || ""));
+    return [item,{...model.calculate([intrinsic], {...settings,cash:0,cashDebt:0,cashAccounts:[]}),
+      intrinsic:true,contribution,label:`${item.holding?.symbol || ""} holding risk`}];
   }));
-  return { model: "portfolio-risk-v2", label, score, components, drivers, position_risks: positionRisks, cash_pct: cashPct,
-    quality_details: typeof riskMissingDataDetails === "function" ? riskMissingDataDetails(rows, { normalizeField: valueOfHolding, holdingsValue, totalValue, industryRows }) : [],
-    cash_debt: cashDebt, net_equity: netEquity, unlevered_score: unleveredScore };
+  return risk;
 }
 
 function portfolioRiskSnapshot(items) {
-  const accountsById = Object.fromEntries(state.localAccounts.map((account) => [account.id, account]));
-  const itemsByAccount = items.reduce((groups, item) => {
-    const key = item.holding.account_id || cleanSourceLabel(item.holding.account) || "Unassigned";
-    groups[key] = groups[key] || [];
-    groups[key].push(item);
-    return groups;
-  }, {});
-  portfolioAccounts().forEach((account) => {
-    if (Math.abs(accountRiskCashValue(account)) > 0 && !itemsByAccount[account.id]) itemsByAccount[account.id] = [];
+  const accounts = portfolioAccounts();
+  const byId = new Map(accounts.map(account => [String(account.id), account]));
+  const grouped = new Map();
+  for (const item of items || []) {
+    const key = String(item.holding?.account_id || "Unassigned");
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key).push(item);
+  }
+  const cashAccounts = accounts.map(account => {
+    const native = accountNativeCashBalance(account);
+    return { account_id:String(account.id), currency:account.currency,
+      value:riskStrictBaseValue(native, account.currency, state.baseCurrency) };
   });
-  const accountRisks = Object.entries(itemsByAccount).map(([key, rows]) => {
-    const account = accountsById[key] || (rows[0] ? accountRecordForHolding(rows[0].holding) : null);
-    const cash = accountRiskCashValue(account);
-    const value = sum(rows.map((item) => Math.abs(normalizedField(item, "market_value")))) + Math.max(0, cash);
-    const horizonYears = accountHorizonYears(account);
-    const label = cleanSourceLabel(rows[0]?.holding.account) || account?.account_id || "Unassigned";
-    return {
-      key,
-      account: label,
-      value,
-      horizonYears,
-      risk: riskScoreForItems(rows, { label: `${label || "Account"} risk`, cash, cashCurrency: account?.currency, horizonYears }),
-      allocation: riskAllocationForItems(rows, { cash, cashCurrency: account?.currency }),
-    };
+  for (const cash of cashAccounts) if (cash.value !== 0 && !grouped.has(cash.account_id)) grouped.set(cash.account_id, []);
+  const accountRisks = [...grouped].map(([key, rows]) => {
+    const account = byId.get(key), cash = cashAccounts.find(row => row.account_id === key) || {value:null,currency:account?.currency};
+    const label = account ? cleanSourceLabel(accountLabel(account)) : key;
+    const knownValues = rows.map(item => riskStrictBaseValue(item.holding?.market_value, item.holding?.currency, state.baseCurrency));
+    return { key, account:label, value:sum(knownValues.filter(Number.isFinite).map(Math.abs)) + Math.max(0,cash.value || 0),
+      horizonYears:accountHorizonYears(account),
+      risk:riskScoreForItems(rows, {label:`${label} risk`,cash:cash.value,cashCurrency:cash.currency,cashAccounts:[cash]}),
+      allocation:riskAllocationForItems(rows, {cash:cash.value,cashCurrency:cash.currency}) };
   });
-  const combinedCash = sum(portfolioAccounts().map(accountRiskCashValue));
-  const combinedDebt = sum(portfolioAccounts().map((account) => Math.max(0, -accountRiskCashValue(account))));
-  const portfolioHorizons = portfolioAccounts().map(accountHorizonYears).filter((value) => value !== null);
-  const portfolioHorizonYears = portfolioHorizons.length ? Math.min(...portfolioHorizons) : null;
-  const combinedRisk = riskScoreForItems(items, { label: "Total portfolio risk", cash: combinedCash, cashDebt: combinedDebt, horizonYears: portfolioHorizonYears });
-  const holdingsValue = sum(items.map((item) => Math.abs(normalizedField(item, "market_value"))));
-  const nav = sum(accountRisks.map((entry) => entry.value)) || 1;
-  const weightedAccountScore = accountRisks.reduce((total, entry) => {
-    return total + entry.risk.score * (entry.value / nav);
-  }, 0);
-  const score = combinedRisk.net_equity <= 0 && (holdingsValue > 0 || combinedDebt > 0) ? 100
-    : Math.min(Math.max(Math.round(0.75 * combinedRisk.score + 0.25 * weightedAccountScore), 0), 100);
-  const totalRisk = { ...combinedRisk, score, label: "Total portfolio risk" };
-  return { total: totalRisk, accounts: accountRisks };
+  const totalRisk = riskScoreForItems(items || [], {label:"Total portfolio risk",cashAccounts});
+  totalRisk.scope = "securities_and_cash";
+  totalRisk.coverage ||= {complete:false,covered_value_percent:null};
+  totalRisk.coverage.unmodeled_savings_count = (state.localFunds || []).length;
+  totalRisk.coverage.whole_wealth_available = !(state.localFunds || []).length;
+  return { total:totalRisk, accounts:accountRisks };
 }
 
 function cleanSourceLabel(value) {
@@ -4141,11 +3992,11 @@ function renderPortfolioValueDashboard(items) {
           ${cashSummary}
         </div>
         <div class="account-summary-metrics">
-          ${accountRisk ? `<div><span class="account-summary-metric-label">${esc(optionLabel("Risk"))}</span>${riskBadge(accountRisk)}</div>` : ""}
+          ${accountRisk ? `<div><span class="account-summary-metric-label">${esc(optionLabel("Risk"))}</span>${riskBadge(accountRisk)}${typeof stressRiskSummaryHtml === "function" ? stressRiskSummaryHtml(accountRisk,{compact:true}) : ""}</div>` : ""}
           <div><span class="account-summary-metric-label">${esc(optionLabel("Portfolio share"))}</span>${accountShareBadge(share)}</div>
         </div>
-        <div class="account-summary-allocation"${segments ? ` title="${esc(optionLabel("Allocation is based on each holding's asset-risk category. Cash and money-market holdings are No risk only in the base currency; foreign-currency exposure is Low risk."))}"` : ' aria-hidden="true"'}>${segments ? `
-          <div class="account-risk-allocation-bar" role="img" aria-label="${esc(`${optionLabel("Account risk allocation")}: ${allocation.bands.map((band) => `${optionLabel(band.label)} ${fmt(band.percent, 1)}%`).join(", ")}`)}">${segments}</div>
+        <div class="account-summary-allocation"${segments ? ` title="${esc(optionLabel("Allocation shows asset categories. Credit, interest-rate and currency risks are assessed in the stress score; cash and money-market holdings are not guaranteed risk-free."))}"` : ' aria-hidden="true"'}>${segments ? `
+          <div class="account-risk-allocation-bar" role="img" aria-label="${esc(`${optionLabel("Asset allocation")}: ${allocation.bands.map((band) => `${optionLabel(band.label)} ${fmt(band.percent, 1)}%`).join(", ")}`)}">${segments}</div>
           <div class="account-risk-allocation-labels">${labels}</div>
         ` : ""}</div>
         <div class="account-summary-footer">${accountRisk && typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(accountRisk) : ""}<button class="secondary compact-button" type="button" data-open-risk-scenarios="${esc(accountKey)}">${esc(t("Explore lower risk"))}</button></div>
@@ -4153,9 +4004,9 @@ function renderPortfolioValueDashboard(items) {
     })
     .join("");
 
-  const totalRiskBand = riskBand(state.riskSnapshot.total.score);
+  const totalRiskBand = riskBand(state.riskSnapshot.total.score ?? state.riskSnapshot.total.estimated_score);
   const statsHtml = [
-    { label: "Risk", value: state.riskSnapshot.total.score, tooltip: riskTooltip(state.riskSnapshot.total), detail: totalRiskBand.label, className: `risk-${totalRiskBand.key}` },
+    { label: "Risk", value: Number.isFinite(state.riskSnapshot.total.score) ? state.riskSnapshot.total.score : Number.isFinite(state.riskSnapshot.total.estimated_score) ? `~${state.riskSnapshot.total.estimated_score}` : t("Incomplete"), tooltip: riskTooltip(state.riskSnapshot.total), detail: totalRiskBand.label, className: `risk-${totalRiskBand.key}` },
     { label: "Positions", value: items.length, tooltip: "Number of open positions shown after filters" },
     { label: "Securities", value: symbols, tooltip: "Unique security symbols" },
     { label: "Equities", value: equities, tooltip: "Open equity positions" },
@@ -4184,6 +4035,7 @@ function renderPortfolioValueDashboard(items) {
           <div class="portfolio-risk-summary">
             <span>${esc(optionLabel("Total portfolio risk"))}</span>
             ${riskBadge(state.riskSnapshot.total)}
+            ${typeof stressRiskSummaryHtml === "function" ? stressRiskSummaryHtml(state.riskSnapshot.total) : ""}
             <button class="secondary compact-button" type="button" data-open-risk-scenarios="">${esc(t("Explore lower risk"))}</button>
             ${typeof riskDataQualityHtml === "function" ? riskDataQualityHtml(state.riskSnapshot.total) : ""}
           </div>
@@ -5231,6 +5083,7 @@ function renderIndustrySplit(items) {
     group.risk = riskScoreForItems(group.items, {
       label: `${group.label} industry risk`,
       cash: allocatedCash,
+      cashAccounts: portfolioAccounts().map(account => ({account_id:String(account.id),currency:account.currency,value:riskStrictBaseValue(accountNativeCashBalance(account),account.currency) === null ? null : riskStrictBaseValue(accountNativeCashBalance(account),account.currency) * (total ? group.value/total : 0)})),
       cashDebt: total ? combinedDebt * (group.value / total) : 0,
       horizonYears,
     });
@@ -13102,6 +12955,8 @@ async function loadPortfolio({ refresh = false, notification = false } = {}) {
     state.items = portfolioItems(allItems);
     if (typeof loadHoldingsCreditRatings === "function") loadHoldingsCreditRatings(state.items);
     if (typeof checkTradePlannerInputs === "function") checkTradePlannerInputs();
+    state.riskAsOf = data.risk_as_of || new Date().toISOString();
+    state.riskRevision = data.risk_revision || "";
     state.portfolioReady = true;
     state.accountTrend = {
       ...trend,
@@ -15063,6 +14918,10 @@ function openModal(id, returnFocus = document.activeElement, destination = {}) {
     loadTradingJournal();
   }
   if (id === "xrayModal") loadXray();
+  if (id === "stressRiskInputsModal") {
+    const parent = document.activeElement?.closest?.(".modal:not([hidden])");
+    if (parent && parent.id !== id) { modal.dataset.parentModalId=parent.id;parent.inert=true;parent.setAttribute("aria-hidden","true"); }
+  }
   if (id === "securityDetailModal") {
     const parentModal = returnFocus instanceof HTMLElement ? returnFocus.closest(".modal:not([hidden])") : null;
     if (parentModal && parentModal !== modal) {
@@ -15212,7 +15071,7 @@ function closeModal(modal) {
   if (modal.id === "brokerEditorModal" && state.brokerSaving) return;
   if (modal.id === "instrumentEditorModal" && state.manualSecuritySaving && !state.manualSecuritySaved) return;
   if (modal.id === "assistantModal") saveAssistantDraft();
-  if (["securityDetailModal", "tradingJournalModal", "brokerEditorModal", "instrumentEditorModal", "alarmRiskModal", "accountCashModal", "priceEntryModal", "transactionEntryModal"].includes(modal.id) && modal.dataset.parentModalId) {
+  if (["stressRiskInputsModal", "securityDetailModal", "tradingJournalModal", "brokerEditorModal", "instrumentEditorModal", "alarmRiskModal", "accountCashModal", "priceEntryModal", "transactionEntryModal"].includes(modal.id) && modal.dataset.parentModalId) {
     const parentModal = $(modal.dataset.parentModalId);
     if (parentModal) {
       parentModal.inert = false;
@@ -16480,4 +16339,22 @@ document.addEventListener("input", event => {
   if (["securitySymbol", "securityMarket"].includes(event.target.id)) syncBondMaturityForm();
   if (["securityBondMaturityDate", "manualBondMaturityDate", "positionTransactionBondMaturityDate"].includes(event.target.id)) event.target.setCustomValidity("");
   if (event.target.id === "positionTransactionBondMaturityDate") event.target.dataset.maturityDirty = "true";
+});
+
+
+// Local risk evidence changes invalidate current derived views. Captured trade
+// scenarios remain explicitly frozen; new runs read a fresh coherent context.
+let stressRiskReloadTimer = null;
+document.addEventListener("stress-risk-inputs-changed", () => {
+  if (typeof invalidateRiskScenarios === "function") invalidateRiskScenarios();
+  clearTimeout(stressRiskReloadTimer);
+  stressRiskReloadTimer = setTimeout(() => {
+    if (currentUser()) loadPortfolio({notification:true}).catch(reportBackgroundError);
+  }, 100);
+});
+document.addEventListener("click", event => {
+  if (!event.target.closest?.("#openSecurityRiskInputs") || !state.securityDetail) return;
+  const detail=state.securityDetail;
+  openStressRiskInputs({security_key:detail.item?.stress_risk?.security_key,
+    symbol:detail.symbol,stock_market:detail.market_key,currency:detail.currency},event.target.closest("button"));
 });

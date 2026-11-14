@@ -192,11 +192,11 @@ class _VisibleEnglishParser(HTMLParser):
 
 
 TECHNICAL_UI_VALUES = {
-    "S = C + A + FX + I + B + D + V + H + IC + Q; risk = clamp(round(S + L), 0, 100)",
+    "risk = round(min(100, 200 × largest_modeled_loss / positive_net_equity))",
     "1M", "6M", "1Y", "3Y", "5Y",
     "MA 7", "MA 10", "MA 15", "MA 30",
     "AMEX", "NASDAQ", "NYSE", "TASE", "US", "RSU",
-    "IL",  # Language-neutral ISO country-code example in issuer domicile input.
+    "IL", "ILS",  # Language-neutral ISO country/currency examples in risk inputs.
     "ANET, HPE, JNPR", "AVGO, MSFT", "NASDAQ, NYSE, TASE…",
     "USD/ILS, IXIC, GCUSD", "Asia/Jerusalem", "dd/mm/yyyy",
 }

@@ -154,6 +154,7 @@ async function persistSovereignAssignment(clear = false) {
     const country = await creditRatingsRequest(clear ? `/api/securities/country?${params}` : "/api/securities/country", clear ? {method:"DELETE"} : {method:"PUT",body:JSON.stringify(payload)});
     if (!sovereignEntryActive(security, false)) return;
     if (country.security_key !== security.country.security_key) throw Error("invalid_country_assignment");
+    document.dispatchEvent(new CustomEvent("stress-risk-inputs-changed"));
     security.country = country; security.countryDraft = false; security.message = "Issuer domicile saved. Country ratings remain separate from company ratings.";
     if (country.country_code) loadSovereignCountry(sovereignCountryEntry(country.country_code));
   } catch (error) {
@@ -163,7 +164,7 @@ async function persistSovereignAssignment(clear = false) {
 function acceptSovereignJob(entry, job) {
   entry.job = job; entry.pending = ["queued", "running"].includes(job.status); entry.resume = false;
   entry.message = entry.pending ? "" : job.status === "failed" ? "Rating research could not finish. Saved evidence is retained; refresh ratings to retry." : "Rating check finished. Unverified agency information remains unknown.";
-  if (!entry.pending) loadSovereignCountry(entry, {force:true});
+  if (!entry.pending) { document.dispatchEvent(new CustomEvent("stress-risk-inputs-changed"));loadSovereignCountry(entry, {force:true}); }
   renderSovereignCreditRatings();
 }
 function scheduleSovereignPoll(entry) {
@@ -272,6 +273,7 @@ async function persistSovereignManual(clear = false) {
     const context = await creditRatingsRequest(clear?`/api/countries/credit-ratings/manual?${params}`:"/api/countries/credit-ratings/manual",clear?{method:"DELETE"}:{method:"PUT",body:JSON.stringify(payload)});
     if (!sovereignEntryActive(entry) || entry.manual !== editor) return;
     if (context.country_code !== entry.key || !context.identity_token) throw Error("invalid_country_response");
+    document.dispatchEvent(new CustomEvent("stress-risk-inputs-changed"));
     entry.context = context; entry.version += 1;
     const key = `${editor.agency}:${editor.basis}`;
     if (clear) { delete entry.drafts?.[key]; entry.manual = null; entry.message = "Manual override cleared. Retrieved agency evidence is shown."; }

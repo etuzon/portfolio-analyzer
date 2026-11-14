@@ -19,6 +19,7 @@ function tradePlannerReason(reason) {
     account_currency: "The account must hold cash in the stock currency; currency conversion is not assumed.",
     collateral_unverified: "Existing shorts or derivatives may tie up cash as collateral.",
     existing_long: "Sell the existing long position before opening a short in this account.",
+    risk_inputs_incomplete: "Complete verified risk inputs before using risk-based trade sizing.",
     risk_limit: "The modeled risk limit leaves no room for this trade.",
     cash_reserve: "Cash reserve and the estimated fee buffer limit the amount.",
     stock_account_limit: "The account stock concentration limit leaves less than one share of room.",

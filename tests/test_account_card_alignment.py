@@ -38,7 +38,7 @@ state.localAccounts=[
  {id:'base',username:'Synthetic base account',type:'Investment',currency:'ILS',initial_cash:5000,persons:[]}
 ];
 qa.originalSnapshot=portfolioRiskSnapshot;
-portfolioRiskSnapshot=items=>{const snapshot=qa.originalSnapshot(items);snapshot.accounts[0].risk.components.data_quality=2;return snapshot;};
+portfolioRiskSnapshot=items=>{const snapshot=qa.originalSnapshot(items);snapshot.accounts[0].risk.gaps=[{code:"credit_rating",symbol:"QA"}];return snapshot;};
 $('analyticsBoard').innerHTML=withDashboardToolbar({id:'portfolio_value'},renderPortfolioValueDashboard([]));
 window.PortfolioI18n.applyToDocument(state.language);
 qa.cards=()=>[...document.querySelectorAll('.account-summary-card')];
@@ -54,7 +54,7 @@ qa.geometry=()=>qa.cards().map(card=>{
     assert len(geometry) == 2
     assert all(card["left"] >= 0 and card["right"] <= width for card in geometry), geometry
     assert evaluate("qa.cards().every(card=>card.lastElementChild.classList.contains('account-summary-footer'))")
-    assert evaluate("qa.cards()[0].querySelector('.risk-data-quality').closest('.account-summary-footer')!==null")
+    assert evaluate("qa.cards()[0].querySelector('.stress-risk-gaps').closest('.account-summary-footer')!==null")
     assert evaluate("qa.cards()[1].querySelector('.account-summary-local').getAttribute('aria-hidden')") == "true"
     assert evaluate("Number(getComputedStyle(qa.cards()[0].querySelector('.account-summary-balance>span')).fontWeight)") >= 800
     if width == 1440:
@@ -62,7 +62,7 @@ qa.geometry=()=>qa.cards().map(card=>{
             assert abs(geometry[0][row] - geometry[1][row]) <= 1, (row, geometry)
     else:
         assert geometry[1]["name"] > geometry[0]["footer"]
-    evaluate("qa.cards()[0].querySelector('.risk-data-quality').open=true;")
+    evaluate("qa.cards()[0].querySelector('.stress-risk-gaps').open=true;")
     expanded = evaluate("qa.geometry()")
     for index in range(2 if width == 1440 else 1):
         for row in ["label", "value", "native", "cash", "metrics", "allocation", "footer"]:

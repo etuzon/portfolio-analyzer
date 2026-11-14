@@ -14,6 +14,7 @@ const formatDateTime=value=>formatDate(value.slice(0,10))+' 12:00';
 const currencyDisplayLabel=value=>value;
 const riskBand=score=>({label:'Risk band'});
 const riskTooltip=risk=>'Score '+risk.score;
+const riskBadge=risk=>Number.isFinite(risk.score)?risk.score+'/100':'Incomplete';
 const document={addEventListener(){}};
 const nodes={riskHistoryContent:{innerHTML:'',setAttribute(){}}};
 const $=id=>nodes[id];

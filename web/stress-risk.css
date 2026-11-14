@@ -1,0 +1,51 @@
+.risk-badge.risk-incomplete {
+  color: var(--ux-orange, #ffae18);
+  background: #302716;
+  border-color: #80642c;
+  white-space: normal;
+  line-height: 1.3;
+  text-align: center;
+  max-width: 100%;
+}
+.stress-risk-summary { display: grid; gap: 4px; min-width: 0; margin-block: 5px; line-height: 1.4; font-variant-numeric: tabular-nums; }
+.stress-risk-summary > span { font-size: 12px; }
+.stress-risk-summary > small { font-size: 11px; color: var(--ux-muted, #a6abb5); overflow-wrap: anywhere; }
+.stress-risk-summary.is-compact { margin-block: 3px; }
+.stress-risk-incomplete { color: var(--ux-orange, #ffae18); }
+.stress-risk-gaps { max-width: 100%; margin-block: 8px; color: var(--ux-text, #f7f9ff); font-size: 12px; text-align: start; }
+.stress-risk-gaps summary { cursor: pointer; color: var(--ux-orange, #ffae18); padding-block: 5px; }
+.stress-risk-gaps > p { color: var(--ux-muted, #a6abb5); line-height: 1.5; }
+.stress-risk-gaps ul { display: grid; gap: 10px; margin-block: 8px; padding-inline-start: 18px; }
+.stress-risk-gaps li > div { overflow-wrap: anywhere; line-height: 1.5; }
+.stress-risk-gaps button { margin-block-start: 5px; white-space: normal; }
+#stressRiskInputsModal .stress-risk-inputs-card { width: min(780px, 100%); min-width: 0; }
+#stressRiskInputsModal .section-head h2 { margin: 0; }
+#stressRiskInputsModal #stressRiskInputsSecurity { overflow-wrap: anywhere; margin-block: 8px; }
+.stress-risk-inputs-form { display: grid; gap: 14px; min-width: 0; }
+.stress-risk-inputs-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.stress-risk-inputs-fields > .field { min-width: 0; margin: 0; }
+.stress-risk-inputs-fields > .field > input, .stress-risk-inputs-fields > .field > select,
+.stress-risk-inputs-fields > .field > textarea { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; }
+.stress-risk-inputs-fields input[type="number"] { min-width: 150px; width: 180px; max-width: 100%; font-variant-numeric: tabular-nums; }
+.stress-risk-inputs-fields .date-field { min-width: 148px; width: 160px; max-width: 100%; }
+#stressRiskInputsModal .field > input.date-field { width: 160px; min-width: 148px; }
+#stressRiskInputsModal .field > input#stressRiskCountryCode { width: 104px; }
+#stressRiskInputsModal .field > input#stressRiskCountryCurrency { width: 120px; }
+.stress-risk-inputs-fields .field small { font-size: 11px; line-height: 1.45; color: var(--ux-muted, #a6abb5); font-weight: 400; }
+.stress-risk-inputs-fields .stress-risk-wide-field { grid-column: 1 / -1; }
+.stress-risk-bond-fields { display: grid; gap: 12px; border-block: 1px solid var(--ux-stroke, #282a2f); padding-block: 12px; min-width: 0; }
+.stress-risk-bond-fields[hidden], #stressRiskZeroFields[hidden], #stressRiskCashflowFields[hidden], #stressRiskSovereignFields[hidden], #stressRiskCorporateFields[hidden] { display: none; }
+.stress-risk-inputs-form textarea { background: var(--ux-panel-soft, #1b1b1d); color: var(--ux-text, #f7f9ff); border: 1px solid var(--ux-stroke, #282a2f); border-radius: 6px; padding: 10px; min-height: 90px; resize: vertical; }
+.stress-risk-checkbox { display: flex; align-items: start; gap: 9px; font-size: 13px; line-height: 1.5; }
+.stress-risk-checkbox input { flex: 0 0 18px; width: 18px; height: 18px; margin-block-start: 2px; }
+.stress-risk-inputs-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px; }
+.stress-risk-inputs-actions button { flex: 0 1 auto; width: auto; white-space: normal; }
+.stress-risk-inputs-actions #saveStressRiskInputs { margin-inline-start: auto; }
+#stressRiskInputsModal :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--ux-blue, #21a7ff); outline-offset: 3px; }
+@media (max-width: 600px) {
+  .stress-risk-inputs-fields { grid-template-columns: minmax(0, 1fr); }
+  .stress-risk-inputs-fields .stress-risk-wide-field { grid-column: auto; }
+  .stress-risk-inputs-actions #saveStressRiskInputs { margin-inline-start: 0; }
+  .stress-risk-inputs-actions { gap: 10px; }
+  .stress-risk-inputs-actions button, .stress-risk-gaps button { min-height: 44px; }
+}

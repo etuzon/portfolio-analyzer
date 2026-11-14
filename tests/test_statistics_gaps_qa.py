@@ -64,7 +64,17 @@ def test_summary_statistics_all_six_labels_and_native_multiline_hover(tmp_path, 
     assert len(labels) == 6, labels
     if language == "he":
         assert all(not any(c.isascii() and c.isalpha() for c in label) for label in labels), labels
-        assert all(not re.search(r"[A-Za-z]{3,}", entry["title"]) for entry in stats[:-1]), stats
+        # Risk now names the affected securities and displays loss units. Those
+        # exact security identifiers and the ISO base currency remain intact;
+        # every operational label surrounding them must still be Hebrew.
+        identifiers = evaluate("qa.items.map(item=>item.holding.symbol).concat([state.baseCurrency])")
+        for entry in stats[:-1]:
+            operational_copy = entry["title"]
+            for identifier in identifiers:
+                operational_copy = operational_copy.replace(identifier, "")
+            assert not re.search(r"[A-Za-z]{3,}", operational_copy), entry
+        assert "הערכת הסיכון אינה מלאה" in stats[0]["title"]
+        assert evaluate("qa.symbol") in stats[0]["title"]
         assert not re.search(r"[A-Za-z]", gap_detail := stats[-1]["text"]), gap_detail
     else:
         assert labels == ["Risk", "Positions", "Securities", "Equities", "Bonds", "Data gaps"]
