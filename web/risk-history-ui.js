@@ -12,7 +12,7 @@ function resetRiskHistory() {
 }
 function riskHistoryRiskRecord(risk) {
   if (risk.model === "portfolio-risk-v3") {
-    const fields=["model","status","score","estimated_score","provisional_model","provisional_score","provisional_basis","provisional_loss","provisional_unmodeled_gross","loss_pct","stress_loss","worst_scenario","net_equity","cash_debt","cash_pct","components","quality_details","gaps","assumptions","coverage","funding","scenarios","rating_evidence","forward_sensitivity","as_of","source_revision"];
+    const fields=["model","status","score","estimated_score","provisional_model","provisional_score","provisional_basis","provisional_loss","provisional_unmodeled_gross","provisional_net_equity","provisional_proxy_gross","provisional_assumptions","provisional_scope","provisional_range","provisional_worst_scenario","provisional_scenarios","loss_pct","stress_loss","worst_scenario","net_equity","cash_debt","cash_pct","components","quality_details","gaps","assumptions","coverage","funding","scenarios","rating_evidence","forward_sensitivity","as_of","source_revision"];
     return Object.fromEntries(fields.filter(key=>risk[key] !== undefined).map(key=>[key,risk[key]]));
   }
   const result = { score:risk.score, components:risk.components || {}, quality_details:risk.quality_details || [], drivers:risk.drivers || [] };
@@ -84,7 +84,8 @@ function riskHistoryGraph(rows,label) {
   const times=rows.map(row=>Date.parse(`${row.date}T00:00:00Z`));
   const min=times[0],max=times.at(-1),span=max-min;
   const points=rows.map((row,index)=>{
-    const value=Number.isFinite(row.risk.score)?row.risk.score:Number.isFinite(row.risk.estimated_score)?row.risk.estimated_score:row.risk.provisional_score;
+    const ranged=row.risk.provisional_model==="portfolio-risk-provisional-v2" && row.risk.provisional_scope==="known_values";
+    const value=Number.isFinite(row.risk.score)?row.risk.score:Number.isFinite(row.risk.estimated_score)?row.risk.estimated_score:ranged?null:row.risk.provisional_score;
     return {...row,index,value,x:span?left+(times[index]-min)/span*(width-left-right):width/2,y:Number.isFinite(value)?top+(100-value)/100*(height-top-bottom):null};
   });
   if(!points.some(p=>p.y!==null))return "";

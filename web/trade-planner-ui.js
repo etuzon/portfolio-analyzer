@@ -93,7 +93,7 @@ function tradePlannerResultHtml(view) {
       <p>${esc(t("Model defaults: keep at least 10% of account value and 20% of current cash; raise the value reserve to 20% for shorts, higher risk or a short horizon. Allow 1% of trade value for fees and slippage."))}</p>
       <p>${esc(t("Buy limits: stock 10% per account and 5% of the liquid portfolio. Short limits: 2.5% and 2%. Sector limits: 30% per account and 25% of the liquid portfolio. Retirement and ESOP assets are excluded from this sizing base."))}</p>
       <p>${esc(t("Starting trade size is the smallest of 5% of account value, 2% of portfolio value and 25% of cash. Higher risk, volatility, shorts, unknown sector or missing/short retirement horizon reduce it. Modeled risk may rise by at most 5 points and may not exceed 75/100."))}</p>
-      <p>${esc(t("For a cash-only account, the first position may raise modeled risk by up to 25 points because industry, issuer and volatility risk components start with the first holding. The 75/100 ceiling still applies."))}</p>
+      <p>${esc(t("The shared score measures scenario loss severity. For a cash-only account, sizing policy allows up to 25 points of increase when opening the first position; the 75/100 ceiling still applies."))}</p>
       <p>${esc(t("Retirement horizon is a proxy, not your stated investment goal or risk tolerance. Recorded cash is not confirmed broker buying power. Quotes and FX are saved estimates; taxes and actual broker fees are not modeled."))}</p>
       <p>${esc(t("Holdings are valued using their latest available saved quotes for this estimate; the recorded portfolio is unchanged."))}</p>
       ${rec.unknownSector ? `<p class="signal-missing">${esc(t("Sector is unknown; the proposed amount was reduced."))}</p>` : ""}

@@ -73,12 +73,12 @@ def test_summary_statistics_all_six_labels_and_native_multiline_hover(tmp_path, 
             for identifier in identifiers:
                 operational_copy = operational_copy.replace(identifier, "")
             assert not re.search(r"[A-Za-z]{3,}", operational_copy), entry
-        assert "נתונים חלקיים" in stats[0]["title"]
+        assert "אומדן" in stats[0]["title"]
         assert evaluate("qa.symbol") in stats[0]["title"]
         assert not re.search(r"[A-Za-z]", gap_detail := stats[-1]["text"]), gap_detail
     else:
         assert labels == ["Risk", "Positions", "Securities", "Equities", "Bonds", "Data gaps"]
-        assert "Partial data" in stats[0]["title"]
+        assert "Estimate" in stats[0]["title"]
     assert re.search(r"~\d{1,3}", stats[0]["text"])
     assert "⚠" in stats[0]["text"]
     assert evaluate("document.querySelector('.summary-stat .risk-badge .risk-data-warning')!==null")

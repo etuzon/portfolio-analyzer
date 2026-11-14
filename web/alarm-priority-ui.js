@@ -74,7 +74,7 @@ function portfolioRiskAlarms() {
     const estimated = !Number.isFinite(risk?.score) && risk?.status === "estimate" && Number.isFinite(risk.estimated_score);
     const score = Number.isFinite(risk?.score) ? risk.score : estimated ? risk.estimated_score : null;
     if (score === null || score < 0 || score > 100) return [{kind:"risk",key:`risk:${key}:assessment`,level:"unavailable",risk,title:label,
-      body:Number.isFinite(risk?.provisional_score)
+      body:Number.isFinite(risk?.provisional_score) && risk?.provisional_scope !== "known_values"
         ? alarmText("Provisional stress risk: ~{score}/100. Complete missing evidence before using risk-based sizing.",{score:risk.provisional_score})
         : t("Complete missing risk evidence in Risk inputs and Ratings before assessing this scope."),meta:t("View risk details")}];
     const band = riskBand(score);
@@ -172,6 +172,7 @@ function riskAlarmDismissalId(alarm) {
     source_state: state.portfolioSourceState, pending: Boolean(state.portfolioRefreshPending),
     model: alarmModelEvidence({ version:risk.model,status:risk.status,estimated_score:risk.estimated_score,loss_pct:risk.loss_pct,worst_scenario:risk.worst_scenario,gaps:risk.gaps,score: risk.score, components: risk.components, quality_details: risk.quality_details,
       provisional_model:risk.provisional_model,provisional_score:risk.provisional_score,provisional_basis:risk.provisional_basis,provisional_loss:risk.provisional_loss,
+      provisional_scope:risk.provisional_scope,provisional_range:risk.provisional_range,
       cash_debt: risk.cash_debt, net_equity: risk.net_equity, unlevered_score: risk.unlevered_score }),
     base_currency: state.baseCurrency, holdings, accounts }));
   // Two independent 32-bit accumulators keep local dismissal IDs compact.

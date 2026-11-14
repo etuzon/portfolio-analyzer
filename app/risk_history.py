@@ -136,6 +136,65 @@ def create_context(store, user_id: str, base_currency: str, capture: Callable[[s
     return deepcopy({key: value for key, value in {**context, "token": token, "source": SOURCE}.items() if key != "guard"})
 
 
+def _asset_aware_estimate(value: dict, status: str) -> dict:
+    fields = {"provisional_model", "provisional_basis", "provisional_score", "provisional_loss",
+              "provisional_net_equity", "provisional_proxy_gross", "provisional_assumptions", "provisional_scope"}
+    if (not fields.issubset(value) or status not in {"incomplete", "unavailable"}
+            or value["provisional_model"] != "portfolio-risk-provisional-v2"
+            or value["provisional_basis"] != "asset_aware_scenarios"
+            or not isinstance(value["provisional_scope"], str) or value["provisional_scope"] not in {"portfolio", "known_values"}):
+        raise RiskHistoryError("risk_history_invalid_metadata")
+    point, loss, equity, gross = (value[key] for key in ("provisional_score", "provisional_loss", "provisional_net_equity", "provisional_proxy_gross"))
+    if point is not None and (type(point) is not int or not 0 <= point <= 100):
+        raise RiskHistoryError("risk_history_invalid_metadata")
+    for number, signed in ((loss, False), (equity, True), (gross, False)):
+        if number is not None and (_number(number) is None or not signed and number < 0):
+            raise RiskHistoryError("risk_history_invalid_metadata")
+    scope = value["provisional_scope"]
+    if scope == "known_values":
+        interval = value.get("provisional_range")
+        if (not isinstance(interval, dict) or set(interval) != {"min", "max"}
+                or type(interval["min"]) is not int or type(interval["max"]) is not int
+                or interval != {"min": 0, "max": 100}):
+            raise RiskHistoryError("risk_history_invalid_metadata")
+    elif equity is None or gross is None or value.get("provisional_range") is not None or point is None:
+        raise RiskHistoryError("risk_history_invalid_metadata")
+    if point is not None:
+        if equity is None:
+            raise RiskHistoryError("risk_history_invalid_metadata")
+        if equity > 0:
+            if loss is None or point != math.floor(min(100, 200 * (loss / equity)) + .5):
+                raise RiskHistoryError("risk_history_invalid_metadata")
+        elif point == 100:
+            if value.get("provisional_worst_scenario") != "nonpositive_estimated_equity" or loss is not None:
+                raise RiskHistoryError("risk_history_invalid_metadata")
+        elif not (equity == 0 and point == 0 and loss == 0):
+            raise RiskHistoryError("risk_history_invalid_metadata")
+    elif scope == "portfolio":
+        raise RiskHistoryError("risk_history_invalid_metadata")
+    for key in ("provisional_assumptions", "provisional_scenarios"):
+        rows = value.get(key, [])
+        if not isinstance(rows, list) or len(rows) > 1000 or any(not isinstance(row, dict) for row in rows):
+            raise RiskHistoryError("risk_history_invalid_metadata")
+    for assumption in value["provisional_assumptions"]:
+        if not isinstance(assumption.get("code"), str) or not 1 <= len(assumption["code"]) <= 100:
+            raise RiskHistoryError("risk_history_invalid_metadata")
+        for key in ("duration_years", "spread_bps", "loss_fraction"):
+            if key in assumption and (_number(assumption[key]) is None or assumption[key] < 0):
+                raise RiskHistoryError("risk_history_invalid_metadata")
+        if "currency_exposures" in assumption:
+            exposures = assumption["currency_exposures"]
+            if (not isinstance(exposures, dict) or not exposures
+                    or any(_number(weight) is None or not 0 <= weight <= 1 for weight in exposures.values())
+                    or abs(sum(exposures.values()) - 1) > 1e-8):
+                raise RiskHistoryError("risk_history_invalid_metadata")
+    worst = value.get("provisional_worst_scenario")
+    if worst is not None and (not isinstance(worst, str) or len(worst) > 1000):
+        raise RiskHistoryError("risk_history_invalid_metadata")
+    keys = fields | {"provisional_range", "provisional_worst_scenario", "provisional_scenarios"}
+    return {key: deepcopy(value[key]) for key in keys if key in value}
+
+
 def _stress_risk(value: Any) -> dict:
     """Validate versioned severe-loss records without promoting partial results."""
     if not isinstance(value, dict) or value.get("model", MODEL) != MODEL:
@@ -165,7 +224,9 @@ def _stress_risk(value: Any) -> dict:
             raise RiskHistoryError("risk_history_invalid_metadata")
         result[field] = deepcopy(data)
     provisional_fields = {"provisional_model", "provisional_score", "provisional_basis", "provisional_loss", "provisional_unmodeled_gross"}
-    if provisional_fields.intersection(value):
+    if value.get("provisional_model") == "portfolio-risk-provisional-v2":
+        result.update(_asset_aware_estimate(value, status))
+    elif provisional_fields.intersection(value):
         if (not provisional_fields.issubset(value) or status not in {"incomplete", "unavailable"}
                 or value["provisional_model"] != "portfolio-risk-provisional-v1"
                 or type(value["provisional_score"]) is not int or not 0 <= value["provisional_score"] <= 100):

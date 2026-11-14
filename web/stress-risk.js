@@ -3,13 +3,14 @@
  * portfolio-risk.md contract. Scenario sizes are assumptions, not probabilities.
  */
 (function (root, factory) {
-  const api = factory();
+  const estimate = typeof module === "object" && module.exports ? require("./stress-risk-estimate.js") : root.PortfolioStressEstimate;
+  const api = factory(estimate);
   if (typeof module === "object" && module.exports) module.exports = api;
   else root.PortfolioStressRisk = api;
-})(typeof globalThis !== "undefined" ? globalThis : this, function () {
+})(typeof globalThis !== "undefined" ? globalThis : this, function (estimate) {
   "use strict";
   const MODEL = "portfolio-risk-v3";
-  const PROVISIONAL_MODEL = "portfolio-risk-provisional-v1";
+  const PROVISIONAL_MODEL = "portfolio-risk-provisional-v2";
   const BUCKETS = ["AAA", "AA", "A", "BBB", "BB", "B", "CCC"];
   const SPREAD = [.005, .0075, .01, .015, .03, .05, .08];
   const COUNTRY = [
@@ -93,16 +94,21 @@
     const ratingFor = (primary, estimate, item, enabled) => selectedRating(primary, item, enabled)
       || (enabled ? selectedRating(estimate, item, true) : null);
 
-    function rememberIdentity(item, depth = 0, seen = new Set()) {
-      if (!item || depth > 3 || seen.has(item)) return;
-      seen.add(item);
+    function identityFact(item) {
       const m = item?.stress_risk || {};
       if (m.issuer_identity_verified === true && typeof m.issuer_name_key === "string" && m.issuer_name_key.trim()) {
         const id = String(m.issuer_id || ""), strong = /^sec:\d+$/.test(id) ? `sec:${id.slice(4).replace(/^0+(?=\d)/, "")}` : null;
-        identityFacts.set(item, { name:m.issuer_name_key, id, strong,
+        return { name:m.issuer_name_key, id, strong,
           weak:id === m.issuer_name_key || id === `issuer:${m.issuer_name_key}`,
-          jurisdiction:upper(m.issuer_legal_jurisdiction) });
+          jurisdiction:upper(m.issuer_legal_jurisdiction) };
       }
+      return null;
+    }
+    function rememberIdentity(item, depth = 0, seen = new Set()) {
+      if (!item || depth > 3 || seen.has(item)) return;
+      seen.add(item);
+      const m = item?.stress_risk || {}, fact = identityFact(item);
+      if (fact) identityFacts.set(item, fact);
       const children = m.lookthrough || m.fund_components || m.parameters?.fund_components;
       if (Array.isArray(children)) for (const child of children) {
         if (child && typeof child === "object") rememberIdentity(child.item || {stress_risk:child.stress_risk || child}, depth + 1, seen);
@@ -196,6 +202,7 @@
         return;
       }
       if (!["equity", "corporate_bond", "sovereign_bond", "cash_like"].includes(kind)
+          || ["corporate_bond", "sovereign_bond"].includes(kind) && m.requires_recovery_model === true
           || ["OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"].includes(upper(h.asset_sub_class || h.asset_class))
           || item.exposure_profile?.leverage_type && item.exposure_profile.leverage_type !== "none" && item.exposure_profile.leverage_type !== "unleveraged") gap("unsupported_instrument", item);
       const issuer = m.issuer_id || m.issuer_key || p.issuer_key;
@@ -332,6 +339,12 @@
     const cash = total(knownCash.map(a => a.value));
     const debt = total(knownCash.map(a => Math.max(0, -a.value)));
     const positiveCash = total(knownCash.map(a => Math.max(0, a.value)));
+    for (const row of prepared) if (row.item.stress_risk?.country_requires_recovery_model === true) {
+      const relevant = row.kind !== "sovereign_bond" || row.countryCurrency !== base && (
+        prepared.some(position => position.value !== 0 && position.fx[row.countryCurrency] > 0)
+        || knownCash.some(account => account.value !== 0 && upper(account.currency) === row.countryCurrency));
+      if (relevant) gap("unsupported_instrument", row.item);
+    }
     if (![signedValues, cash, knownGross, positiveCash, debt].every(finite)) { valuesKnown = false; gap("valuation", null); }
     const equity = valuesKnown && finite(signedValues + cash) ? signedValues + cash : null;
     const gross = knownGross + positiveCash;
@@ -441,39 +454,24 @@
       result.status = "incomplete";
       result.partial_stress_loss = worst.loss;
       result.partial_worst_scenario = worst.name;
-      // A displayed provisional score does not change the verified-input
-      // assessment. Missing exposure is charged once at principal at risk;
-      // no rating, maturity, fund diversification or FX fact is invented.
-      const { excluded, unscoped } = assessmentExclusions();
-      const unmodeledValues = sourceItems.filter(item => excluded.has(item)).map(item => {
-        const value = normalize(item, "market_value");
-        return finite(value) ? Math.abs(value) : null;
-      });
-      const unknownGross = valuesKnown && unmodeledValues.every(finite) ? total(unmodeledValues) : null;
-      const unbounded = [...excluded].some(item => {
-        const h = item.holding || {}, profile = item.exposure_profile || {};
-        return normalize(item, "market_value") < 0
-          || ["OPTION", "FUTURE", "STOCK_OPTION", "EMPLOYEE_STOCK_OPTION"].includes(upper(h.asset_sub_class || h.asset_class))
-          || profile.leverage_type && !["none", "unleveraged"].includes(profile.leverage_type);
-      });
-      result.provisional_model = PROVISIONAL_MODEL;
-      result.provisional_unmodeled_gross = unknownGross;
-      if (!(equity > 0) || unscoped || unbounded || !finite(unknownGross)) {
-        result.provisional_score = 100;
-        result.provisional_basis = "missing_valuation_ceiling";
-        result.provisional_loss = null;
-      } else {
-        const supported = prepared.filter(row => !excluded.has(row.sourceItem));
-        const supportedCountries = new Map();
-        const beforeProvisional = gapCount;
-        for (const row of supported) includeCountry(supportedCountries, row);
-        const cases = evaluateScenarios(false, supported, supportedCountries, false);
-        const knownLoss = cases.reduce((amount, scenario) => Math.max(amount, scenario.loss), 0);
-        const loss = knownLoss + unknownGross;
-        result.provisional_basis = finite(loss) && cases.length && gapCount === beforeProvisional ? "unmodeled_exposure_allowance" : "missing_valuation_ceiling";
-        result.provisional_loss = result.provisional_basis === "unmodeled_exposure_allowance" ? loss : null;
-        result.provisional_score = result.provisional_loss === null ? 100 : scoreOf(loss / equity);
-      }
+      // Financial loss and source completeness are different dimensions.
+      // Preserve strict nulls; automatic estimates use declared asset proxies.
+      Object.assign(result, estimate?.estimate ? estimate.estimate(sourceItems, {...options,baseCurrency:base,asOf,normalizeField:normalize}, {
+        normalize, prepared, cashAccounts, cashBreakdownUnknown:gaps.some(row=>row.code === "cash_currency_breakdown"),
+        spreads:SPREAD, countries:COUNTRY, global:GLOBAL,
+        selectRating:(row,item)=>selectedRating(row,item,item.stress_risk?.parameters?.assumptions_enabled === true),
+        issuerFor:(item,raw)=>{
+          const fact=identityFacts.get(item) || identityFact(item), ids=fact && legalIssuers.get(fact.name);
+          if (!fact) return raw || null;
+          if (fact.strong) return fact.strong;
+          if (!fact.weak) return raw || null;
+          if (!ids?.size) return (weakJurisdictions.get(fact.name)?.size || 0) > 1 ? null : fact.name;
+          const [id,jurisdictions]=ids.entries().next().value;
+          return ids.size !== 1 || jurisdictions.size > 1 || fact.jurisdiction && jurisdictions.size && !jurisdictions.has(fact.jurisdiction) ? null : id;
+        },
+      }) : {provisional_model:PROVISIONAL_MODEL,provisional_basis:"asset_aware_scenarios",provisional_score:null,
+        provisional_loss:null,provisional_net_equity:null,provisional_proxy_gross:null,provisional_assumptions:[],
+        provisional_scope:"known_values",provisional_range:{min:0,max:100}});
       result.coverage = inputCoverage();
       return result;
     }

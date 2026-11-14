@@ -17,6 +17,10 @@
 .stress-risk-summary > small { font-size: 11px; color: var(--ux-muted, #a6abb5); overflow-wrap: anywhere; }
 .stress-risk-summary.is-compact { margin-block: 3px; }
 .stress-risk-incomplete { color: var(--ux-orange, #ffae18); }
+@media (max-width: 480px) {
+  .account-summary-finances { display: flex; align-items: flex-start; }
+  .account-summary-card .account-current-cash { align-self: auto; }
+}
 .stress-risk-gaps { max-width: 100%; margin-block: 8px; color: var(--ux-text, #f7f9ff); font-size: 12px; text-align: start; }
 .stress-risk-gaps summary { cursor: pointer; color: var(--ux-orange, #ffae18); padding-block: 5px; }
 .stress-risk-gaps > p { color: var(--ux-muted, #a6abb5); line-height: 1.5; }

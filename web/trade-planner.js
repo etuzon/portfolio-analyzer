@@ -14,6 +14,13 @@
   const upper = (value) => String(value || "").trim().toUpperCase();
   const total = (values) => values.reduce((sum, value) => sum + value, 0);
   const key = (value) => upper(value).replace(/[\s_.-]/g, "");
+  const listingIdentity = (item) => {
+    const holding = item.holding || {};
+    const rawMarket = upper(holding.stock_market || item.exchange).replace(/[\s_-]/g, "");
+    const market = ({ NASDAQGS: "NASDAQ", NASDAQGM: "NASDAQ", NASDAQCM: "NASDAQ", NAS: "NASDAQ", NMS: "NASDAQ",
+      NYSEAMERICAN: "AMEX", NYSEMKT: "AMEX", ARCA: "NYSEARCA", OTCMKTS: "OTC", TLV: "TASE", TELAVIV: "TASE" }[rawMarket] || rawMarket);
+    return [upper(holding.symbol), market, upper(holding.currency), upper(holding.asset_class)].join("|");
+  };
   const country = (value) => {
     const code = key(value);
     if (["USA", "US", "UNITEDSTATES", "UNITEDSTATESOFAMERICA", "ארצותהברית", 'ארה"ב', "ארה״ב"].includes(code)) return "US";
@@ -152,6 +159,8 @@
     if (!Number.isFinite(nav) || nav <= 0) return blocked("no_cash");
     const symbol = upper(h.symbol);
     const sameSymbol = (item) => upper(item.holding.symbol) === symbol;
+    const targetListing = listingIdentity(security);
+    const sameListing = (item) => listingIdentity(item) === targetListing;
     const sector = upper(h.sector || adapters.industry(security));
     const sameSector = (item) => upper(item.holding.sector || adapters.industry(item)) === sector;
     const exposure = (items, predicate) => total(items.filter(predicate).map((item) => Math.abs(value(item))));
@@ -164,7 +173,7 @@
       if (upper(account.currency) !== currency) { reject("account_currency"); continue; }
       const positions = rows.filter((item) => String(item.holding.account_id) === String(account.id));
       if (positions.some((item) => adapters.derivative(item) || Number(item.holding.quantity) < 0)) { reject("collateral_unverified"); continue; }
-      if (action === "SHORT" && positions.some((item) => sameSymbol(item) && Number(item.holding.quantity) > 0)) { reject("existing_long"); continue; }
+      if (action === "SHORT" && positions.some((item) => sameListing(item) && Number(item.holding.quantity) > 0)) { reject("existing_long"); continue; }
       const cash = cashByAccount.get(String(account.id));
       if (!(cash > 0)) { reject("no_cash"); continue; }
       const cashBase = convert(cash, currency);
@@ -203,13 +212,16 @@
       while (quantity > 0) {
         const notional = quantity * current.price;
         costBase = quantity * unitBase;
-        const existing = positions.find(sameSymbol);
+        const existing = positions.find(sameListing);
         projected = positions.map((item) => item === existing ? { ...item, holding: { ...item.holding,
           market_value: Number(item.holding.market_value) + (action === "SHORT" ? -notional : notional),
           quantity: Number(item.holding.quantity) + (action === "SHORT" ? -quantity : quantity) } } : item);
         if (!existing) projected.push({ ...security, holding: { ...h, account_id: account.id,
           quantity: action === "SHORT" ? -quantity : quantity, market_value: action === "SHORT" ? -notional : notional } });
-        after = adapters.risk(projected, { cash: Math.max(0, cashBase - costBase * (collateral + POLICY.feeBuffer)),
+        // Reserved collateral remains an asset. Financial risk uses ledger cash;
+        // the spending limits above separately reserve collateral and fee buffer.
+        const projectedCashBase = cashBase + (action === "SHORT" ? costBase : -costBase) - costBase * POLICY.feeBuffer;
+        after = adapters.risk(projected, { cash: projectedCashBase,
           cashCurrency: currency, horizonYears: horizon, baseCurrency: base, asOf:context.calculated_at,
           normalizeField: (item, field) => convert(item.holding[field], item.holding.currency) });
         if (Number.isFinite(after.score) && after.score <= Math.min(POLICY.maxRisk, before.score + riskIncreaseLimit)) break;

@@ -103,47 +103,140 @@ observation does not refresh its as-of date. Static classification or cashflow
 terms do not expire solely because their source is old. Cash's zero nominal
 market stress is not a guarantee of deposit protection, access or purchasing power.
 
-### Numeric display with incomplete evidence
+### Asset-aware estimates with incomplete evidence
 
-The separate `portfolio-risk-provisional-v1` overlay keeps a numeric display
-available without changing the strict v3 `score`, `status`, ratings or raw facts.
-Complete verified scores take precedence, then complete explicit-assumption
-`estimated_score`, then `provisional_score`. An incomplete assessment displays
-`~N`, a warning symbol and a localized Partial data label. Any strict boundary
-score with remaining input gaps also retains the warning. The tooltip lists all
-missing inputs, value-weighted coverage and the provisional calculation basis;
-the expandable missing-input list and recovery actions remain available.
+The automatic overlay is `portfolio-risk-provisional-v2`, with
+`provisional_basis=asset_aware_scenarios`. It leaves the strict v3 `score`,
+`status`, ratings and raw facts unchanged. Display precedence is a verified
+score, then a complete explicit-assumption `estimated_score`, then an automatic
+estimate. Incomplete estimates display `~N`, a warning and a localized Estimate
+label. Strict boundary scores with remaining gaps also retain the warning.
+Tooltips retain every missing input, value-weighted coverage, source dates and
+explicit proxy assumptions. Completeness adds no loss or score points.
 
-With known positive current net equity, identify each top-level holding with
-missing model evidence. Remove all its prepared child exposures from the
-supported scenario calculation. Charge its absolute base-currency value once,
-regardless of the number of gaps, lots or fund children. Let that sum be `U`,
-and let `K` be the largest loss from common scenarios using only supported
-holdings and the known signed cash. Then
-`provisional_loss = K + U` and
-`provisional_score = round(min(100, 200 * (K + U) / E))`.
-The full-principal allowance is an explicit precautionary assumption, not a
-guessed rating, duration, forecast, confidence percentage or true maximum loss.
-For example, an unmodeled fund100 plus cash900 gives20; supported six-year AAA
-zero-coupon debt60 plus unmodeled debt40 gives95 at the synthetic 14/11/2026
-cutoff. An incomplete fund is replaced at its parent value once; supported
-children are not charged a second time.
+Automatic estimates use the same signed common-scenario P&L, positive-equity
+denominator and `round(min(100, 200 * loss / E))` severity scale as strict v3.
+Known cash has zero local price shock, dilutes exposure and retains signed FX
+shocks; borrowing reduces equity. Fund classification requires an explicit
+instrument/profile classification, not a name, broker, listing currency or a
+fund's numeric ID. A direct share/RSU retains issuer distress even when an
+incompatible fund-focus profile is attached. Unknown raw classification with an
+explicit equity kind can use the share proxy. Unsupported derivatives, leverage
+or known nonplain bonds require a suitable model and cannot become ordinary debt.
 
-Unknown/stale/future valuations, missing conversion FX/cash, unscoped gaps or
-unmodeled short/nonlinear/leveraged payoffs use a precautionary display ceiling
-of100 with `provisional_basis=missing_valuation_ceiling` and
-`provisional_loss=null`. This does not establish insolvency or certain loss.
-Unknown current unmodeled gross is retained as null. Other provisional outputs
-use `provisional_basis=unmodeled_exposure_allowance` and retain `U` as
-`provisional_unmodeled_gross`. Known current nonpositive equity still follows
-the strict100 boundary; a known empty debt-free portfolio still scores0.
+For funds without verified complete lookthrough, use the declared category:
 
-New history records freeze the overlay's own version, basis, score and amounts
-alongside the strict null/complete result and original evidence. Older records
-are never retrospectively assigned a provisional score. Graphs distinguish
-provisional, explicit-assumption and verified observations and do not connect
-different status/method series. A displayed provisional score does not qualify
-as verified risk evidence for automatic trade sizing or risk-reduction ranking.
+| Exposure | Local proxy assumptions |
+|---|---|
+| Unleveraged money-market fund | -1% NAV in recession/inflation; zero in rally; country loss at least 1%, or 25% of the eligible country spread shock |
+| Government bond / government bond fund | Duration 5 years; unknown credit widening 200bp |
+| Corporate / unspecified direct bond or bond fund | Duration 5 years; unknown widening 250bp |
+| Investment-grade bond fund | Duration 5 years; widening 150bp |
+| High-yield bond fund | Duration 4 years; widening 500bp |
+| Direct equity or broad/unclassified equity fund | Global -40% recession, -25% inflation, +40% rally |
+| Declared sector/thematic equity fund | Global -50% recession, -35% inflation, +50% rally |
+
+Canonical `MONEY_MARKET_FUND` and `BOND_FUND` class/subclass aliases use their
+respective category even without a separate focus. A broad single-country fund
+does not receive the sector proxy merely for being single-country. Eligible
+direct-bond credit and actual confirmed zero/coupon terms take precedence over
+proxies. A no-lookthrough fund never inherits its manager/wrapper issuer rating,
+maturity, cashflows, country sensitivity or current credit spread as underlying
+bond evidence; retain category duration/widening and sensitivity1. No corporate issuer-default shock is assigned to
+a fund manager. Verified lookthrough children use their actual direct-instrument
+rules, including canonical legal-issuer aggregation across flat/nested children.
+
+Proxy bonds use `expm1(-D * (curve + spread))`; retain the global curve and spread
+multipliers above. If no eligible current credit spread is supplied, omit credit
+tightening from rallies and label that omission; do not claim an observed zero
+spread. Direct corporate issuer distress/rally stays applicable with the proxy
+duration. Eligible matched sovereign issue/LC/FC opinions retain their axes.
+The automatic estimate may use an existing exact TreasuryDirect reference in
+`item.market_data` to recognize plain USD Treasury bills/notes/bonds as sovereign
+US/USD local-currency obligations. Require an exact bound CUSIP, USD currency,
+Treasury issuer, an HTTPS TreasuryDirect primary source and a nonfuture reference
+capture. Identity establishes the sovereign category independently of missing
+pricing terms. Missing nominal flags/type retain a labelled sovereign D5/200bp
+proxy without a maturity bound. Explicit floating, inflation-linked, callable or
+contradictory nonlinear terms instead require a suitable payoff model and range.
+Partial price/history coverage does not invalidate supported static identity.
+This adds no sovereign grade, current yield or spread, and a coupon note is not
+a zero coupon. A known matured reference requires an appropriate payoff model.
+If an exact repricer remains unavailable, verified nonfloating/non-inflation-linked
+plain nominal type and final maturity may cap
+the default duration proxy at remaining ACT/365.25 years. Label this
+`bond_duration_maturity_bound` with its maturity and source: it is a conservative
+sensitivity proxy, not actual coupon duration. User-entered maturity alone,
+including enabled manual assumptions, does not establish this verified bound.
+Keep reference retrieval dates distinct from quote observation dates. These
+reference aids leave strict v3 completeness requirements unchanged and perform
+no network lookup or data write while calculating risk.
+For direct securities, an explicitly labelled issuer-domicile proxy may support
+country scenarios. A fund's manager domicile does not establish its underlying
+economic country. Without declared underlying economic-country evidence and an
+eligible rating, use generic country equity -40%, spread +200bp and currency -15%.
+Retain eligible direct-security country sensitivity, or label `kappa=1` as an
+assumption. User-entered parameters require explicit assumption mode; an
+unenabled manual sensitivity0 cannot suppress a known country shock.
+Generic country, domicile and quote/reference-currency fallbacks are labelled.
+Declared economic FX weights take precedence; otherwise label a quote/reference
+currency proxy. Compound all local/FX returns and apply FX to signed cash too.
+
+Finite reported saved values may support a last-known estimate when valuation
+dates are stale or absent, with dates/assumptions visible. Future-dated values are
+excluded. Missing monetary values, conversion FX, cash, supported exposure or
+pricing models set `provisional_scope=known_values` and display the 0–100 range
+from `provisional_range`, never a forced100 or an arbitrary midpoint. A secondary
+point may describe supported known positions only; it is not the whole-portfolio
+score and is not plotted as one. With fully scoped values/exposures, use
+`provisional_scope=portfolio`. Known current nonpositive equity retains the
+strict100 boundary; stale nonpositive equity can only establish an explicitly
+estimated funding boundary, not verified insolvency. Empty known debt-free scope
+retains0.
+
+Current eligible S&P D/SD, Fitch D/RD and Moody's C require a recovery model;
+they are not ordinary unrated debt. S&P/Fitch C and Moody's Ca/Caa retain their
+existing CCC treatment. `app/stress_risk_inputs.py` preserves applicable primary
+evidence as `requires_recovery_model`/`recovery_evidence` without fabricating a
+spread bucket. Exact eligible issue evidence takes precedence over issuer
+fallback, including performing issues; sovereign fallback must match the
+obligation's LC/FC basis. Stale, future, withdrawn, national, short-term or
+unenabled manual opinions do not establish this boundary. A separate
+`country_requires_recovery_model` flag preserves the relevant systemic FC
+opinion. It applies to a known economic country for direct equity/corporate debt
+or fund underlying exposures. For direct sovereigns it applies only if the
+country-crisis currency differs from base and any holding or signed cash has
+exposure to that currency; an irrelevant FC opinion cannot overwrite a
+performing LC/base-LC obligation. Fund-manager domicile/default is not underlying
+country/credit evidence. Applicable unresolved recovery models produce scoped
+ranges, not a guessed100 or fabricated recovery amount.
+
+For example, fund452,599.35 plus cash38,819.65 in ILS, if all the fund exposure is
+an identified unleveraged ILS money-market fund, produces loss4,525.9935 and
+score2 on equity491,419. This is a conditional example, not a verified account
+valuation. All-native cash100 scores0; foreign cash100 versus ILS scores30;
+unleveraged native money-market exposure100 scores2, or32 when fully foreign.
+These shocks are declared scenario assumptions, not guarantees or probabilities.
+
+History freezes `provisional_model`, basis, scope/range, point, loss, estimated
+net equity, proxy gross, assumptions and scenarios alongside the original strict
+result and input evidence. Existing records are immutable. Graphs distinguish
+verified, manual-estimate and automatic-estimate observations, break between
+method versions, and do not plot range/known-position points as whole-portfolio
+observations. Provisional scores are not verified inputs for automatic trade
+sizing or risk-reduction ranking. Source-based proxy assumptions retain bounded
+reference identity, nominal/payoff facts, maturity and reference retrieval time;
+an unused reported coupon can change evidence without changing scenario returns.
+
+### Historical provisional-v1 overlay (immutable observations only)
+
+Saved `portfolio-risk-provisional-v1` observations retain their original meaning:
+`provisional_loss = K + U`, where `K` was supported common-scenario loss and `U`
+was the absolute value of each unmodeled top-level holding charged once. The
+basis was `unmodeled_exposure_allowance`. Unknown/stale/future values or unmodeled
+payoffs instead used `missing_valuation_ceiling`, score100 and null loss. This
+precautionary ceiling did not establish insolvency. V1 is no longer computed for
+current assessments and is not silently reinterpreted as the asset-aware model.
 
 ### Completing missing inputs
 
@@ -211,10 +304,35 @@ Investment-account scope; risk-reduction alternatives retain canonical dashboard
 scope. Source corrections, rating/parameter/country changes and provider evidence
 enter the capture/publication guard.
 
+Planner risk projections use the same signed ledger cash as simulations: BUY
+subtracts notional and the fee allowance; SHORT adds proceeds and subtracts the
+fee allowance. With equal execution and valuation prices, both preserve net
+equity before fees. Reserved collateral remains an asset and constrains only the
+planner's separate spending policy. Projected trades mutate only the exact
+symbol, normalized market, currency and asset class; other listings remain
+separate, while legal-issuer risk aggregation remains shared. Holdings Risk
+sorting follows the displayed numeric score/estimate; a range or a secondary
+known-position point is not a sortable whole-exposure score.
+
 Regression evidence includes `tests/test_stress_risk_model.py`,
 `tests/test_stress_risk_inputs.py`, independent financial/QA tests, simulator,
 history, source-revision and browser/localization checks. Software tests do not
 validate financial forecast accuracy.
+
+## Financial plausibility before publishing scores
+
+Financial QA must reconcile the actual holdings, signed ledger cash, valuation
+dates and base-currency FX, then independently derive scenario loss in money and
+percent before accepting the displayed score. Explain the result using asset mix,
+concentration, currency and funding. Challenge an extreme score against known
+unleveraged native cash or money-market exposure: missing evidence does not
+establish a 50% capital-loss scenario. A genuine100 needs a qualifying modeled
+loss or known nonpositive-equity boundary. Positive native cash dilutes market
+loss; foreign cash retains currency exposure. The combined score must use one
+pooled scenario, since different accounts can have different worst scenarios.
+Passing software tests or repeating a prior formula is not financial sign-off.
+Keep proxy assumptions, incomplete coverage and stale saved marks visible in
+the explanation and independently recheck actual account outputs after changes.
 
 ## Historical v2 contract (immutable observations only)
 

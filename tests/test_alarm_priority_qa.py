@@ -34,8 +34,14 @@ FUNCTIONS = (
 )
 
 
-def source_js():
-    return (ROOT / "web/stress-risk.js").read_text() + "\nconst PortfolioStressRisk=globalThis.PortfolioStressRisk || module.exports;\n" + (ROOT / "web/stress-risk-ui.js").read_text().split("(() => {")[0] + "\n" + app_functions(*FUNCTIONS) + "\n" + (ROOT / "web/alarm-priority-ui.js").read_text()
+def source_js(*, browser=False):
+    if browser:
+        model = (ROOT / "web/stress-risk-estimate.js").read_text() + "\n" + (ROOT / "web/stress-risk.js").read_text()
+        model += "\nconst PortfolioStressRisk=globalThis.PortfolioStressRisk;\n"
+    else:
+        # Resolve the model's own dependencies from its real module location.
+        model = "const PortfolioStressRisk=require('./web/stress-risk.js');\n"
+    return model + (ROOT / "web/stress-risk-ui.js").read_text().split("(() => {")[0] + "\n" + app_functions(*FUNCTIONS) + "\n" + (ROOT / "web/alarm-priority-ui.js").read_text()
 
 
 SETUP = r'''
@@ -329,7 +335,7 @@ $('clearAlarms').addEventListener('click',clearAlarms);
 renderAlarms();
 '''
     setup += f"state.language={json.dumps(language)};window.PortfolioI18n.applyToDocument(state.language);window.PortfolioI18n.observe();applyRolePermissions();\n"
-    html = html.replace('</body>', '<script>' + (ROOT / 'web/i18n.js').read_text() + '\n' + setup + source_js() + '\n' + constants + '\n' + extra + '\n' + permissions + '\n' + handlers + '</script></body>')
+    html = html.replace('</body>', '<script>' + (ROOT / 'web/i18n.js').read_text() + '\n' + setup + source_js(browser=True) + '\n' + constants + '\n' + extra + '\n' + permissions + '\n' + handlers + '</script></body>')
     # declarations are hoisted, but constants used by renderAlarms must precede setup.
     html = html.replace('renderAlarms();\nstate.language=', 'window.addEventListener("load",()=>{renderAlarms();\nstate.language=')
     html = html.replace('applyRolePermissions();\n', 'applyRolePermissions();});\n')

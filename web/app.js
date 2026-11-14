@@ -3157,7 +3157,8 @@ function riskBadge(risk) {
   const presentation = risk.model === "portfolio-risk-v3" && typeof stressRiskDisplay === "function" ? stressRiskDisplay(risk) : null;
   const estimate = !Number.isFinite(risk.score) && Number.isFinite(risk.estimated_score);
   const number = presentation ? presentation.number : Number.isFinite(risk.score) ? risk.score : estimate ? risk.estimated_score : null;
-  const band = presentation?.ceiling ? {key:"incomplete",label:optionLabel("Precautionary ceiling"),symbol:"⚠"} : riskBand(number);
+  const band = presentation?.unknownScope ? {key:"incomplete",label:optionLabel("Uncertain scope"),symbol:"⚠"}
+    : presentation?.ceiling ? {key:"incomplete",label:optionLabel("Precautionary ceiling"),symbol:"⚠"} : riskBand(number);
   const value = presentation ? presentation.value : number === null ? optionLabel("Incomplete") : `${estimate ? "~" : ""}${number}`;
   const status = presentation ? presentation.statusLabel : estimate ? optionLabel("Estimate") : "";
   const missing = presentation?.missing === true;
@@ -3248,8 +3249,9 @@ function riskScoreForItems(items, options = {}) {
   const normalizeField = options.normalizeField || ((item, field) => riskStrictBaseValue(item.holding?.[field], item.holding?.currency, baseCurrency));
   const settings = { sourceRevision:state.riskRevision, ...options, baseCurrency, normalizeField, asOf: options.asOf || state.riskAsOf || new Date().toISOString() };
   if (!model) return { model:"portfolio-risk-v3", status:"incomplete", score:null, estimated_score:null,
-    provisional_model:"portfolio-risk-provisional-v1", provisional_score:100,
-    provisional_basis:"missing_valuation_ceiling", provisional_loss:null, provisional_unmodeled_gross:null,
+    provisional_model:"portfolio-risk-provisional-v2", provisional_score:null,
+    provisional_basis:"asset_aware_scenarios", provisional_loss:null, provisional_net_equity:null,
+    provisional_proxy_gross:null, provisional_assumptions:[], provisional_scope:"known_values", provisional_range:{min:0,max:100},
     label:options.label || "Portfolio risk", gaps:[{code:"parameters_unavailable"}], components:{}, quality_details:[], position_risks:new Map() };
   const risk = model.calculate(items || [], settings);
   risk.position_risks = new Map((items || []).map(item => {
@@ -4010,7 +4012,8 @@ function renderPortfolioValueDashboard(items) {
     .join("");
 
   const totalRiskDisplay = typeof stressRiskDisplay === "function" ? stressRiskDisplay(state.riskSnapshot.total) : null;
-  const totalRiskBand = totalRiskDisplay?.ceiling ? {key:"incomplete",label:optionLabel("Precautionary ceiling")} : riskBand(totalRiskDisplay?.number ?? state.riskSnapshot.total.score ?? state.riskSnapshot.total.estimated_score);
+  const totalRiskBand = totalRiskDisplay?.unknownScope ? {key:"incomplete",label:optionLabel("Uncertain scope")}
+    : totalRiskDisplay?.ceiling ? {key:"incomplete",label:optionLabel("Precautionary ceiling")} : riskBand(totalRiskDisplay?.number ?? state.riskSnapshot.total.score ?? state.riskSnapshot.total.estimated_score);
   const statsHtml = [
     { label: "Risk", content: riskBadge(state.riskSnapshot.total), tooltip: riskTooltip(state.riskSnapshot.total), detail: totalRiskBand.label, className: `risk-${totalRiskBand.key}` },
     { label: "Positions", value: items.length, tooltip: "Number of open positions shown after filters" },
@@ -4269,7 +4272,11 @@ function sortHoldingsRows(items) {
   if (typeof HoldingsSort === "undefined") return [...items];
   return HoldingsSort.sortRows(items, holdingsTableSort, { language: state.language, maPeriod: state.tableMaPeriod,
     account: (holding) => cleanSourceLabel(holding.account), status: holdingsStatusSortLabel,
-    risk: (item) => state.riskSnapshot?.total?.position_risks?.get(item)?.score,
+    risk: (item) => {
+      const risk = state.riskSnapshot?.total?.position_risks?.get(item);
+      return risk?.model === "portfolio-risk-v3" && typeof stressRiskDisplay === "function"
+        ? stressRiskDisplay(risk).number : risk?.score;
+    },
     amount: (value, currency) => reportAmount(value, currency, state.baseCurrency) });
 }
 
@@ -5818,6 +5825,9 @@ function renderAnalytics(items) {
     observeDashboardLayout(board);
     restoreDashboardScrollPositions(board, scrollPositions);
     restoreInteraction();
+    // Restoring open details changes intrinsic card heights. Repack before the
+    // old footprint is released so the page cannot clamp a reader's scroll.
+    if (visible.length) layoutDashboardCards(board);
   } finally {
     board.style.minHeight = previousMinHeight;
   }

@@ -124,8 +124,8 @@ def rating_bucket(row):
     return base if base in _BUCKETS else "CCC" if base in {"CC", "C"} else None
 
 
-def select_rating(response, candidate=None, *, basis=None, sovereign=False, allow_manual=False):
-    """Conservative comparable verified opinions; manual overlays never verify facts."""
+def _eligible_rating_rows(response, candidate=None, *, basis=None, sovereign=False, allow_manual=False):
+    """Keep evidence eligibility separate from the repricer's supported grades."""
     eligible = []
     for row in (response or {}).get("ratings", []):
         manual = bool(row.get("manual_override") or row.get("source_kind") == "manual")
@@ -142,14 +142,48 @@ def select_rating(response, candidate=None, *, basis=None, sovereign=False, allo
             continue
         if verified_at > datetime.now(timezone.utc):
             continue
+        try:
+            if row.get("rating_date") and date.fromisoformat(row["rating_date"]) > date.today():
+                continue
+        except (ValueError, TypeError):
+            continue
         if sovereign:
             if row.get("scope") != "sovereign" or row.get("currency_basis") != basis:
                 continue
         elif not is_primary_observation(row, candidate):
             continue
-        bucket = rating_bucket(row)
-        if bucket:
-            eligible.append({**deepcopy(row), "bucket": bucket})
+        eligible.append(deepcopy(row))
+    return eligible
+
+
+def _recovery_grade(row):
+    return row.get("rating") in {"sp": {"D", "SD"}, "fitch": {"D", "RD"},
+                                 "moodys": {"C"}}.get(row.get("agency"), set())
+
+
+def select_recovery_evidence(response, candidate=None, *, basis=None, sovereign=False, allow_manual=False):
+    """Preserve applicable distress evidence that an ordinary spread cannot price."""
+    eligible = [row for row in _eligible_rating_rows(response, candidate, basis=basis,
+                sovereign=sovereign, allow_manual=allow_manual)
+                if not row.get("conflicting") and row.get("eligible") is not False
+                and (rating_bucket(row) or _recovery_grade(row))]
+    if not sovereign and candidate and "BOND" in {str(candidate.get(k) or "").upper() for k in ("asset_class", "asset_sub_class")}:
+        eligible = [row for row in eligible if row.get("scope") == "issue"] or eligible
+    for row in eligible:
+        if _recovery_grade(row):
+            fields = ("agency", "rating", "scope", "scale", "term", "rating_type", "entity_name", "entity_id",
+                      "security_key", "country_code", "currency_basis", "rating_date", "fetched_at", "source_url",
+                      "source_kind", "issuer_fallback", "manual_override", "updated_at", "manual_revision")
+            manual = bool(row.get("manual_override") or row.get("source_kind") == "manual")
+            return {**{key: deepcopy(row[key]) for key in fields if key in row}, "requires_recovery_model": True,
+                    "verification_status": "user_entered" if manual else "verified"}
+    return None
+
+
+def select_rating(response, candidate=None, *, basis=None, sovereign=False, allow_manual=False):
+    """Conservative comparable verified opinions; manual overlays never verify facts."""
+    eligible = [{**row, "bucket": rating_bucket(row)} for row in _eligible_rating_rows(
+        response, candidate, basis=basis, sovereign=sovereign, allow_manual=allow_manual) if rating_bucket(row)]
     if not eligible:
         return None
     if not sovereign and candidate and "BOND" in {str(candidate.get(k) or "").upper() for k in ("asset_class", "asset_sub_class")}:
@@ -292,6 +326,19 @@ class StressRiskInputs:
                               and credit and credit.get("scope") == "issue" else sovereign_ratings.get(basis))
         sovereign_estimate = (credit_estimate if params.get("instrument_kind") == "sovereign_bond"
                              and credit_estimate and credit_estimate.get("scope") == "issue" else sovereign_estimates.get(basis))
+        recovery = None
+        if "BOND" in {str(candidate.get(k) or "").upper() for k in ("asset_class", "asset_sub_class")}:
+            allow_manual = params.get("assumptions_enabled") is True
+            recovery = select_recovery_evidence(public, candidate, allow_manual=allow_manual)
+            # Sovereign fallback must match the obligation's currency axis. An
+            # applicable exact issue (performing or distressed) takes precedence.
+            if params.get("instrument_kind") == "sovereign_bond" and not (
+                    recovery and recovery.get("scope") == "issue"
+                    or ((credit_estimate if allow_manual else credit) or {}).get("scope") == "issue"):
+                recovery = select_recovery_evidence(sovereign, basis=basis, sovereign=True,
+                                                    allow_manual=allow_manual)
+        country_recovery = select_recovery_evidence(sovereign, basis="foreign_currency", sovereign=True,
+            allow_manual=params.get("assumptions_enabled") is True) if code else None
         gaps = []
         if not issuer_id:
             gaps.append({"code": "issuer_identity"})
@@ -312,6 +359,8 @@ class StressRiskInputs:
             "issuer_name_key": _entity(researched.get("issuer_name") or (candidate.get("issuer_name") if candidate.get("issuer_identity_verified") else None)) or None,
             "currency_exposures": deepcopy(researched.get("currency_exposures")),
             "unsupported_bond": researched.get("unsupported_bond") is True,
+            "requires_recovery_model": recovery is not None, "recovery_evidence": recovery,
+            "country_requires_recovery_model": country_recovery is not None, "country_recovery_evidence": country_recovery,
             "source_evidence": deepcopy(list(fields.values())), "evidence_revision": evidence.get("revision", 0),
             "country": {**country, "basis": params.get("country_basis") or "issuer_domicile_proxy"},
             "credit_rating": credit, "sovereign_ratings": sovereign_ratings,

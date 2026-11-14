@@ -73,7 +73,7 @@ def incomplete(position_):
     return position_
 
 
-def test_multiple_gaps_lots_and_accounts_charge_each_value_once_without_mutation():
+def test_multiple_gaps_lots_and_accounts_preserve_one_scenario_exposure_without_mutation():
     whole = [incomplete(position())]
     pieces = [incomplete(position(value=25, account=str(i))) for i in range(4)]
     original = deepcopy(pieces)
@@ -81,25 +81,28 @@ def test_multiple_gaps_lots_and_accounts_charge_each_value_once_without_mutation
         result = assess(items, cash=400)
         assert result["score"] is None and result["estimated_score"] is None
         assert result["status"] == "incomplete" and len(result["gaps"]) >= 2
-        assert result["provisional_model"] == "portfolio-risk-provisional-v1"
-        assert result["provisional_score"] == severity(100, 500) == 40
-        assert result["provisional_loss"] == result["provisional_unmodeled_gross"] == 100
-        assert result["provisional_basis"] == "unmodeled_exposure_allowance"
+        loss = 100 * (1 - math.exp(-5 * (.02 + .5 * .02)))
+        assert result["provisional_model"] == "portfolio-risk-provisional-v2"
+        assert result["provisional_score"] == severity(loss, 500) == 6
+        assert result["provisional_loss"] == pytest.approx(loss)
+        assert result["provisional_proxy_gross"] == 100
+        assert result["provisional_basis"] == "asset_aware_scenarios"
         assert result["coverage"]["covered_value_percent"] == 80
     assert pieces == original
 
 
-def test_supported_zero_coupon_loss_and_missing_principal_use_original_equity():
+def test_supported_zero_coupon_and_proxy_debt_use_original_equity_and_common_scenario():
     result = assess([position("KNOWN", 60), incomplete(position("UNKNOWN", 40))])
     elapsed = (date.fromisoformat(MATURITY) - date.fromisoformat(AS_OF)).days / 365.25
     known_loss = 60 * (1 - math.exp(-elapsed * (.02 + .5 * .005)))
     assert result["net_equity"] == 100
-    assert result["provisional_loss"] == pytest.approx(known_loss + 40)
-    assert result["provisional_score"] == severity(known_loss + 40, 100) == 95
+    proxy_loss = 40 * (1 - math.exp(-5 * (.02 + .5 * .02)))
+    assert result["provisional_loss"] == pytest.approx(known_loss + proxy_loss)
+    assert result["provisional_score"] == severity(known_loss + proxy_loss, 100) == 26
     assert result["score"] is None
 
 
-def test_partial_nested_fund_excludes_every_prepared_child_and_counts_parent_once():
+def test_partial_nested_fund_preserves_verified_children_and_proxies_only_the_missing_bond():
     fund = position("WRAPPER", 100, "fund")
     fund["holding"]["asset_class"] = "ETF"
     child = position("NESTED", 60, "fund")
@@ -110,10 +113,13 @@ def test_partial_nested_fund_excludes_every_prepared_child_and_counts_parent_onc
     fund["stress_risk"].update(lookthrough_verified=True, lookthrough=[
         {"weight": .4, "item": position("OTHER", 40, "equity")}, {"weight": .6, "item": child}])
     result = assess([fund], cash=400)
-    # Previously prepared child losses are replaced by the entire wrapper's 100.
+    # Reported weights establish 70 equity +30 government debt; unknown bond
+    # terms use the duration/credit proxy without wiping out the wrapper.
     assert result["partial_stress_loss"] > 0
-    assert result["provisional_unmodeled_gross"] == result["provisional_loss"] == 100
-    assert result["provisional_score"] == 40
+    loss = 70 * .4 + 30 * (1 - math.exp(-5 * (-.01 + .02)))
+    assert result["provisional_proxy_gross"] == 100
+    assert result["provisional_loss"] == pytest.approx(loss)
+    assert result["provisional_score"] == severity(loss, 500) == 12
 
 
 def test_supported_signed_hedge_remains_in_the_common_scenarios():
@@ -122,33 +128,40 @@ def test_supported_signed_hedge_remains_in_the_common_scenarios():
     result = assess([long, short, incomplete(position("UNKNOWN", 40))], cash=200)
     # Equal signed positions in the same issuer offset each scenario exactly.
     assert result["net_equity"] == 240
-    assert result["provisional_loss"] == 40
-    assert result["provisional_score"] == severity(40, 240) == 33
+    loss = 40 * (1 - math.exp(-5 * (.02 + .5 * .02)))
+    assert result["provisional_loss"] == pytest.approx(loss)
+    assert result["provisional_score"] == severity(loss, 240) == 5
 
 
-def test_late_foreign_systemic_gap_marks_its_top_level_position_unmodeled():
+def test_late_foreign_systemic_gap_keeps_strict_gap_and_uses_a_declared_fx_proxy():
     item = position()
     item["stress_risk"].pop("country_rating")
     result = assess([item], baseCurrency="ILS", cash=400)
     assert any(g["code"] == "country_rating" and g.get("detail") == "foreign_currency_fx" for g in result["gaps"])
-    assert result["provisional_unmodeled_gross"] == 100
-    assert result["provisional_score"] == 40
+    elapsed = (date.fromisoformat(MATURITY) - date.fromisoformat(AS_OF)).days / 365.25
+    loss = 100 * (1 - .85 * math.exp(-elapsed * (.02 + .5 * .005)))
+    assert result["provisional_proxy_gross"] == 100
+    assert result["provisional_loss"] == pytest.approx(loss)
+    assert result["provisional_score"] == severity(loss, 500) == 10
     assert result["score"] is None
     assert result["coverage"]["covered_value_percent"] == 80
     assert result["coverage"]["covered_value"] == 400
 
 
-def test_unresolved_systemic_fx_opinion_does_not_count_foreign_cash_as_supported():
+def test_unresolved_systemic_fx_opinion_retains_foreign_cash_in_numeric_estimate_not_verified_coverage():
     item = position()
     item["stress_risk"].pop("country_rating")
     result = assess([item], baseCurrency="ILS", cashAccounts=[{"value": 400, "currency": "USD"}])
-    assert result["score"] is None and result["provisional_score"] == 100
-    assert result["provisional_basis"] == "missing_valuation_ceiling" and result["provisional_loss"] is None
+    elapsed = (date.fromisoformat(MATURITY) - date.fromisoformat(AS_OF)).days / 365.25
+    loss = 100 * (1 - .85 * math.exp(-elapsed * (.02 + .5 * .005))) + 400 * .15
+    assert result["score"] is None and result["provisional_score"] == severity(loss, 500) == 34
+    assert result["provisional_basis"] == "asset_aware_scenarios"
+    assert result["provisional_loss"] == pytest.approx(loss)
     assert result["coverage"]["covered_value_percent"] == 0
 
 
 @pytest.mark.parametrize("cause", ["unknown_value", "stale_value", "future_value", "missing_cash", "short", "nonlinear", "leverage"])
-def test_uncertain_or_unbounded_inputs_mean_ceiling_without_asserted_loss(cause):
+def test_unknown_scope_is_ranged_while_stale_marks_and_linear_shorts_keep_financial_estimates(cause):
     item = incomplete(position())
     options = {"cash": 400}
     if cause == "unknown_value": item["holding"]["market_value"] = None
@@ -160,9 +173,16 @@ def test_uncertain_or_unbounded_inputs_mean_ceiling_without_asserted_loss(cause)
     elif cause == "leverage": item["exposure_profile"] = {"leverage_type": "leveraged"}
     result = assess([item], **options)
     assert result["score"] is None and result["status"] == "incomplete"
-    assert result["provisional_score"] == 100
-    assert result["provisional_basis"] == "missing_valuation_ceiling"
-    assert result["provisional_loss"] is None
+    assert result["provisional_basis"] == "asset_aware_scenarios"
+    if cause in {"stale_value", "short"}:
+        loss = 100 * (1 - math.exp(-5 * .03)) if cause == "stale_value" else 100 * math.expm1(5 * .025)
+        equity = 500 if cause == "stale_value" else 300
+        assert result["provisional_scope"] == "portfolio"
+        assert result["provisional_loss"] == pytest.approx(loss)
+        assert result["provisional_score"] == severity(loss, equity)
+    else:
+        assert result["provisional_scope"] == "known_values"
+        assert result["provisional_range"] == {"min": 0, "max": 100}
     assert result["worst_scenario"] != "nonpositive_equity"
 
 
@@ -181,7 +201,7 @@ def test_numeric_precedence_preserves_verified_estimate_and_known_boundaries():
     assert boundary["worst_scenario"] == "nonpositive_equity" and "provisional_score" not in boundary
 
 
-def test_history_freezes_optional_overlay_and_never_invents_it_for_old_records(tmp_path, monkeypatch):
+def test_history_keeps_saved_v1_and_current_v2_immutable_without_recalculation(tmp_path, monkeypatch):
     store = LocalPortfolioStore(tmp_path / "qa-history.sqlite3")
     item = incomplete(position())
     inputs = risk_history.canonical_inputs([item], [{"id": "a", "type": "Investment", "currency": "USD", "initial_cash": 400}], [], {"quotes": []}, "USD")
@@ -192,6 +212,9 @@ def test_history_freezes_optional_overlay_and_never_invents_it_for_old_records(t
     old = assess([item], cash=400)
     for field in list(old):
         if field.startswith("provisional_"): del old[field]
+    old.update(provisional_model="portfolio-risk-provisional-v1", provisional_score=40,
+               provisional_basis="unmodeled_exposure_allowance", provisional_loss=100,
+               provisional_unmodeled_gross=100)
     context = risk_history.create_context(store, "qa-author", "USD", capture)
     legacy = risk_history.save_observation(store, "qa-author", {"token": context["token"], "total": old, "accounts": [{"account_id": "a", "risk": old}]}, capture, lambda: inputs["guard"])["observation"]
     monkeypatch.setattr(risk_history, "_now", lambda: now + timedelta(days=1))
@@ -201,8 +224,10 @@ def test_history_freezes_optional_overlay_and_never_invents_it_for_old_records(t
     partial["provisional_score"] = 99
     inputs["items"][0]["stress_risk"]["issuer_id"] = "corrected-later"
     rows = risk_history.list_observations(LocalPortfolioStore(store.path), "USD", 0)["items"]
-    assert rows[0] == legacy and "provisional_score" not in rows[0]["total"]
-    assert rows[1] == saved and rows[1]["total"]["provisional_score"] == 40
+    assert rows[0] == legacy and rows[0]["total"]["provisional_score"] == 40
+    assert rows[0]["total"]["provisional_model"] == "portfolio-risk-provisional-v1"
+    assert rows[1] == saved and rows[1]["total"]["provisional_score"] == 6
+    assert rows[1]["total"]["provisional_model"] == "portfolio-risk-provisional-v2"
     assert rows[1]["total"]["score"] is None
     assert rows[1]["evidence"]["stress_inputs"][0]["inputs"]["issuer_id"] == "sovereign:US"
 
@@ -228,15 +253,16 @@ const sample=(day,risk,model='portfolio-risk-v3')=>({model,date:`2026-11-${day}`
 const verified={status:'ok',score:20};
 const explicit={status:'estimate',score:null,estimated_score:25};
 const partial={status:'incomplete',score:null,provisional_model:'portfolio-risk-provisional-v1',provisional_score:40};
+const current={status:'incomplete',score:null,provisional_model:'portfolio-risk-provisional-v2',provisional_score:6,provisional_scope:'portfolio'};
 const rows=[sample('01',verified),sample('02',explicit),sample('03',partial),sample('04',partial),
- sample('05',{status:'incomplete',score:null}),sample('06',verified),sample('07',verified,'portfolio-risk-v2')];
+ sample('05',current),sample('06',current),sample('07',{status:'incomplete',score:null,provisional_model:'portfolio-risk-provisional-v2',provisional_scope:'known_values',provisional_score:0,provisional_range:{min:0,max:100}}),sample('08',verified),sample('09',verified,'portfolio-risk-v2')];
 const html=riskHistoryGraph(rows,'QA portfolio');
 console.log(JSON.stringify({html,path:html.match(/<path d="([^"]*)"/)[1]}));
 """
     result = node(script)
-    assert result["html"].count("<circle ") == 6
-    assert result["path"].count("L") == 1
-    assert result["path"].count("M") == 5
+    assert result["html"].count("<circle ") == 8
+    assert result["path"].count("L") == 2
+    assert result["path"].count("M") == 6
     assert "~40/100 ⚠ Partial data" in result["html"] and "~25/100" in result["html"]
 
 
@@ -400,6 +426,8 @@ def test_issuer_name_collision_never_merges_distinct_exact_ids_or_guesses_unrese
     for holding, candidate in zip(positions, inventory):
         holding["stress_risk"].update({key: value for key, value in inputs.read(candidate).items() if key.startswith("issuer_")})
     result = assess(positions)
-    assert result["score"] is None and result["provisional_score"] == 100
+    assert result["score"] is None and result["provisional_score"] == 80
     assert result["coverage"]["covered_value_percent"] == 70
-    assert result["provisional_unmodeled_gross"] == 30
+    assert result["provisional_proxy_gross"] == 30
+    assert result["provisional_loss"] == 40
+    assert any(row["code"] == "security_key_issuer_proxy" for row in result["provisional_assumptions"])
