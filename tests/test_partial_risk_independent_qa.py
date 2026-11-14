@@ -227,9 +227,16 @@ def test_history_keeps_saved_v1_and_current_v3_immutable_without_recalculation(t
     partial["provisional_score"] = 99
     inputs["items"][0]["stress_risk"]["issuer_id"] = "corrected-later"
     rows = risk_history.list_observations(LocalPortfolioStore(store.path), "USD", 0)["items"]
-    assert rows[0] == legacy and rows[0]["total"]["provisional_score"] == 40
+    for displayed, frozen in zip(rows, (legacy, saved)):
+        assert {key: value for key, value in displayed.items() if key != "performance"} == {
+            key: value for key, value in frozen.items() if key != "performance_snapshot"}
+        with store._connect() as connection:
+            stored = connection.execute("select value from app_preferences where key glob ? and json_extract(value,'$.id')=?",
+                                        (risk_history.PREFIX + "*", frozen["id"])).fetchone()
+        assert json.loads(stored["value"]) == frozen
+    assert rows[0]["total"]["provisional_score"] == 40
     assert rows[0]["total"]["provisional_model"] == "portfolio-risk-provisional-v1"
-    assert rows[1] == saved and rows[1]["total"]["provisional_score"] == 3
+    assert rows[1]["total"]["provisional_score"] == 3
     assert rows[1]["total"]["provisional_model"] == "portfolio-risk-provisional-v3"
     assert rows[1]["total"]["score"] is None
     assert rows[1]["evidence"]["stress_inputs"][0]["inputs"]["issuer_id"] == "sovereign:US"

@@ -229,6 +229,10 @@ def test_rendered_reader_uses_documented_json_and_one_credential_free_request(mo
     ("https://www.ubs.com/global/en/investor-relations/investors/bondholder-information/ratings.html", "auto", True),
     ("https://www.ubs.com/global/en/investor-relations/investors/bondholder-information/ratings.html", "jina", False),
     ("https://www.ubs.com/global/en/investor-relations/report.pdf", "auto", False),
+    ("https://www.sec.gov/Archives/edgar/data/1513363/000119312526449784/fdus-20260930.htm", "auto", True),
+    ("https://www.sec.gov/Archives/edgar/data/1513363/000119312526449784/fdus-20260930.htm", "jina", False),
+    ("https://www.sec.gov/Archives/edgar/data/1513363/000119312526449784/report.pdf", "auto", False),
+    ("https://data.sec.gov/submissions/CIK0001513363.json", "auto", False),
     ("https://example.com/quote", "auto", False),
 ])
 def test_static_issuer_reader_selects_engine_before_one_request_without_extra_access(monkeypatch, url, reader, static):
@@ -242,6 +246,8 @@ def test_static_issuer_reader_selects_engine_before_one_request_without_extra_ac
     assert len(requests) == 1
     assert requests[0].headers.get("x-engine") == ("direct" if static else None)
     assert document["reader_engine"] == ("direct" if static else "rendered")
+    if "fdus-20260930.htm" in url:
+        assert "ix\\:header" in requests[0].headers.get("x-remove-selector", "")
     assert not any(key in requests[0].headers for key in ("authorization", "cookie", "x-set-cookie", "x-instruction", "x-inject-page-script"))
 
 

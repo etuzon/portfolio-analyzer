@@ -51,6 +51,7 @@ class CountryResearchStart(BaseModel):
     country_codes: list[str] | None = Field(default=None, min_length=1, max_length=MAX_SELECTED)
     resume_request_id: str | None = Field(default=None, min_length=1, max_length=100)
     language: str | None = None
+    refresh_policy: str = "refresh_existing"
 
 
 class _NoMarketJobs:
@@ -66,8 +67,9 @@ class CountryRatingResearch(PortfolioAIResearch):
         self.country_inventory_reader = inventory_reader
         settings = assistant_settings or child_jobs.settings
 
-        def inventory(position_scope, **_):
-            captured = inventory_reader("accounts" if position_scope == "open" else "all")
+        def inventory(position_scope, **options):
+            forwarded = {"refresh_policy": options.get("refresh_policy", "missing")} if "data_types" in options or "refresh_policy" in options else {}
+            captured = inventory_reader("accounts" if position_scope == "open" else "all", **forwarded)
             items = captured.get("items", []) if isinstance(captured, dict) else captured
             return {"market_items": [], "credit_items": items}
 
@@ -77,6 +79,10 @@ class CountryRatingResearch(PortfolioAIResearch):
     def _capture(self, job):
         super()._capture(job)
         captured = {row["security_key"] for row in job["_targets"]["credit"]}
+        if job.get("_candidate_options") and job.get("_security_keys"):
+            rows = self.country_inventory_reader("accounts" if job["position_scope"] == "open" else "all")
+            rows = rows.get("items", []) if isinstance(rows, dict) else rows
+            captured = {row["security_key"] for row in rows}
         if set(job["_security_keys"] or []) - captured:
             # Explicit country requests must not silently succeed with an empty
             # selection when the caller chose an incompatible account scope.
@@ -99,7 +105,7 @@ class CountryRatingResearch(PortfolioAIResearch):
         return result
 
     def start(self, user_id, headers, language, country_scope="accounts", *, country_codes=None,
-              resume_request_id=None, scheduled_credentials=None):
+              resume_request_id=None, scheduled_credentials=None, refresh_policy="refresh_existing"):
         country_scope = _scope(country_scope)
         keys = None
         if country_codes is not None:
@@ -115,8 +121,11 @@ class CountryRatingResearch(PortfolioAIResearch):
             if any(job["status"] in {"queued", "running"} and job["_user_id"] != user_id
                    for job in self._jobs.values()):
                 raise HTTPException(409, "enrichment_busy")
+            # Existing explicit country checks always refresh. Only a named
+            # schedule supplies narrower missing/stale eligibility.
+            options = {} if refresh_policy == "refresh_existing" else {"refresh_policy": refresh_policy, "data_types": ["company_ratings"]}
             return super().start(user_id, headers, language, SCOPES[country_scope], security_keys=keys,
-                resume_request_id=resume_request_id, scheduled_credentials=scheduled_credentials, ratings_only=True)
+                resume_request_id=resume_request_id, scheduled_credentials=scheduled_credentials, ratings_only=True, **options)
 
     def get(self, identifier, owner):
         with self._lock:
@@ -142,7 +151,8 @@ class CountryRatingResearch(PortfolioAIResearch):
             if payload.language is not None and payload.language not in {"en", "he"}:
                 raise HTTPException(422, "invalid_language")
             return self.start(owner["id"], dict(request.headers), language, payload.country_scope,
-                              country_codes=payload.country_codes, resume_request_id=payload.resume_request_id)
+                              country_codes=payload.country_codes, resume_request_id=payload.resume_request_id,
+                              refresh_policy=payload.refresh_policy)
 
         @router.get(PREFIX + "/ai/{request_id}")
         def get(request_id: str, request: Request):
@@ -174,6 +184,10 @@ class CountryRatingSchedules:
     def status(self):
         result = self.settings()
         result.pop("owner_id", None)
+        replacement = getattr(self, "replacement", None)
+        if replacement and replacement.is_migrated():
+            row = replacement.legacy_status("country_ratings")
+            return {**result, "next_run": (row or {}).get("next_run")}
         scheduler = self.scheduler_getter()
         job = scheduler.get_job(JOB_ID) if scheduler else None
         result["next_run"] = job.next_run_time.isoformat() if job and job.next_run_time else None
@@ -201,6 +215,9 @@ class CountryRatingSchedules:
                 raise HTTPException(400, "invalid_schedule") from exc
             settings["owner_id"] = owner["id"]
             self.settings_writer(settings)
+            replacement = getattr(self, "replacement", None)
+            if replacement and replacement.is_migrated():
+                replacement.import_legacy("country_ratings")
             self.configure()
             return self.status()
 
@@ -210,6 +227,10 @@ class CountryRatingSchedules:
 
     def configure(self):
         with self._lock:
+            replacement = getattr(self, "replacement", None)
+            if replacement and replacement.is_migrated():
+                replacement.configure()
+                return
             scheduler = self.scheduler_getter()
             if scheduler is None:
                 return

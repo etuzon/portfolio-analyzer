@@ -29,7 +29,8 @@ MAX_REST_CALLS = MAX_MODEL_CALLS = MAX_WEB_CALLS = 8
 MAX_SELECTED = 3
 RESEARCH_METADATA = {"security_key", "symbol", "secondary_symbol", "stock_market", "currency", "location",
                      "asset_class", "asset_sub_class", "quote_unit", "name", "industry", "missing_fields",
-                     "needs_name", "needs_industry", "source_hints", "search_hints", "price_basis", "latest_price_date"}
+                     "needs_name", "needs_industry", "source_hints", "search_hints", "price_basis", "latest_price_date",
+                     "requested_fields", "refresh_requested"}
 FIELDS = {"prices", "profile", "fundamentals", "dividends", "reference", "auto"}
 CATALOG = {
     "fetch_security_information": {
@@ -51,7 +52,7 @@ WEB_CATALOG = {
     },
     "read_security_source": {
         "path": PREFIX + "/web/read",
-        "description": "Open a discovered source_id and inspect its fetched page text, facts and links. reader=auto selects the configured reader with static HTTP compatibility for Google Finance and UBS investor-relations pages. You may explicitly choose compatible (browser headers, no JavaScript), jina (rendered page) or direct (plain HTTPS); each attempt spends one research operation. Match identity, price basis, date, currency and units.",
+        "description": "Open a discovered source_id and inspect its fetched page text, facts and links. reader=auto uses static HTTP for Google Finance and static Jina reading for SEC HTML filings and UBS investor-relations pages; other pages use the configured reader. Hidden inline-XBRL metadata is removed from SEC filings before the bounded visible evidence window. You may explicitly choose compatible (browser headers, no JavaScript), jina (rendered page) or direct (plain HTTPS); each attempt spends one research operation. Match identity, price basis, date, currency and units.",
         "parameters": {"type": "object", "properties": {"security_key": {"type": "string"}, "source_id": {"type": "string"}, "reader": {"type": "string", "enum": ["auto", "jina", "direct", "compatible"]}}, "required": ["security_key", "source_id"]},
     },
     "follow_security_source": {
@@ -169,12 +170,18 @@ class EnrichmentJobs:
         self._lock = RLock()
         self._jobs: dict[str, dict[str, Any]] = {}
 
-    def start(self, user_id: str, headers: dict[str, str], language: str, position_scope: str = "open", *, scheduled_credentials=None, security_keys: list[str] | None = None) -> dict[str, Any]:
+    def start(self, user_id: str, headers: dict[str, str], language: str, position_scope: str = "open", *, scheduled_credentials=None, security_keys: list[str] | None = None, candidate_options=None) -> dict[str, Any]:
         if position_scope not in {"open", "all"}:
             raise HTTPException(422, "invalid_position_scope")
         if security_keys is not None and (not security_keys or len(security_keys) > MAX_SELECTED
                 or any(not isinstance(key, str) or not key.strip() or len(key) > 300 for key in security_keys)):
             raise HTTPException(422, "invalid_enrichment_candidate")
+        candidate_options = deepcopy(candidate_options or {})
+        if (set(candidate_options) - {"data_types", "refresh_policy"}
+                or candidate_options.get("refresh_policy", "missing") not in {"missing", "stale", "refresh_existing"}
+                or "data_types" in candidate_options and (not isinstance(candidate_options["data_types"], list)
+                    or not candidate_options["data_types"] or set(candidate_options["data_types"]) - {"prices", "profile"})):
+            raise HTTPException(422, "invalid_research_mode")
         configured = self.settings()
         model_limit = min(MAX_MODEL_CALLS, max(1, int(configured.get("max_tool_loops", MAX_MODEL_CALLS))))
         rest_limit = min(MAX_REST_CALLS, max(1, int(configured.get("max_rest_calls", MAX_REST_CALLS))))
@@ -184,6 +191,8 @@ class EnrichmentJobs:
                 raise HTTPException(409, "enrichment_busy")
             for job in self._jobs.values():
                 if job["_user_id"] == user_id and job["status"] in {"queued", "running"}:
+                    if job.get("_candidate_options", {}) != candidate_options:
+                        raise HTTPException(409, "enrichment_busy")
                     if self._selection_reader and (set(job.get("_security_keys") or []) != set(security_keys or [])
                             or job["position_scope"] != position_scope):
                         raise HTTPException(409, "enrichment_busy")
@@ -205,6 +214,7 @@ class EnrichmentJobs:
                 "failure": None,
                 "coverage": {"inventory_truncated": False, "listed_candidates": 0},
                 "_user_id": user_id, "_security_keys": list(dict.fromkeys(security_keys)) if security_keys else None,
+                "_candidate_options": candidate_options,
                 "_candidates": {}, "_results": {}, "_research_responses": {}, "_evidence_by_key": {}, "_proposal": None,
                 "_finalized": False, "_ready_to_finalize": False,
                 "_web_responses": {}, "_web_lock": RLock(), "_trace": [],
@@ -528,6 +538,7 @@ class EnrichmentJobs:
                 self._progress(job, "checking_apis")
             try:
                 reader_arguments = {"position_scope": job["position_scope"]} if job["position_scope"] != "open" else {}
+                reader_arguments.update(deepcopy(job.get("_candidate_options") or {}))
                 if job.get("_security_keys") and self._selection_reader:
                     reader_arguments["security_keys"] = job["_security_keys"]
                 result = self._candidate_reader(**reader_arguments)
@@ -643,9 +654,14 @@ class EnrichmentJobs:
                     entries = result.get("evidence") or []
                     if entries:
                         known = job["_evidence_by_key"].setdefault(security_key, {"evidence": []})["evidence"]
-                        by_url = {entry["url"]: entry for entry in known}
-                        by_url.update((entry["url"], deepcopy(entry)) for entry in entries)
-                        known[:] = list(by_url.values())
+                        # A later read/follow of the same URL must not discard
+                        # a fetched snapshot whose returned record IDs the
+                        # planner already selected. The existing web ceiling
+                        # bounds these immutable versions to at most eight.
+                        identity = lambda entry: (entry.get("source_id"), entry.get("url"), entry.get("retrieved_at"))
+                        versions = {identity(entry): entry for entry in known}
+                        versions.update((identity(entry), deepcopy(entry)) for entry in entries)
+                        known[:] = list(versions.values())
                     code = result.get("source_status") or result.get("code") or "data_unavailable"
                     skipped = code in {"not_open", "api_managed"} or (code == "request_limit" and not result.get("diagnostics", {}).get("search_requests") and not result.get("diagnostics", {}).get("source_requests"))
                     job["_results"][security_key] = {**previous, "status": "not_attempted" if skipped else "unavailable", "attempted": not skipped,

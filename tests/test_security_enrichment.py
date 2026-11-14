@@ -660,6 +660,29 @@ def test_completed_source_reads_never_count_as_verified_field_updates(environmen
     assert result["code"] == "data_unavailable"
 
 
+def test_same_url_read_preserves_each_bounded_fetched_record_snapshot(environment):
+    env = environment
+    identifier = start(env)
+    item = env.state.items[0]
+    internal = env.manager._job(identifier)
+    internal.update(status="running", _candidates={item["security_key"]: deepcopy(item)})
+    responses = []
+    def fetched(candidate, action, arguments):
+        number = len(responses)+1
+        source = {"url":"https://issuer.example/report", "source_id":"source-one", "text":"Actual snapshot " + str(number),
+            "retrieved_at":f"2026-11-14T10:00:0{number}Z", "context_records":[{"record_id":"record-"+str(number)}]}
+        responses.append(source)
+        return {"evidence":[source], "source_status":"evidence_found", "web_requests":number, "diagnostics":{"source_requests":number}}
+    env.manager._research_tool_fetcher=fetched
+    for reader in ("auto","compatible"):
+        response=env.client.get(PREFIX+"/web/read", headers=env.headers,
+            params={"request_id":identifier,"security_key":item["security_key"],"source_id":"source-one","reader":reader})
+        assert response.status_code==200
+    retained=internal["_evidence_by_key"][item["security_key"]]["evidence"]
+    assert [source["context_records"][0]["record_id"] for source in retained]==["record-1","record-2"]
+    assert retained==responses and internal["counts"]["web_requests"]==2
+
+
 def test_saving_progress_can_be_polled_while_application_callback_is_running(environment):
     env = environment
     readable, observed = Event(), []

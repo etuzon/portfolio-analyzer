@@ -81,6 +81,7 @@ from .report_pdf import build_portfolio_report_pdf
 from . import risk_history, risk_scenarios
 from .stress_risk_inputs import StressRiskInputs
 from .risk_input_retrieval import RiskEvidenceResearch, RiskInputRetrieval, RiskInputRetrievalSchedules
+from .research_schedules import ResearchSchedules
 from .dividend_summary_pdf import build_dividend_summary_pdf
 from .trade_planner import planner_security
 
@@ -104,6 +105,7 @@ async def application_lifespan(_app: FastAPI):
     configure_ai_enrichment_job()
     country_rating_schedules.configure()
     risk_input_retrieval_schedules.configure()
+    research_schedules.configure()
     Thread(target=_refresh_portfolio_fx_history, name="portfolio-fx-history", daemon=True).start()
     if _mcp_session_context is None:
         _mcp_session_context = portfolio_mcp.session_manager.run()
@@ -2156,6 +2158,8 @@ def restore_full_backup(payload: bytes) -> dict[str, Any]:
         configure_dividend_job()
         configure_ai_enrichment_job()
         country_rating_schedules.configure()
+        risk_input_retrieval_schedules.configure()
+        research_schedules.configure()
         return {
             "status": "restored",
             "restored_from": inspection,
@@ -3496,6 +3500,17 @@ def get_risk_history(base_currency: str = "ILS", days: int = 90):
         raise _risk_history_error(exc) from exc
 
 
+@app.delete("/api/portfolio/risk-history")
+def reset_risk_history(request: Request):
+    actor = request.state.auth_user
+    if actor.get("role") != "Admin":
+        raise HTTPException(403, detail={"code": "admin_required", "message": "Admin access is required"})
+    try:
+        return risk_history.reset_history(local_store, user_id=actor["id"])
+    except risk_history.RiskHistoryError as exc:
+        raise _risk_history_error(exc) from exc
+
+
 @app.get("/api/portfolio")
 def portfolio(refresh: bool = False):
     # Reads return saved evidence without waiting for providers. Explicit
@@ -4652,10 +4667,21 @@ def _sovereign_inventory():
             for row in COUNTRIES]
 
 
-def _country_research_inventory(country_scope="accounts"):
+def _country_research_inventory(country_scope="accounts", *, refresh_policy="refresh_existing"):
     if country_scope not in {"accounts", "all"}:
         raise HTTPException(422, "invalid_country_scope")
-    return [row for row in _sovereign_inventory() if country_scope == "all" or row["has_accounts"]]
+    if refresh_policy not in {"missing", "stale", "refresh_existing"}:
+        raise HTTPException(422, "invalid_research_mode")
+    rows = [row for row in _sovereign_inventory() if country_scope == "all" or row["has_accounts"]]
+    if refresh_policy == "refresh_existing":
+        return rows
+    def needed(candidate):
+        response = sovereign_rating_service.read(candidate)
+        if refresh_policy == "stale":
+            return bool(sovereign_rating_service.missing(response))
+        return any(not any(row.get("agency") == agency and row.get("status") in {"rated", "unrated", "withdrawn"}
+            for row in response.get("retrieved_ratings", [])) for agency in ("moodys", "sp", "fitch"))
+    return [row for row in rows if needed(row)]
 
 
 @app.get("/api/countries/credit-ratings/countries")
@@ -4678,6 +4704,7 @@ def _stress_risk_inventory():
         return []
     records = {row["security_key"]: row for row in _credit_rating_inventory()}
     holdings = [to_dict(row.holding) for row in local_store.holdings(include_closed=True)]
+    open_keys = {enrichment_security_key(row) for row in holdings if (_number_or_none(row.get("quantity")) or 0) != 0}
     for holding in [*local_store.list_manual_securities(), *holdings]:
         key = enrichment_security_key(holding)
         if key in records or not all(holding.get(field) for field in ("symbol", "stock_market", "currency")):
@@ -4685,7 +4712,8 @@ def _stress_risk_inventory():
         profile = hub().cached_profile(holding["symbol"], stock_market=holding["stock_market"],
             secondary_symbol=holding.get("secondary_symbol") or "") if hasattr(hub(), "cached_profile") else {}
         records[key] = {**deepcopy(holding), "security_key": key, "issuer_name": profile.get("name") or "",
-            "issuer_country": profile.get("country") or "", "issuer_identity_verified": False}
+            "issuer_country": profile.get("country") or "", "issuer_identity_verified": False,
+            "has_open_position": key in open_keys}
     return sorted(records.values(), key=lambda row: row["security_key"])
 
 
@@ -4881,11 +4909,17 @@ def _enrichment_scope_keys(position_scope: str = "open") -> set[str]:
             and str(holding.get("asset_class") or "").upper() not in {"CASH", "CURRENCY", "PRIVATE_STOCK", "EMPLOYEE_STOCK_OPTION", "STOCK_OPTION"}}
 
 
-def _ai_enrichment_candidates(position_scope: str = "open"):
+def _ai_enrichment_candidates(position_scope: str = "open", *, data_types=None, refresh_policy="missing"):
     """The selected AI inventory excludes API-owned and private securities."""
     from .price_agent import price_agent_settings, PriceAgentError
     from .security_search import search_is_configured
-    inventory = _enrichment_candidates(limit=None, position_scope=position_scope)
+    if refresh_policy not in {"missing", "stale", "refresh_existing"}:
+        raise HTTPException(422, "invalid_research_mode")
+    requested = set(data_types or ["prices", "profile"])
+    if not requested or requested - {"prices", "profile"}:
+        raise HTTPException(422, "invalid_research_mode")
+    inventory = _enrichment_candidates(limit=None, position_scope=position_scope,
+        **({"include_complete": True} if refresh_policy == "refresh_existing" else {}))
     items = []
     excluded = 0
     for candidate in inventory["items"]:
@@ -4895,9 +4929,15 @@ def _ai_enrichment_candidates(position_scope: str = "open"):
             continue
         # The AI validator supports these fields. Unsupported reports or
         # distributions alone must not consume calls that can never save them.
-        fields = [field for field in candidate["missing_fields"] if field in {"prices", "profile"}]
+        fields = [field for field in candidate["missing_fields"] if field in requested]
+        if refresh_policy == "refresh_existing":
+            fields = sorted(requested)
+        elif data_types is not None and refresh_policy == "missing" and candidate.get("latest_price_date"):
+            # A retained old price is stale, rather than an absent field.
+            fields = [field for field in fields if field != "prices"]
         if fields:
-            items.append({**candidate, "missing_fields": fields, "api_data_route": route})
+            items.append({**candidate, "missing_fields": fields, "requested_fields": fields,
+                "refresh_requested": refresh_policy == "refresh_existing", "api_data_route": route})
     try:
         research_settings = price_agent_settings(config.raw)
         research_available = search_is_configured(research_settings)
@@ -4910,7 +4950,7 @@ def _ai_enrichment_candidates(position_scope: str = "open"):
             "configured_search_providers": search_providers}
 
 
-def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200, position_scope: str = "open") -> dict[str, Any]:
+def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200, position_scope: str = "open", include_complete=False) -> dict[str, Any]:
     """Application-owned inventory route; the AI coordinator never calls this directly."""
     from .security_prices import quote_unit
     by_key = {}
@@ -4962,7 +5002,7 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200, 
         missing = _enrichment_missing_fields(item)
         if reference and "reference" in missing:
             missing.remove("reference")
-        if not missing:
+        if not missing and not include_complete:
             continue
         key = enrichment_security_key(holding)
         if not holding.get("symbol") or not holding.get("stock_market"):
@@ -4975,10 +5015,12 @@ def _enrichment_candidates(*, preflight: bool = False, limit: int | None = 200, 
             "quantity": quantity,
             "location": holding.get("location", ""),
             "quote_unit": quote_unit({"location": holding.get("location", ""), "asset_class": holding.get("asset_class", ""), "currency": holding.get("currency", "")}),
-            "asset_class": holding.get("asset_class", ""), "asset_sub_class": holding.get("asset_sub_class", ""), "name": holding.get("name", ""),
+            "asset_class": holding.get("asset_class", ""), "asset_sub_class": holding.get("asset_sub_class", ""), "name": holding.get("name", ""), "industry": industry,
             "needs_name": _enrichment_name_missing(holding),
             "needs_industry": not bool(industry),
             "missing_fields": missing, "available_fields": [],
+            "latest_price_date": max((str(values.get("current_date")) for values in (item.get("price_ranges") or {}).values()
+                if isinstance(values, dict) and values.get("current") is not None and _parse_query_date(values.get("current_date"))), default=None),
         }
         if previous_candidate:
             by_key[key]["missing_fields"] = sorted(set(previous_candidate["missing_fields"]) | set(missing))
@@ -5114,11 +5156,14 @@ def _enrichment_research_tool(candidate: dict[str, Any], action: str, arguments:
     from .security_research_tools import ResearchSession, ResearchFailure, WebRequestBudget
     from .security_search import SearchFailure
     from .us_market_providers import ProviderFailure
-    current = next((item for item in _enrichment_candidates(limit=None, position_scope=candidate.get("_position_scope", "open"))["items"] if item["security_key"] == candidate["security_key"]), None)
+    current = next((item for item in _enrichment_candidates(limit=None, position_scope=candidate.get("_position_scope", "open"),
+        **({"include_complete": True} if candidate.get("refresh_requested") else {}))["items"] if item["security_key"] == candidate["security_key"]), None)
     if not current:
         return {"evidence": [], "source_status": "not_open"}
     if _security_api_route(current)["owner"] != "ai":
         return {"evidence": [], "source_status": "api_managed"}
+    if candidate.get("requested_fields"):
+        current = {**current, "missing_fields": candidate["requested_fields"], "refresh_requested": candidate.get("refresh_requested", False)}
     request_id = str(candidate.get("_request_id") or "")
     if not request_id:
         return {"evidence": [], "source_status": "job_failed"}
@@ -5163,7 +5208,8 @@ def _enrichment_research_security(candidate: dict[str, Any], field: str) -> dict
     """Application source route: the AI sees only this authenticated REST result."""
     from .price_agent import price_agent_settings
     from .security_research_tools import WebRequestBudget
-    current = next((item for item in _enrichment_candidates(limit=None, position_scope=candidate.get("_position_scope", "open"))["items"] if item["security_key"] == candidate["security_key"]), None)
+    current = next((item for item in _enrichment_candidates(limit=None, position_scope=candidate.get("_position_scope", "open"),
+        **({"include_complete": True} if candidate.get("refresh_requested") else {}))["items"] if item["security_key"] == candidate["security_key"]), None)
     if not current:
         return {"evidence": [], "status": "not_attempted", "source_status": "not_open", "code": "not_open"}
     if candidate.get("api_data_route") and _security_api_route(current)["owner"] != "ai":
@@ -5180,7 +5226,9 @@ def _enrichment_research_security(candidate: dict[str, Any], field: str) -> dict
 def _apply_enrichment_proposals(proposal, evidence_by_key, candidates, *, recovery_reason=None, position_scope: str = "open") -> dict[str, dict[str, Any]]:
     """Application-owned finalization; no model may access this storage directly."""
     from .security_prices import PriceObservation, quote_unit
-    current = {item["security_key"]: item for item in _enrichment_candidates(limit=None, position_scope=position_scope)["items"]}
+    refreshing = any(candidate.get("refresh_requested") for candidate in (candidates or {}).values())
+    current = {item["security_key"]: item for item in _enrichment_candidates(limit=None, position_scope=position_scope,
+        **({"include_complete": True} if refreshing else {}))["items"]}
     prepared = {}
     for key, candidate in (candidates or {}).items():
         if key not in current:
@@ -5191,7 +5239,8 @@ def _apply_enrichment_proposals(proposal, evidence_by_key, candidates, *, recove
         if not metadata:
             continue
         prepared[key] = {**candidate, **metadata, "security_key": key,
-                         "missing_fields": current[key]["missing_fields"], "quote_unit": quote_unit(metadata)}
+                         "missing_fields": candidate.get("requested_fields", current[key]["missing_fields"]) if candidate.get("refresh_requested") else current[key]["missing_fields"],
+                         "quote_unit": quote_unit(metadata)}
     from .security_web_research import parse_research_proposal, recover_context_proposal
     supplied_proposal = proposal is not None
     recovered = parse_research_proposal(proposal) is None
@@ -5202,8 +5251,9 @@ def _apply_enrichment_proposals(proposal, evidence_by_key, candidates, *, recove
     def still_missing(key, field):
         # Re-read immediately before each application-owned write. Positions may
         # have left the selected scope or another update may have supplied the value.
-        return next((item for item in _enrichment_candidates(limit=None, position_scope=position_scope)["items"]
-                     if item["security_key"] == key and field in item["missing_fields"]
+        return next((item for item in _enrichment_candidates(limit=None, position_scope=position_scope,
+                     **({"include_complete": True} if prepared[key].get("refresh_requested") else {}))["items"]
+                     if item["security_key"] == key and (field in item["missing_fields"] or prepared[key].get("refresh_requested") and field in prepared[key].get("requested_fields", []))
                      and (not prepared[key].get("api_data_route") or _security_api_route(item)["owner"] == "ai")), None)
 
     for key, verified_fields in verified.items():
@@ -5237,14 +5287,19 @@ def _apply_enrichment_proposals(proposal, evidence_by_key, candidates, *, recove
                 latest = still_missing(key, "profile")
                 if not latest:
                     continue
+                provenance = local_store.get_preference("security_enrichment_sources_v1", {})
+                provenance = provenance if isinstance(provenance, dict) else {}
+                previous = provenance.get(f"{key}|{profile['field']}") or {}
+                current_value = latest.get(profile["field"])
+                refresh_owned = bool(candidate.get("refresh_requested") and previous.get("value") == current_value and current_value)
                 if profile["field"] == "industry":
-                    if not latest.get("needs_industry", not latest.get("industry")):
+                    if not latest.get("needs_industry", not latest.get("industry")) and not refresh_owned:
                         continue
                     local_store.save_security_industry_override({"symbol": candidate["symbol"], "stock_market": candidate["stock_market"], "industry": profile["value"]})
                     found.append("profile")
-                elif latest.get("needs_name", _enrichment_name_missing(latest)):
+                elif latest.get("needs_name", _enrichment_name_missing(latest)) or refresh_owned:
                     metadata = local_store.manual_security(candidate["symbol"], candidate["stock_market"])
-                    if not metadata or not _enrichment_name_missing(metadata):
+                    if not metadata or not _enrichment_name_missing(metadata) and not refresh_owned:
                         continue
                     local_store.save_manual_security({**metadata, "name": profile["value"]})
                     found.append("profile")
@@ -5393,7 +5448,7 @@ def _enrichment_assistant_settings():
 
 
 security_enrichment = EnrichmentJobs(app, lambda: _enrichment_assistant_settings(),
-                                    candidate_reader=lambda position_scope="open": _ai_enrichment_candidates(position_scope),
+                                    candidate_reader=lambda position_scope="open", **options: _ai_enrichment_candidates(position_scope, **options),
                                     security_fetcher=lambda candidate, field: _enrichment_research_security(candidate, field),
                                     research_tool_fetcher=lambda candidate, action, arguments: _enrichment_research_tool(candidate, action, arguments),
                                     source_hint_reader=lambda candidate: _enrichment_research_tool(candidate, "discover", {}).get("sources", []),
@@ -5404,11 +5459,24 @@ credit_rating_jobs = credit_rating_service.manager(app, lambda: _enrichment_assi
     event_writer=lambda event, **fields: _record_log("market-data", "credit_" + event, **fields))
 
 
-def _portfolio_ai_inventory(position_scope="open", *, ratings_only=False):
+def _portfolio_ai_inventory(position_scope="open", *, ratings_only=False, data_types=None, refresh_policy="missing"):
     """Separate market-data eligibility from public company-rating coverage."""
     scope_keys = _enrichment_scope_keys(position_scope)
-    return {"market_items": [] if ratings_only else _ai_enrichment_candidates(position_scope)["items"],
-            "credit_items": [item for item in _credit_rating_inventory() if item["security_key"] in scope_keys]}
+    selected = set(data_types or (["company_ratings"] if ratings_only else ["prices", "profile", "company_ratings"]))
+    credit = [item for item in _credit_rating_inventory() if item["security_key"] in scope_keys] if "company_ratings" in selected else []
+    if data_types is not None and refresh_policy != "refresh_existing":
+        def needs_credit(candidate):
+            response = credit_rating_service.read(candidate)
+            if refresh_policy == "stale":
+                return bool(credit_rating_service.missing(response))
+            return any(row.get("status") not in {"rated", "unrated", "withdrawn"}
+                or row.get("status") == "rated" and row.get("outlook") in {None,"unknown"} and row.get("watch") in {None,"unknown"}
+                for row in response.get("retrieved_ratings", []))
+        credit = [item for item in credit if needs_credit(item)]
+    market_types = [value for value in ("prices", "profile") if value in selected]
+    options = {"data_types": market_types, "refresh_policy": refresh_policy} if data_types is not None or refresh_policy != "missing" else {}
+    return {"market_items": _ai_enrichment_candidates(position_scope, **options)["items"] if market_types and not ratings_only else [],
+            "credit_items": credit}
 
 
 portfolio_ai_research = PortfolioAIResearch(security_enrichment, credit_rating_jobs, _portfolio_ai_inventory)
@@ -5452,6 +5520,47 @@ risk_input_retrieval_schedules = RiskInputRetrievalSchedules(
 app.include_router(risk_evidence_jobs.router())
 app.include_router(risk_input_retrieval.router())
 app.include_router(risk_input_retrieval_schedules.router())
+
+
+def _named_schedule_legacy_sources():
+    return {"runtime": load_runtime_settings(),
+        "risk_inputs": local_store.get_preference("risk_input_retrieval_schedule", {}),
+        "country_ratings": local_store.get_preference("country_rating_schedule", {})}
+
+
+def _named_schedule_legacy_writer(reference, row):
+    common = {key: deepcopy(row[key]) for key in ("enabled", "schedule_config", "timezone", "language", "owner_id")}
+    if reference.startswith("ai:"):
+        scope = reference.split(":", 1)[1]
+        runtime = load_runtime_settings()
+        collection = {key: ai_enrichment_schedule_settings(key, runtime=runtime) for key in AI_ENRICHMENT_SCOPES}
+        collection[scope] = {**common, "position_scope": scope}
+        runtime.update(ai_enrichment_schedules=collection, ai_enrichment_schedule=collection[scope])
+        save_runtime_settings(runtime)
+    else:
+        key = "risk_input_retrieval_schedule" if reference == "risk_inputs" else "country_rating_schedule"
+        if reference == "risk_inputs":
+            common.update(mode=row["mode"], security_keys=row["security_keys"], batch_cursor=row.get("batch_cursor", 0))
+        else:
+            common["country_scope"] = "all" if row["country_scope"] == "selected" else row["country_scope"]
+        local_store.set_preference(key, common)
+
+
+def _named_schedule_inventory():
+    return [row for row in _stress_risk_inventory()
+        if str(row.get("stock_market") or "").upper() != "PRIVATE"
+        and str(row.get("asset_class") or "").upper() not in {"CASH", "CURRENCY", "PRIVATE_STOCK", "EMPLOYEE_STOCK_OPTION", "STOCK_OPTION"}]
+
+
+research_schedules = ResearchSchedules(
+    lambda: local_store.get_preference("research_schedules_v1", {}),
+    lambda value: local_store.set_preference("research_schedules_v1", value),
+    lambda: scheduler, lambda: auth_store, portfolio_ai_research, risk_input_retrieval, country_rating_research,
+    legacy_reader=_named_schedule_legacy_sources, legacy_writer=_named_schedule_legacy_writer,
+    inventory_reader=_named_schedule_inventory, timezone=str(config.alerts.get("timezone") or "UTC"))
+country_rating_schedules.replacement = research_schedules
+risk_input_retrieval_schedules.replacement = research_schedules
+app.include_router(research_schedules.router())
 
 
 AI_ENRICHMENT_JOB_ID = "ai-missing-data-enrichment"  # Legacy singleton, removed on reconciliation.
@@ -5502,7 +5611,8 @@ def ai_enrichment_schedule_status(position_scope: str | None = None) -> dict[str
         settings = ai_enrichment_schedule_settings(scope, runtime=runtime)
         settings.pop("owner_id", None)
         job = scheduler.get_job(ai_enrichment_job_id(scope)) if scheduler else None
-        items.append({**settings, "next_run": job.next_run_time.isoformat() if job and job.next_run_time else None})
+        replacement = research_schedules.legacy_status("ai:" + scope) if research_schedules.is_migrated() else None
+        items.append({**settings, "next_run": replacement.get("next_run") if replacement else job.next_run_time.isoformat() if job and job.next_run_time else None})
     selected = next(item for item in items if item["position_scope"] == selected_scope)
     return {**selected, "items": items}
 
@@ -5510,6 +5620,11 @@ def ai_enrichment_schedule_status(position_scope: str | None = None) -> dict[str
 def run_scheduled_ai_enrichment(position_scope: str | None = None) -> None:
     settings = ai_enrichment_schedule_settings(position_scope)
     if not settings["enabled"]:
+        return
+    if research_schedules.is_migrated():
+        replacement = research_schedules.legacy_status("ai:" + settings["position_scope"])
+        if replacement:
+            research_schedules.run(replacement["id"])
         return
 
     def credentials():
@@ -5526,6 +5641,9 @@ def run_scheduled_ai_enrichment(position_scope: str | None = None) -> None:
 
 
 def configure_ai_enrichment_job() -> None:
+    if research_schedules.is_migrated():
+        research_schedules.configure()
+        return
     if scheduler is None:
         return
     runtime = load_runtime_settings()
@@ -5585,6 +5703,8 @@ def update_ai_enrichment_schedule(request: Request, payload: dict[str, Any]):
         # source of truth for another scope.
         runtime["ai_enrichment_schedule"] = settings
         save_runtime_settings(runtime)
+        if research_schedules.is_migrated():
+            research_schedules.import_legacy("ai:" + selected_scope)
         configure_ai_enrichment_job()
         return ai_enrichment_schedule_status(selected_scope)
 

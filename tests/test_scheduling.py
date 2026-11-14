@@ -237,11 +237,14 @@ def test_restore_reconfigures_ai_job_from_restored_runtime(schedule_environment,
     monkeypatch.setattr(main, "configure_dividend_job", lambda: None)
     assert main.restore_full_backup(b"archive")["status"] == "restored"
     if restored_schedule is None:
-        assert main.AI_ENRICHMENT_JOB_ID not in registered
+        assert registered == {}
     else:
-        assert main.AI_ENRICHMENT_JOB_ID not in registered
-        assert str(registered[main.ai_enrichment_job_id("open")].timezone) == "UTC"
-        assert "hour='*/4'" in str(registered[main.ai_enrichment_job_id("open")])
+        # Restoring an older singleton yields one named migrated job, keeping
+        # its original cadence and removing every legacy job identifier.
+        identifier="research-schedule:legacy-ai-open"
+        assert set(registered)=={identifier}
+        assert str(registered[identifier].timezone) == "UTC"
+        assert "hour='*/4'" in str(registered[identifier])
 
 
 def test_scheduled_session_rejects_viewer_and_disabled(schedule_environment):

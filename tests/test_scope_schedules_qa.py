@@ -196,8 +196,11 @@ def test_restore_replaces_both_scope_jobs_without_retaining_old_jobs(schedule_en
     monkeypatch.setattr(main, "load_config", lambda: main.config)
     monkeypatch.setattr(main, "configure_dividend_job", lambda: None)
     assert main.restore_full_backup(b"synthetic archive")["status"] == "restored"
-    assert set(registered) == {main.AI_ENRICHMENT_JOB_ID + ":all"}
-    assert registered[main.AI_ENRICHMENT_JOB_ID + ":all"]["args"] == ["all"]
+    # A restored older backup migrates once into the named-rule collection;
+    # its old scope job must not remain alongside the replacement.
+    identifier = "research-schedule:legacy-ai-all"
+    assert set(registered) == {identifier}
+    assert registered[identifier]["args"] == ["legacy-ai-all"]
 
 
 def scope_browser(tmp_path, chromium, language="en", width=1440):
@@ -227,7 +230,11 @@ api=async(path,options={})=>{
 qa.field=name=>$('aiScheduleEditor').querySelector('[data-schedule-field='+name+']');
 qa.change=(name,value)=>{qa.field(name).value=value;qa.field(name).dispatchEvent(new Event('change',{bubbles:true}));};
 qa.scope=value=>{$('aiScheduleScope').value=value;$('aiScheduleScope').dispatchEvent(new Event('change',{bubbles:true}));};
-openModal('aiEnrichmentModal');$('aiScheduleEditor').closest('details').open=true;
+openModal('aiEnrichmentModal');
+// This fixture represents an older client using the compatibility editor.
+// The current product exposes the named-rule editor instead.
+$('aiScheduleEditor').closest('details').hidden=false;
+$('aiScheduleEditor').closest('details').open=true;
 ''')
     evaluate("loadAISchedule()")
     return command, evaluate

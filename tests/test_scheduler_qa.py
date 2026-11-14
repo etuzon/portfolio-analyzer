@@ -38,7 +38,9 @@ loadCacheStatus=async()=>{};
 qa.field=name=>$('aiScheduleEditor').querySelector('[data-schedule-field='+name+']');
 qa.change=(name,value)=>{qa.field(name).value=value;qa.field(name).dispatchEvent(new Event('change',{bubbles:true}));};
 qa.check=(name,values)=>$('aiScheduleEditor').querySelectorAll('[data-schedule-field='+name+']').forEach(input=>{input.checked=values.includes(Number(input.value));input.dispatchEvent(new Event('change',{bubbles:true}));});
-openModal('aiEnrichmentModal');$('aiScheduleEditor').closest('details').open=true;
+// This fixture deliberately represents an older client using the retained
+// compatibility editor. Current product journeys use named research schedules.
+openModal('aiEnrichmentModal');$('aiScheduleEditor').closest('details').hidden=false;$('aiScheduleEditor').closest('details').open=true;
 ''')
     evaluate("loadAISchedule()")
     return command, evaluate
@@ -225,7 +227,8 @@ def test_browser_save_and_reload_roundtrip_to_real_isolated_api(tmp_path, chromi
 api=async(path,options={})=>{const response=await fetch(path,{...options,headers:{'Content-Type':'application/json'}});if(!response.ok)throw new Error('HTTP '+response.status);return response.json();};
 qa.field=name=>$('aiScheduleEditor').querySelector('[data-schedule-field='+name+']');
 qa.change=(name,value)=>{qa.field(name).value=value;qa.field(name).dispatchEvent(new Event('change',{bubbles:true}));};
-openModal('aiEnrichmentModal');$('aiScheduleEditor').closest('details').open=true;
+// Exercise an older client's controls against the compatible REST endpoint.
+openModal('aiEnrichmentModal');$('aiScheduleEditor').closest('details').hidden=false;$('aiScheduleEditor').closest('details').open=true;
 ''')
         evaluate("loadAISchedule()")
         evaluate("qa.field('enabled').click();qa.change('timezone','America/New_York');")

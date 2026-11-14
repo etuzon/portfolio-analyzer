@@ -257,4 +257,5 @@
   });
   new MutationObserver(() => { if (el("riskRetrievalModal") && !el("riskRetrievalModal").hidden) render(); })
     .observe(document.documentElement,{attributes:true,attributeFilter:["lang"]});
+  window.RiskInputRetrievalPresentation = Object.freeze({fields,outcomeMessage});
 })();

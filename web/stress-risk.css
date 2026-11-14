@@ -24,6 +24,17 @@ html:has(#riskBadgeExplanation) { scrollbar-gutter: stable; }
   font-variant-numeric: tabular-nums;
 }
 .risk-badge.risk-stress b { flex: 0 0 auto; white-space: nowrap; }
+.risk-badge > .risk-score-values,
+.stat .risk-badge > .risk-score-values,
+.holdings-table .holding-risk-cell .risk-badge > .risk-score-values {
+  display: inline-flex; flex-direction: column; align-items: center; gap: 2px; flex: 0 0 auto; min-width: 0;
+}
+.risk-badge .risk-exact-loss { font-size: 10px; line-height: 1.2; white-space: nowrap; font-weight: 500; }
+@media (min-width: 901px) {
+  .holdings-table-wrap .holdings-table th:nth-child(1) { width: calc(27% - 144px); }
+  .holdings-table-wrap .holdings-table th[data-holdings-sort-column="risk"] { width: 144px; }
+  .holdings-table-wrap [data-holdings-sort="risk"] { white-space: normal; }
+}
 .risk-badge.risk-funding-boundary {
   flex-shrink: 0;
   color: #ff9d9d;

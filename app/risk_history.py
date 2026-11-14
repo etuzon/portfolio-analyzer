@@ -18,6 +18,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from .local_portfolio import _cash_delta
+from . import risk_performance
 
 MODEL = "portfolio-risk-v4"
 LEGACY_STRESS_MODEL = "portfolio-risk-v3"
@@ -26,6 +27,7 @@ SCORE_METADATA = {"score_unit": "percent_capital_loss", "score_scale": "stress-l
                   "scenario_horizon": "instantaneous_revaluation"}
 SOURCE = "dashboard_client_calculated"
 PREFIX = "risk_history_v1:"
+EPOCH_KEY = "risk_history_epoch_v1"
 CONTEXT_TTL = timedelta(minutes=10)
 MAX_CONTEXTS = 1024
 MAX_READ = 10000
@@ -71,6 +73,46 @@ def _currency(value: Any) -> str:
 
 def account_label(account: dict) -> str:
     return " · ".join(str(account.get(key) or "").strip() for key in ("management_company", "username", "account_id") if account.get(key)) or str(account.get("id") or "")
+
+
+def _epoch_value(value):
+    if value is None:
+        return {"id": "initial", "reset_at": None}
+    if (not isinstance(value, dict) or not isinstance(value.get("id"), str)
+            or not value["id"] or len(value["id"]) > 100):
+        raise RiskHistoryError("risk_history_invalid_metadata")
+    return value
+
+
+def history_epoch(store):
+    return deepcopy(_epoch_value(store.get_preference(EPOCH_KEY, None)))
+
+
+def _connection_epoch(connection):
+    row = connection.execute("select value from app_preferences where key=?", (EPOCH_KEY,)).fetchone()
+    try:
+        return _epoch_value(json.loads(row["value"]) if row else None)
+    except (TypeError, ValueError):
+        raise RiskHistoryError("risk_history_invalid_metadata") from None
+
+
+def reset_history(store, *, user_id=None):
+    """Explicitly reset derived risk observations, never source financial data."""
+    with store._sync_lock, _lock:
+        now = _timestamp(_now())
+        with store._connect() as connection:
+            connection.execute("begin immediate")
+            count = connection.execute("select count(*) from app_preferences where key glob ?", (PREFIX + "*",)).fetchone()[0]
+            connection.execute("delete from app_preferences where key glob ?", (PREFIX + "*",))
+            epoch = {"id": str(uuid4()), "reset_at": now, "deleted_observations": count,
+                     "model": MODEL, "actor": str(user_id or "authorized_local_maintenance")}
+            connection.execute("""insert into app_preferences(key,value,updated_at) values(?,?,?)
+                on conflict(key) do update set value=excluded.value,updated_at=excluded.updated_at""",
+                (EPOCH_KEY, json.dumps(epoch), now))
+        for token in list(_contexts):
+            if _contexts[token]["path"] == str(store.path):
+                del _contexts[token]
+        return {"deleted_observations": count, "reset_epoch": epoch["id"], "reset_at": now}
 
 
 def canonical_inputs(items: list, accounts: list, transactions: list, fx: dict, base_currency: str) -> dict:
@@ -124,19 +166,21 @@ def canonical_inputs(items: list, accounts: list, transactions: list, fx: dict, 
 
 
 def create_context(store, user_id: str, base_currency: str, capture: Callable[[str], dict]) -> dict:
-    inputs = capture(_currency(base_currency))
-    now = _now()
-    context = {**deepcopy(inputs), "fingerprint": _digest({key: value for key, value in inputs.items() if key != "guard"}),
-               "observed_at": _timestamp(now), "date": now.astimezone(ZoneInfo("Asia/Jerusalem")).date().isoformat()}
-    token = secrets.token_urlsafe(32)
-    with _lock:
+    with store._sync_lock, _lock:
+        epoch = history_epoch(store)
+        inputs = {**capture(_currency(base_currency)), "reset_epoch": epoch["id"]}
+        now = _now()
+        context = {**deepcopy(inputs), "fingerprint": _digest({key: value for key, value in inputs.items() if key != "guard"}),
+                   "observed_at": _timestamp(now), "date": now.astimezone(ZoneInfo("Asia/Jerusalem")).date().isoformat()}
+        context["performance_snapshot"] = risk_performance.capture(inputs, context["observed_at"], epoch["id"])
+        token = secrets.token_urlsafe(32)
         for key in list(_contexts):
             if _contexts[key]["expires_at"] <= now:
                 del _contexts[key]
         if len(_contexts) >= MAX_CONTEXTS:
             del _contexts[next(iter(_contexts))]
         _contexts[token] = {"user_id": user_id, "path": str(store.path), "expires_at": now + CONTEXT_TTL, "context": context}
-    return deepcopy({key: value for key, value in {**context, "token": token, "source": SOURCE}.items() if key != "guard"})
+    return deepcopy({key: value for key, value in {**context, "token": token, "source": SOURCE}.items() if key not in {"guard", "performance_snapshot"}})
 
 
 def _asset_aware_estimate(value: dict, status: str, model: str = MODEL) -> dict:
@@ -395,7 +439,7 @@ def _risk(value: Any, model: str = LEGACY_MODEL) -> dict:
 def save_observation(store, user_id: str, payload: Any, capture: Callable[[str], dict], guard: Callable[[], Any], current_fx: Callable[[dict], dict] | None = None) -> dict:
     if not isinstance(payload, dict) or not isinstance(payload.get("token"), str):
         raise RiskHistoryError("risk_history_context_required")
-    with _lock, store._sync_lock:
+    with store._sync_lock, _lock:
         entry = _contexts.get(payload["token"])
         if not entry or entry["user_id"] != user_id or entry["path"] != str(store.path):
             raise RiskHistoryError("risk_context_expired", 409)
@@ -403,7 +447,10 @@ def save_observation(store, user_id: str, payload: Any, capture: Callable[[str],
             del _contexts[payload["token"]]
             raise RiskHistoryError("risk_context_expired", 409)
         context = entry["context"]
-        current = capture(context["base_currency"])
+        epoch = history_epoch(store)
+        if epoch["id"] != context.get("reset_epoch", "initial"):
+            raise RiskHistoryError("risk_context_reset", 409)
+        current = {**capture(context["base_currency"]), "reset_epoch": epoch["id"]}
         if current.get("guard") != context.get("guard") or _digest({key: value for key, value in current.items() if key != "guard"}) != context["fingerprint"]:
             raise RiskHistoryError("risk_context_stale", 409)
         model = context.get("model", MODEL)
@@ -420,6 +467,8 @@ def save_observation(store, user_id: str, payload: Any, capture: Callable[[str],
         # the final revision check and immutable observation publication.
         with store._connect() as connection:
             connection.execute("begin immediate")
+            if _connection_epoch(connection)["id"] != context.get("reset_epoch", "initial"):
+                raise RiskHistoryError("risk_context_reset", 409)
             if guard() != context.get("guard") or (current_fx is not None and _digest(current_fx(context)) != _digest(context["fx"])):
                 raise RiskHistoryError("risk_context_stale", 409)
             dedup = _digest([context["fingerprint"], context["date"]])
@@ -429,6 +478,8 @@ def save_observation(store, user_id: str, payload: Any, capture: Callable[[str],
                 return {"saved": False, "observation": json.loads(existing["value"])}
             observation = {"id": str(uuid4()), "observed_at": context["observed_at"], "date": context["date"], "model": model,
                            "source": SOURCE, "base_currency": context["base_currency"], "fingerprint": context["fingerprint"], "total": total, "accounts": accounts,
+                           "reset_epoch": context.get("reset_epoch", "initial"),
+                           "performance_snapshot": deepcopy(context.get("performance_snapshot")),
                            "evidence": {"fx": deepcopy(context["fx"]), "position_count": len(context["items"]),
                                         "source_signature": context["guard"][0], "generation": context["guard"][1],
                                         "scope": "canonical_non_esop", "risk_revision": context["guard"][2] if len(context["guard"]) > 2 else None,
@@ -483,5 +534,10 @@ def list_observations(store, base_currency: str, days: int = 90) -> dict:
     for account in store.list_accounts():
         if str(account.get("type") or "").upper() != "ESOP":
             labels[str(account["id"])] = account_label(account)
-    return {"model": MODEL, "models": [LEGACY_MODEL, LEGACY_STRESS_MODEL, MODEL], "base_currency": base_currency, "source": SOURCE, "items": observations[-MAX_READ:],
+    compared = risk_performance.attach_comparisons(observations[-MAX_READ:], base_currency)
+    for observation in compared:
+        observation.pop("performance_snapshot", None)
+    epoch = history_epoch(store)
+    return {"model": MODEL, "models": [LEGACY_MODEL, LEGACY_STRESS_MODEL, MODEL], "base_currency": base_currency, "source": SOURCE, "items": compared,
+            "performance_version": risk_performance.VERSION, "reset_epoch": epoch["id"], "reset_at": epoch.get("reset_at"),
             "accounts": [{"id": key, "label": labels[key]} for key in sorted(labels)], "truncated": len(rows) > MAX_READ, "invalid_records": invalid_records}

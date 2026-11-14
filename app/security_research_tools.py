@@ -189,14 +189,23 @@ def fetch_research_document(url: str, settings: dict[str, Any]) -> dict[str, Any
     headers = {"Accept": "application/json", "X-Respond-With": "markdown", "X-With-Links-Summary": "true",
                "X-Retain-Images": "none", "X-With-Generated-Alt": "false", "X-Timeout": "20",
                "X-No-Cache": "true", "DNT": "1"}
-    # UBS IR pages contain server-rendered tables. Executing their tracking
-    # scripts can navigate a renderer to an ad pixel instead of the document.
+    # SEC HTML filings and UBS IR pages are static documents. Browser execution
+    # can time out on very large filings or navigate UBS tracking scripts away
+    # from the document. Select one static read before spending the operation.
     # Select the documented static engine before the single reader request;
     # this is not a retry or another uncounted fetch.
-    static_engine = (reader == "auto" and parsed.hostname in {"www.ubs.com", "ubs.com"}
-                     and "/investor-relations/" in parsed.path and not parsed.path.lower().endswith(".pdf"))
+    sec_filing = parsed.hostname in {"www.sec.gov", "sec.gov"} and re.fullmatch(
+        r"/Archives/edgar/data/[0-9]+/[0-9]+/[A-Za-z0-9_.-]+\.html?", parsed.path, re.I)
+    static_engine = reader == "auto" and (
+        parsed.hostname in {"www.ubs.com", "ubs.com"} and "/investor-relations/" in parsed.path
+            and not parsed.path.lower().endswith(".pdf")
+        or sec_filing)
     if static_engine:
         headers["X-Engine"] = "direct"
+    if sec_filing:
+        # Hidden inline-XBRL context can precede the entire visible filing and
+        # consume the existing 40k evidence window before its cover page.
+        headers["X-Remove-Selector"] = 'ix\\:header, ix\\:hidden, [hidden], [style*="display:none"], [style*="display: none"]'
     # Only the public URL is sent. No application identity, credentials, cookies,
     # arbitrary headers, instructions, custom script or model feature is exposed.
     with httpx.Client(timeout=25, follow_redirects=False, trust_env=False) as client:

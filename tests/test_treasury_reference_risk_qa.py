@@ -340,7 +340,14 @@ def test_issued_contexts_preserve_reference_and_detect_reference_changes_before_
     assert changed["fingerprint"] != context["fingerprint"]
     with pytest.raises(risk_history.RiskHistoryError, match="risk_context_stale"):
         risk_history.save_observation(store, "qa-author", payload, capture, lambda: inputs["guard"])
-    assert risk_history.list_observations(store, "USD", 0)["items"] == [frozen]
+    displayed = risk_history.list_observations(store, "USD", 0)["items"]
+    assert len(displayed) == 1
+    assert {key: value for key, value in displayed[0].items() if key != "performance"} == {
+        key: value for key, value in frozen.items() if key != "performance_snapshot"}
+    with store._connect() as connection:
+        stored = connection.execute("select value from app_preferences where key glob ? and json_extract(value,'$.id')=?",
+                                    (risk_history.PREFIX + "*", frozen["id"])).fetchone()
+    assert json.loads(stored["value"]) == frozen
 
 
 def test_actual_backend_serialization_keeps_cached_reference_without_fetch_write_or_price_replacement(tmp_path, monkeypatch):
@@ -421,7 +428,11 @@ qa.render();PortfolioI18n.observe();qa.fixtureReady=true;
     assert risk["provisional_score"] == expected_score
     evaluate("qa.badge=document.querySelector('[data-account-summary=synthetic-account] .risk-badge');qa.badge.scrollIntoView({block:'center'});qa.badge.focus()")
     browser_wait(evaluate, "!$('riskBadgeExplanation').hidden")
-    assert evaluate("qa.badge.textContent").find(f"~{100 * expected_loss / 200:.1f}%") >= 0
+    assert evaluate("qa.badge.querySelector('b bdi').textContent") == f"~{expected_score}"
+    exact_loss = f"~{100 * expected_loss / 200:.2f}%"
+    assert evaluate("qa.badge.querySelector('.risk-exact-loss').textContent") == exact_loss
+    assert exact_loss in evaluate("qa.badge.getAttribute('aria-label')")
+    assert evaluate("qa.badge.scrollWidth<=qa.badge.clientWidth+1")
     assert "⚠" in evaluate("qa.badge.textContent")
     lines = evaluate("stressRiskProxyAssumptionLines(state.riskSnapshot.accounts[0].risk).join('\\n')")
     for text in ["Sensitivity proxy capped by verified remaining maturity", "This bound does not establish actual coupon duration.",

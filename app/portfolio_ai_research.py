@@ -19,6 +19,9 @@ from .security_enrichment import EnrichmentStart, MAX_SELECTED
 PREFIX = "/api/securities/enrichment"
 AGENCIES = ("moodys", "sp", "fitch")
 IDENTITY_FIELDS = ("security_key", "symbol", "stock_market", "currency", "name", "asset_class", "asset_sub_class")
+MARKET_TYPES = {"prices", "profile"}
+DATA_TYPES = MARKET_TYPES | {"company_ratings"}
+REFRESH_POLICIES = {"missing", "stale", "refresh_existing"}
 
 
 def _now():
@@ -28,6 +31,8 @@ def _now():
 class PortfolioResearchStart(EnrichmentStart):
     resume_request_id: str | None = Field(default=None, min_length=1, max_length=100)
     ratings_only: StrictBool = False
+    data_types: list[str] | None = Field(default=None, min_length=1, max_length=3)
+    refresh_policy: str = "missing"
 
 
 class PortfolioAIResearch:
@@ -80,11 +85,15 @@ class PortfolioAIResearch:
             job["counts"]["max_" + field + "_requests"] = job["_planned_children"] * limits[field]
 
     def _capture(self, job):
-        captured = self.inventory_reader(job["position_scope"], ratings_only=True) if job["ratings_only"] else self.inventory_reader(job["position_scope"])
+        options = deepcopy(job.get("_candidate_options") or {})
+        if job["ratings_only"]:
+            options["ratings_only"] = True
+        captured = self.inventory_reader(job["position_scope"], **options)
         selected = set(job["_security_keys"] or [])
         for branch, field in (("market", "market_items"), ("credit", "credit_items")):
             unique = {}
-            for original in ([] if branch == "market" and job["ratings_only"] else captured.get(field, [])):
+            enabled = bool(set(job["data_types"]) & MARKET_TYPES) if branch == "market" else "company_ratings" in job["data_types"]
+            for original in (captured.get(field, []) if enabled else []):
                 key = original.get("security_key")
                 if key and (not selected or key in selected):
                     unique.setdefault(key, {name: deepcopy(original.get(name)) for name in IDENTITY_FIELDS})
@@ -102,11 +111,23 @@ class PortfolioAIResearch:
         job["_captured"] = True
 
     def start(self, user_id, headers, language, position_scope="open", *, security_keys=None,
-              resume_request_id=None, scheduled_credentials=None, ratings_only=False):
+              resume_request_id=None, scheduled_credentials=None, ratings_only=False,
+              data_types=None, refresh_policy="missing"):
         if type(ratings_only) is not bool:
             raise HTTPException(422, "invalid_research_mode")
         if position_scope not in {"open", "all"}:
             raise HTTPException(422, "invalid_position_scope")
+        if (data_types is not None and (not isinstance(data_types, list) or not data_types
+                or any(not isinstance(value, str) or value not in DATA_TYPES for value in data_types))
+                or refresh_policy not in REFRESH_POLICIES):
+            raise HTTPException(422, "invalid_research_mode")
+        options = {"data_types": list(dict.fromkeys(data_types))} if data_types is not None else {}
+        if refresh_policy != "missing":
+            options["refresh_policy"] = refresh_policy
+        effective_types = list(dict.fromkeys(data_types)) if data_types is not None else (["company_ratings"] if ratings_only else ["prices", "profile", "company_ratings"])
+        if ratings_only and any(value != "company_ratings" for value in effective_types):
+            raise HTTPException(422, "invalid_research_mode")
+        ratings_only = effective_types == ["company_ratings"]
         if security_keys is not None and (not security_keys or len(security_keys) > MAX_SELECTED
                 or any(not isinstance(key, str) or not key.strip() or len(key) > 300 for key in security_keys)):
             raise HTTPException(422, "invalid_enrichment_candidate")
@@ -116,7 +137,7 @@ class PortfolioAIResearch:
             active = next((job for job in self._jobs.values()
                 if job["_user_id"] == user_id and job["status"] in {"queued", "running"}), None)
             if active:
-                if active["position_scope"] != position_scope or active["ratings_only"] != ratings_only or set(active["_security_keys"] or []) != set(security_keys or []) or (
+                if scheduled_credentials is not None or active["position_scope"] != position_scope or active["ratings_only"] != ratings_only or active.get("_candidate_options", {}) != options or set(active["_security_keys"] or []) != set(security_keys or []) or (
                         resume_request_id and active["request_id"] != resume_request_id):
                     raise HTTPException(409, "enrichment_busy")
                 return self._public(active)
@@ -124,7 +145,7 @@ class PortfolioAIResearch:
                 raise HTTPException(409, "enrichment_busy")
             if resume_request_id:
                 job = self._owned(resume_request_id, user_id)
-                if job["position_scope"] != position_scope or job["ratings_only"] != ratings_only or set(job["_security_keys"] or []) != set(security_keys or []):
+                if job["position_scope"] != position_scope or job["ratings_only"] != ratings_only or job.get("_candidate_options", {}) != options or set(job["_security_keys"] or []) != set(security_keys or []):
                     raise HTTPException(409, "enrichment_scope_changed")
                 if job["status"] != "failed" or job["_captured"] and not any(self._pending(job, branch) for branch in ("market", "credit")):
                     raise HTTPException(409, "nothing_to_resume")
@@ -137,7 +158,8 @@ class PortfolioAIResearch:
                 settings = self.market_jobs.settings()
                 limits = {kind: min(8, max(1, int(settings.get(field, 8)))) for kind, field in
                           (("model", "max_tool_loops"), ("rest", "max_rest_calls"), ("web", "max_web_calls"))}
-                job = {"request_id": str(uuid4()), "position_scope": position_scope, "ratings_only": ratings_only, "status": "queued", "code": "queued",
+                job = {"request_id": str(uuid4()), "position_scope": position_scope, "ratings_only": ratings_only,
+                    "data_types": effective_types, "refresh_policy": refresh_policy, "status": "queued", "code": "queued",
                     "created_at": _now(), "finished_at": None, "failure": None, "outcomes": [], "summary": self._summary([]),
                     "counts": {}, "per_batch_limits": limits, "coverage": {"inventory_truncated": False, "listed_candidates": 0},
                     "progress": {"stage": "queued", "completed": 0, "total": 0, "current_security": None},
@@ -145,6 +167,7 @@ class PortfolioAIResearch:
                     "credit_ratings": {"status": "queued", "progress": {"completed": 0, "total": 0, "current_security": None},
                         "summary": self._summary([]), "outcomes": []},
                     "_user_id": user_id, "_security_keys": list(dict.fromkeys(security_keys)) if security_keys else None,
+                    "_candidate_options": options,
                     "_targets": {"market": [], "credit": []}, "_done": {"market": set(), "credit": set()},
                     "_children": [], "_planned_children": 0, "_captured": False}
                 self._jobs[job["request_id"]] = job
@@ -231,8 +254,12 @@ class PortfolioAIResearch:
                 size = self._batch_size(branch)
                 for offset in range(0, len(pending), size):
                     batch = pending[offset:offset + size]
+                    options = {}
+                    if branch == "market" and parent.get("_candidate_options"):
+                        requested = [value for value in parent["data_types"] if value in MARKET_TYPES]
+                        options["candidate_options"] = {"data_types": requested, "refresh_policy": parent["refresh_policy"]}
                     child = manager.start(parent["_user_id"], headers, language, parent["position_scope"],
-                                          security_keys=[row["security_key"] for row in batch])
+                                          security_keys=[row["security_key"] for row in batch], **options)
                     while child["status"] in {"queued", "running"}:
                         with self._lock:
                             self._recount(parent, child)
@@ -285,7 +312,8 @@ class PortfolioAIResearch:
                 raise HTTPException(403, "read_only")
             return self.start(owner["id"], dict(request.headers), request.headers.get("Accept-Language", "en")[:24],
                 payload.position_scope if payload else "open", security_keys=payload.security_keys if payload else None,
-                resume_request_id=payload.resume_request_id if payload else None, ratings_only=payload.ratings_only if payload else False)
+                resume_request_id=payload.resume_request_id if payload else None, ratings_only=payload.ratings_only if payload else False,
+                data_types=payload.data_types if payload else None, refresh_policy=payload.refresh_policy if payload else "missing")
         @router.get(PREFIX + "/ai/{request_id}")
         def status(request_id: str, request: Request):
             return self.get(request_id, user(request)["id"])

@@ -1284,6 +1284,8 @@ function resetAIEnrichment() {
   const ui = state.aiEnrichment;
   clearTimeout(ui.timer);
   state.aiEnrichment = { job: null, outcomes: [], pending: false, resume: false, ratingsOnly: false, message: "", timer: null, polls: 0 };
+  window.AIResearchTargets?.reset();
+  window.AIResearchSchedules?.reset();
   renderAIEnrichment();
 }
 
@@ -1386,17 +1388,23 @@ function renderAIEnrichment() {
     if (item) node.title = dataGapTooltip(item);
   });
   if (typeof renderAIEnrichmentCreditRatings === "function") renderAIEnrichmentCreditRatings();
+  window.AIResearchTargets?.render();
 }
 
 function openAIEnrichment() {
   if (!currentUser() || currentUser().must_change_password) return;
   const mobile = window.matchMedia("(max-width: 760px)").matches;
-  openModal("aiEnrichmentModal", mobile ? $("navigationToggle") : $("enrichMissingData"), { focusId: "aiEnrichmentTitle" });
+  openModal("aiEnrichmentModal", mobile ? $("navigationToggle") : $("enrichMissingData"));
+  // Focus before asynchronous status rendering; a delayed initial focus must
+  // not take the keyboard away from a user already changing a data target.
+  $("aiEnrichmentTitle").focus({ preventScroll: true });
   document.querySelectorAll(".nav-menu[open]").forEach((menu) => { menu.open = false; });
   setMobileNavigation(false);
   renderAIEnrichment();
   if (window.ScheduleEditor) {
-    loadAISchedule({ preserveDraft: true });
+    if (window.AIResearchSchedules) AIResearchSchedules.open();
+    else loadAISchedule({ preserveDraft: true });
+    window.AIResearchTargets?.open();
     if (!state.aiEnrichment.pending) loadAIEnrichmentStatus().catch(() => {});
   }
 }
@@ -1477,6 +1485,7 @@ async function loadAIEnrichmentStatus() {
 async function requestAIEnrichment(positionScope = "open", { resumeRequestId = "" } = {}) {
   const ui = state.aiEnrichment;
   if (!canWrite() || ui.pending || state.auth.forcedPasswordChange || currentUser()?.must_change_password) return;
+  if (window.AIResearchTargets?.isRisk()) return AIResearchTargets.start(positionScope);
   const ratingsOnly = resumeRequestId ? Boolean(ui.job?.ratings_only) : Boolean(ui.ratingsOnly);
   ui.ratingsOnly = ratingsOnly;
   ui.version = (ui.version || 0) + 1;
@@ -1502,8 +1511,9 @@ async function requestAIEnrichment(positionScope = "open", { resumeRequestId = "
         }
       }
     } else {
+      const targetOptions = window.AIResearchTargets?.requestOptions(resumeRequestId ? ui.job : null) || {};
       ui.job = null;
-      const job = await api("/api/securities/enrichment/ai", { method: "POST", body: JSON.stringify({ position_scope: positionScope, ratings_only: ratingsOnly, ...(resumeRequestId ? { resume_request_id: resumeRequestId } : {}) }) });
+      const job = await api("/api/securities/enrichment/ai", { method: "POST", body: JSON.stringify({ position_scope: positionScope, ratings_only: targetOptions.data_types ? targetOptions.data_types.length === 1 && targetOptions.data_types[0] === "company_ratings" : ratingsOnly, ...targetOptions, ...(resumeRequestId ? { resume_request_id: resumeRequestId } : {}) }) });
       if (state.aiEnrichment !== ui) return;
       acceptAIEnrichmentJob(job);
     }
@@ -3159,15 +3169,17 @@ function riskBadge(risk) {
   const presentation = ["portfolio-risk-v3", "portfolio-risk-v4"].includes(risk.model) && typeof stressRiskDisplay === "function" ? stressRiskDisplay(risk) : null;
   const estimate = !Number.isFinite(risk.score) && Number.isFinite(risk.estimated_score);
   const number = presentation ? presentation.number : current ? (Number.isFinite(risk.score) || estimate) && Number.isFinite(risk.loss_pct) ? risk.loss_pct : null : Number.isFinite(risk.score) ? risk.score : estimate ? risk.estimated_score : null;
-  const metricLabel = presentation?.metricLabel || optionLabel(current ? "Stress loss" : "Risk");
+  const metricLabel = (current ? presentation?.scoreLabel : presentation?.metricLabel) || optionLabel(current ? "Stress-loss score" : "Risk");
   const band = current ? {key:Number.isFinite(number) ? "stress" : "incomplete",label:metricLabel,symbol:presentation?.nonpositiveEquity ? "!" : ""}
     : presentation?.unknownScope ? {key:"incomplete",label:optionLabel("Uncertain scope"),symbol:"⚠"}
     : presentation?.ceiling ? {key:"incomplete",label:optionLabel("Precautionary ceiling"),symbol:"⚠"} : riskBand(number);
-  const value = presentation ? presentation.fullValue : number === null ? optionLabel("Incomplete") : `${estimate ? "~" : ""}${current ? `${fmt(number,1)}%` : number}`;
+  const value = presentation ? current ? presentation.scoreValue : presentation.fullValue : number === null ? optionLabel("Incomplete") : `${estimate ? "~" : ""}${current ? Math.min(100,Math.round(number+1e-10)) : number}`;
+  const exactLoss = current && presentation?.rawLossFullValue ? presentation.rawLossFullValue : "";
   const status = presentation ? presentation.statusLabel : estimate ? optionLabel("Estimate") : "";
   const missing = presentation?.missing === true || current && ((risk.gaps || []).length > 0 || risk.coverage?.complete === false);
-  const label = `${metricLabel}: ${value}${status ? ` · ${status}` : ""}${missing && status !== optionLabel("Partial data") ? ` · ${optionLabel("Partial data")}` : ""}${current ? "" : ` · ${band.label}`}`;
-  return `<button class="risk-badge risk-${band.key}${missing ? " has-missing-risk-data" : ""}${presentation?.nonpositiveEquity ? " risk-funding-boundary" : ""}" type="button" data-risk-badge="${esc(risk.label || presentation?.metricLabel || "Risk")}" data-risk-explanation="${esc(riskTooltip(risk))}" aria-label="${esc(label)}" aria-describedby="riskBadgeExplanation"><b><bdi dir="ltr">${esc(value)}</bdi></b>${missing ? '<span class="risk-data-warning" aria-hidden="true">⚠</span>' : ""}${status ? `<small class="risk-data-status">${esc(status)}</small>` : ""}</button>`;
+  const label = `${metricLabel}: ${value}${exactLoss ? ` · ${optionLabel("Scenario loss (%)")}: ${exactLoss}` : ""}${status ? ` · ${status}` : ""}${missing && status !== optionLabel("Partial data") ? ` · ${optionLabel("Partial data")}` : ""}${current ? "" : ` · ${band.label}`}`;
+  const values = exactLoss ? `<span class="risk-score-values"><b><bdi dir="ltr">${esc(value)}</bdi></b><small class="risk-exact-loss"><bdi dir="ltr">${esc(exactLoss)}</bdi></small></span>` : `<b><bdi dir="ltr">${esc(value)}</bdi></b>`;
+  return `<button class="risk-badge risk-${band.key}${missing ? " has-missing-risk-data" : ""}${presentation?.nonpositiveEquity ? " risk-funding-boundary" : ""}" type="button" data-risk-badge="${esc(risk.label || presentation?.metricLabel || "Risk")}" data-risk-explanation="${esc(riskTooltip(risk))}" aria-label="${esc(label)}" aria-describedby="riskBadgeExplanation">${values}${missing ? '<span class="risk-data-warning" aria-hidden="true">⚠</span>' : ""}${status ? `<small class="risk-data-status">${esc(status)}</small>` : ""}</button>`;
 }
 
 function riskTooltip(risk) {
@@ -4003,7 +4015,7 @@ function renderPortfolioValueDashboard(items) {
           ${cashSummary}
         </div>
         <div class="account-summary-metrics">
-          ${accountRisk ? `<div><span class="account-summary-metric-label">${esc(optionLabel(accountRisk.model === "portfolio-risk-v4" ? "Stress loss" : "Risk"))}</span>${riskBadge(accountRisk)}${typeof stressRiskSummaryHtml === "function" ? stressRiskSummaryHtml(accountRisk,{compact:true}) : ""}</div>` : ""}
+          ${accountRisk ? `<div><span class="account-summary-metric-label">${esc(optionLabel(accountRisk.model === "portfolio-risk-v4" ? "Stress-loss score" : "Risk"))}</span>${riskBadge(accountRisk)}${typeof stressRiskSummaryHtml === "function" ? stressRiskSummaryHtml(accountRisk,{compact:true}) : ""}</div>` : ""}
           <div><span class="account-summary-metric-label">${esc(optionLabel("Portfolio share"))}</span>${accountShareBadge(share)}</div>
         </div>
         <div class="account-summary-allocation"${segments ? ` title="${esc(optionLabel("Allocation shows asset categories. Credit, interest-rate and currency risks are assessed in the stress score; cash and money-market holdings are not guaranteed risk-free."))}"` : ' aria-hidden="true"'}>${segments ? `
@@ -4020,7 +4032,7 @@ function renderPortfolioValueDashboard(items) {
     : totalRiskDisplay?.unknownScope ? {key:"incomplete",label:optionLabel("Uncertain scope")}
     : totalRiskDisplay?.ceiling ? {key:"incomplete",label:optionLabel("Precautionary ceiling")} : riskBand(totalRiskDisplay?.number ?? state.riskSnapshot.total.score ?? state.riskSnapshot.total.estimated_score);
   const statsHtml = [
-    { label: totalRiskDisplay?.current ? "Stress loss" : "Risk", content: riskBadge(state.riskSnapshot.total), tooltip: riskTooltip(state.riskSnapshot.total), detail: totalRiskBand.label, className: `risk-${totalRiskBand.key}` },
+    { label: totalRiskDisplay?.current ? "Stress-loss score" : "Risk", content: riskBadge(state.riskSnapshot.total), tooltip: riskTooltip(state.riskSnapshot.total), detail: totalRiskBand.label, className: `risk-${totalRiskBand.key}` },
     { label: "Positions", value: items.length, tooltip: "Number of open positions shown after filters" },
     { label: "Securities", value: symbols, tooltip: "Unique security symbols" },
     { label: "Equities", value: equities, tooltip: "Open equity positions" },
@@ -4378,7 +4390,7 @@ function renderRows(items) {
     return `<tr data-portfolio-position="${esc(JSON.stringify([h.account_id, h.symbol, marketKey, h.currency, h.asset_class]))}">
       <td data-label="Security"><div class="security-cell"><div class="security-symbols">${companyLogoHtml(h)}<button class="symbol security-history-link" type="button" data-security-detail-symbol="${esc(h.symbol)}" data-security-detail-market-key="${esc(marketKey)}" data-security-detail-stock-market="${esc(market)}" data-security-detail-provider="${esc(provider)}" data-security-detail-asset="${esc(h.asset_class)}" data-security-detail-currency="${esc(h.currency)}" data-security-detail-location="${esc(h.country || h.location || "")}" title="Open security overview">${esc(h.symbol)}</button>${h.secondary_symbol ? `<span class="secondary-symbol" title="Secondary symbol">${esc(h.secondary_symbol)}</span>` : ""}<span class="ux-tooltip security-meta-tooltip" tabindex="0" role="note" aria-label="Security details" title="${esc(marketLine)}" data-tooltip="${esc(marketLine)}">i</span></div><div class="security-name">${esc(companyLine)}</div>${referenceBadge}${industryLine}${exposureLine}</div></td>
       <td data-label="Account"><div>${esc(cleanSourceLabel(h.account) || "∅")}</div><div class="sub">${esc(accountMeta)}</div>${holdingTransactionActionsHtml(h)}</td>
-      <td class="holding-risk-cell" data-label="Risk">${riskBadge(rowRisk)}</td>
+      <td class="holding-risk-cell" data-label="${esc(optionLabel(rowRisk?.model === "portfolio-risk-v4" ? "Stress-loss score" : "Risk"))}">${riskBadge(rowRisk)}</td>
       <td data-label="Value / P&L"><div class="value-cell">
         <strong>${money(h.market_value, h.currency)}</strong>
         <button class="units-history-link" type="button" data-position-history-symbol="${esc(h.symbol)}" data-position-history-market="${esc(marketKey)}" data-position-history-account-id="${esc(h.account_id || "")}" data-position-history-account="${esc(cleanSourceLabel(h.account) || "")}" data-position-history-currency="${esc(h.currency || state.baseCurrency)}" data-position-history-quantity="${esc(h.quantity || 0)}" data-position-history-average="${esc(averageBuyPrice)}" data-position-history-asset="${esc(h.asset_class || "EQUITY")}" data-position-history-location="${esc(h.country || h.location || "")}" title="Open buy and sell history">${fmt(h.quantity, 3)} ${esc(optionLabel("units"))}</button>

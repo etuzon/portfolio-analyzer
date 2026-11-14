@@ -1,6 +1,6 @@
 """Risk input provenance, normalized units, persistence and revision boundaries."""
 from copy import deepcopy
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import json
 from types import SimpleNamespace
 from pathlib import Path
@@ -182,8 +182,18 @@ def test_v4_partial_never_becomes_numeric_and_nested_nonfinite_rejected():
         risk_history._risk({'model':MODEL,**risk_history.SCORE_METADATA,'status':'ok','score':30,'scenarios':[{'pnl':float('nan')}]},MODEL)
 
 
-def test_portfolio_retries_changed_risk_inputs_before_publishing(monkeypatch):
+@pytest.mark.parametrize("instant,expected_day", [
+    ("2026-11-14T22:10:00+00:00", "2026-11-14"),
+    ("2026-11-15T01:10:00+00:00", "2026-11-15"),
+])
+def test_portfolio_retries_changed_risk_inputs_before_publishing(monkeypatch, instant, expected_day):
     from app import main
+    captured_at = datetime.fromisoformat(instant)
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return captured_at.astimezone(tz) if tz else captured_at.replace(tzinfo=None)
+    monkeypatch.setattr(main, "datetime", Clock)
     revisions=iter(['old','new','new','new'])
     captures=[]
     def enrich(items):
@@ -198,7 +208,7 @@ def test_portfolio_retries_changed_risk_inputs_before_publishing(monkeypatch):
     assert result['risk_revision']=='new'
     assert result['items'][0]['stress_risk']['source_revision']=='new'
     assert result['risk_model']==MODEL
-    assert result['risk_as_of']==date.today().isoformat()
+    assert result['risk_as_of']==expected_day
 
 
 def test_portfolio_does_not_publish_unstable_risk_sources(monkeypatch):

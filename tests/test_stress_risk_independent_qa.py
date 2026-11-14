@@ -330,7 +330,7 @@ def local_parameters(**changes):
             "country_code": "IL", "country_currency": "ILS", "country_basis": "economic_exposure",
             "plain_nominal_noncallable": True, "pricing_model": "zero_coupon_continuous",
             "zero_coupon_confirmed": True, "maturity_date": MATURITY, "current_spread_bps": 50,
-            "as_of": date.today().isoformat(), "notes": "Synthetic contractual evidence", **changes}
+            "as_of": AS_OF, "notes": "Synthetic contractual evidence", **changes}
 
 
 def update_payload(service, **changes):
@@ -452,7 +452,13 @@ def test_history_preserves_old_model_estimate_and_raw_evidence_and_rejects_race(
     frozen = deepcopy(observation)
     raw["items"][0]["stress_risk"]["parameters"]["maturity_date"] = "2040-01-01"
     listed = risk_history.list_observations(store, "USD", 0)
-    assert next(row for row in listed["items"] if row["model"] == "portfolio-risk-v4") == frozen
+    displayed = next(row for row in listed["items"] if row["model"] == "portfolio-risk-v4")
+    assert {key: value for key, value in displayed.items() if key != "performance"} == {
+        key: value for key, value in frozen.items() if key != "performance_snapshot"}
+    with store._connect() as connection:
+        stored = connection.execute("select value from app_preferences where key glob ? and json_extract(value,'$.id')=?",
+                                    (risk_history.PREFIX + "*", frozen["id"])).fetchone()
+    assert json.loads(stored["value"]) == frozen
     assert store.get_preference(risk_history.PREFIX + "legacy") == old
 
 

@@ -1,0 +1,17 @@
+.ai-research-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: .8rem; margin-block: .8rem; }
+.ai-research-fields > .field { min-width: 0; }
+.ai-research-fields select, .ai-research-fields input { width: 100%; min-height: 2.6rem; }
+.ai-research-target-checks { display: flex; flex-wrap: wrap; gap: .7rem 1.2rem; }
+#researchScheduleTargets { border: 1px solid var(--border, #39425b); border-radius: .6rem; padding: .8rem; margin-block: .8rem; }
+.ai-research-schedule-list { display: grid; gap: .75rem; margin-block: .8rem; }
+.ai-research-schedule-row { border: 1px solid var(--border, #39425b); border-radius: .65rem; padding: .85rem; min-width: 0; }
+.ai-research-schedule-row h4 { margin: 0 0 .4rem; font-size: 1rem; overflow-wrap: anywhere; }
+.ai-research-schedule-row p { margin: .35rem 0; overflow-wrap: anywhere; }
+.ai-research-schedule-row .modal-toolbar { flex-wrap: wrap; }
+#researchScheduleForm { border-block-start: 1px solid var(--border, #39425b); margin-block-start: 1rem; padding-block-start: 1rem; }
+#researchScheduleForm [multiple] { min-height: 9rem; width: 100%; }
+.ai-research-result-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .8rem; }
+.ai-research-result-list li { border-block-start: 1px solid var(--border, #39425b); padding-block: .75rem; }
+.ai-research-result-list p { margin: .35rem 0; overflow-wrap: anywhere; }
+.ai-research-result-list a { overflow-wrap: anywhere; }
+#aiRiskResearchPanel progress { width: 100%; }

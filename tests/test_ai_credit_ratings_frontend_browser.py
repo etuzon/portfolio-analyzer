@@ -4,7 +4,7 @@ import base64
 import pytest
 
 from test_account_cash_update_qa import browser_wait
-from test_ai_enrichment_frontend import ready
+from test_ai_enrichment_frontend import ready, choose_ai_target
 from test_native_account_history_qa import chromium
 
 
@@ -20,10 +20,12 @@ qa.progress={stage:'researching_ratings',completed:0,total:25,current_security:n
 $('enrichMissingData').click();
 ''')
     assert evaluate("qa.aiPosts") == 0
-    assert ("API-priced stocks" if language == "en" else "כולל מניות שמחירן") in evaluate("$('aiEnrichmentScope').textContent")
+    assert evaluate("$('aiResearchTarget').value") == "portfolio"
+    assert ("company ratings" if language == "en" else "דירוגי חברות") in evaluate("$('aiResearchTarget').selectedOptions[0].textContent")
     evaluate("$('aiEnrichmentStartAll').click()")
     browser_wait(evaluate, "state.aiEnrichment.pending&&!!qa.poll&&!$('aiCreditRatings').hidden")
-    assert evaluate("qa.aiBodies") == [{"position_scope": "all", "ratings_only": False}]
+    assert evaluate("qa.aiBodies") == [{"position_scope": "all", "ratings_only": False,
+        "data_types":["prices","profile","company_ratings"],"refresh_policy":"stale"}]
     assert evaluate("$('aiCreditRatingsResults').children.length") == 25
     assert "C24" in evaluate("$('aiCreditRatingsResults').textContent")
     assert evaluate("$('loadingOverlay').hidden&&!$('refresh').disabled")
@@ -60,7 +62,8 @@ qa.returnButton=$('aiCreditRatingsResults').querySelector('[data-ai-credit-key="
     browser_wait(evaluate, "!state.aiEnrichment.pending&&!$('aiEnrichmentRetryRatings').hidden")
     evaluate("$('aiEnrichmentRetryRatings').click()")
     browser_wait(evaluate, "qa.aiPosts===2")
-    assert evaluate("qa.aiBodies[1]") == {"position_scope": "all", "ratings_only": False, "resume_request_id": "synthetic-job"}
+    assert evaluate("qa.aiBodies[1]") == {"position_scope": "all", "ratings_only": False, "resume_request_id": "synthetic-job",
+        "data_types":["prices","profile","company_ratings"],"refresh_policy":"stale"}
     evaluate("state.auth.user.role='Viewer';renderAIEnrichment()")
     assert evaluate("$('aiEnrichmentRetryRatings').disabled")
     assert evaluate("qa.errors") == []
@@ -76,34 +79,40 @@ qa.originalJob=qa.job;qa.job=()=>({...qa.originalJob(),position_scope:'open',rat
 state.aiEnrichment.job={request_id:'previous-market',status:'completed',summary:{updated:1},outcomes:[{symbol:'OLD',stock_market:'NASDAQ',currency:'USD',status:'updated',code:'data_found'}]};
 renderAIEnrichment();$('enrichMissingData').click();
 ''')
-    assert evaluate("$('aiEnrichmentRatingsOnly').checked") is False
+    assert evaluate("$('aiResearchTarget').value") == "portfolio"
     assert evaluate("$('aiEnrichmentResults').children.length") == 1
-    evaluate("$('aiEnrichmentRatingsOnly').click()")
-    assert evaluate("$('aiEnrichmentRatingsOnly').checked") is True
-    assert evaluate("$('aiEnrichmentDetails').hidden&&$('aiEnrichmentSummary').hidden&&$('aiEnrichmentEmpty').hidden")
+    choose_ai_target(command,evaluate,"company_ratings")
+    # The selector chooses the next request. Displayed prior results keep their
+    # frozen contract until the user explicitly starts the new request.
+    assert evaluate("$('aiResearchCurrentJob').hidden") is False
+    assert evaluate("$('aiEnrichmentResults').children.length") == 1
     assert evaluate("qa.aiPosts") == 0
     evaluate("$('aiEnrichmentStart').click()")
     browser_wait(evaluate, "state.aiEnrichment.pending&&!!qa.poll")
-    assert evaluate("qa.aiBodies") == [{"position_scope": "open", "ratings_only": True}]
-    assert evaluate("$('aiEnrichmentRatingsOnly').disabled&&$('aiEnrichmentRatingsOnly').checked")
+    assert evaluate("qa.aiBodies") == [{"position_scope": "open", "ratings_only": True,
+        "data_types":["company_ratings"],"refresh_policy":"stale"}]
+    assert evaluate("$('aiResearchTarget').disabled&&$('aiResearchTarget').value==='company_ratings'")
     assert evaluate("$('aiEnrichmentDetails').hidden&&$('aiEnrichmentSummary').hidden&&$('aiEnrichmentEmpty').hidden")
     assert evaluate("$('aiCreditRatingsResults').children.length") == 1
     evaluate("qa.apiMode='poll-failure';qa.poll()")
     browser_wait(evaluate, "state.aiEnrichment.resume")
-    assert evaluate("$('aiEnrichmentRatingsOnly').disabled")
+    assert evaluate("$('aiResearchTarget').disabled")
     evaluate("$('aiEnrichmentResume').click()")
     browser_wait(evaluate, "state.aiEnrichment.pending&&!state.aiEnrichment.resume")
     assert evaluate("qa.aiPosts") == 1
-    assert evaluate("$('aiEnrichmentRatingsOnly').checked")
+    assert evaluate("$('aiResearchTarget').value") == "company_ratings"
     evaluate("qa.jobStatus='failed';qa.credit.status='failed';qa.credit.outcomes[0].status='not_attempted';qa.poll()")
     browser_wait(evaluate, "!state.aiEnrichment.pending&&!$('aiEnrichmentRetryRatings').hidden")
     status_text = evaluate("$('aiEnrichmentStatus').textContent")
     assert ("Add manually" if language == "en" else "בהוספה ידנית") in status_text
     assert "Prices" not in status_text and "במחירים" not in status_text
-    evaluate("$('aiEnrichmentRatingsOnly').click();$('aiEnrichmentRetryRatings').click()")
+    choose_ai_target(command,evaluate,"prices")
+    evaluate("$('aiEnrichmentRetryRatings').click()")
     browser_wait(evaluate, "qa.aiPosts===2")
-    assert evaluate("qa.aiBodies[1]") == {"position_scope": "open", "ratings_only": True, "resume_request_id": "synthetic-job"}
-    assert evaluate("$('aiEnrichmentRatingsOnly').checked")
+    assert evaluate("qa.aiBodies[1]") == {"position_scope": "open", "ratings_only": True, "resume_request_id": "synthetic-job",
+        "data_types":["company_ratings"],"refresh_policy":"stale"}
+    assert evaluate("state.aiEnrichment.job.data_types") == ["company_ratings"]
+    assert evaluate("$('aiResearchTarget').value") == "prices"
     evaluate("$('aiEnrichmentModal').querySelector('.modal-header').scrollIntoView({block:'start'})")
     (tmp_path / f"ratings-only-{language}-{width}.png").write_bytes(base64.b64decode(command("Page.captureScreenshot", {"format": "png", "captureBeyondViewport": False})["data"]))
     assert evaluate("qa.errors") == []

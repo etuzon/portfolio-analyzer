@@ -25,8 +25,9 @@ CHILD_PREFIX = "/api/securities/risk-inputs/research"
 SCHEDULE_ENDPOINT = "/api/settings/risk-input-retrieval-schedule"
 JOB_ID = "risk-input-retrieval"
 MODES = {"api_then_ai", "api", "ai"}
+REFRESH_POLICIES = {"missing", "stale", "refresh_existing"}
 POLICY = WEB_RESEARCH_POLICY + (
-    " This task is missing RISK INPUT evidence, not prices. Read exact primary issuer filings, "
+    " This task is RISK INPUT evidence, not prices. For refresh_requested=true, re-read current primary sources for requested_fields even when no field is missing. Read exact primary issuer filings, "
     "government offering documents or the verified issuer website. Select only risk_input/credit_rating context_records "
     "returned by the application. An address is issuer domicile only; it is never economic allocation. "
     "A trading/reporting currency never proves economic currency exposure. Do not manufacture ratings, "
@@ -93,11 +94,27 @@ def missing_fields(risk, candidate):
     return list(dict.fromkeys(fields))
 
 
+def refresh_fields(risk, candidate):
+    """Request instrument evidence again; each fetched claim still needs validation."""
+    fields = ["issuer_identity", "issuer_domicile", "country_exposure", "country_rating", "country_currency"]
+    kind = (risk.get("parameters") or {}).get("instrument_kind")
+    if candidate.get("asset_class") == "BOND" or kind in {"corporate_bond", "sovereign_bond"}:
+        fields += ["bond_kind", "credit_rating", "bond_maturity", "bond_terms", "bond_cashflows", "current_spread", "bond_yield"]
+        fields += ["sovereign_currency_basis"] if kind == "sovereign_bond" else ["country_sensitivity"]
+    else:
+        fields.append("fx")
+    if kind == "fund" or candidate.get("asset_class") in {"FUND", "ETF", "MUTUALFUND"}:
+        fields.append("fund_lookthrough")
+    return list(dict.fromkeys(missing_fields(risk, candidate) + fields))
+
+
 class RetrievalStart(BaseModel):
     model_config = ConfigDict(extra="forbid")
     security_keys: list[str] | None = Field(default=None,min_length=1,max_length=MAX_SELECTED)
     mode: str = "api_then_ai"
     language: str | None = None
+    position_scope: str = "open"
+    refresh_policy: str = "missing"
 
 
 class RiskEvidenceResearch:
@@ -109,24 +126,32 @@ class RiskEvidenceResearch:
         self.credit_service, self.sovereign_service = credit_service, sovereign_service
         self._sessions, self._outcomes, self._lock = {}, {}, RLock()
 
-    def candidates(self, position_scope="open", security_keys=None):
+    def candidates(self, position_scope="open", security_keys=None, refresh_policy="missing"):
+        if position_scope not in {"open", "all"} or refresh_policy not in REFRESH_POLICIES:
+            raise HTTPException(422,"invalid_retrieval_request")
         selected = set(security_keys or [])
         rows = []
         for candidate in self.inputs.inventory():
+            if (str(candidate.get("stock_market") or "").upper() == "PRIVATE"
+                    or str(candidate.get("asset_class") or "").upper() in {"CASH","CURRENCY","PRIVATE_STOCK","EMPLOYEE_STOCK_OPTION","STOCK_OPTION"}):
+                continue
             if position_scope == "open" and not candidate.get("has_open_position"):
                 continue
             if selected and candidate["security_key"] not in selected:
                 continue
             risk = self.inputs.read(candidate)
             needed = missing_fields(risk,candidate)
-            if not needed:
+            eligible = [field for field in needed if not field.endswith("_stale")] if refresh_policy == "missing" else needed
+            if not eligible and refresh_policy != "refresh_existing":
                 continue
             evidence = self.inputs.evidence(candidate).get("fields") or {}
-            rows.append({**candidate,"missing_fields":needed,"identity_token":self.inputs.identity(candidate),
+            rows.append({**candidate,"missing_fields":needed,
+                "requested_fields":refresh_fields(risk,candidate) if refresh_policy == "refresh_existing" else needed,
+                "refresh_requested":refresh_policy == "refresh_existing","identity_token":self.inputs.identity(candidate),
                 "expected_revision":risk["revision"],"researched_issuer_name":evidence.get("issuer_name",{}).get("value"),
                 "researched_issuer_id":evidence.get("issuer_id",{}).get("value"),
                 "api_supported_fields":no_registration_fields(candidate),
-                "ai_supported_fields":["issuer_identity","country_exposure","fx","country_rating","credit_rating"],
+                "ai_supported_fields":["issuer_identity","issuer_domicile","country_exposure","fx","country_rating","credit_rating"],
                 "country_code":(risk.get("country") or {}).get("country_code"),
                 "captured_at":_now(),
                 "source_evidence":risk.get("source_evidence",[])})
@@ -315,8 +340,9 @@ class RiskInputRetrieval:
             active=next((j for j in reversed(jobs) if j["status"] in {"queued","running"}),None)
             return {"active_job":self._public(active) if active else None,"last_job":self._public(jobs[-1]) if jobs else None}
 
-    def start(self,owner,headers,language="en",*,security_keys=None,mode="api_then_ai",scheduled_credentials=None,batch_offset=None):
-        if mode not in MODES or language not in {"en","he"}:
+    def start(self,owner,headers,language="en",*,security_keys=None,mode="api_then_ai",scheduled_credentials=None,batch_offset=None,
+              position_scope="open",refresh_policy="missing"):
+        if mode not in MODES or language not in {"en","he"} or position_scope not in {"open","all"} or refresh_policy not in REFRESH_POLICIES:
             raise HTTPException(422,"invalid_retrieval_request")
         if security_keys is not None and (not isinstance(security_keys,list) or not 1<=len(security_keys)<=MAX_SELECTED or any(not isinstance(k,str) or not 1<=len(k)<=300 for k in security_keys)):
             raise HTTPException(422,"invalid_retrieval_request")
@@ -324,7 +350,8 @@ class RiskInputRetrieval:
         with self._lock:
             active=next((j for j in self._jobs.values() if j["status"] in {"queued","running"}),None)
             if active:
-                if active["_owner"] == owner and active["mode"] == mode and active["security_keys"] == keys:
+                if (scheduled_credentials is None and active["_owner"] == owner and active["mode"] == mode and active["security_keys"] == keys
+                        and active.get("position_scope","open") == position_scope and active.get("refresh_policy","missing") == refresh_policy):
                     return self._public(active)
                 raise HTTPException(409,"enrichment_busy")
             cleanup=None
@@ -332,19 +359,26 @@ class RiskInputRetrieval:
                 headers,cleanup=scheduled_credentials()
             forwarded={k:v for k,v in headers.items() if k.lower() in {"cookie","authorization","x-csrf-token"}}
             try:
-                captured=self.evidence.candidates(security_keys=keys)["items"]
+                captured=self.evidence.candidates(position_scope=position_scope,security_keys=keys,refresh_policy=refresh_policy)["items"]
+                # A valid selected listing whose fields are already complete
+                # has no work under missing/stale policy, rather than an invalid
+                # identity. Registration and selected scope remain mandatory.
+                registered=(self.evidence.candidates(position_scope=position_scope,security_keys=keys,refresh_policy="refresh_existing")["items"]
+                    if keys and set(keys)-{c["security_key"] for c in captured} else captured)
             except Exception:
                 if cleanup:
                     cleanup()
                 raise
-            if keys and set(keys)-{c["security_key"] for c in captured}:
+            if keys and set(keys)-{c["security_key"] for c in registered}:
                 if cleanup:
                     cleanup()
                 raise HTTPException(422,"invalid_retrieval_candidate")
-            offset=(self._cursors.get(owner,0) if batch_offset is None else max(0,int(batch_offset))) % max(1,len(captured)) if keys is None else 0
+            cursor_key=(owner,position_scope,refresh_policy)
+            offset=(self._cursors.get(cursor_key,0) if batch_offset is None else max(0,int(batch_offset))) % max(1,len(captured)) if keys is None else 0
             targets=(captured[offset:]+captured[:offset])[:MAX_SELECTED]
             job={"request_id":str(uuid4()),"status":"queued","code":"queued","created_at":_now(),"finished_at":None,
-                "mode":mode,"security_keys":keys,"progress":{"stage":"queued","completed":0,"total":0,"current_security":None},
+                "mode":mode,"security_keys":keys,"position_scope":position_scope,"refresh_policy":refresh_policy,
+                "progress":{"stage":"queued","completed":0,"total":0,"current_security":None},
                 "outcomes":[],"counts":{"api_requests":0,"model_requests":0,"rest_requests":0,"web_requests":0},
                 "coverage":{"total_candidates":len(captured),"selected":len(targets),"remaining":max(0,len(captured)-len(targets)),"truncated":len(captured)>len(targets),
                             "batch_offset":offset,"next_batch_offset":(offset+len(targets))%max(1,len(captured))},
@@ -362,7 +396,7 @@ class RiskInputRetrieval:
         try:
             self.worker_factory(target=work,daemon=True,name="risk-input-retrieval").start()
             if keys is None:
-                self._cursors[owner]=job["coverage"]["next_batch_offset"]
+                self._cursors[cursor_key]=job["coverage"]["next_batch_offset"]
         except Exception:
             if cleanup:
                 cleanup()
@@ -425,12 +459,12 @@ class RiskInputRetrieval:
                     result["sources"].extend({"url":s["url"],"source_kind":s["source_kind"],"retrieved_at":s["retrieved_at"],"fields":s["fields"]} for s in api["sources"])
                 risk=self.evidence.inputs.read(self.evidence.inputs.candidate(candidate["security_key"]))
                 remaining=missing_fields(risk,candidate)
-                if remaining and job["mode"] != "api" and result["api"]["code"] != "identity_changed":
+                if (remaining or job["refresh_policy"] == "refresh_existing") and job["mode"] != "api" and result["api"]["code"] != "identity_changed":
                     unresolved.append(candidate["security_key"])
                 risk=self.evidence.inputs.read(self.evidence.inputs.candidate(candidate["security_key"]))
                 result["missing_fields"]=missing_fields(risk,candidate)
                 result["available_fields"]=sorted(set(result["available_fields"]))
-                result["status"]="updated" if not result["missing_fields"] else "partial" if result["available_fields"] else "unavailable"
+                result["status"]=("updated" if not result["missing_fields"] else "partial") if result["available_fields"] else "unavailable"
                 result["code"]="data_found" if result["status"]=="updated" else "partial_data" if result["status"]=="partial" else "data_unavailable"
                 with self._lock:
                     job["outcomes"].append(result)
@@ -442,7 +476,12 @@ class RiskInputRetrieval:
             if unresolved:
                 self._authorize(identifier,headers)
                 job["progress"].update(stage="ai",completed=0)
-                child=self._wait(self.ai_jobs,self.ai_jobs.start(job["_owner"],headers,language,security_keys=unresolved),job["_owner"])
+                options={}
+                if job["position_scope"] != "open":
+                    options["position_scope"]=job["position_scope"]
+                if job["refresh_policy"] != "missing":
+                    options["candidate_options"]={"refresh_policy":job["refresh_policy"]}
+                child=self._wait(self.ai_jobs,self.ai_jobs.start(job["_owner"],headers,language,security_keys=unresolved,**options),job["_owner"])
                 for field in ("model_requests","rest_requests","web_requests"):
                     job["counts"][field]=child.get("counts",{}).get(field,0)
                 self._authorize(identifier,headers)
@@ -456,7 +495,7 @@ class RiskInputRetrieval:
                     current=self.evidence.inputs.read(self.evidence.inputs.candidate(result["security_key"]))
                     candidate=next(c for c in candidates if c["security_key"]==result["security_key"])
                     result["missing_fields"]=missing_fields(current,candidate)
-                    result["status"]="updated" if not result["missing_fields"] else "partial" if result["available_fields"] else "unavailable"
+                    result["status"]=("updated" if not result["missing_fields"] else "partial") if result["available_fields"] else "unavailable"
                     result["code"]="data_found" if result["status"]=="updated" else "partial_data" if result["status"]=="partial" else result["ai"]["code"]
                     job["portfolio_refresh_required"] |= bool(outcome.get("available_fields"))
             with self._lock:
@@ -471,9 +510,9 @@ class RiskInputRetrieval:
     def router(self):
         router=APIRouter(tags=["risk input retrieval"])
         @router.get(PREFIX+"/candidates")
-        def candidates(request:Request):
+        def candidates(request:Request,position_scope:str="open",refresh_policy:str="missing"):
             _user(request)
-            rows=self.evidence.candidates()
+            rows=self.evidence.candidates(position_scope=position_scope,refresh_policy=refresh_policy)
             allowed={"security_key","symbol","stock_market","currency","name","identity_token","missing_fields","api_supported_fields","ai_supported_fields"}
             return {"items":[{k:v for k,v in row.items() if k in allowed} for row in rows["items"]],"total_count":rows["total_count"]}
         @router.post(PREFIX,status_code=202)
@@ -481,7 +520,8 @@ class RiskInputRetrieval:
             actor=_user(request,True)
             payload=payload or RetrievalStart()
             language=payload.language or ("he" if request.headers.get("Accept-Language","").startswith("he") else "en")
-            return self.start(actor["id"],dict(request.headers),language,security_keys=payload.security_keys,mode=payload.mode)
+            return self.start(actor["id"],dict(request.headers),language,security_keys=payload.security_keys,mode=payload.mode,
+                position_scope=payload.position_scope,refresh_policy=payload.refresh_policy)
         @router.get(PREFIX+"/status")
         def status(request:Request):
             return self.status(_user(request)["id"])
@@ -509,6 +549,10 @@ class RiskInputRetrievalSchedules:
     def status(self):
         result=self.settings()
         result.pop("owner_id",None)
+        replacement=getattr(self,"replacement",None)
+        if replacement and replacement.is_migrated():
+            row=replacement.legacy_status("risk_inputs")
+            return {**result, **{key:(row or {}).get(key) for key in ("next_run","last_run_at","last_run_code","last_request_id")}}
         scheduler=self.scheduler_getter()
         job=scheduler.get_job(JOB_ID) if scheduler else None
         result["next_run"]=job.next_run_time.isoformat() if job and job.next_run_time else None
@@ -541,11 +585,18 @@ class RiskInputRetrievalSchedules:
                 raise HTTPException(400,"invalid_schedule") from None
             settings["owner_id"]=actor["id"]
             self.writer(settings)
+            replacement=getattr(self,"replacement",None)
+            if replacement and replacement.is_migrated():
+                replacement.import_legacy("risk_inputs")
             self.configure()
             return self.status()
 
     def configure(self):
         with self._lock:
+            replacement=getattr(self,"replacement",None)
+            if replacement and replacement.is_migrated():
+                replacement.configure()
+                return
             scheduler=self.scheduler_getter()
             if not scheduler:
                 return

@@ -107,8 +107,10 @@ def test_dashboard_badges_gaps_history_and_recovery_use_real_renderers(tmp_path,
     assert evaluate("qa.errors") == []
     badges = evaluate("Array.from(document.querySelectorAll('[data-account-summary]')).map(card=>({id:card.dataset.accountSummary,text:card.querySelector('.risk-badge')?.innerText,label:card.querySelector('.risk-badge')?.getAttribute('aria-label')}))")
     by_id = {row["id"]: row for row in badges}
-    assert "108.0%" in by_id["qa-leveraged"]["text"]
-    assert "~1.0%" in by_id["qa-mmf"]["text"]
+    assert by_id["qa-leveraged"]["text"].splitlines()[0] == "100"
+    assert "108.00%" in by_id["qa-leveraged"]["text"]
+    assert by_id["qa-mmf"]["text"].splitlines()[0] == "~1"
+    assert "~1.00%" in by_id["qa-mmf"]["text"]
     assert "100%" not in by_id["qa-debt"]["text"]
     assert ("Nonpositive equity" if language == "en" else "הון נטו שאינו חיובי") in by_id["qa-debt"]["text"]
     assert ("Incomplete" if language == "en" else "לא שלם") in by_id["qa-unknown"]["text"]
@@ -179,7 +181,7 @@ def test_dashboard_badges_gaps_history_and_recovery_use_real_renderers(tmp_path,
     click(command, evaluate, '[data-modal="riskHistoryModal"]')
     browser_wait(evaluate, "!$('riskHistoryModal').hidden&&$('riskHistoryContent').querySelectorAll('svg').length===2")
     history = evaluate("$('riskHistoryContent').innerText")
-    assert "108.0%" in history and "80/100" in history
+    assert "108.00%" in history and "80/100" in history
     assert "13/11/2026" in history and "14/11/2026" in history
     assert evaluate("$('riskHistoryContent').querySelectorAll('svg circle').length") == 2
     assert evaluate("$('riskHistoryContent').querySelectorAll('.risk-history-model').length") == 2

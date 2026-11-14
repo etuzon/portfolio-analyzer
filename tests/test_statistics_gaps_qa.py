@@ -77,7 +77,7 @@ def test_summary_statistics_all_six_labels_and_native_multiline_hover(tmp_path, 
         assert evaluate("qa.symbol") in stats[0]["title"]
         assert not re.search(r"[A-Za-z]", gap_detail := stats[-1]["text"]), gap_detail
     else:
-        assert labels == ["Stress loss", "Positions", "Securities", "Equities", "Bonds", "Data gaps"]
+        assert labels == ["Stress-loss score", "Positions", "Securities", "Equities", "Bonds", "Data gaps"]
         assert "Estimate" in stats[0]["title"]
     assert re.search(r"~\d{1,3}", stats[0]["text"])
     assert "⚠" in stats[0]["text"]

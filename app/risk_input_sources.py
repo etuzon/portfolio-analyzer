@@ -21,6 +21,12 @@ SEC_SUBMISSIONS = "https://data.sec.gov/submissions/CIK{cik}.json"
 TREASURY = "https://www.treasurydirect.gov/TA_WS/securities/search"
 US_MARKETS = {"NASDAQ", "NYSE", "NYSEARCA", "AMEX", "NYSEAMERICAN"}
 US_STATES = set("AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC".split())
+US_STATE_NAMES = ("Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware",
+    "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana",
+    "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", "Nebraska",
+    "Nevada", "New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio",
+    "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", "South Dakota", "Tennessee", "Texas",
+    "Utah", "Vermont", "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming", "District of Columbia")
 SOURCE_FIELDS = frozenset({"issuer_id", "issuer_name", "country_code", "country_basis", "country_currency",
     "currency_exposures", "instrument_kind", "maturity_date", "plain_nominal_noncallable", "zero_coupon_confirmed",
     "sovereign_currency_basis", "pricing_model"})
@@ -43,6 +49,8 @@ def _record(field, value, source, *, as_of=None, basis="reported"):
         "source_kind":source.get("source_kind", "regulatory"), "retrieved_at":source["retrieved_at"],
         "as_of":as_of, "basis":basis, "evidence_quote":source.get("evidence_quote") or source["text"][:2000],
         "verification_status":"verified", "units":"fraction" if field == "currency_exposures" else "contractual_date" if field == "maturity_date" else "identity_or_classification"}
+    if _day(source.get("published_at")):
+        record["published_at"] = source["published_at"]
     record["record_id"] = "risk-" + hashlib.sha256(json.dumps(record,sort_keys=True).encode()).hexdigest()[:24]
     return record
 
@@ -209,6 +217,7 @@ def extract_risk_records(source, candidate):
     text = str(source.get("text") or "")
     source_issuer=None
     source_legal=None
+    bound_filing=False
     if host == "sec.gov" or host.endswith(".sec.gov"):
         path=urlsplit(str(source.get("url") or "")).path
         issuer=str(candidate.get("researched_issuer_id") or "")
@@ -232,6 +241,7 @@ def extract_risk_records(source, candidate):
             if (not match or issuer != "sec:"+str(int(match[1]))
                     or not any(filing.get("url")==source.get("url") for filing in manifests)):
                 return []
+            bound_filing=True
     legal = next((value for value in (candidate.get("researched_issuer_name"),candidate.get("issuer_name"),candidate.get("name"))
         if len(_entity(value))>=6 and _entity(value)!=_entity(candidate.get("symbol")) and _entity(value) in _entity(text)),None)
     legal=source_legal or legal
@@ -240,6 +250,19 @@ def extract_risk_records(source, candidate):
     public = {**source,"source_kind":"regulatory" if "sec.gov" in host else "issuer_ir"}
     observed = source.get("observation_date")
     records = [_record("issuer_id",source_issuer or candidate.get("researched_issuer_id") or "issuer:"+_entity(legal),public),_record("issuer_name",legal,public)]
+    if bound_filing and _day(observed):
+        # A dated registrant cover-page address supplies an explicit domicile
+        # proxy only. It says nothing about investment-country/currency weights.
+        states = "|".join(re.escape(value) for value in sorted([*US_STATES, *US_STATE_NAMES], key=len, reverse=True))
+        address = re.search(r"\b[A-Za-z][A-Za-z .'-]{1,80},[ \t]*(?:" + states
+            + r")[ \t]+[0-9]{5}(?:-[0-9]{4})?\s*\(\s*Address of Principal Executive Offices\s*\)(?:\s*\(\s*Zip Code\s*\))?",
+            text[:12000], re.I)
+        if address:
+            prefix = text[max(0,address.start()-2000):address.start()]
+            if _entity(legal) in _entity(prefix) and re.search(r"Exact Name of Registrant", prefix, re.I):
+                quote = {**public, "evidence_quote": address[0]}
+                records += [_record(field,value,quote,as_of=observed,basis="issuer_domicile_proxy") for field,value in (
+                    ("country_code","US"),("country_basis","issuer_domicile_proxy"))]
     # Only full affirmative first-person statements qualify. Regex searching
     # for an embedded 'all' would turn 'not all', exceptions and history into
     # fabricated 100% allocations. Different current all-portfolio statements

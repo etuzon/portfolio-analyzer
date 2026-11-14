@@ -18,6 +18,14 @@ function stressRiskNumber(value, digits = 1) {
   }).format(value);
 }
 
+function stressRiskExactPercent(value) {
+  if (!(typeof value === "number" && Number.isFinite(value) && value >= 0)) return "";
+  if (value > 0 && value < .0001) return `<${stressRiskNumber(.0001,4)}%`;
+  if (value > 100 && value < 100.005) return value < 100.00005
+    ? `>${stressRiskNumber(100,0)}%` : `${stressRiskNumber(value,4)}%`;
+  return `${stressRiskNumber(value, value > 0 && value < .01 ? 4 : 2)}%`;
+}
+
 function stressRiskLossPercent(risk) {
   const valid = value => typeof value === "number" && Number.isFinite(value) && value >= 0;
   const automatic = ["portfolio-risk-provisional-v2", "portfolio-risk-provisional-v3"].includes(risk?.provisional_model);
@@ -51,8 +59,13 @@ function stressRiskDisplay(risk) {
   const value = nonpositiveEquity ? `${estimated || provisional ? "~" : ""}${stressRiskText("Nonpositive equity")}`
     : range && !current ? `${stressRiskNumber(range.min,0)}–${stressRiskNumber(range.max,0)}`
       : number === null ? stressRiskText("Incomplete") : `${estimated || provisional ? "~" : ""}${stressRiskNumber(number, current ? 1 : 0)}`;
+  const scoreValue = current && Number.isFinite(rawLossPct)
+    ? `${estimated || provisional ? "~" : ""}${stressRiskNumber(compatibilityScore,0)}` : value;
+  const rawLossFullValue = current && Number.isFinite(rawLossPct)
+    ? `${estimated || provisional ? "~" : ""}${stressRiskExactPercent(rawLossPct)}` : "";
   return { number, available, estimated, provisional, automatic, unknownScope, range, missing,
     current, legacy: !current, rawLossPct, compatibilityScore, nonpositiveEquity, unit, value, fullValue: `${value}${unit}`,
+    scoreValue, rawLossFullValue, scoreLabel: stressRiskText(current ? "Stress-loss score" : "Legacy stress score"),
     metricLabel: stressRiskText(current ? "Stress loss" : "Legacy stress score"),
     ceiling: provisional && !automatic && risk.provisional_basis === "missing_valuation_ceiling",
     statusLabel: unknownScope ? stressRiskText("Uncertain scope") : (automatic && provisional || estimated) ? stressRiskText("Estimate") : provisional ? stressRiskText("Partial data") : "" };
@@ -237,6 +250,9 @@ function stressRiskTooltip(risk) {
         : stressRiskText("Risk assessment incomplete"),
     stressRiskText("Legacy scale: twice the modeled loss percentage, capped at 100. Compare only matching model versions and currencies.")];
   if (current && unknownScope) lines.push(stressRiskText("The whole-portfolio loss percentage is unavailable. A capped index range is not an economic loss bound; leveraged or short positions can lose more than net equity."));
+  if (current && Number.isFinite(display.rawLossPct)) lines.push(stressRiskText("Rounded stress-loss score: {score} (0–100), calculated from the unrounded loss percentage. Exact scenario loss: {loss}.", {
+    score:display.scoreValue, loss:display.rawLossFullValue,
+  }));
   if (display.nonpositiveEquity) lines.push(stressRiskText("A loss percentage is undefined when net equity is nonpositive and exposure or borrowing remains. The saved boundary flag is not a measured 100% loss or a verified insolvency finding."));
   if (estimated) lines.push(stressRiskText("This estimate uses explicit assumptions. It is separate from a score supported by complete verified inputs."));
   if (provisional || unknownScope) {

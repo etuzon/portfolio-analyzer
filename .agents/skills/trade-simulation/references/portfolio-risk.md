@@ -11,13 +11,17 @@ For positive net equity `E = signed securities + signed account cash`, calculate
 each common scenario's signed base-currency P&L. Let
 `L = max(0, max_s(-pooled_P&L_s))`, then `loss_pct = 100 * L / E` and
 `score = round(min(100, loss_pct))`. The factor 100 converts a fraction to percent;
-it is not empirical calibration. The primary result is the unrounded, uncapped
-`loss_pct`; the integer `score` is only a capped compatibility field. Recompute
-from money P&L and equity, never halve a previously rounded v3 score. Display
-**Stress loss / הפסד בתרחיש קיצון**, normally to one decimal, with `%`, without
-`/100` or uncalibrated Low/Moderate/Elevated/High/Extreme bands. A 36.4% result
-means 36.4% modeled included-equity loss. Preserve money loss and percentages
-above 100%; the compatibility cap must not hide losses exceeding net equity.
+it is not empirical calibration. The underlying economic result is the unrounded,
+uncapped `loss_pct`; `score` is its rounded capped representation. Recompute
+from money P&L and equity, never halve a previously rounded v3 score. Dashboard
+badges and the current history chart display **Stress-loss score / ציון הפסד
+בתרחיש קיצון** as the rounded 0–100 number. Display the uncapped loss percentage
+beside/below it and retain it in history tables and accessible explanations.
+Use two decimal places, increasing precision for tiny positive losses so a zero
+rounded score never implies no loss. For example 36.47% gives score 36. Simulator
+and planning percentage surfaces retain explicit `%` units. Do not introduce
+uncalibrated Low/Moderate/Elevated/High/Extreme bands. Preserve monetary loss and
+percentages above 100%; the display cap must not hide losses exceeding net equity.
 For v4 compatibility rounding only, allow a `1e-10` percentage-point tie tolerance
 before rounding the clamped percentage. This removes binary floating-point
 misrounding such as mathematical 44.5 represented as 44.49999999999999. Use the
@@ -339,6 +343,35 @@ Investment-account scope; risk-reduction alternatives retain canonical dashboard
 scope. Source corrections, rating/parameter/country changes and provider evidence
 enter the capture/publication guard.
 
+Prospective risk/profit comparison stores a server-derived immutable equity,
+ledger, dated mark and FX snapshot alongside each risk observation. Monetary
+P&L is `ending equity - baseline equity - recorded net external flows`, never
+an inferred return percentage, TWR/MWR or investment-correctness grade. Internal
+trades, dividends, interest and fees are already in equity and must not be
+double-counted. New unclassified cash reconciliations and unvalued in-kind
+transfers break comparisons. Foreign flows require evidenced flow-date FX;
+later observations cannot backfill an earlier missing fact. Missing/stale marks,
+ledger corrections, unreconciled quantities, account scope/model/currency/epoch
+changes and malformed comparison evidence create visible gaps and fresh
+baselines. All registered non-ESOP accounts, including zero accounts, define
+total scope; unaffected accounts can retain their own baselines. Never use
+reconstructed account-trend profit as an observed performance history.
+
+Read-time comparison metadata may be derived, but stored risk/evidence JSON is
+immutable. Validate optional imported comparison evidence before dereferencing
+it, including economic scope/epoch, total-to-account equity, ledger-derived
+cash, action/amount/flow signs and account equity from signed quantities and
+positive native marks. Reject zero-quantity nonzero values and sign-contradictory
+position values. Every FX fact must match its source and reporting currencies;
+future-dated evidence may never enter the historical flow FX pool. A corrupt or
+inconsistent snapshot stays a visible risk point with unavailable P&L and breaks
+the comparison segment. A user-authorized history restart deletes only
+the exact `risk_history_v1:` preference prefix atomically and advances a durable
+epoch; stale pre-reset capture tokens must fail across processes and restarts.
+Do not delete transactions, prices, account snapshots or unrelated histories,
+and never run a repeating startup purge. After a restart the first eligible
+observation inside a selected period establishes its actual timestamped baseline.
+
 Planner risk projections use the same signed ledger cash as simulations: BUY
 subtracts notional and the fee allowance; SHORT adds proceeds and subtracts the
 fee allowance. With equal execution and valuation prices, both preserve net
@@ -353,6 +386,18 @@ Regression evidence includes `tests/test_stress_risk_model.py`,
 `tests/test_stress_risk_inputs.py`, independent financial/QA tests, simulator,
 history, source-revision and browser/localization checks. Software tests do not
 validate financial forecast accuracy.
+
+History integration acceptance must include actual serialized enriched portfolio
+shapes. Dated normalized marks ordinarily live at `price_ranges[period].current`
+and `current_date`; enrichment does not promise `stress_risk.valuation_date`.
+Use the latest eligible saved quote and reconcile quote times signed quantity
+to holding value. Actual FX providers use `quote.time` for the observation date;
+cache/retrieval timestamps do not replace it. Conversion must match the shared
+dashboard's explicit-direct-pair priority, falling back to the inverse only when
+no usable direct quote exists. Synthetic convenience fields alone cannot prove
+the runtime data contract works. Include zero/tiny loss and just-above-100%
+display cases alongside ordinary, concentrated, cash-heavy and leveraged money
+examples before release.
 
 ## Financial plausibility before publishing scores
 

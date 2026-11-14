@@ -373,8 +373,8 @@ const rows=[
 ];
 const html=riskHistoryGraph(rows,'Portfolio');
 assert.equal((html.match(/<svg /g)||[]).length,2);
-assert.ok(html.includes('Legacy risk index (0–100)')&&html.includes('Stress loss (%)'));
-assert.ok(html.includes('80/100')&&html.includes('108.0%'));
+assert.ok(html.includes('Legacy risk index (0–100)')&&html.includes('Stress-loss score (0–100)'));
+assert.ok(html.includes('80/100')&&html.includes('108.00%'));
 assert.ok(!html.includes('100.0%')&&!html.includes('0.0%'));
 assert.equal((html.match(/<circle /g)||[]).length,2);
 assert.ok(!/d="[^"]*L/.test(html),'No line may link different units, undefined funding, or unknown scope');
