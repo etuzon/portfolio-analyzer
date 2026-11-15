@@ -59,8 +59,8 @@ function stressRiskDisplay(risk) {
   const value = nonpositiveEquity ? `${estimated || provisional ? "~" : ""}${stressRiskText("Nonpositive equity")}`
     : range && !current ? `${stressRiskNumber(range.min,0)}–${stressRiskNumber(range.max,0)}`
       : number === null ? stressRiskText("Incomplete") : `${estimated || provisional ? "~" : ""}${stressRiskNumber(number, current ? 1 : 0)}`;
-  const scoreValue = current && Number.isFinite(rawLossPct)
-    ? `${estimated || provisional ? "~" : ""}${stressRiskNumber(compatibilityScore,0)}` : value;
+  const scoreValue = current && nonpositiveEquity ? stressRiskText("Nonpositive equity") : current && Number.isFinite(rawLossPct)
+    ? stressRiskNumber(compatibilityScore,0) : value;
   const rawLossFullValue = current && Number.isFinite(rawLossPct)
     ? `${estimated || provisional ? "~" : ""}${stressRiskExactPercent(rawLossPct)}` : "";
   return { number, available, estimated, provisional, automatic, unknownScope, range, missing,

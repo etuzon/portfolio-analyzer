@@ -3173,13 +3173,11 @@ function riskBadge(risk) {
   const band = current ? {key:Number.isFinite(number) ? "stress" : "incomplete",label:metricLabel,symbol:presentation?.nonpositiveEquity ? "!" : ""}
     : presentation?.unknownScope ? {key:"incomplete",label:optionLabel("Uncertain scope"),symbol:"⚠"}
     : presentation?.ceiling ? {key:"incomplete",label:optionLabel("Precautionary ceiling"),symbol:"⚠"} : riskBand(number);
-  const value = presentation ? current ? presentation.scoreValue : presentation.fullValue : number === null ? optionLabel("Incomplete") : `${estimate ? "~" : ""}${current ? Math.min(100,Math.round(number+1e-10)) : number}`;
-  const exactLoss = current && presentation?.rawLossFullValue ? presentation.rawLossFullValue : "";
+  const value = presentation ? current ? presentation.scoreValue : presentation.fullValue : number === null ? optionLabel("Incomplete") : `${estimate && !current ? "~" : ""}${current ? Math.min(100,Math.round(number+1e-10)) : number}`;
   const status = presentation ? presentation.statusLabel : estimate ? optionLabel("Estimate") : "";
   const missing = presentation?.missing === true || current && ((risk.gaps || []).length > 0 || risk.coverage?.complete === false);
-  const label = `${metricLabel}: ${value}${exactLoss ? ` · ${optionLabel("Scenario loss (%)")}: ${exactLoss}` : ""}${status ? ` · ${status}` : ""}${missing && status !== optionLabel("Partial data") ? ` · ${optionLabel("Partial data")}` : ""}${current ? "" : ` · ${band.label}`}`;
-  const values = exactLoss ? `<span class="risk-score-values"><b><bdi dir="ltr">${esc(value)}</bdi></b><small class="risk-exact-loss"><bdi dir="ltr">${esc(exactLoss)}</bdi></small></span>` : `<b><bdi dir="ltr">${esc(value)}</bdi></b>`;
-  return `<button class="risk-badge risk-${band.key}${missing ? " has-missing-risk-data" : ""}${presentation?.nonpositiveEquity ? " risk-funding-boundary" : ""}" type="button" data-risk-badge="${esc(risk.label || presentation?.metricLabel || "Risk")}" data-risk-explanation="${esc(riskTooltip(risk))}" aria-label="${esc(label)}" aria-describedby="riskBadgeExplanation">${values}${missing ? '<span class="risk-data-warning" aria-hidden="true">⚠</span>' : ""}${status ? `<small class="risk-data-status">${esc(status)}</small>` : ""}</button>`;
+  const label = `${metricLabel}: ${value}${status ? ` · ${status}` : ""}${missing && status !== optionLabel("Partial data") ? ` · ${optionLabel("Partial data")}` : ""}${current ? "" : ` · ${band.label}`}`;
+  return `<button class="risk-badge risk-${band.key}${missing ? " has-missing-risk-data" : ""}${presentation?.nonpositiveEquity ? " risk-funding-boundary" : ""}" type="button" data-risk-badge="${esc(risk.label || presentation?.metricLabel || "Risk")}" data-risk-explanation="${esc(riskTooltip(risk))}" aria-label="${esc(label)}" aria-describedby="riskBadgeExplanation"><b><bdi dir="ltr">${esc(value)}</bdi></b>${missing ? '<span class="risk-data-warning" aria-hidden="true">⚠</span>' : ""}${status ? `<small class="risk-data-status">${esc(status)}</small>` : ""}</button>`;
 }
 
 function riskTooltip(risk) {

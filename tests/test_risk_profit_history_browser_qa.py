@@ -67,7 +67,7 @@ const nodes=Array.from(document.querySelectorAll('[data-holdings-sort-column=ris
 return{width:innerWidth,scroll:document.documentElement.scrollWidth,
  fontStatus:document.fonts.status,
  nodes:nodes.map(e=>{const r=e.getBoundingClientRect(),c=getComputedStyle(e);return{tag:e.tagName,text:e.innerText,client:e.clientWidth,scroll:e.scrollWidth,width:r.width,display:c.display,overflow:c.overflow,textOverflow:c.textOverflow};}),
- pairs:Array.from(document.querySelectorAll('.risk-score-values')).map(e=>{const a=e.querySelector('b').getBoundingClientRect(),b=e.querySelector('.risk-exact-loss').getBoundingClientRect();return{text:e.innerText,stacked:b.top>=a.bottom-1,gap:Math.max(b.left-a.right,a.left-b.right)};}),
+ scores:Array.from(document.querySelectorAll('.risk-badge.risk-stress b bdi')).map(e=>e.textContent),
  mobile:{label:$('holdingsMobileSort').options.namedItem?.('risk')?.text || Array.from($('holdingsMobileSort').options).find(o=>o.value==='risk')?.text,
  display:getComputedStyle($('holdingsMobileSort')).display,client:$('holdingsMobileSort').clientWidth,scroll:$('holdingsMobileSort').scrollWidth}};
 })()""")
@@ -78,8 +78,7 @@ return{width:innerWidth,scroll:document.documentElement.scrollWidth,
         if node["width"] > 0:
             assert node["scroll"] <= node["client"] + 1, node
             assert node["textOverflow"] != "ellipsis", node
-    for pair in metrics["pairs"]:
-        assert pair["stacked"] or pair["gap"] >= 6, pair
+    assert metrics["scores"] and all(score.isdecimal() for score in metrics["scores"])
     if width == 390:
         assert metrics["mobile"]["client"] > 0
         assert metrics["mobile"]["scroll"] <= metrics["mobile"]["client"] + 1
@@ -134,10 +133,12 @@ api=async(path,options={})=>{
     text = evaluate("$('riskHistoryContent').innerText")
     assert "220.00%" in text and "0.49%" in text
     assert evaluate("$('riskHistoryContent').querySelector('[data-risk-history-row=gap] .risk-badge b bdi').textContent") == "0"
-    assert evaluate("$('riskHistoryContent').querySelector('[data-risk-history-row=gap] .risk-exact-loss').textContent") == "0.49%"
+    assert evaluate("$('riskHistoryContent').querySelector('[data-risk-history-row=gap] .risk-badge').innerText") == "0"
+    assert evaluate("$('riskHistoryContent').querySelector('[data-risk-history-row=gap] .risk-history-number').textContent") == "0.49%"
     assert evaluate("$('riskHistoryContent').querySelector('[data-risk-history-row=loss] .risk-badge b bdi').textContent") == "100"
-    assert evaluate("$('riskHistoryContent').querySelector('[data-risk-history-row=loss] .risk-exact-loss').textContent") == "220.00%"
-    near_cap = evaluate("$('riskHistoryContent').querySelector('[data-risk-history-row=new-baseline] .risk-exact-loss').textContent")
+    assert evaluate("$('riskHistoryContent').querySelector('[data-risk-history-row=loss] .risk-badge').innerText") == "100"
+    assert evaluate("$('riskHistoryContent').querySelector('[data-risk-history-row=loss] .risk-history-number').textContent") == "220.00%"
+    near_cap = evaluate("$('riskHistoryContent').querySelector('[data-risk-history-row=new-baseline] .risk-history-number').textContent")
     assert near_cap.startswith(">") or float(near_cap.removesuffix("%")) > 100, near_cap
     assert "+70.00 USD" in text and "-25.00 USD" in text
     assert "14/11/2026" in text and "18/11/2026" in text

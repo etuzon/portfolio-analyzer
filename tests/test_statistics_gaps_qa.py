@@ -79,7 +79,8 @@ def test_summary_statistics_all_six_labels_and_native_multiline_hover(tmp_path, 
     else:
         assert labels == ["Stress-loss score", "Positions", "Securities", "Equities", "Bonds", "Data gaps"]
         assert "Estimate" in stats[0]["title"]
-    assert re.search(r"~\d{1,3}", stats[0]["text"])
+    assert re.search(r"\b\d{1,3}\b", stats[0]["text"])
+    assert "~" not in stats[0]["text"] and "%" not in stats[0]["text"]
     assert "⚠" in stats[0]["text"]
     assert evaluate("document.querySelector('.summary-stat .risk-badge .risk-data-warning')!==null")
     gap = stats[-1]

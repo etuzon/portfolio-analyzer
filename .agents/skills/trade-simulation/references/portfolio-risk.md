@@ -15,8 +15,10 @@ it is not empirical calibration. The underlying economic result is the unrounded
 uncapped `loss_pct`; `score` is its rounded capped representation. Recompute
 from money P&L and equity, never halve a previously rounded v3 score. Dashboard
 badges and the current history chart display **Stress-loss score / ציון הפסד
-בתרחיש קיצון** as the rounded 0–100 number. Display the uncapped loss percentage
-beside/below it and retain it in history tables and accessible explanations.
+בתרחיש קיצון** as the rounded 0–100 number. Dashboard badges show the integer
+without a percent or approximation sign; estimate labels and missing-data warnings
+remain visible. Retain the uncapped loss percentage in history tables and accessible
+explanations.
 Use two decimal places, increasing precision for tiny positive losses so a zero
 rounded score never implies no loss. For example 36.47% gives score 36. Simulator
 and planning percentage surfaces retain explicit `%` units. Do not introduce

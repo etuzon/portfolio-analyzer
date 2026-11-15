@@ -428,10 +428,11 @@ qa.render();PortfolioI18n.observe();qa.fixtureReady=true;
     assert risk["provisional_score"] == expected_score
     evaluate("qa.badge=document.querySelector('[data-account-summary=synthetic-account] .risk-badge');qa.badge.scrollIntoView({block:'center'});qa.badge.focus()")
     browser_wait(evaluate, "!$('riskBadgeExplanation').hidden")
-    assert evaluate("qa.badge.querySelector('b bdi').textContent") == f"~{expected_score}"
+    assert evaluate("qa.badge.querySelector('b bdi').textContent") == str(expected_score)
     exact_loss = f"~{100 * expected_loss / 200:.2f}%"
-    assert evaluate("qa.badge.querySelector('.risk-exact-loss').textContent") == exact_loss
-    assert exact_loss in evaluate("qa.badge.getAttribute('aria-label')")
+    badge_text = evaluate("qa.badge.innerText")
+    assert "~" not in badge_text and "%" not in badge_text
+    assert exact_loss in evaluate("$('riskBadgeExplanation').innerText")
     assert evaluate("qa.badge.scrollWidth<=qa.badge.clientWidth+1")
     assert "⚠" in evaluate("qa.badge.textContent")
     lines = evaluate("stressRiskProxyAssumptionLines(state.riskSnapshot.accounts[0].risk).join('\\n')")

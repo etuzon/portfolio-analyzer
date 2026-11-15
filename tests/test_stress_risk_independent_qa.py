@@ -586,7 +586,9 @@ def test_actual_backend_to_browser_editor_model_and_serialization_roundtrip(tmp_
     expected_before = severity(1 - math.exp(-t * (.02 + .5 * .0075)))
     assert evaluate("qa.result.score") is None
     assert evaluate("qa.result.estimated_score") == expected_before
-    assert "~" + str(expected_before) in evaluate("$('analyticsBoard').innerText")
+    assert evaluate("$('analyticsBoard').querySelector('.risk-badge b bdi').textContent") == str(expected_before)
+    badge_text = evaluate("$('analyticsBoard').querySelector('.risk-badge').innerText")
+    assert "~" not in badge_text and "%" not in badge_text
     evaluate("openStressRiskInputs({security_key:'GOV|NYSE|ILS'})")
     browser_wait(evaluate, "!$('stressRiskInputsModal').hidden&&$('stressRiskPricingModel').value==='zero_coupon_continuous'")
     assert evaluate("$('stressRiskMaturity').value") == "14/11/2032"
