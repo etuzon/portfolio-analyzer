@@ -272,7 +272,7 @@ def parse_research_proposal(proposal: Any) -> dict[str, Any] | None:
             proposal = json.loads(proposal)
         except ValueError:
             return None
-    return proposal if isinstance(proposal, dict) and not set(proposal) - {"observations", "profiles", "records"} else None
+    return proposal if isinstance(proposal, dict) and not set(proposal) - {"observations", "profiles", "records", "risk_claims"} else None
 
 
 def recover_context_proposal(candidates: dict[str, dict[str, Any]], evidence_by_key: dict[str, Any]) -> dict[str, Any]:

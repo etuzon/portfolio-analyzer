@@ -21,11 +21,11 @@ $('enrichMissingData').click();
 ''')
     assert evaluate("qa.aiPosts") == 0
     assert evaluate("$('aiResearchTarget').value") == "portfolio"
-    assert ("company ratings" if language == "en" else "דירוגי חברות") in evaluate("$('aiResearchTarget').selectedOptions[0].textContent")
+    assert ("Complete portfolio update" if language == "en" else "עדכון מלא של התיק") == evaluate("$('aiResearchTarget').selectedOptions[0].textContent")
     evaluate("$('aiEnrichmentStartAll').click()")
     browser_wait(evaluate, "state.aiEnrichment.pending&&!!qa.poll&&!$('aiCreditRatings').hidden")
     assert evaluate("qa.aiBodies") == [{"position_scope": "all", "ratings_only": False,
-        "data_types":["prices","profile","company_ratings"],"refresh_policy":"stale"}]
+        "data_types":["prices","profile","company_ratings","risk_inputs","country_ratings"],"refresh_policy":"stale","risk_mode":"api_then_ai"}]
     assert evaluate("$('aiCreditRatingsResults').children.length") == 25
     assert "C24" in evaluate("$('aiCreditRatingsResults').textContent")
     assert evaluate("$('loadingOverlay').hidden&&!$('refresh').disabled")
@@ -63,7 +63,7 @@ qa.returnButton=$('aiCreditRatingsResults').querySelector('[data-ai-credit-key="
     evaluate("$('aiEnrichmentRetryRatings').click()")
     browser_wait(evaluate, "qa.aiPosts===2")
     assert evaluate("qa.aiBodies[1]") == {"position_scope": "all", "ratings_only": False, "resume_request_id": "synthetic-job",
-        "data_types":["prices","profile","company_ratings"],"refresh_policy":"stale"}
+        "data_types":["prices","profile","company_ratings","risk_inputs","country_ratings"],"refresh_policy":"stale","risk_mode":"api_then_ai"}
     evaluate("state.auth.user.role='Viewer';renderAIEnrichment()")
     assert evaluate("$('aiEnrichmentRetryRatings').disabled")
     assert evaluate("qa.errors") == []

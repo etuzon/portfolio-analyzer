@@ -269,7 +269,65 @@ class StressRiskInputs:
         self._store().update_preferences([manual_key, evidence_key], transform)
         return self.evidence(current)
 
-    def read(self, candidate, *, as_of=None):
+    def _lookthrough(self, candidate, researched, fields, seen):
+        """Resolve source-declared fund members through their own identities.
+
+        A manager's ratings, country or bond terms never flow into a member.
+        Unregistered/ambiguous members remain explicit gaps at their full weight.
+        """
+        if str(candidate.get("asset_class") or "").upper() not in {"ETF","MUTUALFUND","FUND"}:
+            return None
+        raw = researched.get("fund_holdings")
+        provenance = deepcopy(fields.get("fund_holdings") or {})
+        if raw is None:
+            # Reuse an already fetched exact issuer snapshot. User-uploaded
+            # holdings remain user evidence and cannot become verified inputs.
+            from .xray import read_snapshot, market_scope
+            from .providers import IssuerFundHoldingsProvider
+            snapshot = read_snapshot(self._store(),candidate.get("symbol"),candidate.get("stock_market"))
+            expected = IssuerFundHoldingsProvider.SOURCES.get(str(candidate.get("symbol") or "").upper())
+            try:
+                current = 0 <= (date.today()-date.fromisoformat(snapshot.get("as_of") or "")).days <= 45
+            except (AttributeError,TypeError,ValueError):
+                current = False
+            if (current and expected and snapshot.get("source_kind") == "issuer" and snapshot.get("source_url") == expected):
+                raw = [{"identifier":row.get("symbol"),"market":row.get("market"),"weight":row.get("weight_percent",0)/100}
+                       for row in snapshot.get("holdings",[]) if isinstance(row,dict)]
+                provenance = {key:deepcopy(snapshot.get(key)) for key in ("as_of","source_url","source_kind","retrieved_at")}
+        if (not isinstance(raw,list) or not 1 <= len(raw) <= 5000 or
+                any(not isinstance(row,dict) or not isinstance(row.get("identifier"),str)
+                    or not _number(row.get("weight")) or not 0 <= row["weight"] <= 1 for row in raw)):
+            return None
+        if not math.isclose(math.fsum(row["weight"] for row in raw),1,abs_tol=1e-8):
+            return None
+        inventory = self.inventory()
+        children, unresolved = [], []
+        for row in raw:
+            if row["weight"] == 0:
+                continue
+            token = row["identifier"].strip().upper()
+            matches = [child for child in inventory if token in {str(child.get(key) or "").strip().upper()
+                for key in ("security_key","symbol","secondary_symbol","isin","cusip")}]
+            if row.get("market"):
+                from .xray import market_scope
+                requested_market = market_scope(row["market"])
+                matches = [child for child in matches if market_scope(child.get("stock_market")) == requested_market
+                    or requested_market == "US" and str(child.get("stock_market") or "").upper() == "YAHOO"]
+            if len(matches) == 1 and matches[0]["security_key"] not in seen and len(seen) < 4:
+                child = matches[0]
+                risk = self.read(child,_seen=seen)
+                holding = {key:deepcopy(child.get(key)) for key in ("symbol","stock_market","currency","asset_class","asset_sub_class")}
+            else:
+                unresolved.append(token)
+                holding = {"symbol":token,"asset_class":"UNKNOWN"}
+                risk = {"model":MODEL,"parameters":{},"error":"fund_underlying_inputs_missing",
+                    "gaps":[{"code":"fund_lookthrough","symbol":token}]}
+            children.append({"weight":row["weight"],"identifier":token,"item":{"holding":holding,"stress_risk":risk}})
+        return {"lookthrough":children,"lookthrough_verified":True,"lookthrough_missing":unresolved,
+            "lookthrough_source":provenance,"fund_holdings":deepcopy(raw)}
+
+    def read(self, candidate, *, as_of=None, _seen=None):
+        seen = set(_seen or ()) | {candidate["security_key"]}
         saved = self._saved(candidate)
         evidence = self.evidence(candidate)
         fields = evidence.get("fields") or {}
@@ -277,10 +335,11 @@ class StressRiskInputs:
         for key,row in fields.items():
             # A literal allocation from an undated/old filing can be retained
             # as evidence without becoming a current economic allocation.
-            if row.get("basis") in {"reported_investment_currency", "reported_allocation"}:
+            if row.get("basis") in {"reported_investment_currency", "reported_allocation", "reported_fund_holdings"}:
                 try:
                     observed = date.fromisoformat(row.get("as_of") or "")
-                    if not 0 <= (date.today()-observed).days <= 550:
+                    horizon = 45 if row.get("basis") == "reported_fund_holdings" else 550
+                    if not 0 <= (date.today()-observed).days <= horizon:
                         continue
                 except ValueError:
                     continue
@@ -346,6 +405,7 @@ class StressRiskInputs:
             gaps.append({"code": "country_exposure"})
         if not params:
             gaps.append({"code": "risk_parameters"})
+        lookthrough = self._lookthrough(candidate,researched,fields,seen)
         return {"model": MODEL, "security_key": candidate["security_key"], "identity_token": self.identity(candidate),
             "revision": int(saved.get("revision") or 0), "parameters": params,
             "local_parameters": supplied_params,
@@ -358,6 +418,8 @@ class StressRiskInputs:
             "issuer_identity_verified": bool(candidate.get("issuer_identity_verified") or researched.get("issuer_id")),
             "issuer_name_key": _entity(researched.get("issuer_name") or (candidate.get("issuer_name") if candidate.get("issuer_identity_verified") else None)) or None,
             "currency_exposures": deepcopy(researched.get("currency_exposures")),
+            "country_exposures": deepcopy(researched.get("country_exposures")),
+            **(lookthrough or {}),
             "unsupported_bond": researched.get("unsupported_bond") is True,
             "requires_recovery_model": recovery is not None, "recovery_evidence": recovery,
             "country_requires_recovery_model": country_recovery is not None, "country_recovery_evidence": country_recovery,
@@ -368,7 +430,7 @@ class StressRiskInputs:
             "credit_rating_estimate": credit_estimate, "sovereign_ratings_estimate": sovereign_estimates,
             "sovereign_rating_estimate": sovereign_estimate, "country_rating_estimate": sovereign_estimates.get("foreign_currency"),
             "as_of": as_of or datetime.now(timezone.utc).date().isoformat(), "gaps": gaps,
-            "fingerprint": _digest([self.identity(candidate), saved, evidence, public.get("ratings", []), sovereign.get("ratings", []), country])}
+            "fingerprint": _digest([self.identity(candidate), saved, evidence, public.get("ratings", []), sovereign.get("ratings", []), country, lookthrough])}
 
     def update(self, payload, actor, *, clear=False):
         if not isinstance(payload, dict):

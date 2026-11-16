@@ -20,7 +20,7 @@ qa.item={holding:{symbol:'91282CKD2',stock_market:'NYSE',currency:'USD'},missing
 qa.other={holding:{symbol:'91282CKD2',stock_market:'TASE',currency:'ILS'},missing:['price history'],price_ranges:{}};
 state.allPortfolioItems=[qa.item,qa.other];
 qa.outcomes=[{symbol:'91282CKD2',stock_market:'NYSE',currency:'USD',status:'partial',code:'partial_data',missing_fields:['price_history']}];
-qa.job=()=>({request_id:'synthetic-job',status:qa.jobStatus,position_scope:qa.aiBodies.at(-1)?.position_scope||'open',data_types:qa.aiBodies.at(-1)?.data_types||['prices','profile','company_ratings'],refresh_policy:qa.aiBodies.at(-1)?.refresh_policy||'stale',ratings_only:qa.aiBodies.at(-1)?.ratings_only||false,progress:qa.progress,summary:{updated:0,partial:1,unavailable:0,not_attempted:0},outcomes:qa.jobStatus==='running'?[]:qa.outcomes,portfolio_refresh_required:qa.jobStatus==='completed'});
+qa.job=()=>({request_id:'synthetic-job',status:qa.jobStatus,position_scope:qa.aiBodies.at(-1)?.position_scope||'open',data_types:qa.aiBodies.at(-1)?.data_types||['prices','profile','company_ratings'],refresh_policy:qa.aiBodies.at(-1)?.refresh_policy||'stale',ratings_only:qa.aiBodies.at(-1)?.ratings_only||false,risk_mode:qa.aiBodies.at(-1)?.risk_mode||'api_then_ai',progress:qa.progress,summary:{updated:0,partial:1,unavailable:0,not_attempted:0},outcomes:qa.jobStatus==='running'?[]:qa.outcomes,portfolio_refresh_required:qa.jobStatus==='completed'});
 qa.nativeTimeout=window.setTimeout;
 window.setTimeout=(callback,delay,...args)=>delay===3000?(qa.poll=callback,999999):qa.nativeTimeout.call(window,callback,delay,...args);
 api=async(path,options={})=>{
@@ -201,7 +201,7 @@ def test_ai_single_request_partial_results_tooltips_permissions_and_narrow_layou
     evaluate("$('aiEnrichmentStart').click();")
     browser_wait(evaluate, "state.aiEnrichment.pending===true&&qa.aiPosts===1&&!!qa.poll")
     assert evaluate("qa.aiBodies") == [{"position_scope": "open", "ratings_only": False,
-        "data_types":["prices","profile","company_ratings"],"refresh_policy":"stale"}]
+        "data_types":["prices","profile","company_ratings","risk_inputs","country_ratings"],"refresh_policy":"stale","risk_mode":"api_then_ai"}]
     assert evaluate("$('refresh').disabled") is False
     assert evaluate("$('loadingOverlay').hidden") is True
     assert evaluate("$('aiEnrichmentModal').hidden") is False
@@ -372,7 +372,7 @@ def test_opening_is_inert_and_both_explicit_scopes_are_available(tmp_path, chrom
     evaluate("$('aiEnrichmentStartAll').click();$('aiEnrichmentStart').click();")
     browser_wait(evaluate, "state.aiEnrichment.pending===true")
     assert evaluate("qa.aiBodies") == [{"position_scope": "all", "ratings_only": False,
-        "data_types":["prices","profile","company_ratings"],"refresh_policy":"stale"}]
+        "data_types":["prices","profile","company_ratings","risk_inputs","country_ratings"],"refresh_policy":"stale","risk_mode":"api_then_ai"}]
     assert evaluate("$('aiEnrichmentStartAll').disabled&&$('aiEnrichmentStart').disabled") is True
     evaluate("qa.jobStatus='completed';qa.poll();")
     browser_wait(evaluate, "!state.aiEnrichment.pending")

@@ -276,3 +276,23 @@ def test_auth_permissions_cache_only_reads_and_manual_writes(environment):
     summary = client.get(PREFIX + "/summaries", params={"country_codes": "IL"}, headers={"x-test-role": "Viewer"})
     assert summary.status_code == 200 and summary.json()["items"][0]["country_code"] == "IL"
     assert client.get(PREFIX + "/catalog", headers={"x-test-role": "Viewer"}).status_code == 200
+
+
+def test_us_fitch_dangling_currency_hyphen_and_privacy_paragraph_preserve_real_rating_axes():
+    """Regression based on the public Fitch13/08/2026 action's grammar.
+
+    The compact fixture verifies binding/parser behavior; live retrieval parity
+    is recorded separately and cannot be established by this fixture.
+    """
+    candidate = country_descriptor('US')
+    text = ("Your privacy choices may be updated under applicable laws.\n\n"
+        "Fitch Ratings - New York - 13 Aug 2026: Fitch Ratings has affirmed the United States of America's "
+        "Long-Term Foreign- and Local Currency Issuer Default Ratings (IDRs) at 'AA+' with a Stable Outlook.")
+    observed = source(text, url='https://www.fitchratings.com/research/sovereigns/public-us-action',
+        published_at='2026-08-13', title='United States rating action')
+    rows = extract_rating_records(observed, candidate)
+    assert {(row['agency'], row['rating'], row['currency_basis'], row['rating_date'], row['outlook']) for row in rows} == {
+        ('fitch', 'AA+', 'foreign_currency', '2026-08-13', 'stable'),
+        ('fitch', 'AA+', 'local_currency', '2026-08-13', 'stable')}
+    hypothetical = {**observed, 'text': text.replace('has affirmed', 'may affirm')}
+    assert extract_rating_records(hypothetical, candidate) == []

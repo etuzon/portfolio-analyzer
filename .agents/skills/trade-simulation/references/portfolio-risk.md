@@ -291,17 +291,20 @@ current discount yield or spread. Other fields proceed to bounded AI research
 when selected; unsupported or unverifiable evidence remains an explicit gap.
 
 `app/risk_input_retrieval.py` coordinates authenticated owner-bound jobs and
-schedules. One request selects at most three securities and shares the existing
+schedules. Each low-level request selects at most three securities and shares the existing
 eight model/eight REST/eight web call limits across its single AI child.
 The public API stage makes at most two requests per selected security. Selection,
 remaining coverage, per-field outcomes and source links are visible. Null/all
-scope advances bounded batches; an explicit selected scope repeats that scope.
+scope in the low-level worker advances bounded batches. Main and dedicated risk
+actions and named schedules use the parent queue to complete the full chosen
+scope; an explicit selected scope repeats that scope.
 Admin/Operator may run retrieval or save its schedule; Viewer can inspect.
 Scheduled execution rechecks its owner's current permissions, uses temporary
 scoped credentials and cleans them up. Ordinary scoring remains cache-only.
 
 Research planners receive only allowlisted authenticated REST tools and may
-select request-bound source/record IDs. Application publication validates the
+select request-bound source/record IDs or propose exact quoted field mappings
+through `risk_claims`, which are reparsed independently by the server. Application publication validates the
 actual fetched primary source, exact security/issuer identity, evidence scope,
 observation date, publication cutoff and units. A company mention in another
 issuer's filing does not establish identity. Economic allocation evidence needs
@@ -312,6 +315,16 @@ retractions/conflicting statements and historical headings do not become full
 current allocations. Explicit statement dates must match the bound report date;
 ambiguous prose stays missing. Dated economic allocations are active only within
 the declared 550-day evidence horizon.
+The general AI update includes risk inputs and dependent sovereign ratings. Its
+coordinator covers the full open/all scope using bounded per-security children;
+explicit selection retains the three-security limit. A finished run with unresolved
+fields is partial, not proof of complete model input coverage. Exact unique SEC
+ticker identity also supports the application's `YAHOO` provider label while
+retaining the resolved source exchange. Public-source table/prose claims require
+source-bound identity, observation date, exact quotation, field meaning and units;
+AI cannot publish arbitrary values. Multi-country allocations remain evidence
+without becoming a fabricated single-country exposure. Coupon rates and ordinary
+YTM do not become continuously compounded discount yields.
 Static reference terms retain their own contract dates; current yield/spread
 expiry remains seven days. Store public evidence separately from manual local
 overrides. Editing notes or static terms must not refresh an inherited market
@@ -320,9 +333,14 @@ without discarding saved market quotes or changing the external import source.
 
 Funds require actual/declared underlying issuer, credit, country, rate and FX
 exposures. The pure engine can evaluate supplied complete look-through and rejects
-inconsistent wrapper/child currency hedges. The current backend/editor does not
-provide a fund look-through entry workflow; actual funds without that evidence
-remain incomplete. An ETF label, fund-manager rating or asset-focus profile never
+inconsistent wrapper/child currency hedges. The backend can resolve complete
+verified public fund-holdings evidence or a supported saved issuer Xray snapshot
+to independently identified registered constituents. Membership older than 45
+calendar days cannot establish current look-through. Unregistered/ambiguous
+constituents retain their full unresolved weights; no partial table is normalized
+to 100%, and no manager/wrapper rating or country is inherited. The editor has no
+manual look-through entry workflow; funds without sufficient current constituent
+evidence remain incomplete. An ETF label, fund-manager rating or asset-focus profile never
 establishes underlying credit or diversification. Savings balances lacking
 allocations stay outside securities/cash risk; do not call this whole-wealth risk.
 

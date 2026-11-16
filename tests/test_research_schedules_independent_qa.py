@@ -190,7 +190,7 @@ def test_editing_scope_during_old_child_completion_cannot_restore_old_batch_curs
     saved = env.manager.save(ACTOR, rule())
     identifier = saved["id"]
     env.manager.run(identifier, ACTOR, manual=True)
-    env.risk.hook = lambda: env.manager.save(ACTOR,
+    env.portfolio.hook = lambda: env.manager.save(ACTOR,
         dict(position_scope="all", refresh_policy="refresh_existing", expected_revision=saved["revision"]), identifier)
     env.workers.callbacks.pop(0)()
     current = next(row for row in env.store.get_preference(PREFERENCE)["items"] if row["id"] == identifier)

@@ -214,6 +214,7 @@ def test_api_falls_through_to_one_shared_budget_ai_and_batches_rotate(environmen
         result=retrieval.get(job["request_id"],"owner")
         selections.append([r["symbol"] for r in result["outcomes"]])
         assert result["coverage"]["selected"]==3 and result["coverage"]["remaining"]==2
+        assert all(row["attempted"] for row in result["outcomes"])
         assert result["counts"]=={"api_requests":3,"model_requests":8,"rest_requests":8,"web_requests":8}
     assert selections==[["SEC0","SEC1","SEC2"],["SEC3","SEC4","SEC0"]]
     assert len(child.calls)==2 and all(len(c[3]["security_keys"])==3 for c in child.calls)

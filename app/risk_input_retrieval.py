@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from .auth import SESSION_COOKIE_NAME
-from .risk_input_sources import PublicRiskAPIs, extract_risk_records, no_registration_fields
+from .risk_input_sources import PublicRiskAPIs, extract_risk_records, extract_proposed_risk_records, no_registration_fields
 from .security_enrichment import EnrichmentJobs, WEB_RESEARCH_POLICY, MAX_SELECTED
 from .security_research_tools import ResearchSession, ResearchFailure, WebRequestBudget
 from .security_search import SearchFailure, search_is_configured
@@ -33,6 +33,14 @@ POLICY = WEB_RESEARCH_POLICY + (
     "A trading/reporting currency never proves economic currency exposure. Do not manufacture ratings, "
     "duration, current spread/yield, geographic percentages or fund diversification. Unknowns remain unknown. "
     "Return records:[{security_key,source_id,record_id}] using actual returned IDs. "
+    "For additional explicitly reported facts, return risk_claims:[{security_key,source_id,field,value,as_of,units,evidence_quote}]. "
+    "When the local planner schema uses value_json, encode that value as JSON text there; the application decodes it before validation. "
+    "Copy the exact complete dated source sentence or table including its headings into evidence_quote; the server parses and validates it. "
+    "Supported fields include currency_exposures/country_exposures (maps with fraction or percent units), country_code, country_currency, "
+    "instrument_kind, maturity_date, plain_nominal_noncallable, zero_coupon_confirmed, sovereign_currency_basis, "
+    "current_spread_bps (basis points), continuous_yield (annual continuously compounded decimal or percent), "
+    "cashflows (dated complete future payments) and fund_holdings ([{identifier,weight}]). "
+    "A multi-country allocation does not establish a single-country model input. A coupon or ordinary yield-to-maturity is not a continuous discount yield. "
 )
 
 
@@ -49,10 +57,41 @@ def _user(request, write=False):
     return actor
 
 
-def missing_fields(risk, candidate):
+def missing_fields(risk, candidate, _depth=0):
     fields = []
     params = risk.get("parameters") or {}
-    kind = params.get("instrument_kind") or ({"EQUITY":"equity", "RSU":"equity", "ETF":"fund", "MUTUALFUND":"fund"}.get(candidate.get("asset_class")))
+    asset = str(candidate.get("asset_class") or candidate.get("asset_sub_class") or "").upper()
+    kind = params.get("instrument_kind") or ({"EQUITY":"equity", "STOCK":"equity", "RSU":"equity", "ETF":"fund", "MUTUALFUND":"fund", "FUND":"fund"}.get(asset))
+    if risk.get("unsupported_bond") is True or risk.get("requires_recovery_model") is True:
+        fields.append("unsupported_instrument")
+    if risk.get("error") or risk.get("status") == "unavailable":
+        fields.append("parameters_unavailable")
+    if (asset in {"EQUITY", "STOCK", "RSU"} and kind != "equity"
+            or asset in {"ETF", "MUTUALFUND", "FUND"} and kind != "fund"
+            or asset in {"BOND", "FIXED_INCOME"} and kind not in {None, "corporate_bond", "sovereign_bond"}):
+        fields.append("asset_class")
+    if kind == "fund":
+        # The model prices the constituents, not the fund manager. Requiring
+        # wrapper issuer/country facts cannot complete or validate lookthrough.
+        children = risk.get("lookthrough") or []
+        if (_depth >= 3 or risk.get("lookthrough_verified") is not True or not children
+                or risk.get("lookthrough_missing")):
+            return list(dict.fromkeys(fields + ["fund_lookthrough"]))
+        try:
+            import math
+            weights = [child["weight"] for child in children]
+            if any(type(weight) not in {int,float} or not math.isfinite(weight) or not 0 <= weight <= 1 for weight in weights) or not math.isclose(sum(weights),1,abs_tol=1e-8):
+                return list(dict.fromkeys(fields + ["fund_lookthrough"]))
+        except (KeyError, TypeError):
+            return list(dict.fromkeys(fields + ["fund_lookthrough"]))
+        required = []
+        for child in children:
+            item = child.get("item") or {}
+            if child["weight"] > 0:
+                required.extend(missing_fields(item.get("stress_risk") or {}, item.get("holding") or {}, _depth+1))
+        return list(dict.fromkeys(fields + (["fund_lookthrough"] if required else []) + required))
+    if kind not in {"equity", "corporate_bond", "sovereign_bond"} and asset not in {"BOND", "FIXED_INCOME"}:
+        fields.append("unsupported_instrument")
     if not risk.get("issuer_id"):
         fields.append("issuer_identity")
     if not (risk.get("country") or {}).get("country_code"):
@@ -65,9 +104,7 @@ def missing_fields(risk, candidate):
         fields.append("country_currency")
     if not risk.get("currency_exposures") and kind not in {"corporate_bond", "sovereign_bond"}:
         fields.append("fx")
-    if kind == "fund":
-        fields.append("fund_lookthrough")
-    if candidate.get("asset_class") == "BOND":
+    if asset in {"BOND", "FIXED_INCOME"} or kind in {"corporate_bond", "sovereign_bond"}:
         if kind not in {"corporate_bond", "sovereign_bond"}:
             fields.append("bond_kind")
         if not (risk.get("sovereign_rating") if kind == "sovereign_bond" else risk.get("credit_rating")):
@@ -151,7 +188,9 @@ class RiskEvidenceResearch:
                 "expected_revision":risk["revision"],"researched_issuer_name":evidence.get("issuer_name",{}).get("value"),
                 "researched_issuer_id":evidence.get("issuer_id",{}).get("value"),
                 "api_supported_fields":no_registration_fields(candidate),
-                "ai_supported_fields":["issuer_identity","issuer_domicile","country_exposure","fx","country_rating","credit_rating"],
+                "ai_supported_fields":["issuer_identity","issuer_domicile","country_exposure","country_currency","fx",
+                    "country_rating","credit_rating","bond_kind","bond_maturity","bond_terms","bond_cashflows",
+                    "bond_yield","current_spread","sovereign_currency_basis","country_sensitivity","fund_lookthrough"],
                 "country_code":(risk.get("country") or {}).get("country_code"),
                 "captured_at":_now(),
                 "source_evidence":risk.get("source_evidence",[])})
@@ -261,6 +300,8 @@ class RiskEvidenceResearch:
         from .security_web_research import parse_research_proposal
         parsed=parse_research_proposal(proposal) or {}
         choices={(r.get("security_key"),r.get("source_id"),r.get("record_id")) for r in parsed.get("records",[]) if isinstance(r,dict)}
+        claims=parsed.get("risk_claims",[])
+        claims=claims[:100] if isinstance(claims,list) else []
         finalized=[]
         for key,candidate in (candidates or {}).items():
             accepted=[]
@@ -273,6 +314,9 @@ class RiskEvidenceResearch:
             for source in (evidence_by_key or {}).get(key,[]):
                 source=self._dated_source(source,candidate)
                 accepted.extend(r for r in extract_risk_records(source,candidate) if (key,source.get("source_id"),r["record_id"]) in choices)
+                for claim in claims:
+                    if isinstance(claim,dict) and claim.get("security_key")==key and claim.get("source_id")==source.get("source_id"):
+                        accepted.extend(extract_proposed_risk_records(source,candidate,claim))
                 for category,record,normalized,subject in self._rating_records(source,candidate):
                     if (key,source.get("source_id"),record["record_id"]) in choices:
                         ratings[category].append(normalized)
@@ -295,7 +339,7 @@ class RiskEvidenceResearch:
             current=self.inputs.read(self.inputs.candidate(key))
             row={**candidate,"status":"partial" if accepted or rating_fields else "unavailable","code":code,
                 "available_fields":sorted({r["field"] for r in accepted}|set(rating_fields)),"missing_fields":missing_fields(current,candidate),
-                "sources":[{"url":r["source_url"],"source_kind":r["source_kind"],"retrieved_at":r["retrieved_at"],"fields":[r["field"]]} for r in accepted],
+                "sources":[{"url":r["source_url"],"source_kind":r["source_kind"],"retrieved_at":r["retrieved_at"],"as_of":r.get("as_of"),"fields":[r["field"]]} for r in accepted],
                 "attempted":bool((evidence_by_key or {}).get(key)),"retrieval_mode":"public_ai"}
             finalized.append(row)
             self._outcomes[key]=deepcopy(row)
@@ -438,7 +482,7 @@ class RiskInputRetrieval:
                 with self._lock:
                     job["progress"].update(stage="api" if job["mode"] != "ai" else "ai",current_security={k:candidate.get(k) for k in ("security_key","symbol")})
                 result={"security_key":candidate["security_key"],"symbol":candidate["symbol"],"status":"unavailable","code":"data_unavailable",
-                    "available_fields":[],"missing_fields":candidate["missing_fields"],"sources":[],
+                    "available_fields":[],"missing_fields":candidate["missing_fields"],"sources":[],"attempted":False,
                     "api":{"status":"not_attempted","code":"not_requested"},"ai":{"status":"not_attempted","code":"not_requested"}}
                 if job["mode"] != "ai":
                     self._authorize(identifier,headers)
@@ -447,6 +491,7 @@ class RiskInputRetrieval:
                     except Exception:
                         api={"records":[],"sources":[],"requests":0,"status":"unavailable","code":"provider_unavailable"}
                     job["counts"]["api_requests"]+=api["requests"]
+                    result["attempted"] |= api["requests"] > 0
                     self._authorize(identifier,headers)
                     if api["records"]:
                         try:
@@ -456,7 +501,8 @@ class RiskInputRetrieval:
                             api.update(records=[],sources=[],status="unavailable",code="identity_changed")
                     result["api"]={"status":api["status"],"code":api["code"]}
                     result["available_fields"].extend(r["field"] for r in api["records"])
-                    result["sources"].extend({"url":s["url"],"source_kind":s["source_kind"],"retrieved_at":s["retrieved_at"],"fields":s["fields"]} for s in api["sources"])
+                    result["sources"].extend({"url":s["url"],"source_kind":s["source_kind"],"retrieved_at":s["retrieved_at"],
+                        "as_of":s.get("as_of"),"fields":s["fields"]} for s in api["sources"])
                 risk=self.evidence.inputs.read(self.evidence.inputs.candidate(candidate["security_key"]))
                 remaining=missing_fields(risk,candidate)
                 if (remaining or job["refresh_policy"] == "refresh_existing") and job["mode"] != "api" and result["api"]["code"] != "identity_changed":
@@ -489,6 +535,7 @@ class RiskInputRetrieval:
                     if result["security_key"] not in unresolved:
                         continue
                     outcome=next((r for r in child.get("outcomes",[]) if r.get("security_key")==result["security_key"]),{})
+                    result["attempted"] |= bool(outcome.get("attempted"))
                     result["available_fields"]=sorted(set(result["available_fields"])|set(outcome.get("available_fields",[])))
                     result["sources"].extend(outcome.get("sources",[]))
                     result["ai"]={"status":child["status"],"code":outcome.get("code") or child.get("code","data_unavailable")}

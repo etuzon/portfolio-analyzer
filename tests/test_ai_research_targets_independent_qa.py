@@ -32,7 +32,7 @@ const acceptAIEnrichmentJob=job=>state.aiEnrichment.job=job;
 ''')
 
 
-def test_main_risk_target_uses_current_scope_mode_policy_and_discards_old_session_result():
+def test_main_risk_target_uses_parent_scope_and_mode_and_preserves_retry_options():
     node(r'''
 const assert=require('node:assert/strict');
 const nodes={aiResearchTarget:{value:'risk_inputs'},aiResearchRefresh:{value:'refresh_existing'},aiRiskResearchMode:{value:'ai'}};
@@ -40,19 +40,17 @@ const document={getElementById:id=>nodes[id],addEventListener(){},dispatchEvent(
 const state={language:'he',auth:{user:{id:'synthetic',role:'Operator'},forcedPasswordChange:false},aiEnrichment:{ratingsOnly:false}};
 const currentUser=()=>state.auth.user,canWrite=()=>true,t=x=>x;
 const window={};const renderAIEnrichment=()=>{};
-let resolve,posted,calls=0;
-const api=async(path,options)=>{calls++;posted={path,body:JSON.parse(options.body)};return await new Promise(done=>resolve=done);};
+let scope;
+const requestAIEnrichment=async value=>{scope=value;};
 ''' + (ROOT / "web/ai-research-targets.js").read_text() + r'''
 (async()=>{
- const old=window.AIResearchTargets.start('all');
- await Promise.resolve();
- assert.equal(calls,1);
- assert.deepEqual(posted,{path:'/api/securities/risk-inputs/retrieval',body:{mode:'ai',position_scope:'all',refresh_policy:'refresh_existing',language:'he'}});
+ assert.deepEqual(window.AIResearchTargets.requestOptions(),{data_types:['risk_inputs'],refresh_policy:'refresh_existing',risk_mode:'ai'});
+ await window.AIResearchTargets.start('all');
+ assert.equal(scope,'all');
+ const old={data_types:['risk_inputs'],refresh_policy:'missing',risk_mode:'api'};
+ assert.deepEqual(window.AIResearchTargets.requestOptions(old),old);
  window.AIResearchTargets.reset();
- state.auth.user={id:'synthetic',role:'Operator'};
- resolve({request_id:'old',status:'completed',portfolio_refresh_required:true});
- await old;
- assert.equal(calls,1);
+ assert.deepEqual(window.AIResearchTargets.requestOptions(),{data_types:['prices','profile','company_ratings','risk_inputs','country_ratings'],refresh_policy:'stale',risk_mode:'ai'});
 })().catch(error=>{console.error(error);process.exit(1);});
 ''')
 

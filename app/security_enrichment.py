@@ -420,6 +420,7 @@ class EnrichmentJobs:
                     parsed = parse_research_proposal(job["_proposal"])
                     job["proposal_summary"] = {"valid_json": parsed is not None,
                         "selected_records": len(parsed.get("records", [])) if parsed and isinstance(parsed.get("records", []), list) else 0,
+                        "risk_claims": len(parsed.get("risk_claims", [])) if parsed and isinstance(parsed.get("risk_claims", []), list) else 0,
                         "observations": len(parsed.get("observations", [])) if parsed and isinstance(parsed.get("observations", []), list) else 0,
                         "profiles": len(parsed.get("profiles", [])) if parsed and isinstance(parsed.get("profiles", []), list) else 0}
                     if parsed is None:

@@ -152,7 +152,7 @@ class PortfolioAssistant:
             final_turn = index == self.settings["max_tool_loops"] - 1 or rest_attempts >= self.settings["max_rest_calls"]
             if final_turn:
                 final_policy = (
-                    "This is the final allowed response. Return the research proposal JSON only, with records, observations and profiles arrays. "
+                    "This is the final allowed response. Return the research proposal JSON only, with records, observations, profiles and any task-permitted risk_claims arrays. "
                     "Select supported source record IDs already received. Leave unsupported fields out and use empty arrays when nothing qualifies. "
                     "Do not return prose, status explanations or additional tools. Follow the output schema: use a nested proposal object in answer when supported, or serialize it only for a string-only transport. Set support_status=answered."
                     if self.settings.get("research_mode") else

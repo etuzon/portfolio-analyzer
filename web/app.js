@@ -1328,20 +1328,25 @@ function renderAIEnrichment() {
   $("aiEnrichmentAction").setAttribute("aria-label", button.title);
   const status = $("aiEnrichmentStatus");
   const ratingWork = Boolean(ui.job?.credit_ratings && (Number(ui.job.credit_ratings.summary?.total_candidates) > 0 || ui.job.credit_ratings.outcomes?.length));
-  const nothingMissing = ui.job?.code === "nothing_missing" && !ratingWork;
+  const riskWork = Boolean(ui.job?.risk_inputs && (Number(ui.job.risk_inputs.progress?.total) > 0 || ui.job.risk_inputs.outcomes?.length));
+  const countryWork = Boolean(ui.job?.country_ratings && (Number(ui.job.country_ratings.progress?.total) > 0 || ui.job.country_ratings.outcomes?.length));
+  const nothingMissing = ui.job?.code === "nothing_missing" && !ratingWork && !riskWork && !countryWork;
   let message = ui.message ? t(ui.message) : (!canWrite() && currentUser() ? permission : "");
   if (ui.pending) message = t("Researching eligible holdings. You can keep using the dashboard.");
   else if (!message && ui.job) {
     message = nothingMissing ? aiOutcomeMessage(ui.job) : "";
     if (ui.job.status === "failed") message = aiOutcomeMessage(ui.job);
+    else if (ui.job.status === "completed" && ui.job.risk_inputs && (ui.job.data_types?.includes("risk_inputs") || riskWork)) message = window.AIResearchTargets?.completionText(ui.job.risk_inputs) || "";
   }
   if (status.textContent !== message) status.textContent = message;
   status.hidden = !message;
   const stage = ui.job?.progress?.stage || (ui.pending ? "queued" : ui.job?.status === "failed" ? "failed" : ui.job ? "completed" : "ready");
-  const phases = { ready: "Ready to research", queued: "Waiting to start", checking_apis: "Checking AI eligibility", researching: "Researching remaining gaps", researching_market_data: "Researching missing market data", researching_ratings: "Researching public-source company ratings", saving: "Saving verified results", completed: "Research finished", failed: "Research stopped" };
+  const phases = { ready: "Ready to research", queued: "Waiting to start", checking_apis: "Checking AI eligibility", researching: "Researching remaining gaps", researching_market_data: "Researching missing market data", researching_ratings: "Researching public-source company ratings", researching_risk_inputs: "Researching risk inputs", researching_country_ratings: "Researching public-source country ratings", saving: "Saving verified results", completed: "Research finished", failed: "Research stopped" };
   const phaseText = t(ui.resume ? "Progress check needed" : nothingMissing ? "No AI research needed" : phases[stage] || "Research in progress");
   if ($("aiEnrichmentPhase").textContent !== phaseText) $("aiEnrichmentPhase").textContent = phaseText;
-  const phaseProgress = (stage === "researching_ratings" || ratingsOnly) && ui.job?.credit_ratings ? ui.job.credit_ratings.progress : ui.job?.progress;
+  const phaseProgress = (stage === "researching_ratings" || ratingsOnly) && ui.job?.credit_ratings ? ui.job.credit_ratings.progress
+    : stage === "researching_risk_inputs" && ui.job?.risk_inputs ? ui.job.risk_inputs.progress
+    : stage === "researching_country_ratings" && ui.job?.country_ratings ? ui.job.country_ratings.progress : ui.job?.progress;
   const completed = Number(phaseProgress?.completed), total = Number(phaseProgress?.total);
   const knownProgress = Number.isFinite(completed) && completed >= 0 && Number.isFinite(total) && total > 0;
   const progress = $("aiEnrichmentProgress");
@@ -1349,7 +1354,7 @@ function renderAIEnrichment() {
   if (knownProgress) { progress.max = total; progress.value = Math.min(completed, total); }
   else { progress.removeAttribute("value"); progress.removeAttribute("max"); }
   $("aiEnrichmentCounts").hidden = !knownProgress;
-  const countText = knownProgress ? t("Checked {completed} of {total} securities in this phase").replace("{completed}", fmt(completed, 0)).replace("{total}", fmt(total, 0)) : "";
+  const countText = knownProgress ? t(stage === "researching_country_ratings" ? "Country checks: {completed} of {total}" : "Checked {completed} of {total} securities in this phase").replace("{completed}", fmt(completed, 0)).replace("{total}", fmt(total, 0)) : "";
   if ($("aiEnrichmentCounts").textContent !== countText) $("aiEnrichmentCounts").textContent = countText;
   if (countText) progress.setAttribute("aria-valuetext", countText); else progress.removeAttribute("aria-valuetext");
   const current = ui.pending && phaseProgress?.current_security;
@@ -1357,8 +1362,9 @@ function renderAIEnrichment() {
   const currentText = current ? [current.symbol, current.stock_market, current.currency].filter(Boolean).join(" · ") : "";
   if ($("aiEnrichmentCurrentSecurity").textContent !== currentText) $("aiEnrichmentCurrentSecurity").textContent = currentText;
   const summary = ui.job?.summary;
-  $("aiEnrichmentSummary").hidden = ratingsOnly || !summary || ui.pending || ui.job?.code === "nothing_missing";
-  if ($("aiEnrichmentMarketTitle")) $("aiEnrichmentMarketTitle").hidden = ratingsOnly || !summary || ui.pending || !ui.job?.credit_ratings;
+  const marketSelected = !ui.job?.data_types || ui.job.data_types.some(type => ["prices", "profile"].includes(type));
+  $("aiEnrichmentSummary").hidden = ratingsOnly || !marketSelected || !summary || ui.pending || ui.job?.code === "nothing_missing";
+  if ($("aiEnrichmentMarketTitle")) $("aiEnrichmentMarketTitle").hidden = ratingsOnly || !marketSelected || !summary || ui.pending || !ui.job?.credit_ratings;
   $("aiEnrichmentSummary").innerHTML = summary ? [[summary.updated || 0, "Updated"], [summary.partial || 0, "Partial results"], [(summary.unavailable || 0) + (summary.not_attempted || 0), "Unavailable or not checked"]].map(([count, label]) => `<div><strong>${esc(fmt(count, 0))}</strong><span>${esc(t(label))}</span></div>`).join("") : "";
   const displayedOutcomes = (ui.job ? ui.job.outcomes || [] : ui.pending ? [] : ui.outcomes).filter((outcome) => {
     if (ratingsOnly) return false;
@@ -1368,7 +1374,7 @@ function renderAIEnrichment() {
   });
   $("aiEnrichmentDetails").hidden = !displayedOutcomes.length;
   $("aiEnrichmentResultsTitle").textContent = t(ui.job?.credit_ratings ? "Market-data results by security" : ui.job ? "Results by security" : "Latest saved results");
-  $("aiEnrichmentEmpty").hidden = ratingsOnly || Boolean(displayedOutcomes.length) || nothingMissing || ratingWork;
+  $("aiEnrichmentEmpty").hidden = ratingsOnly || Boolean(displayedOutcomes.length) || nothingMissing || ratingWork || riskWork || countryWork;
   $("aiEnrichmentEmpty").textContent = t(ui.pending ? "Results will appear as checks finish." : "No AI research results yet.");
   const results = $("aiEnrichmentResults");
   const resultHtml = displayedOutcomes.map((outcome) => {
@@ -1479,13 +1485,13 @@ async function loadAIEnrichmentStatus() {
   if (data.active_job) {
     acceptAIEnrichmentJob(data.active_job);
     scheduleAIEnrichmentPoll();
-  } else renderAIEnrichment();
+  } else if (data.last_job) acceptAIEnrichmentJob(data.last_job);
+  else renderAIEnrichment();
 }
 
 async function requestAIEnrichment(positionScope = "open", { resumeRequestId = "" } = {}) {
   const ui = state.aiEnrichment;
   if (!canWrite() || ui.pending || state.auth.forcedPasswordChange || currentUser()?.must_change_password) return;
-  if (window.AIResearchTargets?.isRisk()) return AIResearchTargets.start(positionScope);
   const ratingsOnly = resumeRequestId ? Boolean(ui.job?.ratings_only) : Boolean(ui.ratingsOnly);
   ui.ratingsOnly = ratingsOnly;
   ui.version = (ui.version || 0) + 1;

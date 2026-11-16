@@ -133,11 +133,11 @@ def test_general_action_covers_all_unique_open_api_priced_stocks_through_normal_
         'entity_name':candidate['issuer_name'],'notes':'Synthetic preserved manual opinion',
         'expected_identity':context['identity_token'],'expected_revision':0})
     assert saved.status_code==200,saved.text
-    started=env.client.post(PATH+'/ai',headers=env.headers,json={'position_scope':'open'})
+    started=env.client.post(PATH+'/ai',headers=env.headers,json={'position_scope':'open','data_types':['prices','profile','company_ratings']})
     assert started.status_code==202,started.text
     request_id=started.json()['request_id']
     assert env.arrived.wait(5)
-    repeated=env.client.post(PATH+'/ai',headers=env.headers,json={'position_scope':'open'})
+    repeated=env.client.post(PATH+'/ai',headers=env.headers,json={'position_scope':'open','data_types':['prices','profile','company_ratings']})
     assert repeated.status_code==202 and repeated.json()['request_id']==request_id
     env.release.set()
     result=poll(env.client,request_id)
@@ -170,7 +170,7 @@ def test_scope_and_real_auth_boundaries(env):
     assert env.client.post(PATH+'/ai',json={}).status_code==403
     assert env.client.post(PATH+'/ai',headers=env.headers,json={'position_scope':'invalid'}).status_code==422
     env.release.set()
-    started=env.client.post(PATH+'/ai',headers=env.headers,json={'position_scope':'all'})
+    started=env.client.post(PATH+'/ai',headers=env.headers,json={'position_scope':'all','data_types':['prices','profile','company_ratings']})
     assert started.status_code==202,started.text
     identifier=started.json()['request_id']
     other,_=login(env.auth,suffix='other')

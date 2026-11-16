@@ -1,21 +1,12 @@
-/* Explicit data targets in the main AI window, using the existing risk worker. */
+/* One parent request owns every selected data type and its bounded child jobs. */
 (() => {
   "use strict";
   const el = id => document.getElementById(id);
   const txt = (key, values = {}) => Object.entries(values).reduce((result, [name, value]) => result.replaceAll(`{${name}}`, String(value)), t(key));
   const running = job => ["queued", "running"].includes(job?.status);
-  const owner = () => String(typeof currentUser === "function" ? currentUser()?.id || "" : "");
-  let view = null;
-  function session() {
-    if (!view || view.owner !== owner()) {
-      clearTimeout(view?.timer);
-      view = {owner:owner(),job:null,pending:false,checking:false,message:"",polls:0,timer:null,refreshed:new Set()};
-    }
-    return view;
-  }
-  const valid = value => value === view && value.owner === owner();
-  const isRisk = () => el("aiResearchTarget")?.value === "risk_inputs";
   const presentation = () => window.RiskInputRetrievalPresentation;
+  const isRisk = () => el("aiResearchTarget")?.value === "risk_inputs";
+  const riskTargets = types => (types || []).includes("risk_inputs");
   function dateTime(value, timezone) {
     try {
       const date = new Date(value); if (!Number.isFinite(date.getTime())) return "";
@@ -24,119 +15,122 @@
       return `${part("day")}/${part("month")}/${part("year")} ${part("hour")}:${part("minute")}`;
     } catch { return ""; }
   }
-  function refresh() { if (typeof renderAIEnrichment === "function") renderAIEnrichment(); }
   function requestOptions(job = null) {
-    if (job?.data_types) return {data_types:job.data_types,refresh_policy:job.refresh_policy || "missing"};
+    if (job?.data_types) return {data_types:job.data_types,refresh_policy:job.refresh_policy || "missing",
+      ...(riskTargets(job.data_types)?{risk_mode:job.risk_mode || "api_then_ai"}:{})};
     const target = el("aiResearchTarget")?.value || "portfolio";
-    const types = target === "portfolio" ? ["prices","profile","company_ratings"] : [target];
-    return {data_types:types,refresh_policy:el("aiResearchRefresh")?.value || "stale"};
+    const types = target === "portfolio" ? ["prices","profile","company_ratings","risk_inputs","country_ratings"] : [target];
+    return {data_types:types,refresh_policy:el("aiResearchRefresh")?.value || "stale",
+      ...(riskTargets(types)?{risk_mode:el("aiRiskResearchMode")?.value || "api_then_ai"}:{})};
   }
   function sourceLink(source, index) {
     try {
-      const url = new URL(source.url);
+      const url = new URL(source.url || source.source_url);
       if (url.protocol !== "https:" || url.username || url.password) return "";
-      const date = source.retrieved_at ? dateTime(source.retrieved_at) : "";
-      return `<a href="${esc(url.href)}" target="_blank" rel="noopener noreferrer">${esc(txt("Source {number}",{number:index+1}))}</a>${date ? ` · ${esc(txt("Retrieved {date}",{date}))}` : ""}`;
+      const observed = source.as_of || source.observation_date;
+      const observation = observed ? txt("Observed {date}",{date:/^\d{4}-\d{2}-\d{2}/.test(String(observed))?String(observed).slice(0,10).split("-").reverse().join("/"):dateTime(observed).split(" ")[0]}) : "";
+      const retrieved = source.retrieved_at ? txt("Retrieved {date}",{date:dateTime(source.retrieved_at)}) : "";
+      return `<a href="${esc(url.href)}" target="_blank" rel="noopener noreferrer">${esc(txt("Source {number}",{number:index+1}))}</a>${[observation,retrieved].filter(Boolean).map(value=>` · ${esc(value)}`).join("")}`;
     } catch { return ""; }
+  }
+  function unresolvedCount(job) {
+    const rows = job?.outcomes || [];
+    return rows.filter(row => row.missing_fields?.length || (!Array.isArray(row.missing_fields) && ["partial","unavailable","not_attempted","pending"].includes(row.status))).length;
+  }
+  function completionText(job) {
+    if (!job) return txt("No risk research has been run yet.");
+    if (running(job)) return txt("Research in progress");
+    if (job.status === "failed") return txt("Research stopped");
+    const count = unresolvedCount(job);
+    return count === 1 ? txt("Research finished; one security still has missing risk inputs.") : count ? txt("Research finished; {count} securities still have missing risk inputs.",{count:fmt(count,0)})
+      : txt("Research finished; no missing risk inputs remain in the checked scope.");
+  }
+  function replaceResults(list, html) {
+    if (!list || list.innerHTML === html) return;
+    const scrollTop = list.scrollTop;
+    const focusedKey = document.activeElement?.getAttribute?.("data-risk-inputs-security-key");
+    list.innerHTML = html; list.scrollTop = scrollTop;
+    if (focusedKey) [...list.querySelectorAll("[data-risk-inputs-security-key]")].find(node=>node.getAttribute("data-risk-inputs-security-key")===focusedKey)?.focus({preventScroll:true});
+  }
+  const uiChecking = () => Boolean(state.aiEnrichment.checking);
+  function renderRisk(job, parent) {
+    const section = el("aiRiskResearchPanel");
+    if (!section) return;
+    section.hidden = !job && !isRisk();
+    if (section.hidden) return;
+    section.setAttribute("aria-busy",String(running(parent)));
+    const progress = job?.progress || {};
+    const message = running(parent) ? txt(parent?.progress?.stage === "researching_country_ratings" ? "Researching public-source country ratings" : parent?.progress?.stage === "researching_risk_inputs" ? "Researching risk inputs" : "Risk research is queued.") : completionText(job);
+    el("aiRiskResearchStatus").textContent = [message,progress.total?txt("{completed} of {total} securities",{completed:fmt(progress.completed || 0,0),total:fmt(progress.total,0)}):"",progress.current_security?.symbol || ""].filter(Boolean).join(" · ");
+    const bar = el("aiRiskResearchProgress");
+    bar.hidden = !running(parent) || !(progress.total > 0); bar.max = Math.max(1,progress.total || 1); bar.value = progress.completed || 0;
+    el("aiRiskResearchCheck").disabled = !currentUser() || !parent?.request_id || uiChecking();
+    const coverage = job?.coverage;
+    const total = coverage?.total_candidates ?? progress.total;
+    el("aiRiskResearchCoverage").textContent = Number.isFinite(total) ? txt("Eligible securities in this request: {count}",{count:fmt(total,0)}) : "";
+    replaceResults(el("aiRiskResearchResults"),(job?.outcomes || []).map(row => {
+      const status = txt({pending:"Waiting for research",updated:"Updated",partial:"Partially updated",unavailable:"Unavailable",not_attempted:"Not attempted"}[row.status] || "Unavailable");
+      const method = name => txt({queued:"Queued",running:"Running",completed:"Completed",updated:"Updated",partial:"Partially updated",failed:"Failed",not_attempted:"Not attempted",unavailable:"Unavailable"}[row[name]?.status] || "Not attempted");
+      const missing = Array.isArray(row.missing_fields) ? presentation()?.fields(row.missing_fields) : txt("Other required risk inputs");
+      return `<li><bdi dir="auto">${esc(row.symbol || row.security_key)}</bdi> · <strong>${esc(status)}</strong><p>${esc(presentation()?.outcomeMessage(row.code) || txt("The requested risk inputs remain missing."))}</p>
+        <p>${esc(txt("Available inputs"))}: ${esc(presentation()?.fields(row.available_fields) || txt("None"))}</p><p>${esc(txt("Still missing"))}: ${esc(missing || txt("None"))}</p>
+        <p>${esc(txt("Public API"))}: ${esc(method("api"))} · ${esc(txt("AI research"))}: ${esc(method("ai"))}</p><p>${(row.sources || []).map(sourceLink).filter(Boolean).join(" · ")}</p>
+        <button type="button" class="secondary compact-button" data-risk-inputs-security-key="${esc(row.security_key || "")}" data-risk-inputs-symbol="${esc(row.symbol || "")}">${esc(txt("Review risk inputs"))}</button></li>`;
+    }).join(""));
+  }
+  function renderCountries(job) {
+    const section = el("aiCountryResearchPanel");
+    if (!section) return;
+    section.hidden = !job; if (!job) return;
+    section.setAttribute("aria-busy",String(running(job)));
+    const progress = job.progress || {};
+    el("aiCountryResearchStatus").textContent = txt("Country checks: {completed} of {total}",{completed:fmt(progress.completed || 0,0),total:fmt(progress.total || 0,0)});
+    replaceResults(el("aiCountryResearchResults"),(job.outcomes || []).map(row=>{
+      const code=row.country_code || "";
+      const name=typeof sovereignCountryLabel === "function"?sovereignCountryLabel(code):code;
+      const status=txt({pending:"Waiting for research",updated:"Supported facts saved",partial:"Partial rating evidence",unavailable:"Checked; no verified rating evidence",not_attempted:"Not checked"}[row.status] || "Not checked");
+      return `<li><bdi dir="auto">${esc(name)}</bdi> · <strong>${esc(status)}</strong>${row.code && typeof creditRatingsReason === "function"?`<p>${esc(creditRatingsReason(row.code, ""))}</p>`:""}<p>${(row.sources || []).map(sourceLink).filter(Boolean).join(" · ")}</p></li>`;
+    }).join(""));
   }
   function render() {
     if (!el("aiResearchTarget")) return;
-    const s = session(), risk = isRisk(), busy = s.pending || s.checking || running(s.job);
-    const marketBusy = Boolean(state.aiEnrichment.pending || state.aiEnrichment.resume);
-    const writable = canWrite() && !state.auth.forcedPasswordChange && !currentUser()?.must_change_password;
-    el("aiResearchTarget").disabled = !currentUser() || busy || marketBusy;
-    el("aiResearchRefresh").disabled = !writable || busy || marketBusy;
-    el("aiRiskResearchModeField").hidden = !risk;
-    el("aiRiskResearchMode").disabled = !writable || busy;
-    el("aiEnrichmentRatingsOnly").closest(".ai-enrichment-mode").hidden = true;
-    el("aiEnrichmentScope").textContent = txt("Research follows the selected data types and freshness policy. Open includes long and short positions; All also includes closed positions. Dashboard and Holdings filters do not limit research. Opening this window does not start a job.");
-    const currentJob = risk ? s.job : state.aiEnrichment.job;
-    el("aiResearchCurrentJob").hidden = !currentJob;
-    if (currentJob) {
-      const labels = {prices:"Prices",profile:"Company profile",company_ratings:"Company credit ratings",risk_inputs:"Risk inputs"};
-      const targets = risk ? txt("Risk inputs") : (currentJob.data_types || ["prices","profile","company_ratings"]).map(type=>txt(labels[type] || "Other data")).join(", ");
-      const freshness = txt({missing:"Missing fields",stale:"Missing or stale fields",refresh_existing:"Recheck existing data too"}[currentJob.refresh_policy] || "Missing or stale fields");
-      el("aiResearchCurrentJob").textContent = txt("Current request: {targets} · {freshness}",{targets,freshness});
+    const ui=state.aiEnrichment, job=ui.job, busy=ui.pending || ui.resume;
+    const writable=canWrite() && !state.auth.forcedPasswordChange && !currentUser()?.must_change_password;
+    el("aiResearchTarget").disabled=!currentUser() || busy;
+    el("aiResearchRefresh").disabled=!writable || busy;
+    const target=el("aiResearchTarget").value;
+    el("aiRiskResearchModeField").hidden=!["portfolio","risk_inputs"].includes(target);
+    el("aiRiskResearchMode").disabled=!writable || busy;
+    el("aiEnrichmentRatingsOnly").closest(".ai-enrichment-mode").hidden=true;
+    el("aiEnrichmentScope").textContent=txt("The complete portfolio update includes prices, company profiles, company ratings, risk inputs and country ratings. Research checks every eligible security in the chosen scope in bounded batches. Opening this window does not start a job.");
+    el("aiResearchCurrentJob").hidden=!job;
+    if (job) {
+      const labels={prices:"Prices",profile:"Company profile",company_ratings:"Company credit ratings",risk_inputs:"Risk inputs",country_ratings:"Country credit ratings"};
+      const targets=(job.data_types || ["prices","profile","company_ratings"]).map(type=>txt(labels[type] || "Other data")).join(", ");
+      const freshness=txt({missing:"Missing fields",stale:"Missing or stale fields",refresh_existing:"Recheck existing data too"}[job.refresh_policy] || "Missing or stale fields");
+      el("aiResearchCurrentJob").textContent=txt("Current request: {targets} · {freshness}",{targets,freshness});
     }
-    el("aiRiskResearchPanel").hidden = !risk;
-    if (!risk) { el("aiEnrichmentPhase").closest(".ai-enrichment-progress-panel").hidden = false; return; }
-    for (const id of ["aiEnrichmentBondScope","aiEnrichmentMarketTitle","aiEnrichmentSummary","aiEnrichmentDetails","aiEnrichmentEmpty","aiCreditRatings","aiEnrichmentResume","aiEnrichmentRetryRatings"]) el(id).hidden = true;
-    el("aiEnrichmentPhase").closest(".ai-enrichment-progress-panel").hidden = true;
-    for (const id of ["aiEnrichmentStart","aiEnrichmentStartAll"]) {
-      el(id).disabled = !writable || busy;
-      el(id).title = txt("Research supported risk inputs in this scope. Each run checks up to three securities.");
-    }
-    el("aiRiskResearchCheck").disabled = s.pending || s.checking || !currentUser();
-    const progress = s.job?.progress || {};
-    const status = s.message ? txt(s.message) : s.pending ? txt("Starting risk research…") : s.checking ? txt("Loading risk research…")
-      : s.job ? txt({queued:"Queued",api:"Checking public APIs…",ai:"Researching missing risk inputs with AI…",completed:"Completed",failed:"Failed"}[progress.stage] || "Running")
-      : txt("No risk research has been run yet.");
-    el("aiRiskResearchStatus").textContent = [status, progress.total ? txt("{completed} of {total} securities",{completed:fmt(progress.completed || 0,0),total:fmt(progress.total,0)}) : "",progress.current_security?.symbol || "",
-      s.job?.status === "failed" ? presentation()?.outcomeMessage(s.job.code) : "",!writable ? txt("AI data updates require Admin or Operator permission.") : ""].filter(Boolean).join(" · ");
-    el("aiEnrichmentFooterNote").textContent = txt(busy ? "You can close this window while research continues. Reopen it from Portfolio to see progress." : "You can close this window. Reopen it from Portfolio to view results or start a new request.");
-    const bar = el("aiRiskResearchProgress");
-    bar.hidden = !running(s.job); bar.max = Math.max(1,progress.total || 1); bar.value = progress.completed || 0;
-    const coverage = s.job?.coverage;
-    el("aiRiskResearchCoverage").textContent = coverage ? txt("This run includes {selected} of {total} candidates; {remaining} remain outside this batch.",{
-      selected:fmt(coverage.selected || 0,0),total:fmt(coverage.total_candidates || 0,0),remaining:fmt(coverage.remaining || 0,0)}) : "";
-    el("aiRiskResearchResults").innerHTML = (s.job?.outcomes || []).map(row => {
-      const status = txt({updated:"Updated",partial:"Partially updated",unavailable:"Unavailable",not_attempted:"Not attempted"}[row.status] || "Unavailable");
-      const method = method => txt({completed:"Completed",updated:"Updated",partial:"Partially updated",failed:"Failed",not_attempted:"Not attempted",unavailable:"Unavailable"}[row[method]?.status] || "Unavailable");
-      return `<li><bdi dir="auto">${esc(row.symbol || row.security_key)}</bdi> · <strong>${esc(status)}</strong><p>${esc(presentation()?.outcomeMessage(row.code) || txt("The requested risk inputs remain missing."))}</p>
-        <p>${esc(txt("Available inputs"))}: ${esc(presentation()?.fields(row.available_fields) || txt("None"))}</p><p>${esc(txt("Still missing"))}: ${esc(presentation()?.fields(row.missing_fields) || txt("Other required risk inputs"))}</p>
-        <p>${esc(txt("Public API"))}: ${esc(method("api"))} · ${esc(txt("AI research"))}: ${esc(method("ai"))}</p><p>${(row.sources || []).map(sourceLink).filter(Boolean).join(" · ")}</p>
-        <button type="button" class="secondary compact-button" data-risk-inputs-security-key="${esc(row.security_key || "")}" data-risk-inputs-symbol="${esc(row.symbol || "")}">${esc(txt("Review risk inputs"))}</button></li>`;
-    }).join("");
+    const hasRisk = riskTargets(job?.data_types) || Boolean(job?.risk_inputs?.outcomes?.length || job?.risk_inputs?.progress?.total > 0);
+    const hasCountries = hasRisk || job?.data_types?.includes("country_ratings") || Boolean(job?.country_ratings?.outcomes?.length || job?.country_ratings?.progress?.total > 0);
+    renderRisk(hasRisk ? job?.risk_inputs : null,hasRisk ? job : null);
+    renderCountries(hasCountries ? job?.country_ratings : null);
   }
-  function accept(s, job) {
-    if (!valid(s)) return;
-    s.job = job; s.message = "";
-    if (job?.mode) el("aiRiskResearchMode").value = job.mode;
-    if (job?.refresh_policy) el("aiResearchRefresh").value = job.refresh_policy;
-    clearTimeout(s.timer);
-    if (running(job)) {
-      if (s.polls >= 120) s.message = "Progress checks paused. Select Check progress to resume.";
-      else s.timer = setTimeout(() => { if (valid(s)) { s.polls++; check(); } },3000);
-    } else if (job?.portfolio_refresh_required && !s.refreshed.has(job.request_id)) {
-      s.refreshed.add(job.request_id);
-      document.dispatchEvent(new CustomEvent("stress-risk-inputs-changed"));
-    }
-  }
-  async function check({reset=false} = {}) {
-    const s = session(); if (s.checking || !currentUser()) return;
-    if (reset) s.polls = 0;
-    s.checking = true; s.message = ""; refresh();
+  async function check() {
+    const ui=state.aiEnrichment, version=ui.version;
+    if (!currentUser() || !ui.job?.request_id || ui.checking) return;
+    ui.checking=true;renderAIEnrichment();
     try {
-      const response = await api(s.job?.request_id ? `/api/securities/risk-inputs/retrieval/${encodeURIComponent(s.job.request_id)}` : "/api/securities/risk-inputs/retrieval/status");
-      if (valid(s)) accept(s,s.job?.request_id ? response : response.active_job || response.last_job);
-    } catch { if (valid(s)) s.message = "Could not check progress. Select Check progress to retry."; }
-    finally { if (valid(s)) { s.checking = false; refresh(); } }
-  }
-  async function start(scope) {
-    const s = session(); if (!canWrite() || s.pending || s.checking || running(s.job)) return;
-    const payload = {mode:el("aiRiskResearchMode").value,position_scope:scope,refresh_policy:el("aiResearchRefresh").value,language:state.language};
-    s.pending = true; s.message = ""; s.polls = 0; refresh();
-    try {
-      const job = await api("/api/securities/risk-inputs/retrieval",{method:"POST",body:JSON.stringify(payload)});
-      if (valid(s)) accept(s,job);
+      const job=await api(`/api/securities/enrichment/ai/${encodeURIComponent(ui.job.request_id)}`);
+      if (state.aiEnrichment !== ui || ui.version !== version) return;
+      acceptAIEnrichmentJob(job); scheduleAIEnrichmentPoll();
     } catch {
-      if (valid(s)) {
-        s.message = "Could not start risk research. Check progress before trying again.";
-        try { const response = await api("/api/securities/risk-inputs/retrieval/status"); if (valid(s) && response.active_job) accept(s,response.active_job); } catch { /* Keep retry guidance. */ }
-      }
-    } finally { if (valid(s)) { s.pending = false; refresh(); } }
+      if (state.aiEnrichment === ui && ui.version === version) {ui.message="Could not check progress. Select Check progress to retry.";renderAIEnrichment();}
+    } finally {if(state.aiEnrichment===ui){ui.checking=false;renderAIEnrichment();}}
   }
-  document.addEventListener("change",event => {
-    if (event.target.id === "aiResearchTarget") {
-      el("aiEnrichmentPhase").closest(".ai-enrichment-progress-panel").hidden = false;
-      refresh();
-      if (isRisk()) check();
-    }
-  });
-  document.addEventListener("click",event => { if (event.target.closest?.("#aiRiskResearchCheck")) check({reset:true}); });
-  window.AIResearchTargets = Object.freeze({isRisk,render,start,requestOptions,open:()=>{session();if(isRisk())check();},reset:()=>{
-    clearTimeout(view?.timer); view = null;
-    if (el("aiResearchTarget")) { el("aiResearchTarget").value = "portfolio"; el("aiResearchRefresh").value = "stale"; }
+  document.addEventListener("change",event=>{if(event.target.id==="aiResearchTarget")renderAIEnrichment();});
+  document.addEventListener("click",event=>{if(event.target.closest?.("#aiRiskResearchCheck"))check();});
+  window.AIResearchTargets=Object.freeze({isRisk,render,requestOptions,completionText,unresolvedCount,open:render,start:scope=>requestAIEnrichment(scope),reset:()=>{
+    if(el("aiResearchTarget")){el("aiResearchTarget").value="portfolio";el("aiResearchRefresh").value="stale";}
   }});
-  window.AIResearchFormatting = Object.freeze({dateTime});
+  window.AIResearchFormatting=Object.freeze({dateTime});
 })();

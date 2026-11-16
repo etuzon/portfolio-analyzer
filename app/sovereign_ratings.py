@@ -65,7 +65,10 @@ def country_descriptor(value):
 
 
 # Discovery leads contain no grades. Facts require the normal bounded source read.
-SOURCE_LEADS = {"IL": ["https://ratings.moodys.com/ratings-news/458577",
+SOURCE_LEADS = {"US": [
+    "https://www.fitchratings.com/research/sovereigns/fitch-affirms-united-states-of-america-at-aa-outlook-stable-13-08-2026",
+    "https://www.moodys.com/web/en/us/about-us/usrating.html"],
+    "IL": ["https://ratings.moodys.com/ratings-news/458577",
     "https://www.gov.il/BlobFolder/news/press_31012026/he/PressReleases_files_Rating_Action-Moodys-Ratings-changes-Israels-30Jan2026-PR_518117.pdf"]}
 GOVERNMENT_DOMAINS = {"IL": ("gov.il",), "US": ("treasury.gov",), "GB": ("dmo.gov.uk",),
     "DE": ("deutsche-finanzagentur.de",), "FR": ("aft.gouv.fr",), "SG": ("mas.gov.sg",),
@@ -154,7 +157,9 @@ def extract_rating_records(source, candidate):
     chars = list(text)
     for start, end in _article_link_spans(text):
         chars[start:end] = ["\n" if c == "\n" else " " for c in chars[start:end]]
-    prose = _plain("".join(chars))
+    # Keep paragraph boundaries: a privacy notice saying "may" must not turn
+    # an agency's later affirmative rating action into a conditional claim.
+    prose = "\n".join(_plain(part) for part in re.split(r"\n\s*\n", "".join(chars)))
     observed = _publication(source, "".join(chars))
     if not observed:
         # Public Moody's releases use "New York, January 30, 2026 --
@@ -167,7 +172,7 @@ def extract_rating_records(source, candidate):
                     if len(name) > 2}, key=len, reverse=True)
     subject = r"(?:" + "|".join(re.escape(name) for name in names) + r")"
     long = r"long[ -]term"
-    currency = r"(?:(?:local|foreign)(?:[ -]currency)?(?:\s+and\s+(?:local|foreign)(?:[ -]currency)?)?\s+)?"
+    currency = r"(?:(?:local|foreign)(?:[ -]currency|-(?=\s+and\b))?(?:\s+and\s+(?:local|foreign)(?:[ -]currency)?)?\s+)?"
     label = long + r"\s+" + currency + r"(?:sovereign\s+(?:credit\s+)?|issuer\s+(?:default\s+|credit\s+)?)(?:rating|ratings|IDR)\b"
     patterns = [
         # Moody's: affirmed Israel's Baa1 long-term local and foreign-currency issuer ratings.
@@ -199,9 +204,9 @@ def extract_rating_records(source, candidate):
             before_subject = prose[max(0, match.start("subject") - 100):match.start("subject")]
             if match.start("subject") == match.start() and re.search(r"\bof\s+$", before_subject, re.I):
                 continue
-            start = max(0, prose.rfind(". ", 0, match.start()) + 2)
-            end = prose.find(". ", match.end())
-            end = min(len(prose), match.end() + 500) if end < 0 else end + 1
+            start = max(0, prose.rfind(". ", 0, match.start()) + 2, prose.rfind("\n", 0, match.start()) + 1)
+            ends = [pos for pos in (prose.find(". ", match.end()), prose.find("\n", match.end())) if pos >= 0]
+            end = min(ends) + 1 if ends else min(len(prose), match.end() + 500)
             clause = prose[start:end]
             if re.search(r"\b(?:could|may|might|would|previously|formerly|historical|expected to)\b", clause, re.I):
                 continue

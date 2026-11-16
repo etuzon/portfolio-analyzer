@@ -5512,6 +5512,32 @@ risk_evidence_research = RiskEvidenceResearch(stress_risk_inputs, _credit_resear
 risk_evidence_jobs = risk_evidence_research.manager(app, lambda: _enrichment_assistant_settings())
 risk_input_retrieval = RiskInputRetrieval(risk_evidence_research, risk_evidence_jobs,
     credit_rating_jobs, country_rating_research)
+
+
+def _portfolio_risk_country_inventory(position_scope="open", *, security_keys=None, refresh_policy="missing"):
+    """Only countries relevant to this portfolio; capture after risk evidence."""
+    selected = set(security_keys or [])
+    codes = set() if selected else {normalize_country(row.get("location")) for row in local_store.list_accounts()}
+    def collect(risk):
+        country = (risk.get("country") or {}).get("country_code")
+        if country:
+            codes.add(country)
+        for child in risk.get("lookthrough") or []:
+            if isinstance(child, dict):
+                collect((child.get("item") or {}).get("stress_risk") or child.get("risk_inputs") or child.get("risk") or {})
+    for candidate in stress_risk_inputs.inventory():
+        if selected and candidate["security_key"] not in selected:
+            continue
+        if position_scope == "open" and not candidate.get("has_open_position"):
+            continue
+        collect(stress_risk_inputs.read(candidate))
+    rows = _country_research_inventory("all", refresh_policy=refresh_policy)
+    return [row for row in rows if row.get("country_code") in codes]
+
+
+portfolio_ai_research.risk_jobs = risk_input_retrieval
+portfolio_ai_research.country_jobs = country_rating_research
+portfolio_ai_research.country_inventory_reader = _portfolio_risk_country_inventory
 risk_input_retrieval_schedules = RiskInputRetrievalSchedules(
     lambda: local_store.get_preference("risk_input_retrieval_schedule", {}),
     lambda value: local_store.set_preference("risk_input_retrieval_schedule", value),

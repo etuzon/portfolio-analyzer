@@ -102,7 +102,7 @@ def test_research_schema_requires_typed_arrays_and_no_unknown_fields_at_every_ob
     schema = codex_bridge.decision_schema([], research=True)
     proposal = schema["properties"]["answer"]
     assert proposal["type"] == "object"
-    assert set(proposal["required"]) == {"records", "observations", "profiles"}
+    assert set(proposal["required"]) == {"records", "observations", "profiles", "risk_claims"}
     observation = schema["$defs"]["_ResearchObservation"]
     assert set(observation["properties"]) == {"security_key", *ITEM_PROPERTIES}
     def check(value):
@@ -208,3 +208,20 @@ def test_yaml_cli_selection_and_default_call_ceilings(provider, expected):
     assert settings["provider"] == expected
     assert settings["enabled"] is True
     assert settings["max_tool_loops"] == settings["max_rest_calls"] == 5
+
+
+def test_research_transport_carries_grounded_risk_claims_without_native_write_tools():
+    claim = {'security_key': 'FUND|NYSE|USD', 'source_id': 'source-returned-by-read',
+        'field': 'currency_exposures', 'value_json': '{"USD":0.6,"EUR":0.4}',
+        'as_of': '2026-11-01', 'units': 'fraction',
+        'evidence_quote': 'Economic investment currency exposure: USD60%; EUR40%.'}
+    proposal = {'records': [], 'observations': [], 'profiles': [], 'risk_claims': [claim]}
+    response = codex_bridge.decision_response({**DECISION, 'answer': proposal}, [], research=True)
+    accepted = json.loads(response['choices'][0]['message']['content'])['risk_claims'][0]
+    assert accepted['value'] == {'USD': .6, 'EUR': .4}
+    assert accepted['source_id'] == claim['source_id'] and accepted['evidence_quote'] == claim['evidence_quote']
+    assert 'value_json' not in accepted
+    for invalid in ('NaN', '{invalid', '{"USD": Infinity}'):
+        with pytest.raises(codex_bridge.CodexBridgeError, match='invalid risk claim value'):
+            codex_bridge.decision_response({**DECISION, 'answer': {**proposal,
+                'risk_claims': [{**claim, 'value_json': invalid}]}}, [], research=True)

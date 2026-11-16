@@ -38,15 +38,18 @@ api=async(path,options={})=>{
   if(method==='DELETE'){qa.rules=qa.rules.filter(row=>row.id!==id);return{status:'deleted',id};}
   return{status:'queued'};
  }
- if(path==='/api/securities/enrichment/status')return{items:[]};
+ if(path==='/api/securities/enrichment/status')return{items:[],active_job:(qa.lastParent||qa.retrieval)?.status==='running'?(qa.lastParent||qa.retrieval):null,last_job:qa.lastParent||qa.retrieval};
  if(path==='/api/securities/enrichment/ai' && method==='POST'){
-  qa.marketBodies.push(body);return{request_id:'market',status:'completed',code:'completed',position_scope:body.position_scope,data_types:body.data_types,refresh_policy:body.refresh_policy,ratings_only:body.ratings_only,outcomes:[],summary:{total_candidates:0},progress:{stage:'completed',completed:0,total:0},portfolio_refresh_required:false};
+  if(body.data_types?.includes('risk_inputs')){qa.riskBodies.push(body);qa.retrieval={request_id:'risk-qa',data_types:body.data_types,risk_mode:body.risk_mode,refresh_policy:body.refresh_policy,status:'running',code:'running',progress:{stage:'researching_risk_inputs',completed:0,total:4},risk_inputs:{status:'running',progress:{completed:0,total:4,current_security:{symbol:'QA'}},summary:{total_candidates:4},outcomes:[]}};qa.lastParent=qa.retrieval;return structuredClone(qa.retrieval);}
+  qa.marketBodies.push(body);qa.lastParent={request_id:'market',status:'completed',code:'completed',position_scope:body.position_scope,data_types:body.data_types,refresh_policy:body.refresh_policy,ratings_only:body.ratings_only,outcomes:[],summary:{total_candidates:0},progress:{stage:'completed',completed:0,total:0},portfolio_refresh_required:false,risk_inputs:{status:'completed',progress:{completed:0,total:0},outcomes:[]},country_ratings:{status:'completed',progress:{completed:0,total:0},outcomes:[]}};return structuredClone(qa.lastParent);
  }
+ if(path.startsWith('/api/securities/enrichment/ai/'))return structuredClone(qa.retrieval);
+ if(path.startsWith('/api/securities/risk-inputs/retrieval/candidates'))return{items:[{security_key:'QA|NASDAQ|USD',symbol:'QA',stock_market:'NASDAQ',currency:'USD'}]};
  if(path.startsWith('/api/securities/risk-inputs/retrieval')){
   if(method==='POST'){
    qa.riskBodies.push(body);qa.retrieval={request_id:'risk-qa',status:'running',code:'running',mode:body.mode,refresh_policy:body.refresh_policy,progress:{stage:'ai',completed:0,total:1,current_security:{symbol:'QA'}},coverage:{selected:1,total_candidates:4,remaining:3},outcomes:[]};return structuredClone(qa.retrieval);
   }
-  if(path.endsWith('/status'))return{active_job:qa.retrieval,last_job:null};
+  if(path.endsWith('/status'))return{active_job:qa.legacyRisk?.status==='running'?qa.legacyRisk:null,last_job:qa.legacyRisk||null};
   return structuredClone(qa.retrieval);
  }
  return{items:[]};
@@ -86,15 +89,15 @@ def test_main_ai_risk_target_and_independent_named_schedule_forms(tmp_path, chro
     browser_wait(evaluate, "!$('aiEnrichmentModal').hidden&&$('researchScheduleList').querySelectorAll('article').length===2")
     assert evaluate("qa.riskBodies.length+qa.marketBodies.length+qa.ruleBodies.length") == 0
     choose(command, evaluate, "#aiResearchTarget", "risk_inputs")
-    browser_wait(evaluate, "!$('aiRiskResearchPanel').hidden&&!$('aiRiskResearchCheck').disabled")
+    browser_wait(evaluate, "!$('aiRiskResearchPanel').hidden&&!$('aiEnrichmentStart').disabled")
     choose(command, evaluate, "#aiResearchRefresh", "refresh_existing")
     choose(command, evaluate, "#aiRiskResearchMode", "ai")
     click(command, evaluate, "#aiEnrichmentStartAll")
     browser_wait(evaluate, "qa.riskBodies.length===1")
-    assert evaluate("qa.riskBodies[0]") == dict(mode="ai", position_scope="all",
-                                               refresh_policy="refresh_existing", language=language)
+    assert evaluate("qa.riskBodies[0]") == dict(risk_mode="ai", position_scope="all",ratings_only=False,
+                                               data_types=["risk_inputs"],refresh_policy="refresh_existing")
     assert evaluate("$('aiRiskResearchProgress').hidden") is False
-    evaluate("qa.retrieval.status='completed';qa.retrieval.progress={stage:'completed',completed:1,total:1};qa.retrieval.outcomes=[{security_key:'QA|NASDAQ|USD',symbol:'QA',status:'partial',code:'partial_data',available_fields:['issuer_identity'],missing_fields:['fx'],api:{status:'not_attempted'},ai:{status:'completed'},sources:[{url:'https://issuer.example/report',retrieved_at:'2026-11-14T10:00:00Z'}]}]")
+    evaluate("qa.retrieval.status='completed';qa.retrieval.progress={stage:'completed',completed:4,total:4};qa.retrieval.risk_inputs.status='completed';qa.retrieval.risk_inputs.progress={completed:4,total:4};qa.retrieval.risk_inputs.outcomes=[{security_key:'QA|NASDAQ|USD',symbol:'QA',status:'partial',code:'partial_data',available_fields:['issuer_identity'],missing_fields:['fx'],api:{status:'not_attempted'},ai:{status:'completed'},sources:[{url:'https://issuer.example/report',retrieved_at:'2026-11-14T10:00:00Z'}]}]")
     click(command, evaluate, "#aiRiskResearchCheck")
     browser_wait(evaluate, "$('aiRiskResearchResults').children.length===1&&!$('aiRiskResearchCheck').disabled")
     risk_text = evaluate("$('aiRiskResearchPanel').innerText")
@@ -109,6 +112,9 @@ def test_main_ai_risk_target_and_independent_named_schedule_forms(tmp_path, chro
     assert evaluate("qa.marketBodies[0].data_types") == ["profile"]
     assert evaluate("qa.marketBodies[0].refresh_policy") == "missing"
     assert evaluate("qa.riskBodies.length") == 1
+    assert evaluate("$('aiRiskResearchPanel').hidden") is True
+    assert evaluate("$('aiCountryResearchPanel').hidden") is True
+    assert "risk inputs remain" not in evaluate("$('aiEnrichmentStatus').textContent")
 
     click(command, evaluate, "#researchSchedules>summary")
     click(command, evaluate, "#newResearchSchedule")
@@ -207,4 +213,66 @@ def test_explicit_reload_refreshes_clean_saved_fields_but_dirty_draft_keeps_orig
     browser_wait(evaluate, "qa.rules[0].name==='Fresh reviewed name'")
     assert evaluate("qa.ruleBodies.at(-1).body.expected_revision") == 3
     assert evaluate("qa.rules[0].mode") == "api"
+    assert evaluate("qa.errors") == []
+
+
+@pytest.mark.parametrize("language", ["en", "he"])
+@pytest.mark.parametrize("width", [1440, 390])
+def test_complete_update_and_risk_dialog_keep_full_scope_and_unresolved_results(tmp_path, chromium, language, width):
+    command, evaluate = chromium
+    command("Emulation.setFocusEmulationEnabled", {"enabled": True})
+    command("Emulation.setDeviceMetricsOverride", {"width": width, "height": 1000,
+                                                   "deviceScaleFactor": 1, "mobile": False})
+    command("Page.navigate", {"url": fixture(tmp_path, language).as_uri()})
+    browser_wait(evaluate, "window.qa?.aiReady===true||!!window.qa?.errors?.length")
+    if width == 390:
+        click(command, evaluate, "#navigationToggle")
+    click(command, evaluate, "details:has(#enrichMissingData)>summary")
+    click(command, evaluate, "#enrichMissingData")
+    browser_wait(evaluate, "!$('aiEnrichmentModal').hidden&&!$('aiEnrichmentStart').disabled")
+    assert evaluate("$('aiResearchTarget').value") == "portfolio"
+    assert evaluate("$('aiRiskResearchModeField').hidden") is False
+    click(command, evaluate, "#aiEnrichmentStart")
+    browser_wait(evaluate, "qa.riskBodies.length===1")
+    assert evaluate("qa.riskBodies[0].data_types") == ["prices", "profile", "company_ratings", "risk_inputs", "country_ratings"]
+    assert evaluate("$('appShell').inert") is False
+    assert evaluate("$('aiRiskResearchCoverage').innerText").find("4") >= 0
+    evaluate("qa.retrieval.status='completed';qa.retrieval.progress={stage:'completed',completed:4,total:4};qa.retrieval.risk_inputs.status='completed';qa.retrieval.risk_inputs.progress={completed:4,total:4};qa.retrieval.risk_inputs.outcomes=[{security_key:'QA|NASDAQ|USD',symbol:'QA',status:'partial',code:'partial_data',available_fields:['issuer_identity'],missing_fields:['fx'],sources:[{url:'https://issuer.example/report',as_of:'2026-09-30',retrieved_at:'2026-11-14T10:00:00Z'}]}];qa.retrieval.country_ratings={status:'completed',progress:{completed:1,total:1},outcomes:[{country_code:'US',status:'unavailable',code:'source_unavailable'}]}")
+    click(command, evaluate, "#aiRiskResearchCheck")
+    browser_wait(evaluate, "!$('aiRiskResearchCheck').disabled&&$('aiRiskResearchResults').children.length===1")
+    text = evaluate("$('aiEnrichmentStatus').innerText+' '+$('aiRiskResearchPanel').innerText+' '+$('aiCountryResearchPanel').innerText")
+    assert ("still has missing risk inputs" if language == "en" else "עדיין חסרים נתוני סיכון") in text
+    assert "30/09/2026" in text
+    assert evaluate("$('aiCountryResearchPanel').hidden") is False
+    if language == "he":
+        for english in ["Country checks", "Still missing", "Observed", "Research finished"]:
+            assert english not in text
+    (tmp_path / "risk-results.png").write_bytes(base64.b64decode(command("Page.captureScreenshot", {"format": "png"})["data"]))
+    click(command, evaluate, '#aiRiskResearchPanel [data-open-risk-input-retrieval="run"]')
+    browser_wait(evaluate, "!$('riskRetrievalModal').hidden&&!$('startRiskRetrieval').disabled")
+    assert evaluate("$('riskRetrievalResults').children.length") == 1
+    click(command, evaluate, "#startRiskRetrieval")
+    browser_wait(evaluate, "qa.riskBodies.length===2")
+    assert evaluate("qa.riskBodies[1]") == {"security_keys": None, "data_types": ["risk_inputs"],
+        "position_scope": "open", "refresh_policy": "stale", "risk_mode": "api_then_ai"}
+    assert "4" in evaluate("$('riskRetrievalCoverage').innerText")
+    assert evaluate("qa.errors") == []
+
+
+@pytest.mark.parametrize("language", ["en", "he"])
+def test_risk_dialog_rejects_profile_placeholder_and_keeps_legacy_partial_scope(tmp_path, chromium, language):
+    command, evaluate = chromium
+    command("Emulation.setDeviceMetricsOverride", {"width": 1440, "height": 1000,
+                                                   "deviceScaleFactor": 1, "mobile": False})
+    command("Page.navigate", {"url": fixture(tmp_path, language).as_uri()})
+    browser_wait(evaluate, "window.qa?.aiReady===true||!!window.qa?.errors?.length")
+    evaluate("qa.lastParent={request_id:'profile-only',data_types:['profile'],status:'completed',risk_inputs:{status:'completed',progress:{completed:0,total:0},outcomes:[]}};qa.legacyRisk={request_id:'old-risk-batch',status:'completed',progress:{stage:'completed',completed:1,total:1},coverage:{selected:1,total_candidates:4,remaining:3},outcomes:[{security_key:'QA|NASDAQ|USD',symbol:'QA',status:'partial',code:'partial_data',available_fields:['issuer_identity'],missing_fields:['fx']}]};")
+    evaluate("document.querySelector('[data-open-risk-input-retrieval]').click()")
+    browser_wait(evaluate, "!$('riskRetrievalModal').hidden&&!$('startRiskRetrieval').disabled")
+    assert evaluate("$('riskRetrievalResults').children.length") == 1
+    result=evaluate("$('riskRetrievalStatus').textContent+' '+$('riskRetrievalCoverage').textContent+' '+$('riskRetrievalResults').textContent")
+    assert ("still has missing risk inputs" if language == "en" else "עדיין חסרים נתוני סיכון") in result
+    assert "4" in result and "3" in result
+    assert ("remain outside this batch" if language == "en" else "נשארים מחוץ למקבץ זה") in result
+    assert ("no missing risk inputs remain" if language == "en" else "לא נותרו נתוני סיכון חסרים") not in result
     assert evaluate("qa.errors") == []

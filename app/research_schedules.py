@@ -384,18 +384,13 @@ class ResearchSchedules:
             self._receipt(identifier, {"last_run_code": "running"}, **fence)
             targets = set(settings["data_types"])
             branches = []
-            portfolio_targets = [target for target in settings["data_types"] if target in {"prices", "profile", "company_ratings"}]
+            portfolio_targets = [target for target in settings["data_types"] if target in {"prices", "profile", "company_ratings", "risk_inputs"}]
             if portfolio_targets:
+                risk_options = {"risk_mode": settings["mode"]} if "risk_inputs" in portfolio_targets else {}
                 branches.append(("portfolio", self.portfolio, lambda: self.portfolio.start(owner, {}, settings["language"],
                     "all" if settings["position_scope"] == "selected" else settings["position_scope"],
                     security_keys=settings["security_keys"], data_types=portfolio_targets,
-                    refresh_policy=settings["refresh_policy"], scheduled_credentials=credentials)))
-            if "risk_inputs" in targets:
-                branches.append(("risk_inputs", self.risk, lambda: self.risk.start(owner, {}, settings["language"],
-                    mode=settings["mode"], security_keys=settings["security_keys"],
-                    position_scope="all" if settings["position_scope"] == "selected" else settings["position_scope"],
-                    refresh_policy=settings["refresh_policy"], batch_offset=int(settings.get("batch_cursor") or 0),
-                    scheduled_credentials=credentials)))
+                    refresh_policy=settings["refresh_policy"], scheduled_credentials=credentials, **risk_options)))
             if "country_ratings" in targets:
                 branches.append(("country_ratings", self.countries, lambda: self.countries.start(owner, {}, settings["language"],
                     "all" if settings["country_scope"] == "selected" else settings["country_scope"],
