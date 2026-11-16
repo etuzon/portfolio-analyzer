@@ -388,9 +388,10 @@ function stressRiskGapsHtml(risk) {
     } else if (key) {
       action = `<button type="button" class="secondary compact-button" data-risk-inputs-security-key="${escape(key)}" data-risk-inputs-symbol="${escape(symbol)}">${escape(stressRiskText("Review risk inputs"))}</button>`;
     }
-    return `<li><div>${symbol ? `<bdi dir="ltr">${escape(symbol)}</bdi> · ` : ""}${escape(stressRiskGapText(gap?.code || gap))}</div>${action}</li>`;
+    const gapKey = JSON.stringify([String(gap?.code || gap), symbol, key]);
+    return `<li data-risk-gap-key="${escape(gapKey)}"><div>${symbol ? `<bdi dir="ltr">${escape(symbol)}</bdi> · ` : ""}${escape(stressRiskGapText(gap?.code || gap))}</div>${action}</li>`;
   });
-  return `<details class="stress-risk-gaps"><summary>${escape(stressRiskText("Missing risk inputs"))}</summary><p>${escape(stressRiskText("Complete the missing evidence, then reload risk inputs. A partial calculation is not a complete portfolio score."))}</p><ul>${entries.join("")}</ul><div class="risk-retrieval-actions"><button type="button" class="secondary compact-button" data-open-risk-input-retrieval="run">${escape(stressRiskText("Find missing risk data"))}</button><button type="button" class="secondary compact-button" data-open-risk-input-retrieval="schedule">${escape(stressRiskText("Schedule risk data updates"))}</button></div></details>`;
+  return `<details class="stress-risk-gaps"><summary>${escape(stressRiskText("Missing risk inputs"))}</summary><p>${escape(stressRiskText("Complete the missing evidence, then reload risk inputs. A partial calculation is not a complete portfolio score."))}</p><ul class="stress-risk-gap-list" tabindex="0" aria-label="${escape(stressRiskText("Missing risk inputs"))}">${entries.join("")}</ul><div class="risk-retrieval-actions"><button type="button" class="secondary compact-button" data-open-risk-input-retrieval="run">${escape(stressRiskText("Find missing risk data"))}</button><button type="button" class="secondary compact-button" data-open-risk-input-retrieval="schedule">${escape(stressRiskText("Schedule risk data updates"))}</button></div></details>`;
 }
 
 (() => {

@@ -4241,13 +4241,15 @@ function preserveRenderedInteraction(root) {
   const active = root.contains(document.activeElement) ? document.activeElement : null;
   const rowKey = active?.closest("[data-portfolio-position]")?.dataset.portfolioPosition;
   const accountKey = active?.closest("[data-account-summary]")?.dataset.accountSummary;
-  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-update-account-cash|data-cash-entry|data-risk-badge|data-holdings-credit-info|data-edit-security|data-delete-security|data-open-risk-scenarios|data-open-risk-input-retrieval|data-open-(signal|risk|dividend|vesting|maturity)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
+  const riskGapKey = active?.closest("[data-risk-gap-key]")?.dataset.riskGapKey;
+  const identity = active ? [...active.attributes].filter((attr) => /^(id|data-position-action|data-clear-alarm|data-profit-holding-key|data-update-account-cash|data-cash-entry|data-risk-badge|data-risk-inputs-security-key|data-stress-risk-exposure|data-holdings-credit-info|data-edit-security|data-delete-security|data-open-risk-scenarios|data-open-risk-input-retrieval|data-open-(signal|risk|dividend|vesting|maturity)-alarm|data-alarm-signal-type|data-.*(symbol|market-key|market|account-id|currency|asset))$/.test(attr.name)).map((attr) => [attr.name, attr.value]) : [];
   const detailKey = (node) => JSON.stringify([node.closest?.("[data-account-summary]")?.dataset.accountSummary || "", node.id, node.className]);
   const detailStates = new Map();
   root.querySelectorAll("details").forEach((node) => {
     const key = detailKey(node);
     if (!detailStates.has(key)) detailStates.set(key, []);
-    detailStates.get(key).push(node.open);
+    const scroller = node.querySelector?.(".stress-risk-gap-list");
+    detailStates.get(key).push({open: node.open, top: scroller?.scrollTop || 0, left: scroller?.scrollLeft || 0});
   });
   const tagName = active?.tagName, className = active?.className;
   return () => {
@@ -4255,13 +4257,19 @@ function preserveRenderedInteraction(root) {
     root.querySelectorAll("details").forEach((node) => {
       const key = detailKey(node), index = detailOffsets.get(key) || 0;
       const previous = detailStates.get(key)?.[index];
-      if (previous !== undefined) node.open = previous;
+      if (previous !== undefined) {
+        node.open = previous.open;
+        const scroller = node.querySelector?.(".stress-risk-gap-list");
+        if (scroller) { scroller.scrollTop = previous.top; scroller.scrollLeft = previous.left; }
+      }
       detailOffsets.set(key, index + 1);
     });
     if (!active || active.isConnected) return;
     const scope = rowKey ? [...root.querySelectorAll("[data-portfolio-position]")].find((node) => node.dataset.portfolioPosition === rowKey)
       : accountKey ? [...root.querySelectorAll("[data-account-summary]")].find((node) => node.dataset.accountSummary === accountKey) : root;
-    const replacement = [...(scope?.querySelectorAll(tagName) || [])].find((node) => identity.length
+    const focusScope = riskGapKey ? [...(scope?.querySelectorAll("[data-risk-gap-key]") || [])].find((node) =>
+      node.dataset.riskGapKey === riskGapKey && (node.closest("[data-account-summary]")?.dataset.accountSummary || "") === (accountKey || "")) : scope;
+    const replacement = [...(focusScope?.querySelectorAll(tagName) || [])].find((node) => identity.length
       ? identity.every(([name, value]) => node.getAttribute(name) === value)
       : node.className === className);
     replacement?.focus({ preventScroll: true });

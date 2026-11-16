@@ -53,6 +53,13 @@ html:has(#riskBadgeExplanation) { scrollbar-gutter: stable; }
 .stress-risk-gaps summary { cursor: pointer; color: var(--ux-orange, #ffae18); padding-block: 5px; }
 .stress-risk-gaps > p { color: var(--ux-muted, #a6abb5); line-height: 1.5; }
 .stress-risk-gaps ul { display: grid; gap: 10px; margin-block: 8px; padding-inline-start: 18px; }
+.stress-risk-gaps > .stress-risk-gap-list {
+  max-block-size: min(22rem, 45vh);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+}
+.stress-risk-gap-list:focus-visible { outline: 2px solid #70b8ff; outline-offset: -2px; border-radius: 5px; }
 .stress-risk-gaps li > div { overflow-wrap: anywhere; line-height: 1.5; }
 .stress-risk-gaps button { margin-block-start: 5px; white-space: normal; }
 .risk-retrieval-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-block: 10px; }
