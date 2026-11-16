@@ -1245,6 +1245,7 @@ function aiOutcomeMessage(outcome) {
     reader_not_configured: "The page reader needs configuration. Saved data is retained.",
     invalid_source: "The selected source is unavailable for this request. Saved data is retained.",
     source_limit: "The source limit was reached. Start another request to continue.",
+    source_section_not_found: "The requested report section was not found. Saved data is retained.",
     invalid_request: "The research request could not be completed. Saved data is retained.",
     search_failed: "The search service could not complete this search. Try again later.",
     not_processed: "This security was not checked in this request.",

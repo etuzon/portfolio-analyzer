@@ -333,6 +333,14 @@ class StressRiskInputs:
         fields = evidence.get("fields") or {}
         researched = {}
         for key,row in fields.items():
+            if row.get("basis") == "iso4217_country_reference":
+                # The current reference list cannot supply a fact for a
+                # historical cutoff that predates its publication.
+                try:
+                    if date.fromisoformat(row.get("reference_published_at") or "") > date.fromisoformat(str(as_of or date.today())[:10]):
+                        continue
+                except ValueError:
+                    continue
             # A literal allocation from an undated/old filing can be retained
             # as evidence without becoming a current economic allocation.
             if row.get("basis") in {"reported_investment_currency", "reported_allocation", "reported_fund_holdings"}:
@@ -367,6 +375,14 @@ class StressRiskInputs:
             country = {**country, "country_code": code, "source_kind": "risk_input_assumption" if "country_code" in supplied_params else fields.get("country_code", {}).get("source_kind"),
                        "basis": params.get("country_basis") or "issuer_domicile_proxy"}
         code = country.get("country_code")
+        currency_reference = fields.get("country_currency") or {}
+        if (currency_reference.get("basis") == "iso4217_country_reference"
+                and currency_reference.get("country_code") != code):
+            # A saved US->USD reference is not an Israel currency reference
+            # after the country association changes. Explicit overrides remain.
+            researched.pop("country_currency",None)
+            if "country_currency" not in supplied_params:
+                params.pop("country_currency",None)
         public = self._credit(candidate) or {}
         sovereign = self._sovereign(code) if code else {}
         sovereign_ratings = {basis: select_rating(sovereign, basis=basis, sovereign=True)

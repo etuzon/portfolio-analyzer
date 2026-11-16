@@ -13,7 +13,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from . import credit_rating_history as history
 from .credit_rating_service import CreditRatingService, _now, _stamp, select_observation
-from .credit_ratings import _entity, _url, normalize_grade
+from .credit_ratings import _entity, _plain, _url, normalize_grade
 from .manual_credit_ratings import _date, _text
 from .security_enrichment import EnrichmentJobs, WEB_RESEARCH_POLICY
 from .security_research_tools import ResearchFailure, search_query_matches_identity
@@ -367,20 +367,24 @@ class SovereignRatingService(CreditRatingService):
                     query = candidate["country_name"] + " " + query
                 return {**session.search(candidate, query, provider=arguments.get("provider", "auto")),
                         "evidence": [], "source_status": "search_results", "web_requests": session.budget.used}
+            section = {key: arguments[key] for key in ("query", "offset") if arguments.get(key) is not None}
             if action == "read":
-                source = session.read(candidate, arguments["source_id"], reader=arguments.get("reader"))
+                source = session.read(candidate, arguments["source_id"], reader=arguments.get("reader"), **section)
             elif action == "follow":
-                source = session.follow(candidate, arguments["source_id"], arguments["link_id"], reader=arguments.get("reader"))
+                source = session.follow(candidate, arguments["source_id"], arguments["link_id"], reader=arguments.get("reader"), **section)
             else:
                 raise ResearchFailure("invalid_request", "Invalid research operation.")
             records = []
-            for row in extract_rating_records(source, candidate):
+            full_source = self._research_validation_source(candidate, source)
+            for row in extract_rating_records(full_source, candidate):
+                if _plain(row.get("evidence_quote")) not in _plain(source["text"]):
+                    continue
                 try:
-                    normalize_observation(row, candidate, source=source)
+                    normalize_observation(row, candidate, source=full_source)
                     records.append(row)
                 except ValueError:
                     pass
-            source.update(source_authority=source_authority(source, candidate) or "unverified", context_records=records)
+            source.update(source_authority=source_authority(full_source, candidate) or "unverified", context_records=records)
             return {"evidence": [source], "source_status": "evidence_found", "diagnostics": dict(session.diagnostics), "web_requests": session.budget.used}
         except (ResearchFailure, SearchFailure, ProviderFailure, ValueError, OSError, TimeoutError) as exc:
             return {"evidence": [], "source_status": getattr(exc, "code", "source_read_failed"),
@@ -403,9 +407,14 @@ class SovereignRatingService(CreditRatingService):
                     "available_fields": [], "missing_fields": []})
                 continue
             accepted = []
-            for source in (evidence_by_key or {}).get(key, []):
+            for original in (evidence_by_key or {}).get(key, []):
+                try:
+                    source = self._research_validation_source({**candidate, "_request_id": request_id}, original)
+                except ResearchFailure:
+                    continue
                 for record in extract_rating_records(source, candidate):
-                    if (key, source.get("source_id"), record["record_id"]) in selected:
+                    if ((key, source.get("source_id"), record["record_id"]) in selected
+                            and _plain(record.get("evidence_quote")) in _plain(original.get("text"))):
                         try:
                             accepted.append(normalize_observation(record, candidate, source=source))
                         except ValueError:

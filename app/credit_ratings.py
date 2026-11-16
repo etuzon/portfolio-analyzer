@@ -874,8 +874,8 @@ def _article_records(source, candidate):
     # Article links/URLs remain discovery leads. Mask the complete spans at
     # original offsets so older grades, URL slugs and pronouns are not facts.
     # Table extraction has its own literal cell rules and is unchanged here.
-    prose_chars = list(text[:40000])
-    for start, end in _article_link_spans(text[:40000]):
+    prose_chars = list(text[:1_000_000])
+    for start, end in _article_link_spans(text[:1_000_000]):
         prose_chars[start:end] = [char if char in "\r\n" else " " for char in prose_chars[start:end]]
     prose = "".join(prose_chars)
     # Reader Markdown can put thousands of characters of invisible sharing

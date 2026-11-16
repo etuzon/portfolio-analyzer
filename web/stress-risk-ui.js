@@ -477,8 +477,13 @@ function stressRiskGapsHtml(risk) {
         try {
           const url = new URL(row.source_url);
           if (!["https:","http:"].includes(url.protocol) || url.username || url.password) return "";
-          const dateText = row.as_of ? `${text("Information date")}: ${displayedDate(row.as_of)}` : "";
-          return `<li><a href="${stressRiskEscape(url.href)}" target="_blank" rel="noopener noreferrer">${stressRiskEscape(text("Source {number}",{number:index+1}))}</a>${dateText ? ` · ${stressRiskEscape(dateText)}` : ""}</li>`;
+          const reference = row.basis === "iso4217_country_reference";
+          const referenceDate = row.reference_published_at || row.as_of;
+          const dateText = reference ? referenceDate ? text("Reference list published {date}",{date:displayedDate(referenceDate)}) : ""
+            : row.as_of ? `${text("Information date")}: ${displayedDate(row.as_of)}` : "";
+          const retrieved = reference && row.retrieved_at ? text("Retrieved {date}",{date:typeof formatDateTime === "function" ? formatDateTime(row.retrieved_at) : displayedDate(row.retrieved_at)}) : "";
+          const saved = reference && row.reference_cache_status === "refresh_failed_using_saved" ? text("Reference refresh failed; using saved list.") : "";
+          return `<li><a href="${stressRiskEscape(url.href)}" target="_blank" rel="noopener noreferrer">${stressRiskEscape(text("Source {number}",{number:index+1}))}</a>${[dateText,retrieved,saved].filter(Boolean).map(value=>` · ${stressRiskEscape(value)}`).join("")}</li>`;
         } catch { return ""; }
       }).filter(Boolean);
       research.innerHTML = rows.length ? `<h3>${stressRiskEscape(text("Researched risk evidence"))}</h3><p>${stressRiskEscape(text("These read-only researched values keep their source dates. The editable fields below contain local overrides only."))}</p><dl>${rows.map(([key,value])=>`<div><dt>${stressRiskEscape(text(labels[key]))}</dt><dd>${stressRiskEscape(show(key,value))}</dd></div>`).join("")}</dl>${links.length ? `<ul>${links.join("")}</ul>` : ""}` : "";

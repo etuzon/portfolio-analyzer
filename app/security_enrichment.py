@@ -52,13 +52,15 @@ WEB_CATALOG = {
     },
     "read_security_source": {
         "path": PREFIX + "/web/read",
-        "description": "Open a discovered source_id and inspect its fetched page text, facts and links. reader=auto uses static HTTP for Google Finance and static Jina reading for SEC HTML filings and UBS investor-relations pages; other pages use the configured reader. Hidden inline-XBRL metadata is removed from SEC filings before the bounded visible evidence window. You may explicitly choose compatible (browser headers, no JavaScript), jina (rendered page) or direct (plain HTTPS); each attempt spends one research operation. Match identity, price basis, date, currency and units.",
-        "parameters": {"type": "object", "properties": {"security_key": {"type": "string"}, "source_id": {"type": "string"}, "reader": {"type": "string", "enum": ["auto", "jina", "direct", "compatible"]}}, "required": ["security_key", "source_id"]},
+        "description": "Open a discovered source_id and inspect its fetched page text, facts and links. Use optional query (literal text, up to 200 characters) to find a later report section or offset to read its next contiguous window; document_window returns absolute match positions and next_offset. Sections reuse this request's public snapshot, retaining its actual retrieval time. Every request still spends one research operation. reader=auto uses static HTTP for Google Finance and static Jina reading for SEC HTML filings and UBS investor-relations pages; other pages use the configured reader. You may explicitly choose compatible, jina or direct to try another reader. document_context is a separate identity hint, never part of a fact quotation. Match identity, price basis, date, currency and units.",
+        "parameters": {"type": "object", "properties": {"security_key": {"type": "string"}, "source_id": {"type": "string"}, "reader": {"type": "string", "enum": ["auto", "jina", "direct", "compatible"]},
+            "query": {"type": "string", "minLength": 1, "maxLength": 200}, "offset": {"type": "integer", "minimum": 0, "maximum": 1_000_000}}, "required": ["security_key", "source_id"]},
     },
     "follow_security_source": {
         "path": PREFIX + "/web/follow",
-        "description": "Read one link_id returned by a previously read source_id in this request, for example a price-history or quote-convention page. Never invent links or IDs.",
-        "parameters": {"type": "object", "properties": {"security_key": {"type": "string"}, "source_id": {"type": "string"}, "link_id": {"type": "string"}, "reader": {"type": "string", "enum": ["auto", "jina", "direct", "compatible"]}}, "required": ["security_key", "source_id", "link_id"]},
+        "description": "Read one link_id returned by a previously read source_id in this request, for example a report or price-history page. Optional query/offset select a contiguous section in the linked public document. Never invent links or IDs.",
+        "parameters": {"type": "object", "properties": {"security_key": {"type": "string"}, "source_id": {"type": "string"}, "link_id": {"type": "string"}, "reader": {"type": "string", "enum": ["auto", "jina", "direct", "compatible"]},
+            "query": {"type": "string", "minLength": 1, "maxLength": 200}, "offset": {"type": "integer", "minimum": 0, "maximum": 1_000_000}}, "required": ["security_key", "source_id", "link_id"]},
     },
 }
 
@@ -98,6 +100,7 @@ WEB_RESEARCH_POLICY = (
     "For a bond whose name is missing, identify the issuer and exact instrument first; issuer offering documents can supply a name even when no current quote is available. A STRIP is a distinct security: do not assign its parent bond's coupon or maturity to it. "
     "Find exact identity/listing, actual price date, raw price basis, currency and scaled quote unit. "
     "Read whole instrument context: headers, tables, quote cards and structured source records may establish separate claims; they need not repeat in one sentence. "
+    "A long source's first window is not the whole document. Use read_security_source query to locate the relevant section or offset=document_window.next_offset for the next window within the existing budget. A query and offset together find the next occurrence at or after that offset. Quote only the actual contiguous text, never join document_context to a different passage. "
     "The application's expected quote_unit describes its input convention, not proof of the source's unit. Do not guess or convert numbers. "
     "Keep bond percent-of-par, coupon/yield, fund NAV/redemption, adjusted closes and market quotes distinct. "
     "Use dates actually supported by source context; retrieval time is not observation time. Preserve unknown fields independently. "
@@ -659,7 +662,7 @@ class EnrichmentJobs:
                         # a fetched snapshot whose returned record IDs the
                         # planner already selected. The existing web ceiling
                         # bounds these immutable versions to at most eight.
-                        identity = lambda entry: (entry.get("source_id"), entry.get("url"), entry.get("retrieved_at"))
+                        identity = lambda entry: (entry.get("source_id"), entry.get("url"), entry.get("retrieved_at"), entry.get("evidence_id"))
                         versions = {identity(entry): entry for entry in known}
                         versions.update((identity(entry), deepcopy(entry)) for entry in entries)
                         known[:] = list(versions.values())
@@ -680,12 +683,16 @@ class EnrichmentJobs:
             return research_tool("search", request_id, security_key, request, arguments)
 
         @router.get(self.prefix + "/web/read")
-        def read_source(request_id: str, security_key: str, source_id: str, request: Request, reader: str | None = None):
-            return research_tool("read", request_id, security_key, request, {"source_id": source_id, **({"reader": reader} if reader is not None else {})})
+        def read_source(request_id: str, security_key: str, source_id: str, request: Request, reader: str | None = None,
+                        query: str | None = None, offset: int | None = None):
+            optional = {key: value for key, value in {"reader": reader, "query": query, "offset": offset}.items() if value is not None}
+            return research_tool("read", request_id, security_key, request, {"source_id": source_id, **optional})
 
         @router.get(self.prefix + "/web/follow")
-        def follow_source(request_id: str, security_key: str, source_id: str, link_id: str, request: Request, reader: str | None = None):
-            return research_tool("follow", request_id, security_key, request, {"source_id": source_id, "link_id": link_id, **({"reader": reader} if reader is not None else {})})
+        def follow_source(request_id: str, security_key: str, source_id: str, link_id: str, request: Request, reader: str | None = None,
+                          query: str | None = None, offset: int | None = None):
+            optional = {key: value for key, value in {"reader": reader, "query": query, "offset": offset}.items() if value is not None}
+            return research_tool("follow", request_id, security_key, request, {"source_id": source_id, "link_id": link_id, **optional})
 
         @router.post(self.prefix + "/ai/{request_id}/finalize")
         def finalize(request_id: str, request: Request, payload: dict[str, Any] | None = None):

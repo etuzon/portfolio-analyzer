@@ -7,7 +7,9 @@ not a claim about the reader provider's internal asset requests.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from copy import deepcopy
 from dataclasses import dataclass, field
+import hashlib
 from html.parser import HTMLParser
 import http.client
 import ipaddress
@@ -25,6 +27,11 @@ import httpx
 from .price_agent import _PageText
 from .security_search import search_web, selected_search_provider
 from .us_market_providers import RequestBudget
+
+
+SOURCE_WINDOW_CHARACTERS = 40_000
+SOURCE_DOCUMENT_BYTES = 1_000_000
+SESSION_DOCUMENT_BYTES = 2_000_000
 
 
 class ResearchFailure(ValueError):
@@ -253,6 +260,10 @@ class ResearchSession:
         self._search, self._fetch, self._resolver = search or search_web, fetch or fetch_research_document, resolver
         self._sources: dict[str, dict[str, Any]] = {}
         self._evidence: dict[str, list[dict[str, Any]]] = {}
+        self._documents: dict[str, dict[str, Any]] = {}
+        self._latest_documents: dict[tuple[str, str], str] = {}
+        self._document_bodies: dict[str, str] = {}
+        self._document_bytes = 0
         self.diagnostics = {"search_requests": 0, "source_requests": 0, "read_failures": 0}
 
     @staticmethod
@@ -376,13 +387,70 @@ class ResearchSession:
             sources.append({"source_id": source_id, "url": source["url"], "title": source["title"]})
         return {"sources": sources, "discovery_only": True, "search_provider": self.last_search_provider, "diagnostics": dict(self.diagnostics)}
 
-    def read(self, candidate: dict[str, Any], source_id: str, *, reader: str | None = None) -> dict[str, Any]:
+    @staticmethod
+    def _section_arguments(query, offset):
+        if query is not None and (not isinstance(query, str) or not 1 <= len(query.strip()) <= 200):
+            raise ResearchFailure("invalid_request", "A document query must contain 1 to 200 characters.")
+        if offset is not None and (type(offset) is not int or not 0 <= offset <= SOURCE_DOCUMENT_BYTES):
+            raise ResearchFailure("invalid_request", "Choose a document offset between zero and 1000000.")
+
+    def _retain_document(self, cache_key, document):
+        # Older windows remain valid against their exact immutable source even
+        # after an explicit refresh. Refuse new data instead of evicting the
+        # validation context needed by already returned facts.
+        digest = document["document_sha256"]
+        extra = 0 if digest in self._document_bodies else document["retained_bytes"]
+        if len(self._documents) >= 8 or self._document_bytes + extra > SESSION_DOCUMENT_BYTES:
+            raise ResearchFailure("source_limit", "The retained-document limit for this request was reached.")
+        if extra:
+            self._document_bodies[digest] = document["text"]
+            self._document_bytes += extra
+        else:
+            document["text"] = self._document_bodies[digest]
+        document_id = "document-" + uuid4().hex
+        document["document_id"] = document_id
+        self._documents[document_id] = document
+        self._latest_documents[cache_key] = document_id
+
+    @staticmethod
+    def _document_window(document, query=None, offset=None):
+        text = document["text"]
+        start, match_start, match_end = offset or 0, None, None
+        if start >= len(text) and start != 0:
+            raise ResearchFailure("source_section_not_found", "That offset is outside the retained public document.")
+        if query is not None:
+            match = re.search(re.escape(query.strip()), text[start:], re.I)
+            if not match:
+                raise ResearchFailure("source_section_not_found", "The query was not found in the retained public document.")
+            match_start, match_end = start + match.start(), start + match.end()
+            # Preserve one contiguous passage, with preceding source context.
+            # Never stitch an identity/header onto a different section's facts.
+            start = max(0, match_start - 2000)
+            line = text.rfind("\n", 0, start)
+            if line >= max(0, start - 1000):
+                start = line + 1
+        end = min(len(text), start + SOURCE_WINDOW_CHARACTERS)
+        return text[start:end], {"start": start, "end": end,
+            "total_characters": document["total_characters"], "retained_characters": len(text),
+            "next_offset": end if end < len(text) else None,
+            "match_start": match_start, "match_end": match_end, "query": query,
+            "truncated": start > 0 or end < len(text)}
+
+    def read(self, candidate: dict[str, Any], source_id: str, *, reader: str | None = None,
+             query: str | None = None, offset: int | None = None) -> dict[str, Any]:
         if reader is not None and reader not in {"auto", "jina", "direct", "compatible"}:
             raise ResearchFailure("invalid_request", "Choose an allowed page reader.")
+        self._section_arguments(query, offset)
         key, source = self._source(candidate, source_id)
         self.budget.consume()
         self.diagnostics["source_requests"] += 1
         try:
+            cache_key = (source_id, str(reader or self.settings.get("reader") or "auto"))
+            # Plain reads preserve the existing explicit-refresh behavior.
+            # Section reads reuse only this request's fetched public snapshot.
+            document = self._documents.get(self._latest_documents.get(cache_key)) if query is not None or offset is not None else None
+            if document is not None:
+                return self._evidence_window(key, source_id, document, query=query, offset=offset, cached=True)
             url = public_source_url(source["url"], resolver=self._resolver)
             document = self._fetch(url, self.settings if reader is None else {**self.settings, "reader": reader})
             if not isinstance(document, dict) or not isinstance(document.get("text"), str) or not document["text"].strip():
@@ -412,27 +480,67 @@ class ResearchSession:
             structured = document.get("structured_data") or []
             if not isinstance(structured, list) or len(json.dumps(structured)) > 16_000:
                 structured = []
-            evidence = {"source_id": source_id, "url": actual, "requested_url": url,
-                        "text": "\n".join(" ".join(line.split()) for line in document["text"].splitlines())[:40_000], "title": str(document.get("title") or source["title"])[:300],
-                        "retrieved_at": datetime.now(timezone.utc).isoformat(), "links": links, "structured_data": structured,
+            normalized = "\n".join(" ".join(line.split()) for line in document["text"].splitlines())
+            body = normalized.encode("utf-8")
+            if len(body) > SOURCE_DOCUMENT_BYTES:
+                raise ResearchFailure("source_limit", "The public document exceeds the retained-source size limit.")
+            retrieved_at = document.get("retrieved_at") or datetime.now(timezone.utc).isoformat()
+            try:
+                stamp = datetime.fromisoformat(str(retrieved_at).replace("Z", "+00:00"))
+                if stamp.tzinfo is None or stamp > datetime.now(timezone.utc):
+                    raise ValueError()
+            except (ValueError, TypeError):
+                raise ResearchFailure("source_read_failed", "The public document has an invalid retrieval timestamp.") from None
+            fetched = {"url": actual, "requested_url": url, "source_id": source_id,
+                        "text": normalized, "total_characters": len(normalized),
+                        "retained_bytes": len(body),
+                        "document_sha256": hashlib.sha256(body).hexdigest(),
+                        "title": str(document.get("title") or source["title"])[:300],
+                        "retrieved_at": retrieved_at, "links": links, "structured_data": structured,
                         "locale": str(document.get("locale") or self.settings.get("locale") or "")[:20],
-                        "reader": str(document.get("reader") or self.settings.get("reader") or "auto")[:20]}
+                        "reader": str(document.get("reader") or reader or self.settings.get("reader") or "auto")[:20]}
             if document.get("reader_engine"):
-                evidence["reader_engine"] = str(document["reader_engine"])[:20]
-            self._evidence.setdefault(key, []).append(evidence)
-            return evidence
+                fetched["reader_engine"] = str(document["reader_engine"])[:20]
+            if document.get("reference_cache_status") in {"fresh", "cached", "refresh_failed_using_saved"}:
+                fetched["reference_cache_status"] = document["reference_cache_status"]
+            self._retain_document(cache_key, fetched)
+            return self._evidence_window(key, source_id, fetched, query=query, offset=offset, cached=False)
         except (ValueError, OSError, httpx.HTTPError, http.client.HTTPException) as exc:
             self.diagnostics["read_failures"] += 1
             if isinstance(exc, ResearchFailure):
                 raise
             raise ResearchFailure("source_read_failed", "The public source could not be read.") from None
 
-    def follow(self, candidate: dict[str, Any], source_id: str, link_id: str, *, reader: str | None = None) -> dict[str, Any]:
+    def _evidence_window(self, key, source_id, document, *, query=None, offset=None, cached=False):
+        text, window = self._document_window(document, query=query, offset=offset)
+        evidence = {name: deepcopy(value) for name, value in document.items()
+                    if name not in {"text", "total_characters", "retained_bytes"}}
+        evidence.update(source_id=source_id, text=text, document_window=window,
+            document_context={"opening_text": document["text"][:2000], "title": document["title"]},
+            cached_document=cached, evidence_id=f'{document["document_id"]}:{window["start"]}:{window["end"]}')
+        self._evidence.setdefault(key, []).append(evidence)
+        return evidence
+
+    def validation_source(self, candidate, source_id, document_id):
+        """Application-only full context for this exact request-bound window.
+
+        This is not a model tool and performs no network or storage operation.
+        Full-source qualifications must remain visible to financial validators.
+        """
+        self._source(candidate, source_id)
+        document = self._documents.get(document_id) if isinstance(document_id, str) else None
+        if not document or document["source_id"] != source_id:
+            raise ResearchFailure("invalid_source", "The source window has no matching retained document.")
+        return {name: deepcopy(value) for name, value in document.items()
+                if name not in {"total_characters", "retained_bytes"}}
+
+    def follow(self, candidate: dict[str, Any], source_id: str, link_id: str, *, reader: str | None = None,
+               query: str | None = None, offset: int | None = None) -> dict[str, Any]:
         _, source = self._source(candidate, source_id)
         linked_source = source.get("links", {}).get(link_id) if isinstance(link_id, str) else None
         if not linked_source:
             raise ResearchFailure("invalid_source", "Select a link returned by the source in this request.")
-        return self.read(candidate, linked_source, reader=reader)
+        return self.read(candidate, linked_source, reader=reader, query=query, offset=offset)
 
     def evidence(self, candidate: dict[str, Any]) -> list[dict[str, Any]]:
         return list(self._evidence.get(self._key(candidate), []))

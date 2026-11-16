@@ -674,17 +674,21 @@ class CreditRatingService:
                     query = str(candidate.get("symbol") or "") + " " + query
                 result = session.search(candidate, query, provider=arguments.get("provider", "auto"))
                 return {**result, "evidence": [], "source_status": "search_results", "web_requests": session.budget.used}
+            section = {key: arguments[key] for key in ("query", "offset") if arguments.get(key) is not None}
             if action == "read":
-                source = session.read(candidate, arguments["source_id"], reader=arguments.get("reader"))
+                source = session.read(candidate, arguments["source_id"], reader=arguments.get("reader"), **section)
             elif action == "follow":
-                source = session.follow(candidate, arguments["source_id"], arguments["link_id"], reader=arguments.get("reader"))
+                source = session.follow(candidate, arguments["source_id"], arguments["link_id"], reader=arguments.get("reader"), **section)
             else:
                 raise ResearchFailure("invalid_request", "Invalid research operation.")
-            from .credit_ratings import extract_rating_records, validate_observation, source_authority
+            from .credit_ratings import _plain, extract_rating_records, validate_observation, source_authority
             source = self._authorize_source(candidate, source)
-            records = [record for record in extract_rating_records(source, candidate)
-                       if validate_observation(record, candidate, source=source) is not None]
-            source["source_authority"] = source_authority(source, candidate) or "unverified"
+            full_source = self._research_validation_source(candidate, source)
+            window = _plain(source["text"])
+            records = [record for record in extract_rating_records(full_source, candidate)
+                       if _plain(record.get("evidence_quote")) in window
+                       and validate_observation(record, candidate, source=full_source) is not None]
+            source["source_authority"] = source_authority(full_source, candidate) or "unverified"
             source["context_records"] = [{k: deepcopy(v) for k, v in record.items() if not k.startswith("_")} for record in records]
             return {"evidence": [source], "source_status": "evidence_found", "diagnostics": dict(session.diagnostics), "web_requests": session.budget.used}
         except (ResearchFailure, SearchFailure, ProviderFailure, ValueError, OSError, TimeoutError) as exc:
@@ -702,8 +706,16 @@ class CreditRatingService:
                 with self._lock:
                     self._research_attempts.setdefault(str(candidate.get("_request_id") or ""), set()).add(candidate["security_key"])
 
+    def _research_validation_source(self, candidate, source):
+        """Validate a returned window against its immutable complete snapshot."""
+        if not source.get("document_id"):
+            # Existing provider observations and legacy evidence have no window.
+            return self._authorize_source(candidate, source)
+        full = self._session(candidate).validation_source(candidate, source.get("source_id"), source["document_id"])
+        return self._authorize_source(candidate, full)
+
     def finalize(self, outcomes, user_id, request_id, *, proposal=None, evidence_by_key=None, candidates=None, **kwargs):
-        from .credit_ratings import extract_rating_records, normalize_observation
+        from .credit_ratings import _plain, extract_rating_records, normalize_observation
         from .security_web_research import parse_research_proposal
         parsed = parse_research_proposal(proposal) or {}
         choices = parsed.get("records") or []
@@ -723,10 +735,13 @@ class CreditRatingService:
                 continue
             accepted = []
             for original in (evidence_by_key or {}).get(key, []):
-                source = self._authorize_source(candidate, original)
+                try:
+                    source = self._research_validation_source({**candidate, "_request_id": request_id}, original)
+                except ResearchFailure:
+                    continue
                 for record in extract_rating_records(source, candidate):
                     identity = (key, source.get("source_id"), record.get("record_id"))
-                    if identity not in selected:
+                    if identity not in selected or _plain(record.get("evidence_quote")) not in _plain(original.get("text")):
                         continue
                     try:
                         accepted.append(normalize_observation(record, candidate, source=source))

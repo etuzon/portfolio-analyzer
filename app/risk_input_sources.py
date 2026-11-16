@@ -512,6 +512,9 @@ def _current_allocation_statements(text, observed):
 
 def extract_risk_records(source, candidate):
     """Select literal observations; no AI-authored numeric facts are accepted."""
+    from .country_currency_reference import SIX_CURRENCY_URL, currency_reference_records
+    if source.get("url") == SIX_CURRENCY_URL:
+        return currency_reference_records(source, candidate)
     if source.get("published_at") and not _day(source["published_at"]):
         return []
     host = (urlsplit(str(source.get("url") or "")).hostname or "").lower().removeprefix("www.")
@@ -653,6 +656,12 @@ def extract_proposed_risk_records(source, candidate, proposal):
     start = text.find(normalized)
     if start < 0:
         return []
+    from .country_currency_reference import SIX_CURRENCY_URL, currency_reference_records
+    if source.get("url") == SIX_CURRENCY_URL:
+        return [record for record in currency_reference_records(source,candidate)
+            if field == "country_currency" and proposal.get("value") == record["value"]
+            and proposal.get("units") == record["units"] and proposal.get("as_of") == record["as_of"]
+            and " ".join(record["evidence_quote"].split()) == normalized]
     # Reject quotations cut out of the middle of a qualified assertion.
     before = text[:start].rstrip()
     after = text[start+len(normalized):].lstrip()

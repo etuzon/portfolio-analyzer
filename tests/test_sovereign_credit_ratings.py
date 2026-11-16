@@ -37,6 +37,29 @@ def environment(tmp_path):
     return service, inventory, cache, store
 
 
+def test_sovereign_later_window_preserves_publication_and_contiguous_forward_evidence(environment):
+    from app.credit_ratings import _plain
+    from app.security_research_tools import ResearchSession, WebRequestBudget
+    service, inventory, _, _ = environment
+    candidate = {**inventory[0], "_request_id": "sovereign-later-window"}
+    text = "30 Jan 2026\n\n" + "Public background paragraph.\n\n" * 2200 + MOODYS
+    session = ResearchSession({}, WebRequestBudget(8), fetch=lambda url, _s: {"url": url, "text": text},
+        resolver=lambda *_a, **_k: [(2, 1, 6, "", ("93.184.216.34", 443))])
+    service._sessions[candidate["_request_id"]] = session
+    source_id = session._add(candidate["security_key"], "https://ratings.moodys.com/ratings-news/458577", "Moody's Israel rating")
+    page = service.research_tool(candidate, "read", {"source_id": source_id, "query": "New York, January"})["evidence"][0]
+    assert page["document_window"]["start"] > 50000 and "30 Jan 2026" not in page["text"]
+    assert len(page["context_records"]) == 2
+    assert all(row["rating_date"] == "2026-01-30" and row["outlook"] == "stable" for row in page["context_records"])
+    assert all(_plain(row["evidence_quote"]) in _plain(page["text"]) for row in page["context_records"])
+    proposal = {"records": [{"security_key": candidate["security_key"], "source_id": source_id, "record_id": row["record_id"]}
+        for row in page["context_records"]]}
+    result, = service.finalize([], "owner", candidate["_request_id"], proposal=proposal,
+        candidates={candidate["security_key"]: inventory[0]}, evidence_by_key={candidate["security_key"]: [page]})
+    assert result["status"] == "partial" and session.budget.used == 1
+    assert row(service.read(candidate))["rating"] == "Baa1"
+
+
 def row(context, agency="moodys", basis="foreign_currency", collection="ratings"):
     return next(item for item in context[collection] if item["agency"] == agency and item["currency_basis"] == basis)
 

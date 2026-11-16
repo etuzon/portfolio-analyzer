@@ -302,6 +302,26 @@ Admin/Operator may run retrieval or save its schedule; Viewer can inspect.
 Scheduled execution rechecks its owner's current permissions, uses temporary
 scoped credentials and cleans them up. Ordinary scoring remains cache-only.
 
+AI research can read the fixed public SIX ISO 4217 current-currency list for an
+already resolved country. Exactly one distinct ordinary currency supplies only
+`country_currency`, the country crisis FX axis; fund codes are excluded, while
+multiple or missing ordinary currencies stay unresolved. This is neither company
+economic FX exposure nor economic country allocation. The evidence retains the
+exact XML row, country binding, list publication and actual retrieval dates.
+Changing the country deactivates the old reference without replacing explicit
+manual overrides. A reference published after a historical cutoff is inactive.
+The shared public-document cache refreshes only during explicit research; a
+failed refresh may reuse its saved document with unchanged dates and a visible
+status. Reference publication never refreshes market yield/spread observations.
+The no-registration API-only stage remains limited to supported SEC/Treasury
+facts; the currency lookup is a budgeted AI research read.
+
+Public-source read/follow tools accept literal `query` and absolute `offset`
+arguments to return contiguous sections beyond the opening 40,000 characters.
+Each operation counts against the existing web/REST limits. The application
+retains bounded immutable source snapshots for identity, dates and qualification
+validation; selected or proposed quotes must also occur in a returned section.
+
 Research planners receive only allowlisted authenticated REST tools and may
 select request-bound source/record IDs or propose exact quoted field mappings
 through `risk_claims`, which are reparsed independently by the server. Application publication validates the

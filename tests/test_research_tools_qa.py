@@ -358,6 +358,50 @@ def test_catalog_exposes_only_fixed_rest_read_capabilities():
         assert not {"url", "sql", "path", "command", "headers", "cookies"}.intersection(entry["parameters"]["properties"])
 
 
+def test_authenticated_rest_section_read_preserves_windows_and_owner_scope(research_app):
+    env = research_app
+    text = "Synthetic QA Example QAEXAMPLE NASDAQ.\n" + "Public report filler.\n" * 3000
+    text += "Later official table\nDate | Country | Share\n30/09/2026 | Canada | 1.1%"
+    env.session._fetch = lambda url, _settings: env.state.reads.append(url) or {"url": url, "text": text}
+    callback = env.manager._research_tool_fetcher
+
+    def window_callback(candidate, action, arguments):
+        result = callback(candidate, action, arguments)
+        # Production domain callbacks return source text once, in evidence.
+        # Keep the generic QA fixture's duplicate top-level text out of the
+        # bounded model response when exercising a full 40k window.
+        return {key: value for key, value in result.items()
+                if action == "search" or key in {"evidence", "source_status", "diagnostics"}}
+
+    env.manager._research_tool_fetcher = window_callback
+
+    def initial(messages):
+        return tool("read_security_source", source_id=last_result(messages)["sources"][0]["source_id"])
+
+    def section(messages):
+        first = last_result(messages)["evidence"][-1]
+        assert "Later official table" not in first["text"]
+        params = {"request_id": next(iter(env.manager._jobs)), "security_key": KEY,
+            "source_id": first["source_id"], "query": "Later official table", "offset": 0}
+        assert env.client.get(PREFIX + "/web/read", params=params).status_code == 401
+        assert env.client.get(PREFIX + "/web/read", params=params, headers={"Authorization": "Bearer viewer"}).status_code == 403
+        assert env.client.get(PREFIX + "/web/read", params=params, headers={"Authorization": "Bearer other"}).status_code == 404
+        return tool("read_security_source", source_id=first["source_id"], query="Later official table", offset=0)
+
+    def finish(messages):
+        page = last_result(messages)["evidence"][-1]
+        assert "30/09/2026 | Canada | 1.1%" in page["text"]
+        assert page["document_window"]["start"] > 40000
+        assert page["cached_document"] is True
+        return final()
+
+    env.state.responses = [tool("search_security_sources", query="QAEXAMPLE report"), initial, section, finish]
+    run_job(env)
+    evidence = env.state.saved[0]["evidence_by_key"][KEY]
+    assert len(evidence) == 2 and len({page["evidence_id"] for page in evidence}) == 2
+    assert len(env.state.reads) == 1 and env.session.budget.used == 3
+
+
 @pytest.mark.parametrize("conflict", ["USD", "Adjusted", "wrong_identity"])
 def test_known_provider_rejected_quote_card_cannot_escape_via_legacy_excerpt(conflict):
     """The full validator must preserve the provider adapter's rejection.
@@ -521,6 +565,22 @@ def raw_record_selection(*, age_days=0):
     record, = context_records(source, CANDIDATE)
     choice = {"security_key": KEY, "source_id": source["source_id"], "record_id": record["record_id"]}
     return source, record, choice
+
+
+def test_full_source_recovery_cannot_select_unseen_later_facts():
+    from app import main
+    from app.security_web_research import recover_context_proposal
+    source, record, choice = raw_record_selection()
+    full = {**source, "text": "Opening report context.\n" + "Other material.\n" * 4000 + source["text"],
+            "_visible_source_text": "Opening report context."}
+    recovered = recover_context_proposal({KEY: CANDIDATE}, {KEY: [full]})
+    assert recovered["records"] == [choice]
+    raw = {"security_key": KEY, "source_url": SOURCE, "evidence_quote": record["evidence_quote"]}
+    filtered = main._visible_enrichment_proposal({**recovered, "observations": [raw], "profiles": [raw]},
+        {KEY: CANDIDATE}, {KEY: [full]})
+    assert filtered == {"records": [], "observations": [], "profiles": []}
+    full["_visible_source_text"] = record["evidence_quote"]
+    assert main._visible_enrichment_proposal(recovered, {KEY: CANDIDATE}, {KEY: [full]})["records"] == [choice]
 
 
 def test_record_selection_recomputes_source_values_and_returns_valid_price_observation():

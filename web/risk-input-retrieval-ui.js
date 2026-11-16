@@ -64,10 +64,12 @@
     try {
       const url = new URL(source.url);
       if (!["https:","http:"].includes(url.protocol) || url.username || url.password) return "";
-      const observed = String(source.as_of || source.observation_date || "").slice(0,10);
-      const observation = /^\d{4}-\d{2}-\d{2}$/.test(observed) ? text("Observed {date}",{date:observed.split("-").reverse().join("/")}) : "";
+      const reference = source.basis === "iso4217_country_reference";
+      const observed = String(reference ? source.reference_published_at || source.as_of || "" : source.as_of || source.observation_date || "").slice(0,10);
+      const observation = /^\d{4}-\d{2}-\d{2}$/.test(observed) ? text(reference ? "Reference list published {date}" : "Observed {date}",{date:observed.split("-").reverse().join("/")}) : "";
       const retrieved = source.retrieved_at && typeof formatDateTime === "function" ? text("Retrieved {date}", {date:formatDateTime(source.retrieved_at)}) : "";
-      return `<span><a href="${escape(url.href)}" target="_blank" rel="noopener noreferrer">${escape(text("Source {number}", {number:index + 1}))}</a>${[observation,retrieved].filter(Boolean).map(value=>` · ${escape(value)}`).join("")}</span>`;
+      const saved = reference && source.reference_cache_status === "refresh_failed_using_saved" ? text("Reference refresh failed; using saved list.") : "";
+      return `<span><a href="${escape(url.href)}" target="_blank" rel="noopener noreferrer">${escape(text("Source {number}", {number:index + 1}))}</a>${[observation,retrieved,saved].filter(Boolean).map(value=>` · ${escape(value)}`).join("")}</span>`;
     } catch { return ""; }
   }
   function flattenJob(job) {

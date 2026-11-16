@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .auth import SESSION_COOKIE_NAME
 from .risk_input_sources import PublicRiskAPIs, extract_risk_records, extract_proposed_risk_records, no_registration_fields
+from .country_currency_reference import CountryCurrencyReference, SIX_CURRENCY_URL
 from .security_enrichment import EnrichmentJobs, WEB_RESEARCH_POLICY, MAX_SELECTED
 from .security_research_tools import ResearchSession, ResearchFailure, WebRequestBudget
 from .security_search import SearchFailure, search_is_configured
@@ -41,6 +42,9 @@ POLICY = WEB_RESEARCH_POLICY + (
     "current_spread_bps (basis points), continuous_yield (annual continuously compounded decimal or percent), "
     "cashflows (dated complete future payments) and fund_holdings ([{identifier,weight}]). "
     "A multi-country allocation does not establish a single-country model input. A coupon or ordinary yield-to-maturity is not a continuous discount yield. "
+    "For country_currency, use the official ISO4217 reference hint and read its exact country name with query. "
+    "It supplies a country's currency-shock axis, never a company's economic FX weights or economic country allocation. "
+    "For long reports, use query or offset on read_security_source to inspect later sections; do not treat the opening window as the entire report. "
 )
 
 
@@ -156,11 +160,12 @@ class RetrievalStart(BaseModel):
 
 class RiskEvidenceResearch:
     """Application callbacks validate fetched sources; the planner sees REST only."""
-    def __init__(self, inputs, research_settings, *, api_sources=None, changed=None, credit_service=None, sovereign_service=None):
+    def __init__(self, inputs, research_settings, *, api_sources=None, changed=None, credit_service=None, sovereign_service=None, reference_reader=None):
         self.inputs, self.research_settings = inputs, research_settings
         self.api_sources = api_sources or PublicRiskAPIs()
         self.changed = changed or (lambda:None)
         self.credit_service, self.sovereign_service = credit_service, sovereign_service
+        self.reference_reader = reference_reader or CountryCurrencyReference()
         self._sessions, self._outcomes, self._lock = {}, {}, RLock()
 
     def candidates(self, position_scope="open", security_keys=None, refresh_policy="missing"):
@@ -216,7 +221,7 @@ class RiskEvidenceResearch:
                 settings=self.research_settings()
                 limits=getattr(self,"_manager",None)
                 limit=limits._job(key)["counts"]["max_web_requests"] if limits and key else min(8,max(1,int(settings.get("max_web_calls",8))))
-                self._sessions[key] = ResearchSession(settings,WebRequestBudget(limit=limit,timeout_seconds=90))
+                self._sessions[key] = ResearchSession(settings,WebRequestBudget(limit=limit,timeout_seconds=90),fetch=self.reference_reader.fetch_document)
                 for old in list(self._sessions)[:-100]:
                     self._sessions.pop(old,None)
             return self._sessions[key]
@@ -238,6 +243,11 @@ class RiskEvidenceResearch:
                 leads += [(url,"Official company rating source; discovery only") for entity,url in (*ISSUER_SOURCES,*AGENCY_SOURCE_LEADS) if _matches_entity(entity,candidate)]
                 from .sovereign_ratings import SOURCE_LEADS
                 leads += [(url,"Official sovereign rating source; discovery only") for url in SOURCE_LEADS.get(candidate.get("country_code"),[])]
+                if candidate.get("country_code") and "country_currency" in candidate.get("requested_fields",candidate.get("missing_fields",[])):
+                    from .sovereign_ratings import country_descriptor
+                    country = country_descriptor(candidate["country_code"])
+                    if country:
+                        leads.insert(0,(SIX_CURRENCY_URL,"Official ISO4217 country currency reference; read with query="+country["country_name"]))
                 sources=[]
                 seen=set()
                 for url,title in leads:
@@ -253,15 +263,32 @@ class RiskEvidenceResearch:
             if action == "search":
                 result=session.search(candidate,arguments.get("query",""),provider=arguments.get("provider","auto"))
                 return {**result,"evidence":[],"source_status":"search_results","web_requests":session.budget.used}
-            source = (session.read(candidate,arguments["source_id"],reader=arguments.get("reader")) if action == "read"
-                else session.follow(candidate,arguments["source_id"],arguments["link_id"],reader=arguments.get("reader")))
-            source=self._dated_source(source,candidate)
-            records=extract_risk_records(source,candidate)
+            options = {key:arguments[key] for key in ("reader","query","offset") if arguments.get(key) is not None}
+            source = (session.read(candidate,arguments["source_id"],**options) if action == "read"
+                else session.follow(candidate,arguments["source_id"],arguments["link_id"],**options))
+            validation=self._validation_source(source,candidate)
+            records=[record for record in extract_risk_records(validation,candidate)
+                if self._quote_visible(record,source)]
             source["context_records"]=[{**r,"kind":"risk_input","security_key":candidate["security_key"]} for r in records]
-            source["context_records"].extend({**record,"kind":"credit_rating","security_key":candidate["security_key"]} for _,record,_,_ in self._rating_records(source,candidate))
+            source["context_records"].extend({**record,"kind":"credit_rating","security_key":candidate["security_key"]}
+                for _,record,_,_ in self._rating_records(validation,candidate) if self._quote_visible(record,source))
             return {"evidence":[source],"source_status":"evidence_found","web_requests":session.budget.used,"diagnostics":dict(session.diagnostics)}
         except (ResearchFailure,SearchFailure,ValueError,OSError,TimeoutError) as exc:
             return {"evidence":[],"source_status":getattr(exc,"code","source_read_failed"),"web_requests":session.budget.used,"diagnostics":dict(session.diagnostics)}
+
+    @staticmethod
+    def _quote_visible(record, source):
+        quote=" ".join(str(record.get("evidence_quote") or "").split())
+        return bool(quote and quote in " ".join(str(source.get("text") or "").split()))
+
+    def _validation_source(self,source,candidate,request_id=None):
+        if not source.get("document_id"):
+            return self._dated_source(source,candidate)
+        identifier=request_id or candidate.get("_request_id") or ""
+        session=self._sessions.get(identifier)
+        if session is None:
+            raise ResearchFailure("invalid_source","The source snapshot is no longer available for validation.")
+        return self._dated_source(session.validation_source(candidate,source["source_id"],source["document_id"]),candidate)
 
     def _rating_records(self,source,candidate):
         output=[]
@@ -312,16 +339,22 @@ class RiskEvidenceResearch:
                 finalized.append({**candidate,"status":"not_attempted","code":"identity_changed","attempted":False,"available_fields":[],"missing_fields":candidate.get("missing_fields",[])})
                 continue
             for source in (evidence_by_key or {}).get(key,[]):
-                source=self._dated_source(source,candidate)
-                accepted.extend(r for r in extract_risk_records(source,candidate) if (key,source.get("source_id"),r["record_id"]) in choices)
+                validation=self._validation_source(source,candidate,request_id)
+                accepted.extend(r for r in extract_risk_records(validation,candidate) if self._quote_visible(r,source)
+                    and (key,source.get("source_id"),r["record_id"]) in choices)
                 for claim in claims:
                     if isinstance(claim,dict) and claim.get("security_key")==key and claim.get("source_id")==source.get("source_id"):
-                        accepted.extend(extract_proposed_risk_records(source,candidate,claim))
-                for category,record,normalized,subject in self._rating_records(source,candidate):
-                    if (key,source.get("source_id"),record["record_id"]) in choices:
+                        quote=" ".join(str(claim.get("evidence_quote") or "").split())
+                        if quote and quote in " ".join(str(source.get("text") or "").split()):
+                            accepted.extend(extract_proposed_risk_records(validation,candidate,claim))
+                for category,record,normalized,subject in self._rating_records(validation,candidate):
+                    if self._quote_visible(record,source) and (key,source.get("source_id"),record["record_id"]) in choices:
                         ratings[category].append(normalized)
                         rating_subjects[category]=subject
             code="data_unavailable"
+            current_country=(self.inputs.read(latest).get("country") or {}).get("country_code")
+            accepted=[record for record in accepted if record.get("basis") != "iso4217_country_reference"
+                or record.get("country_code") == current_country]
             if accepted:
                 try:
                     self.inputs.publish_evidence(candidate,accepted,expected_revision=candidate["expected_revision"])
@@ -339,7 +372,9 @@ class RiskEvidenceResearch:
             current=self.inputs.read(self.inputs.candidate(key))
             row={**candidate,"status":"partial" if accepted or rating_fields else "unavailable","code":code,
                 "available_fields":sorted({r["field"] for r in accepted}|set(rating_fields)),"missing_fields":missing_fields(current,candidate),
-                "sources":[{"url":r["source_url"],"source_kind":r["source_kind"],"retrieved_at":r["retrieved_at"],"as_of":r.get("as_of"),"fields":[r["field"]]} for r in accepted],
+                "sources":[{"url":r["source_url"],"source_kind":r["source_kind"],"retrieved_at":r["retrieved_at"],"as_of":r.get("as_of"),
+                    "basis":r.get("basis"),"reference_published_at":r.get("reference_published_at"),
+                    "reference_cache_status":r.get("reference_cache_status"),"fields":[r["field"]]} for r in accepted],
                 "attempted":bool((evidence_by_key or {}).get(key)),"retrieval_mode":"public_ai"}
             finalized.append(row)
             self._outcomes[key]=deepcopy(row)

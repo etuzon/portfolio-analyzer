@@ -78,6 +78,9 @@ def test_interruption_retention_through_authenticated_finalizer_and_real_main_wr
 
     def writer(*args, **kwargs):
         writer_calls.append(deepcopy(kwargs))
+        # This harness supplies its own reader instead of main's callback;
+        # bind that exact session for immutable full-source final validation.
+        monkeypatch.setitem(main._enrichment_tool_sessions, args[2], env.session)
         return main._save_enrichment_outcomes(*args, **kwargs)
 
     env.manager._research_tool_fetcher = research

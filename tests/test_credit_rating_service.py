@@ -65,6 +65,56 @@ def environment(tmp_path):
     return service, cache, inventory, settings
 
 
+def test_later_rating_window_is_validated_and_published_against_its_full_snapshot(environment):
+    service, _, inventory, _ = environment
+    candidate = {**inventory[0], "_request_id": "later-rating-window"}
+    text = "JPMorgan Chase & Co. annual report\n" + "Other public report content.\n" * 3000 + TABLE
+    session = ResearchSession({}, WebRequestBudget(8), fetch=lambda url, _s: {"url": url, "text": text},
+        resolver=lambda *_a, **_k: [(2, 1, 6, "", ("93.184.216.34", 443))])
+    service._sessions[candidate["_request_id"]] = session
+    source_id = session._add(candidate["security_key"], "https://www.jpmorganchase.com/ir/fixed-income", "Credit ratings")
+    first = service.research_tool(candidate, "read", {"source_id": source_id})["evidence"][0]
+    assert first["context_records"] == []
+    section = service.research_tool(candidate, "read", {"source_id": source_id, "query": "Long-term issuer rating"})["evidence"][0]
+    assert {row["agency"] for row in section["context_records"]} == {"moodys", "sp", "fitch"}
+    assert all(row["evidence_quote"] in section["text"] for row in section["context_records"])
+    proposal = {"records": [{"security_key": candidate["security_key"], "source_id": source_id, "record_id": row["record_id"]}
+        for row in section["context_records"]]}
+    # The finalizer gets the original inventory candidate without its transient
+    # request ID, just as the authenticated job coordinator supplies it.
+    result, = service.finalize([], "owner", candidate["_request_id"], proposal=proposal,
+        candidates={candidate["security_key"]: inventory[0]}, evidence_by_key={candidate["security_key"]: [first, section]})
+    assert result["status"] == "updated" and session.budget.used == 2
+    assert {row["rating"] for row in service.read(candidate)["ratings"]} == {"A1", "A", "AA-"}
+
+
+def test_long_agency_article_keeps_publication_context_when_late_clause_is_read(environment):
+    service, _, inventory, _ = environment
+    candidate = {**inventory[0], "_request_id": "late-agency-article"}
+    text = "JPMorgan Chase & Co.\n30 Jan 2026\n\n" + "Public background paragraph.\n\n" * 2200
+    text += "Fitch Ratings affirmed JPMorgan Chase & Co.'s Long-Term Issuer Default Rating at 'AA-'; Outlook Stable."
+    session = ResearchSession({}, WebRequestBudget(8), fetch=lambda url, _s: {"url": url, "text": text},
+        resolver=lambda *_a, **_k: [(2, 1, 6, "", ("93.184.216.34", 443))])
+    service._sessions[candidate["_request_id"]] = session
+    source_id = session._add(candidate["security_key"], "https://www.fitchratings.com/research/banks/jpmorgan", "JPMorgan Chase & Co. rating")
+    page = service.research_tool(candidate, "read", {"source_id": source_id, "query": "Fitch Ratings affirmed"})["evidence"][0]
+    assert page["document_window"]["start"] > 40000 and "30 Jan 2026" not in page["text"]
+    assert page["context_records"] and all(row["rating_date"] == "2026-01-30" for row in page["context_records"])
+
+
+def test_later_clause_cannot_hide_a_future_source_publication_from_credit_validation(environment):
+    service, _, inventory, _ = environment
+    candidate = {**inventory[0], "_request_id": "future-publication"}
+    text = "JPMorgan Chase & Co.\n30 Jan 2027\n\n" + "Public background paragraph.\n\n" * 2200
+    text += "Fitch Ratings affirmed JPMorgan Chase & Co.'s Long-Term Issuer Default Rating at 'AA-'; Outlook Stable."
+    session = ResearchSession({}, WebRequestBudget(8), fetch=lambda url, _s: {"url": url, "text": text},
+        resolver=lambda *_a, **_k: [(2, 1, 6, "", ("93.184.216.34", 443))])
+    service._sessions[candidate["_request_id"]] = session
+    source_id = session._add(candidate["security_key"], "https://www.fitchratings.com/research/banks/jpmorgan", "JPMorgan Chase & Co. rating")
+    page = service.research_tool(candidate, "read", {"source_id": source_id, "query": "Fitch Ratings affirmed"})["evidence"][0]
+    assert "30 Jan 2027" not in page["text"] and page["context_records"] == []
+
+
 def test_cache_only_read_retains_all_agencies_and_survives_new_service_instance(environment):
     service, cache, inventory, settings = environment
     before = service.read(inventory[0])

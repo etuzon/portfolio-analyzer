@@ -27,10 +27,12 @@
     try {
       const url = new URL(source.url || source.source_url);
       if (url.protocol !== "https:" || url.username || url.password) return "";
-      const observed = source.as_of || source.observation_date;
-      const observation = observed ? txt("Observed {date}",{date:/^\d{4}-\d{2}-\d{2}/.test(String(observed))?String(observed).slice(0,10).split("-").reverse().join("/"):dateTime(observed).split(" ")[0]}) : "";
+      const reference = source.basis === "iso4217_country_reference";
+      const observed = reference ? source.reference_published_at || source.as_of : source.as_of || source.observation_date;
+      const observation = observed ? txt(reference ? "Reference list published {date}" : "Observed {date}",{date:/^\d{4}-\d{2}-\d{2}/.test(String(observed))?String(observed).slice(0,10).split("-").reverse().join("/"):dateTime(observed).split(" ")[0]}) : "";
       const retrieved = source.retrieved_at ? txt("Retrieved {date}",{date:dateTime(source.retrieved_at)}) : "";
-      return `<a href="${esc(url.href)}" target="_blank" rel="noopener noreferrer">${esc(txt("Source {number}",{number:index+1}))}</a>${[observation,retrieved].filter(Boolean).map(value=>` · ${esc(value)}`).join("")}`;
+      const saved = reference && source.reference_cache_status === "refresh_failed_using_saved" ? txt("Reference refresh failed; using saved list.") : "";
+      return `<a href="${esc(url.href)}" target="_blank" rel="noopener noreferrer">${esc(txt("Source {number}",{number:index+1}))}</a>${[observation,retrieved,saved].filter(Boolean).map(value=>` · ${esc(value)}`).join("")}`;
     } catch { return ""; }
   }
   function unresolvedCount(job) {

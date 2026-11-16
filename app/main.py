@@ -5182,13 +5182,17 @@ def _enrichment_research_tool(candidate: dict[str, Any], action: str, arguments:
             result = session.search(current, arguments["query"], provider=arguments.get("provider", "auto"))
             return {**result, "evidence": [], "source_status": "search_results", "web_requests": budget.used}
         if action == "read":
-            source = session.read(current, arguments["source_id"], reader=arguments.get("reader"))
+            source = session.read(current, arguments["source_id"], **{name:arguments[name] for name in ("reader","query","offset") if arguments.get(name) is not None})
         elif action == "follow":
-            source = session.follow(current, arguments["source_id"], arguments["link_id"], reader=arguments.get("reader"))
+            source = session.follow(current, arguments["source_id"], arguments["link_id"], **{name:arguments[name] for name in ("reader","query","offset") if arguments.get(name) is not None})
         else:
             raise ResearchFailure("invalid_request", "Unsupported research operation.")
         from .security_source_context import context_records
-        source["context_records"] = context_records(source, current)[:30]
+        full_source = (session.validation_source(current, source["source_id"], source["document_id"])
+                       if source.get("document_id") else source)
+        visible = " ".join(source["text"].split())
+        source["context_records"] = [record for record in context_records(full_source, current)
+            if record.get("evidence_quote") and " ".join(record["evidence_quote"].split()) in visible][:30]
         # Keep source text and its bindings readable by the planner's bounded
         # tool transport instead of letting a long navigation menu hide them.
         while len(json.dumps(source, ensure_ascii=False)) > 70_000 and source.get("links"):
@@ -5246,6 +5250,7 @@ def _apply_enrichment_proposals(proposal, evidence_by_key, candidates, *, recove
     recovered = parse_research_proposal(proposal) is None
     if recovered:
         proposal = recover_context_proposal(prepared, evidence_by_key or {})
+    proposal = _visible_enrichment_proposal(proposal, prepared, evidence_by_key or {})
     verified = validate_proposals(proposal, prepared, evidence_by_key or {})
     results = {}
     def still_missing(key, field):
@@ -5328,9 +5333,65 @@ def _enrichment_outcomes() -> list[dict[str, Any]]:
     return list(saved.values()) if isinstance(saved, dict) else []
 
 
+def _visible_enrichment_proposal(proposal, candidates, evidence_by_key):
+    """Keep full-source validation while requiring a returned literal window."""
+    if not any("_visible_source_text" in source for sources in evidence_by_key.values() for source in sources):
+        return proposal
+    from .security_source_context import context_records
+    from .security_web_research import parse_research_proposal
+    parsed = parse_research_proposal(proposal)
+    if parsed is None:
+        return proposal
+    allowed = set()
+    windows = {}
+    for key, sources in evidence_by_key.items():
+        candidate = candidates.get(key)
+        if not candidate:
+            continue
+        for source in sources:
+            text = " ".join(str(source.get("_visible_source_text", source.get("text", ""))).split())
+            windows.setdefault((key, source.get("url")), []).append(text)
+            for record in context_records(source, candidate):
+                quote = " ".join(str(record.get("evidence_quote") or "").split())
+                if quote and quote in text:
+                    allowed.add((key, source.get("source_id"), record["record_id"]))
+    records = parsed.get("records") or []
+    result = {**parsed, "records": [choice for choice in records if isinstance(choice, dict)
+        and all(isinstance(choice.get(field), str) for field in ("security_key", "source_id", "record_id"))
+        and (choice["security_key"], choice["source_id"], choice["record_id"]) in allowed]} if isinstance(records, list) else {**parsed, "records": []}
+    for field in ("observations", "profiles"):
+        rows = parsed.get(field) or []
+        result[field] = [row for row in rows if isinstance(row, dict)
+            and isinstance(row.get("security_key"), str) and isinstance(row.get("source_url"), str)
+            and isinstance(row.get("evidence_quote"), str) and row["evidence_quote"].strip()
+            and any(" ".join(row["evidence_quote"].split()) in text
+                    for text in windows.get((row["security_key"], row["source_url"]), []))] if isinstance(rows, list) else []
+    return result
+
+
 def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, request_id: str, *, proposal=None, evidence_by_key=None, candidates=None, context_recovery_reason=None, position_scope: str = "open"):
     saved = {item["security_key"]: item for item in _enrichment_outcomes() if isinstance(item, dict) and item.get("security_key")}
     scope_keys = _enrichment_scope_keys(position_scope)
+    if evidence_by_key:
+        from .security_research_tools import ResearchFailure
+        session = _enrichment_tool_sessions.get(request_id)
+        validated = {}
+        for key,sources in evidence_by_key.items():
+            validated[key] = []
+            for source in sources:
+                if not source.get("document_id"):
+                    validated[key].append(source)
+                    continue
+                try:
+                    if session is None:
+                        continue
+                    full = session.validation_source((candidates or {}).get(key,{"security_key":key}),
+                        source["source_id"],source["document_id"])
+                    full["_visible_source_text"] = source["text"]
+                    validated[key].append(full)
+                except (ResearchFailure,KeyError):
+                    continue
+        evidence_by_key = validated
     # The agent submits only proposals and request-bound fetched evidence through
     # REST. Validation and any supported local save belong to this application.
     recover_interrupted = context_recovery_reason in {"request_limit", "planner_timeout"} and bool(evidence_by_key)

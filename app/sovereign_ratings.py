@@ -153,7 +153,7 @@ def extract_rating_records(source, candidate):
     """
     if not source_authority(source, candidate) or not isinstance(source.get("text"), str):
         return []
-    text = source["text"][:50000]
+    text = source["text"][:1_000_000]
     chars = list(text)
     for start, end in _article_link_spans(text):
         chars[start:end] = ["\n" if c == "\n" else " " for c in chars[start:end]]
@@ -231,17 +231,20 @@ def extract_rating_records(source, candidate):
             # signal, not an unrelated country/company sentence.
             tail = prose[match.end():min(len(prose), end + 250)]
             signal = clause
+            quote_start, quote_end = start, end
             # A separately named sovereign outlook action may precede the grade
             # sentence (the usual Moody's announcement format). Bind the whole
             # country phrase, never a document-wide anonymous outlook.
             named_signal = re.compile(r"(?:chang(?:es|ed)|revis(?:es|ed))\s+(?:the\s+|its\s+)?outlook\s+(?:on|of|for)\s+(?:the\s+)?"
                 + subject + r"\s+to\s+(?:positive|negative|stable|developing)(?:\s+from\s+\w+)?", re.I)
             named = list(named_signal.finditer(prose))
-            if len(named) == 1:
+            if len(named) == 1 and max(end, named[0].end()) - min(start, named[0].start()) <= 12000:
                 signal += " " + named[0][0]
+                quote_start, quote_end = min(start, named[0].start()), max(end, named[0].end())
             first_tail = tail.split(". ", 2)
             if len(first_tail) > 1 and re.match(r"(?:The |Its |The rating )?(?:outlook|Outlook|CreditWatch|Rating Watch)", first_tail[1]):
                 signal += " " + first_tail[1]
+                quote_end = max(quote_end, match.end() + tail.index(first_tail[1]) + len(first_tail[1]))
             out = _forward_values(signal, names)
             out += re.findall(r"\boutlook\s+(?:on|of|for)\s+(?:the\s+)?" + subject + r"\s+to\s+(positive|negative|stable|developing)\b", signal, re.I)
             outlook = normalize_outlook(out[0]) if len({s.lower() for s in out}) == 1 else "unknown"
@@ -259,7 +262,9 @@ def extract_rating_records(source, candidate):
             outlook_action = bool(outlook != "unknown" and re.search(r"(?:chang(?:es|ed)|revis(?:es|ed))\s+(?:its\s+|the\s+)?outlook", signal, re.I))
             for basis in _bases(match["label"]):
                 try:
-                    records.append(_make(source, candidate, agencies[0], match["grade"], basis, signal, observed,
+                    # Forward-signal analysis may combine named clauses, but
+                    # the evidence remains their exact contiguous passage.
+                    records.append(_make(source, candidate, agencies[0], match["grade"], basis, prose[quote_start:quote_end], observed,
                         action=action, outlook=outlook, watch=watch, outlook_action=outlook_action, watch_action=watch_action))
                 except ValueError:
                     continue
