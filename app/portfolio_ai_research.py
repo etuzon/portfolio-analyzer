@@ -49,7 +49,8 @@ class PortfolioAIResearch:
 
     @staticmethod
     def _public(job):
-        return deepcopy({key: value for key, value in job.items() if not key.startswith("_")})
+        return deepcopy({**{key: value for key, value in job.items() if not key.startswith("_")},
+                         "security_keys": job.get("_security_keys")})
 
     def _owned(self, identifier, owner):
         job = self._jobs.get(identifier)

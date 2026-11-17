@@ -3383,7 +3383,9 @@ async def assistant_question(payload: dict[str, Any], request: Request):
         raise failure(exc.status_code, code) from exc
     except AssistantError as exc:
         message = str(exc)
-        code = "assistant_unavailable" if "unavailable" in message or "not configured" in message else "assistant_limit" if "read limit" in message else "assistant_invalid_response"
+        unavailable = exc.code in {"ai_unavailable", "ai_disabled", "ai_bridge_missing", "ai_bridge_unavailable",
+                                   "ai_provider_unavailable", "ai_provider_timeout", "ai_provider_busy"}
+        code = "assistant_unavailable" if unavailable or "unavailable" in message or "not configured" in message else "assistant_limit" if "read limit" in message else "assistant_invalid_response"
         audit("request_failed", code=code, error_type=type(exc).__name__, error=message, exception=traceback.format_exc())
         raise failure(503 if code == "assistant_unavailable" else 400 if code == "assistant_limit" else 502, code) from exc
     except HTTPException:

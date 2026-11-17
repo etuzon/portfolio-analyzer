@@ -436,7 +436,7 @@ class EnrichmentJobs:
                 job["_context_recovery_reason"] = "request_limit"
         except AssistantError as exc:
             failure = "request_limit" if "limit" in str(exc) else (exc.code or "ai_unavailable")
-            if failure == "request_limit" or "timed out" in str(exc).lower() or "timeout" in str(exc).lower():
+            if failure in {"request_limit", "ai_provider_timeout"} or "timed out" in str(exc).lower() or "timeout" in str(exc).lower():
                 job["_context_recovery_reason"] = "request_limit" if failure == "request_limit" else "planner_timeout"
             with self._lock:
                 self._failure(job, failure, type(exc).__name__)

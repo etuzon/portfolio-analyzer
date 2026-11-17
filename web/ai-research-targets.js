@@ -125,8 +125,11 @@
       const job=await api(`/api/securities/enrichment/ai/${encodeURIComponent(ui.job.request_id)}`);
       if (state.aiEnrichment !== ui || ui.version !== version) return;
       acceptAIEnrichmentJob(job); scheduleAIEnrichmentPoll();
-    } catch {
-      if (state.aiEnrichment === ui && ui.version === version) {ui.message="Could not check progress. Select Check progress to retry.";renderAIEnrichment();}
+    } catch (error) {
+      if (state.aiEnrichment === ui && ui.version === version) {
+        if (isAIEnrichmentRequestExpired(error)) expireAIEnrichmentRequest(ui);
+        else {ui.message="Could not check progress. Select Check progress to retry.";renderAIEnrichment();}
+      }
     } finally {if(state.aiEnrichment===ui){ui.checking=false;renderAIEnrichment();}}
   }
   document.addEventListener("change",event=>{if(event.target.id==="aiResearchTarget")renderAIEnrichment();});

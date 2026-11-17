@@ -208,6 +208,25 @@ def test_readonly_assistant_catalog_cannot_access_logs_or_logging_settings():
         assert not tool["path"].startswith(("/api/settings/logging", "/api/logs", "/api/admin/logs"))
 
 
+@pytest.mark.parametrize("code", ["ai_provider_timeout", "ai_provider_busy", "ai_provider_unavailable"])
+@pytest.mark.parametrize("language", ["en", "he"])
+def test_typed_provider_failures_keep_unavailable_status_and_localized_safe_notice(diagnostic_chat_env, code, language):
+    env = diagnostic_chat_env
+    client = env.login()
+    def fail(*args, **kwargs):
+        raise AssistantError("The provider could not complete this check.", code=code)
+    env.patch.setattr(PortfolioAssistant, "_call_provider", fail)
+    response = client.post("/api/assistant/questions", json={"prompt":"Read my accounts", "language":language})
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["code"] == "assistant_unavailable"
+    assert bool(re.search(r"[\u0590-\u05ff]", detail["message"])) == (language == "he")
+    assert "provider could not complete" not in detail["message"]
+    failures = [row for row in _logs(env) if row["request_id"] == detail["request_id"] and row["event"] == "request_failed"]
+    assert len(failures) == 1 and failures[0]["code"] == "assistant_unavailable"
+    assert client.post("/api/assistant/chats").status_code == 200
+
+
 def test_local_bridge_failure_cause_is_redacted_in_log_and_hidden_from_localized_ui(diagnostic_chat_env):
     import httpx
     env = diagnostic_chat_env

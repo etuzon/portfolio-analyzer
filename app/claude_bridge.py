@@ -60,7 +60,7 @@ def claude_completion(messages: list[dict[str, Any]], tools: list[dict[str, Any]
                 decision = json.loads(result.get("result", ""))
             return decision_response(decision, tools, research=research)
         except subprocess.TimeoutExpired as exc:
-            raise CodexBridgeError("Claude Code planning turn timed out.") from exc
+            raise CodexBridgeError("Claude Code planning turn timed out.", code="ai_provider_timeout") from exc
         except (ValueError, TypeError, AttributeError) as exc:
             if isinstance(exc, CodexBridgeError):
                 raise

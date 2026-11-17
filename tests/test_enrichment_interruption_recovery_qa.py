@@ -16,6 +16,7 @@ from test_security_source_context import TASE, URL
     ("assistant-limit", "request_limit", True),
     ("rest-limit", "request_limit", True),
     ("timeout", "planner_timeout", True),
+    ("typed-timeout", "planner_timeout", True),
     ("valid-empty", None, False),
     ("generic-error", None, False),
     ("cancelled", None, False),
@@ -106,6 +107,8 @@ def test_interruption_retention_through_authenticated_finalizer_and_real_main_wr
             raise RestError("request_limit")
         if interruption == "timeout":
             raise AssistantError("The local planner timed out")
+        if interruption == "typed-timeout":
+            raise AssistantError("The planning deadline expired",code="ai_provider_timeout")
         if interruption == "generic-error":
             raise AssistantError("The local planner disconnected")
         if interruption == "cancelled":

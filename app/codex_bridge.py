@@ -30,7 +30,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 class CodexBridgeError(ValueError):
-    pass
+    def __init__(self, message: str, *, code: str = "ai_provider_unavailable"):
+        self.code = code if code in {"ai_provider_unavailable", "ai_provider_timeout", "ai_provider_busy"} else "ai_provider_unavailable"
+        super().__init__(message)
 
 
 def bridge_runtime_directory(repo: Path) -> Path:
@@ -189,7 +191,7 @@ class _Rpc:
         while b"\n" not in self.buffer:
             remaining = self.deadline - time.monotonic()
             if remaining <= 0 or not select.select([self.process.stdout], [], [], max(remaining, 0))[0]:
-                raise CodexBridgeError("Local Codex timed out.")
+                raise CodexBridgeError("Local Codex timed out.", code="ai_provider_timeout")
             chunk = os.read(self.process.stdout.fileno(), 65_536)
             if not chunk:
                 raise CodexBridgeError("Local Codex stopped before answering.")
@@ -390,8 +392,7 @@ class _Handler(BaseHTTPRequestHandler):
                     or payload.get("reasoning_effort", "medium") not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}):
                 raise ValueError()
             if not _slots.acquire(blocking=False):
-                self.send_error(503)
-                return
+                raise CodexBridgeError("The local AI bridge is busy.", code="ai_provider_busy")
             try:
                 if payload.get("provider") == "local_claude":
                     from .claude_bridge import claude_completion
@@ -408,7 +409,9 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:
             # Return only controlled diagnostics, never subprocess stderr or
             # credentials. The app stores this cause in its redacted chat log.
-            body = json.dumps({"error": {"type": type(exc).__name__, "message": str(exc) if isinstance(exc, CodexBridgeError) else "Local Codex is unavailable or rejected the request."}}).encode()
+            body = json.dumps({"error": {"type": type(exc).__name__,
+                "code": exc.code if isinstance(exc, CodexBridgeError) else "ai_provider_unavailable",
+                "message": str(exc) if isinstance(exc, CodexBridgeError) else "Local Codex is unavailable or rejected the request."}}).encode()
             status = 503
         self.send_response(status)
         self.send_header("Content-Type", "application/json")

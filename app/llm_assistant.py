@@ -248,10 +248,37 @@ class PortfolioAssistant:
                         payload["purpose"] = "security_research"
                     response = client.post("/completion", json=payload)
                     if response.status_code != 200:
-                        detail = response.json().get("error", {})
-                        cause = detail.get("message", "") if isinstance(detail, dict) else ""
-                        raise AssistantError("The local AI service is unavailable. " + cause, code="ai_provider_unavailable")
+                        try:
+                            body = response.json()
+                        except ValueError:
+                            body = {}
+                        detail = body.get("error", {}) if isinstance(body, dict) else {}
+                        detail = detail if isinstance(detail, dict) else {}
+                        code = detail.get("code")
+                        code = code if isinstance(code, str) else None
+                        cause = detail.get("message")
+                        # Older bridges returned only controlled fixed messages.
+                        timeout_cause = next((fixed for fixed in ("Local Codex timed out.", "Claude Code planning turn timed out.")
+                            if isinstance(cause, str) and cause.startswith(fixed)), None)
+                        if code is None and timeout_cause:
+                            code = "ai_provider_timeout"
+                        messages_by_code = {
+                            "ai_provider_timeout": "The local AI planning request timed out.",
+                            "ai_provider_busy": "The local AI service is busy.",
+                        }
+                        message = messages_by_code.get(code, "The local AI provider could not complete the request.")
+                        if code == "ai_provider_timeout" and timeout_cause:
+                            message = timeout_cause
+                        if code not in messages_by_code:
+                            code = "ai_provider_unavailable"
+                            if cause == "Codex CLI is not installed.":
+                                message += " " + cause
+                        # Never pass provider-controlled response text into logs
+                        # or UI diagnostics, or interpret it as a login failure.
+                        raise AssistantError(message, code=code)
                     return response.json()
+            except httpx.TimeoutException as exc:
+                raise AssistantError("The local AI request timed out.", code="ai_provider_timeout") from exc
             except (httpx.HTTPError, ValueError) as exc:
                 if isinstance(exc, AssistantError):
                     raise

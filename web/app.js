@@ -1223,7 +1223,9 @@ function aiOutcomeMessage(outcome) {
     ai_disabled: "AI is disabled. An administrator must enable it before research can start.",
     ai_bridge_missing: "The host AI bridge is not running. An administrator must start it, then start a new request.",
     ai_bridge_unavailable: "The app cannot connect to the host AI bridge. An administrator must restore the connection, then start a new request.",
-    ai_provider_unavailable: "The AI bridge could not run the selected model. An administrator must check the AI sign-in and model settings, then start a new request.",
+    ai_provider_unavailable: "The AI service could not complete this check. Saved results are retained; retry the remaining checks. If the failure repeats, ask an administrator to inspect the AI service.",
+    ai_provider_timeout: "The AI check timed out. Saved results are retained; retry the remaining checks.",
+    ai_provider_busy: "The AI service is busy. Saved results are retained; retry the remaining checks shortly.",
     request_limit: "The request limit was reached. This security may need a new request.",
     provider_unavailable: "The data source is unavailable. Try again later or enter verified data manually.",
     source_read_failed: "Search found source pages, but they could not be read. Try again later; saved data is retained.",
@@ -1290,6 +1292,35 @@ function resetAIEnrichment() {
   renderAIEnrichment();
 }
 
+function renderAIEnrichmentRecovery() {
+  const retry = $("aiEnrichmentRetryRatings"), ui = state.aiEnrichment, job = ui.job;
+  if (!retry) return;
+  const unfinished = [job, job?.credit_ratings, job?.risk_inputs, job?.country_ratings].some((panel) =>
+    (panel?.outcomes || []).some((outcome) => ["pending", "not_attempted"].includes(outcome.status))
+    || Number(panel?.summary?.not_attempted) > 0
+    || (Number(panel?.progress?.total) > Number(panel?.progress?.completed)));
+  retry.hidden = !job?.request_id || job.status !== "failed" || !unfinished || ui.pending || ui.resume;
+  retry.disabled = !canWrite() || ui.pending || ui.resume || state.auth.forcedPasswordChange || Boolean(currentUser()?.must_change_password);
+  retry.textContent = t(job?.ratings_only ? "Retry remaining rating checks" : "Retry remaining checks");
+  retry.setAttribute("aria-describedby", "aiEnrichmentStatus aiEnrichmentCounts");
+}
+
+function isAIEnrichmentRequestExpired(error) {
+  return error?.status === 404 && [error.code, error.message].includes("enrichment_request_not_found");
+}
+
+function expireAIEnrichmentRequest(ui) {
+  ui.version = (ui.version || 0) + 1;
+  clearTimeout(ui.timer);
+  ui.timer = null;
+  ui.job = null;
+  ui.pending = false;
+  ui.resume = false;
+  ui.polls = 0;
+  ui.message = "The previous AI request is no longer available. Saved results are retained; start a new request.";
+  renderAIEnrichment();
+}
+
 function renderAIEnrichment() {
   const opener = $("enrichMissingData"), button = $("aiEnrichmentStart");
   if (!button || !opener) return;
@@ -1341,7 +1372,7 @@ function renderAIEnrichment() {
   }
   if (status.textContent !== message) status.textContent = message;
   status.hidden = !message;
-  const stage = ui.job?.progress?.stage || (ui.pending ? "queued" : ui.job?.status === "failed" ? "failed" : ui.job ? "completed" : "ready");
+  const stage = ui.pending && ui.job?.status === "failed" ? "queued" : ui.job?.progress?.stage || (ui.pending ? "queued" : ui.job?.status === "failed" ? "failed" : ui.job ? "completed" : "ready");
   const phases = { ready: "Ready to research", queued: "Waiting to start", checking_apis: "Checking AI eligibility", researching: "Researching remaining gaps", researching_market_data: "Researching missing market data", researching_ratings: "Researching public-source company ratings", researching_risk_inputs: "Researching risk inputs", researching_country_ratings: "Researching public-source country ratings", saving: "Saving verified results", completed: "Research finished", failed: "Research stopped" };
   const phaseText = t(ui.resume ? "Progress check needed" : nothingMissing ? "No AI research needed" : phases[stage] || "Research in progress");
   if ($("aiEnrichmentPhase").textContent !== phaseText) $("aiEnrichmentPhase").textContent = phaseText;
@@ -1395,6 +1426,7 @@ function renderAIEnrichment() {
     if (item) node.title = dataGapTooltip(item);
   });
   if (typeof renderAIEnrichmentCreditRatings === "function") renderAIEnrichmentCreditRatings();
+  renderAIEnrichmentRecovery();
   window.AIResearchTargets?.render();
 }
 
@@ -1450,6 +1482,7 @@ function acceptAIEnrichmentJob(job) {
 
 function scheduleAIEnrichmentPoll() {
   const ui = state.aiEnrichment;
+  const version = ui.version;
   clearTimeout(ui.timer);
   if (!ui.pending) return;
   if (ui.polls >= 120) {
@@ -1460,15 +1493,19 @@ function scheduleAIEnrichmentPoll() {
     return;
   }
   ui.timer = setTimeout(async () => {
-    if (state.aiEnrichment !== ui || !currentUser()) return;
+    if (state.aiEnrichment !== ui || ui.version !== version || !currentUser()) return;
     ui.polls += 1;
     try {
       const job = await api(`/api/securities/enrichment/ai/${encodeURIComponent(ui.job.request_id)}`);
-      if (state.aiEnrichment !== ui) return;
+      if (state.aiEnrichment !== ui || ui.version !== version) return;
       acceptAIEnrichmentJob(job);
       scheduleAIEnrichmentPoll();
-    } catch {
-      if (state.aiEnrichment !== ui) return;
+    } catch (error) {
+      if (state.aiEnrichment !== ui || ui.version !== version) return;
+      if (isAIEnrichmentRequestExpired(error)) {
+        expireAIEnrichmentRequest(ui);
+        return;
+      }
       ui.pending = false;
       ui.resume = true;
       ui.message = "AI progress could not be loaded. Check AI progress to retry the same request.";
@@ -1482,6 +1519,11 @@ async function loadAIEnrichmentStatus() {
   const version = ui.version;
   const data = await api("/api/securities/enrichment/status");
   if (state.aiEnrichment !== ui || ui.version !== version) return;
+  if (!data.active_job && !data.last_job && (ui.pending || ui.resume || ["failed", "queued", "running"].includes(ui.job?.status))) {
+    if (data.items?.length) ui.outcomes = data.items;
+    expireAIEnrichmentRequest(ui);
+    return;
+  }
   ui.outcomes = data.items || [];
   if (data.active_job) {
     acceptAIEnrichmentJob(data.active_job);
@@ -1493,9 +1535,12 @@ async function loadAIEnrichmentStatus() {
 async function requestAIEnrichment(positionScope = "open", { resumeRequestId = "" } = {}) {
   const ui = state.aiEnrichment;
   if (!canWrite() || ui.pending || state.auth.forcedPasswordChange || currentUser()?.must_change_password) return;
-  const ratingsOnly = resumeRequestId ? Boolean(ui.job?.ratings_only) : Boolean(ui.ratingsOnly);
+  const resumeJob = resumeRequestId && !ui.resume ? ui.job : null;
+  if (resumeJob && resumeJob.request_id !== resumeRequestId) return;
+  const ratingsOnly = resumeJob ? Boolean(resumeJob.ratings_only) : Boolean(ui.ratingsOnly);
   ui.ratingsOnly = ratingsOnly;
   ui.version = (ui.version || 0) + 1;
+  const version = ui.version;
   clearTimeout(ui.timer);
   ui.pending = true;
   ui.message = "";
@@ -1505,12 +1550,12 @@ async function requestAIEnrichment(positionScope = "open", { resumeRequestId = "
     if (ui.resume) {
       if (ui.job?.request_id) {
         const job = await api(`/api/securities/enrichment/ai/${encodeURIComponent(ui.job.request_id)}`);
-        if (state.aiEnrichment !== ui) return;
+        if (state.aiEnrichment !== ui || ui.version !== version) return;
         acceptAIEnrichmentJob(job);
       } else {
         await loadAIEnrichmentStatus();
-        if (state.aiEnrichment !== ui) return;
-        if (!ui.job) {
+        if (state.aiEnrichment !== ui || ui.version !== version) return;
+        if (!ui.job && ui.pending) {
           ui.pending = false;
           ui.resume = false;
           ui.message = "No active AI request was found. Start a new request when ready.";
@@ -1518,15 +1563,22 @@ async function requestAIEnrichment(positionScope = "open", { resumeRequestId = "
         }
       }
     } else {
-      const targetOptions = window.AIResearchTargets?.requestOptions(resumeRequestId ? ui.job : null) || {};
-      ui.job = null;
-      const job = await api("/api/securities/enrichment/ai", { method: "POST", body: JSON.stringify({ position_scope: positionScope, ratings_only: targetOptions.data_types ? targetOptions.data_types.length === 1 && targetOptions.data_types[0] === "company_ratings" : ratingsOnly, ...targetOptions, ...(resumeRequestId ? { resume_request_id: resumeRequestId } : {}) }) });
-      if (state.aiEnrichment !== ui) return;
+      const targetOptions = window.AIResearchTargets?.requestOptions(resumeJob) || {};
+      if (resumeJob) {
+        delete ui.refreshedJob;
+        delete ui.refreshedRatingsJob;
+      } else ui.job = null;
+      const job = await api("/api/securities/enrichment/ai", { method: "POST", body: JSON.stringify({ position_scope: resumeJob?.position_scope || positionScope, ratings_only: targetOptions.data_types ? targetOptions.data_types.length === 1 && targetOptions.data_types[0] === "company_ratings" : ratingsOnly, ...targetOptions, ...(resumeJob?.risk_mode && resumeJob.risk_mode !== "api_then_ai" ? { risk_mode: resumeJob.risk_mode } : {}), ...(Array.isArray(resumeJob?.security_keys) ? { security_keys: resumeJob.security_keys } : {}), ...(resumeRequestId ? { resume_request_id: resumeRequestId } : {}) }) });
+      if (state.aiEnrichment !== ui || ui.version !== version) return;
       acceptAIEnrichmentJob(job);
     }
     scheduleAIEnrichmentPoll();
   } catch (error) {
-    if (state.aiEnrichment !== ui) return;
+    if (state.aiEnrichment !== ui || ui.version !== version) return;
+    if (isAIEnrichmentRequestExpired(error)) {
+      expireAIEnrichmentRequest(ui);
+      return;
+    }
     ui.pending = false;
     ui.resume = true;
     ui.message = "AI progress could not be loaded. Check AI progress to retry the same request.";
