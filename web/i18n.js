@@ -278,6 +278,7 @@
     "Could not check progress. Retrying automatically…": "לא ניתן לבדוק התקדמות. מנסה שוב אוטומטית…",
     "Last known progress: {progress}": "ההתקדמות האחרונה שנקראה: {progress}",
     "Request diagnostics": "אבחון הבקשה",
+    "Dependent country-rating checks run after security risk research and use the same freshness policy. A failed country check leaves remaining country checks unfinished while retaining saved security evidence. While the request is retained, Retry remaining checks skips completed security checks. After an application restart, select Country credit ratings in Find missing data with AI to check country evidence without repeating security research.": "בדיקות דירוגי המדינות התלויות במחקר הסיכון פועלות לאחר בדיקת ניירות הערך ומשתמשות באותם כללי עדכניות. כשל בבדיקת מדינה משאיר את בדיקות המדינות שנותרו לא גמורות, תוך שמירת האסמכתאות לניירות הערך. כל עוד הבקשה נשמרת, ניסיון חוזר לבדיקות שנותרו מדלג על בדיקות ניירות ערך שהושלמו. לאחר הפעלה מחדש של היישום, בחרו דירוגי אשראי של מדינות באיתור נתונים חסרים בעזרת העוזר כדי לבדוק אסמכתאות למדינות בלי לחזור על מחקר ניירות הערך.",
     "View request diagnostics": "הצגת פרטי אבחון הבקשה",
     "Request ID: {request_id}": "מזהה הבקשה: {request_id}",
     "The session expired. Sign in again before retrying.": "תוקף ההתחברות פג. התחברו שוב לפני ניסיון חוזר.",

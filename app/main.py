@@ -5556,7 +5556,8 @@ app.include_router(credit_rating_jobs.router())
 sovereign_rating_jobs = sovereign_rating_service.manager(app, lambda: _enrichment_assistant_settings(),
     event_writer=lambda event, **fields: _record_log("market-data", "sovereign_" + event, **fields))
 country_rating_research = CountryRatingResearch(sovereign_rating_jobs, _country_research_inventory,
-                                               lambda: _enrichment_assistant_settings())
+    lambda: _enrichment_assistant_settings(),
+    event_writer=lambda event, **fields: _record_log("market-data", event, **fields))
 country_rating_schedules = CountryRatingSchedules(
     lambda: local_store.get_preference("country_rating_schedule", {}),
     lambda value: local_store.set_preference("country_rating_schedule", value),

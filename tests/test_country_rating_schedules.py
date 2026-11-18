@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.country_rating_schedules import (CountryRatingResearch, CountryRatingSchedules,
                                          JOB_ID, SCHEDULE_ENDPOINT)
+from app.portfolio_ai_research import PortfolioAIResearch
 from app.sovereign_ratings import country_descriptor
 
 
@@ -120,6 +121,73 @@ def test_explicit_country_outside_scope_is_not_silently_treated_as_success():
     result = research.get(job["request_id"], "owner")
     assert result["status"] == "failed" and result["code"] == "invalid_country"
     assert not children.calls
+
+
+@pytest.mark.parametrize("refresh_policy", ["missing", "stale", "refresh_existing"])
+def test_portfolio_country_branch_uses_real_country_queue_for_selected_filtered_countries(refresh_policy):
+    """The production parent must reach both countries through the real subclass.
+
+    Only the bounded sovereign leaf is deterministic here; there are no model,
+    network, storage or financial-validation calls in this orchestration test.
+    """
+    class Immediate:
+        def __init__(self, target, **_):
+            self.target = target
+        def start(self):
+            self.target()
+
+    countries = [country_descriptor(code) for code in ("IL", "US")]
+    captures = []
+    def inventory(scope, *, refresh_policy="refresh_existing"):
+        captures.append((scope, refresh_policy))
+        return deepcopy(countries)
+
+    leaves = Children()
+    lifecycle = []
+    country_queue = CountryRatingResearch(leaves, inventory,
+        event_writer=lambda event, **fields: lifecycle.append((event, fields)),
+        worker_factory=Immediate, poll_seconds=0)
+    Deferred.callbacks = []
+    parent = PortfolioAIResearch(SimpleNamespace(settings=leaves.settings), object(),
+        lambda *_, **__: {"market_items": [], "credit_items": []},
+        country_jobs=country_queue, country_inventory_reader=lambda *_, **__: deepcopy(countries),
+        worker_factory=Deferred, poll_seconds=0)
+    started = parent.start("owner", {"irrelevant": "private"}, "en", "all",
+        data_types=["country_ratings"], refresh_policy=refresh_policy)
+    Deferred.callbacks.pop(0)()
+    result = parent.get(started["request_id"], "owner")
+    assert result["status"] == "completed", result["failure"]
+    assert [call[4] for call in leaves.calls] == [["COUNTRY:IL"], ["COUNTRY:US"]]
+    assert all("irrelevant" not in call[1] for call in leaves.calls)
+    assert result["country_ratings"]["progress"]["completed"] == 2
+    assert result["country_ratings"]["summary"]["updated"] == 2
+    assert all(child["status"] == "completed" for child in result["children"])
+    for child in result["children"]:
+        assert country_queue.get(child["request_id"], "owner")["status"] == "completed"
+    assert all(scope == "all" for scope, _ in captures)
+    assert ("all", refresh_policy) in captures
+    assert len([event for event, _ in lifecycle if event == "research_parent_completed"]) == 2
+    assert not any(event == "research_parent_failed" for event, _ in lifecycle)
+    assert all("irrelevant" not in fields for _, fields in lifecycle)
+
+
+@pytest.mark.parametrize("refresh_policy", ["missing", "stale"])
+def test_filtered_selected_country_keeps_registry_scope_validation(refresh_policy):
+    leaves = Children()
+    def inventory(scope, *, refresh_policy="refresh_existing"):
+        return [country_descriptor("IL")] if refresh_policy == "refresh_existing" else []
+    Deferred.callbacks = []
+    research = CountryRatingResearch(leaves, inventory, worker_factory=Deferred, poll_seconds=0)
+    registered = research.start("owner", {}, "en", "accounts", country_codes=["IL"], refresh_policy=refresh_policy)
+    Deferred.callbacks.pop(0)()
+    checked = research.get(registered["request_id"], "owner")
+    assert checked["status"] == "completed" and checked["code"] == "nothing_missing"
+    assert not leaves.calls
+    outside = research.start("owner", {}, "en", "accounts", country_codes=["US"], refresh_policy=refresh_policy)
+    Deferred.callbacks.pop(0)()
+    rejected = research.get(outside["request_id"], "owner")
+    assert rejected["status"] == "failed" and rejected["code"] == "invalid_country"
+    assert not leaves.calls
 
 
 def test_scheduled_session_is_revoked_when_worker_cannot_start():

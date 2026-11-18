@@ -63,8 +63,7 @@ class CountryRatingResearch(PortfolioAIResearch):
     """Reuse the tested queue, with one bounded sovereign-only child per country."""
 
     def __init__(self, child_jobs, inventory_reader, assistant_settings=None, *,
-                 worker_factory=Thread, poll_seconds=0.25):
-        self.country_inventory_reader = inventory_reader
+                 event_writer=None, worker_factory=Thread, poll_seconds=0.25):
         settings = assistant_settings or child_jobs.settings
 
         def inventory(position_scope, **options):
@@ -74,6 +73,7 @@ class CountryRatingResearch(PortfolioAIResearch):
             return {"market_items": [], "credit_items": items}
 
         super().__init__(_NoMarketJobs(settings), child_jobs, inventory,
+                         country_inventory_reader=inventory_reader, event_writer=event_writer,
                          worker_factory=worker_factory, poll_seconds=poll_seconds)
 
     def _capture(self, job):
