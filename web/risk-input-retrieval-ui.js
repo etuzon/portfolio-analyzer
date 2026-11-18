@@ -12,7 +12,7 @@
     if (!currentSession || currentSession.actor !== actor()) {
       if (currentSession?.timer) clearTimeout(currentSession.timer);
       currentSession = {actor:actor(),mode:"api_then_ai",scope:"all",selected:[],items:[],loaded:false,loading:false,
-        starting:false,checking:false,job:null,message:"",timer:null,polls:0,refreshed:new Set(),
+        starting:false,checking:false,job:null,message:"",timer:null,polls:0,pollingBlocked:false,refreshed:new Set(),
         schedule:{loaded:false,pending:false,saving:false,dirty:false,saved:null,draft:null,message:"",mounted:false,remount:false}};
     }
     return currentSession;
@@ -20,7 +20,7 @@
   const modeLabels = {api_then_ai:"Public API, then AI",api:"Public API only",ai:"AI only"};
   const statusLabels = {pending:"Waiting for research",queued:"Queued",running:"Running",completed:"Completed",failed:"Failed",updated:"Updated",
     partial:"Partially updated",unavailable:"Unavailable",not_attempted:"Not attempted"};
-  const stageLabels = {queued:"Queued",api:"Checking public APIs…",ai:"Researching missing risk inputs with AI…",researching_risk_inputs:"Researching risk inputs",researching_country_ratings:"Researching public-source country ratings",completed:"Research finished",failed:"Failed"};
+  const stageLabels = {queued:"Queued",api:"Checking public APIs…",ai:"Researching missing risk inputs with AI…",researching_market_data:"Researching missing market data",researching_ratings:"Researching public-source company ratings",researching_risk_inputs:"Researching risk inputs",researching_country_ratings:"Researching public-source country ratings",completed:"Research finished",failed:"Failed"};
   const fieldLabels = {issuer_identity:"Issuer identity",issuer_id:"Issuer identity",issuer_name:"Issuer name",issuer_domicile:"Issuer domicile",
     country:"Country exposure",country_code:"Issuer country",country_basis:"Country exposure basis",country_exposure:"Country exposure",country_exposures:"Country exposure",filing_sources:"Regulatory filing sources",
     country_rating:"Sovereign rating",credit_rating:"Security credit rating",sovereign_rating:"Sovereign rating",
@@ -76,7 +76,7 @@
     if (!job?.risk_inputs) return job;
     const branch = job.risk_inputs;
     return {...branch,request_id:job.request_id,status:job.status,code:job.code,
-      progress:{...(branch.progress || {}),stage:job.progress?.stage || job.status},
+      progress:{...(branch.progress || {}),...(activeJob(job) ? job.progress || {} : {}),stage:job.progress?.stage || job.status},
       coverage:branch.coverage || {total_candidates:branch.progress?.total || 0,selected:branch.progress?.total || 0,remaining:0},
       portfolio_refresh_required:job.portfolio_refresh_required};
   }
@@ -85,12 +85,17 @@
   function chooseJob(response) {
     return [response?.active_job,response?.last_job].find(isParentJob) || null;
   }
+  async function statusRequest(path) {
+    const controller = new AbortController(), timeout = setTimeout(() => controller.abort(),15000);
+    try { return await api(path,{signal:controller.signal}); }
+    finally { clearTimeout(timeout); }
+  }
   async function readStatus() {
-    const response=await api("/api/securities/enrichment/status");
+    const response=await statusRequest("/api/securities/enrichment/status");
     const parent=chooseJob(response);
     if(parent)return parent;
     // Read an in-flight request created by the previous bounded UI as well.
-    const legacy=await api("/api/securities/risk-inputs/retrieval/status");
+    const legacy=await statusRequest("/api/securities/risk-inputs/retrieval/status");
     return legacy.active_job || legacy.last_job;
   }
   function render() {
@@ -106,7 +111,7 @@
     }
     el("startRiskRetrieval").disabled = !writable() || !s.loaded || busy || running || (s.scope === "selected" && !s.selected.length);
     el("reloadRiskRetrieval").disabled = busy;
-    el("checkRiskRetrieval").disabled = s.checking || s.starting;
+    el("checkRiskRetrieval").disabled = busy;
     el("checkRiskRetrieval").hidden = !job;
     el("retryRiskRetrieval").hidden = !job || running || !(job.outcomes || []).some(row => row.status !== "updated" || row.missing_fields?.length);
     el("retryRiskRetrieval").disabled = !writable() || busy || running;
@@ -116,10 +121,12 @@
       selected:stressRiskNumber(coverage.selected || 0,0),total:stressRiskNumber(coverage.total_candidates || 0,0),remaining:stressRiskNumber(coverage.remaining || 0,0)}) : "";
     const progress = job?.progress || {};
     const stage = job?.status === "completed" && window.AIResearchTargets ? AIResearchTargets.completionText(job) : text(stageLabels[progress.stage] || statusLabels[job?.status] || "Running");
+    const jobStatus = [stage,
+      text(progress.stage === "researching_country_ratings" ? "{completed} of {total} countries" : "{completed} of {total} securities", {completed:stressRiskNumber(progress.completed || 0,0),total:stressRiskNumber(progress.total || 0,0)}),
+      progress.current_security?.symbol || ""].filter(Boolean).join(" · ");
     el("riskRetrievalStatus").textContent = s.loading ? text("Loading risk research…") : s.starting ? text("Starting risk research…")
-      : s.message ? text(s.message) : job ? [stage,
-        text("{completed} of {total} securities", {completed:stressRiskNumber(progress.completed || 0,0),total:stressRiskNumber(progress.total || 0,0)}),
-        progress.current_security?.symbol || ""].filter(Boolean).join(" · ") : text("No risk research has been run yet.");
+      : job ? s.message ? `${text(s.message)} ${text("Last known progress: {progress}",{progress:jobStatus})}` : jobStatus
+        : s.message ? text(s.message) : text("No risk research has been run yet.");
     const bar = el("riskRetrievalProgress");
     bar.hidden = !running || !(progress.total > 0); bar.max = Math.max(1,progress.total || 1); bar.value = progress.completed || 0;
     const resultList = el("riskRetrievalResults"), scrollTop = resultList.scrollTop;
@@ -134,6 +141,17 @@
     }
     renderSchedule(s);
   }
+  const researchVisible = () => !el("riskRetrievalModal")?.hidden && document.visibilityState !== "hidden";
+  function scheduleProgress(s) {
+    clearTimeout(s.timer); s.timer = null;
+    if (!validSession(s) || !activeJob(s.job) || s.pollingBlocked || !researchVisible()) return;
+    // Full-scope research can outlast a bounded child. Keep reading that same
+    // request, reducing status traffic after six minutes instead of stopping.
+    s.timer = setTimeout(() => {
+      s.timer = null;
+      if (validSession(s) && researchVisible()) { s.polls++; checkProgress(); }
+    },s.polls < 120 ? 3000 : 15000);
+  }
   function acceptJob(s, job) {
     if (!validSession(s)) return;
     s.job = job;
@@ -141,25 +159,29 @@
       s.refreshed.add(job.request_id);
       document.dispatchEvent(new CustomEvent("stress-risk-inputs-changed"));
     }
-    clearTimeout(s.timer);
-    if (activeJob(job)) {
-      if (s.polls >= 120) s.message = "Progress checks paused. Select Check progress to resume.";
-      else s.timer = setTimeout(() => { if (validSession(s)) { s.polls++; checkProgress(); } },3000);
-    }
+    s.pollingBlocked = false;
+    scheduleProgress(s);
   }
   async function checkProgress({reset=false} = {}) {
-    const s = session(); if (s.checking) return;
-    if (reset) s.polls = 0;
+    const s = session(); if (s.checking || s.loading || s.starting) return;
+    clearTimeout(s.timer); s.timer = null;
+    if (reset) { s.polls = 0; s.pollingBlocked = false; }
     s.checking = true; s.message = ""; render();
     try {
-      const response = s.job?.request_id ? await api(`${isParentJob(s.job)?"/api/securities/enrichment/ai":"/api/securities/risk-inputs/retrieval"}/${encodeURIComponent(s.job.request_id)}`) : await readStatus();
+      const response = s.job?.request_id ? await statusRequest(`${isParentJob(s.job)?"/api/securities/enrichment/ai":"/api/securities/risk-inputs/retrieval"}/${encodeURIComponent(s.job.request_id)}`) : await readStatus();
       if (!validSession(s)) return;
       acceptJob(s, response);
-    } catch { if (validSession(s)) s.message = "Could not check progress. Select Check progress to retry."; }
-    finally { if (validSession(s)) { s.checking = false; render(); } }
+    } catch (error) {
+      if (validSession(s)) {
+        s.pollingBlocked = [401,403].includes(error.status);
+        s.message = activeJob(s.job) && !s.pollingBlocked ? "Could not check progress. Retrying automatically…" : "Could not check progress. Select Check progress to retry.";
+      }
+    }
+    finally { if (validSession(s)) { s.checking = false; scheduleProgress(s); render(); } }
   }
   async function load() {
-    const s = session(); if (s.loading) return;
+    const s = session(); if (s.loading || s.checking || s.starting) return;
+    clearTimeout(s.timer); s.timer = null;
     capture(); s.loading = true; s.message = ""; render();
     const results = await Promise.allSettled([api("/api/securities/risk-inputs/retrieval/candidates?refresh_policy=stale"),readStatus()]);
     if (!validSession(s)) return;
@@ -169,8 +191,11 @@
       if (s.schedule.loaded) populateSelect(el("riskRetrievalScheduleSecurities"),s,s.schedule.draft?.security_keys || []);
     } else s.message = "Could not load risk candidates. Select Reload to retry.";
     if (results[1].status === "fulfilled") acceptJob(s,results[1].value);
-    else s.message = "Could not check progress. Select Check progress to retry.";
-    s.loading = false; render();
+    else {
+      s.pollingBlocked = [401,403].includes(results[1].reason?.status);
+      s.message = activeJob(s.job) && !s.pollingBlocked ? "Could not check progress. Retrying automatically…" : "Could not check progress. Select Check progress to retry.";
+    }
+    s.loading = false; scheduleProgress(s); render();
   }
   async function start() {
     const s = session(); if (!writable() || s.starting || s.loading || activeJob(s.job)) return;
@@ -286,6 +311,14 @@
       el("riskRetrievalScheduleStatus").textContent = text("Unsaved changes");
     }
   });
+  function visibilityChanged() {
+    const s = currentSession;
+    if (!s || !validSession(s)) return;
+    clearTimeout(s.timer); s.timer = null;
+    if (researchVisible() && activeJob(s.job) && !s.pollingBlocked && !s.loading && !s.checking && !s.starting) checkProgress();
+  }
+  document.addEventListener("visibilitychange",visibilityChanged);
+  new MutationObserver(visibilityChanged).observe(el("riskRetrievalModal"),{attributes:true,attributeFilter:["hidden"]});
   new MutationObserver(() => { if (el("riskRetrievalModal") && !el("riskRetrievalModal").hidden) render(); })
     .observe(document.documentElement,{attributes:true,attributeFilter:["lang"]});
   window.RiskInputRetrievalPresentation = Object.freeze({fields,outcomeMessage,flattenJob});
