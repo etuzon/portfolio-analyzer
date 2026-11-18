@@ -204,16 +204,18 @@ def _literal_risk_records(source, candidate):
     lines = text.splitlines()
     for index,raw_line in enumerate(lines):
         line = re.sub(r"\s*\|\s*",": ",raw_line.strip().strip("|").strip()).rstrip(".")
+        country_match = re.fullmatch(r"(?:Economic country|Country economic exposure)\s*:\s*(.+)",line,re.I)
+        currency_match = re.fullmatch(r"(?:Economic country currency|Country currency)\s*:\s*(.+)",line,re.I)
+        if fund or not (country_match or currency_match):
+            continue
         observed = _observation_date(source,"\n".join(lines[max(0,index-3):index+1]))
-        if fund or not observed or _QUALIFIED.search(line) or _retracted_context(text,raw_line):
+        if not observed or _QUALIFIED.search(line) or _retracted_context(text,raw_line):
             continue
         public = {**source,"evidence_quote":raw_line}
-        match = re.fullmatch(r"(?:Economic country|Country economic exposure)\s*:\s*(.+)",line,re.I)
-        if match and (code := normalize_country(match[1])):
+        if country_match and (code := normalize_country(country_match[1])):
             records += [_record(field,value,public,as_of=observed,basis="reported_allocation") for field,value in
                 (("country_code",code),("country_basis","economic_exposure"))]
-        match = re.fullmatch(r"(?:Economic country currency|Country currency)\s*:\s*(.+)",line,re.I)
-        if match and (currency := _currency(match[1])):
+        if currency_match and (currency := _currency(currency_match[1])):
             records.append(_record("country_currency",currency,public,as_of=observed,basis="reported_allocation"))
     for block, rows in _tables(text):
         observed = _observation_date(source,block)

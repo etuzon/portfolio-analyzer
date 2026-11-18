@@ -5542,12 +5542,13 @@ def _portfolio_ai_inventory(position_scope="open", *, ratings_only=False, data_t
             "credit_items": credit}
 
 
-portfolio_ai_research = PortfolioAIResearch(security_enrichment, credit_rating_jobs, _portfolio_ai_inventory)
+portfolio_ai_research = PortfolioAIResearch(security_enrichment, credit_rating_jobs, _portfolio_ai_inventory,
+    event_writer=lambda event, **fields: _record_log("market-data", event, **fields))
 # The public start/status routes coordinate all bounded children. The original
 # REST-only child routes remain available for their owner-bound research tools.
 app.include_router(portfolio_ai_research.router())
 market_research_router = security_enrichment.router()
-coordinated_paths = {security_enrichment.prefix + suffix for suffix in ("/ai", "/ai/{request_id}", "/status")}
+coordinated_paths = {security_enrichment.prefix + suffix for suffix in ("/ai", "/ai/{request_id}", "/ai/{request_id}/diagnostics", "/status")}
 market_research_router.routes[:] = [route for route in market_research_router.routes if route.path not in coordinated_paths]
 app.include_router(market_research_router)
 app.include_router(credit_rating_jobs.router())
@@ -5572,9 +5573,11 @@ app.include_router(sovereign_child_router)
 risk_evidence_research = RiskEvidenceResearch(stress_risk_inputs, _credit_research_settings,
     credit_service=credit_rating_service, sovereign_service=sovereign_rating_service,
     changed=lambda: _portfolio_notifications.notify())
-risk_evidence_jobs = risk_evidence_research.manager(app, lambda: _enrichment_assistant_settings())
+risk_evidence_jobs = risk_evidence_research.manager(app, lambda: _enrichment_assistant_settings(),
+    event_writer=lambda event, **fields: _record_log("market-data", event, **fields))
 risk_input_retrieval = RiskInputRetrieval(risk_evidence_research, risk_evidence_jobs,
-    credit_rating_jobs, country_rating_research)
+    credit_rating_jobs, country_rating_research,
+    event_writer=lambda event, **fields: _record_log("market-data", event, **fields))
 
 
 def _portfolio_risk_country_inventory(position_scope="open", *, security_keys=None, refresh_policy="missing"):

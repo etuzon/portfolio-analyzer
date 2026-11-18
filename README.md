@@ -509,6 +509,67 @@ prices or executable quotes; partial historical coverage remains explicit.
 | GET | `/api/securities/enrichment/candidates?request_id=...` | Own running Admin/Operator job; application inventories and tries ordinary APIs once |
 | GET | `/api/securities/enrichment/security?request_id=...&security_key=...&field=auto` | Own running job and approved candidate; bounded source research |
 | POST | `/api/securities/enrichment/ai/{request_id}/finalize` | Own ready job only; server validates/applies bound evidence; browser CSRF required |
+| GET | `/api/securities/enrichment/ai/{request_id}/diagnostics` | Owner-readable bounded lifecycle, child IDs, counts and failure receipt; does not start or repeat research |
+
+To run risk research directly, POST `/api/securities/enrichment/ai` with
+`{"data_types":["risk_inputs"],"position_scope":"open","refresh_policy":"stale","risk_mode":"api_then_ai"}`.
+Omit `security_keys` to cover every eligible listing, or provide one to three
+exact listing keys from `GET /api/securities/risk-inputs/retrieval/candidates`.
+The response is HTTP 202 with a `request_id`; GET
+`/api/securities/enrichment/ai/{request_id}` observes that same request. A completed
+request may still have missing financial inputs. Inspect outcomes and reload
+saved evidence through `GET /api/securities/risk-inputs` using `symbol`,
+`stock_market` and `currency`. A failed request can be explicitly resumed with
+`resume_request_id` and its original data types, scope, listing keys, freshness
+policy and risk source mode. Completed checks are skipped; saved API facts do
+not make a failed AI check complete.
+
+The host runner uses only those authenticated REST routes. It never reads
+configuration or databases, calls a model directly, or automatically restarts
+failed work. Enable REST **Read and write** and provide an Admin/Operator token
+in `PORTFOLIO_API_TOKEN` or a token-only file with permissions `600`:
+
+```bash
+./.venv/bin/python scripts/research-risk-inputs.py --token-file /private/token-file --ca-file certs/server.crt --security-key 'BBDC|NYSE|USD' --output /private/risk-result.json
+./.venv/bin/python scripts/research-risk-inputs.py --token-file /private/token-file --ca-file certs/server.crt --request-id REQUEST_ID --output /private/risk-result.json
+./.venv/bin/python scripts/research-risk-inputs.py --token-file /private/token-file --ca-file certs/server.crt --resume-request-id REQUEST_ID --output /private/risk-retry.json
+```
+
+Use the application's actual signing certificate. `--insecure` is available for
+the established local self-signed test service. The default source mode is public
+API then AI; `--mode api` and `--mode ai` select the other supported routes.
+The default scope is open positions and freshness is missing-or-stale; use
+`--position-scope all` or `--refresh-policy refresh_existing` explicitly when
+needed. Observation timeout returns the existing request ID, without cancellation
+or retry. Exit codes: `0` research finished, `2` failed or still pending, `1`
+REST/credential/file failure. The private JSON receipt includes final outcomes,
+diagnostics and REST-reloaded saved risk evidence; inspect missing fields rather
+than treating exit `0` as full coverage.
+
+Research lifecycle events are flushed immediately to `market-data.log`, including
+failures before finalization. Correlate `request_id`, `parent_request_id` and
+`child_request_id` for inventory, source, model/tool, save and failure stages.
+These lifecycle events contain safe codes, elapsed milliseconds and request
+counts/limits, without credentials, raw exceptions, prompts or source document text. Diagnostics
+receipts retain at most 200 events and 100 child summaries and report truncation.
+For a risk AI child, its detailed receipt is available at
+`/api/securities/risk-inputs/research/ai/{child_request_id}/diagnostics` to the
+same initiating user. In-memory receipts can disappear after restart; durable
+logs and accepted evidence persist under existing retention rules.
+
+An opt-in real acceptance replay starts an isolated temporary HTTPS application,
+authenticates normally and creates a BBDC fixture through REST. It uses the real
+model bridge, public sources, validation and REST persistence; it does not read
+the runtime portfolio or private config, and starts exactly one parent request:
+
+```bash
+./.venv/bin/python tests/risk_research_real_replay.py --attempt 1 --output .runtime/risk-rest-validation/attempt-1.json
+```
+
+The replay checks exact SEC issuer identity, the official country-crisis currency
+reference and preserved missing economic FX allocation. It is real retrieval
+against a temporary portfolio, not proof that the private portfolio's entire
+scope succeeds. Mocked tests alone do not satisfy the retrieval acceptance gate.
 
 All business REST routes retain authentication, role authorization, REST token
 access mode, and browser CSRF enforcement. Read-only identities cannot start or

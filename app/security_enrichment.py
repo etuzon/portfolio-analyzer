@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 
 from .assistant_rest import validate_arguments
 from .llm_assistant import AssistantError, PortfolioAssistant
+from .research_diagnostics import event as diagnostic_event, failure as safe_failure, receipt
 
 
 PREFIX = "/api/securities/enrichment"
@@ -153,6 +154,7 @@ class EnrichmentJobs:
                  discovery_subject: str | None = None,
                  refresh_portfolio_on_update: bool = True,
                  selection_reader: bool = False,
+                 persist_research_trace: bool = True,
                  worker_factory=Thread):
         self.app, self.settings = app, settings
         self._candidate_reader, self._security_fetcher = candidate_reader, security_fetcher
@@ -160,6 +162,7 @@ class EnrichmentJobs:
         self._research_tool_fetcher = research_tool_fetcher
         self._source_hint_reader = source_hint_reader
         self._event_writer = event_writer
+        self._persist_research_trace = persist_research_trace
         self.prefix = prefix
         self._research_policy = research_policy
         self._research_metadata = RESEARCH_METADATA | (research_metadata or set())
@@ -173,7 +176,7 @@ class EnrichmentJobs:
         self._lock = RLock()
         self._jobs: dict[str, dict[str, Any]] = {}
 
-    def start(self, user_id: str, headers: dict[str, str], language: str, position_scope: str = "open", *, scheduled_credentials=None, security_keys: list[str] | None = None, candidate_options=None) -> dict[str, Any]:
+    def start(self, user_id: str, headers: dict[str, str], language: str, position_scope: str = "open", *, scheduled_credentials=None, security_keys: list[str] | None = None, candidate_options=None, parent_request_id=None) -> dict[str, Any]:
         if position_scope not in {"open", "all"}:
             raise HTTPException(422, "invalid_position_scope")
         if security_keys is not None and (not security_keys or len(security_keys) > MAX_SELECTED
@@ -215,6 +218,7 @@ class EnrichmentJobs:
                 "outcomes": [], "code": "queued", "portfolio_refresh_required": False,
                 "progress": {"stage": "queued", "completed": 0, "total": 0, "current_security": None},
                 "failure": None,
+                "parent_request_id": parent_request_id,
                 "coverage": {"inventory_truncated": False, "listed_candidates": 0},
                 "_user_id": user_id, "_security_keys": list(dict.fromkeys(security_keys)) if security_keys else None,
                 "_candidate_options": candidate_options,
@@ -226,6 +230,7 @@ class EnrichmentJobs:
             if scheduled_credentials is not None:
                 headers, cleanup = scheduled_credentials()
             self._jobs[identifier] = job
+            self._event(job, "child_queued")
         forwarded = {key: value for key, value in headers.items() if key.lower() in {"authorization", "cookie", "x-csrf-token"}}
         def scheduled_run(identifier, forwarded, language):
             try:
@@ -235,9 +240,11 @@ class EnrichmentJobs:
         try:
             self._worker_factory(target=scheduled_run if cleanup else self.run, args=(identifier, forwarded, language), daemon=True,
                                  name="security-ai-enrichment").start()
-        except Exception:
+        except Exception as exc:
             with self._lock:
-                self._jobs.pop(identifier, None)
+                job.update(status="failed", code="job_failed", finished_at=_now())
+                self._failure(job, "job_failed", type(exc).__name__)
+                self._event(job, "child_failed", failure=job["failure"])
             if cleanup:
                 cleanup()
             raise
@@ -249,6 +256,14 @@ class EnrichmentJobs:
             if not job or job["_user_id"] != user_id:
                 raise HTTPException(404, "enrichment_job_not_found")
             return _public_job(job)
+
+    def diagnostics(self, identifier, user_id):
+        with self._lock:
+            self.get(identifier, user_id)
+            return receipt(self._jobs[identifier])
+
+    def _event(self, job, name, **fields):
+        diagnostic_event(job, self._event_writer, name, **fields)
 
     def _job(self, identifier: str) -> dict[str, Any]:
         return self._jobs[identifier]
@@ -266,12 +281,12 @@ class EnrichmentJobs:
         job["progress"] = {"stage": stage, "completed": min(max(0, int(completed)), total), "total": total,
                            "current_security": {key: str(current.get(key) or "") for key in ("symbol", "stock_market", "currency")} if current else None}
 
-    @staticmethod
-    def _failure(job, code, error_type, http_status=None):
+    def _failure(self, job, code, error_type, http_status=None):
         """Safe diagnostic identifiers only; never retain an exception message."""
         diagnostic = {"stage": job["progress"]["stage"], "code": code,
                       "error_type": str(error_type)[:80], "http_status": http_status}
         job["failure"] = diagnostic
+        self._event(job, "stage_failed", code=code, failure=diagnostic)
         return deepcopy(diagnostic)
 
     def _request(self, job_id: str, headers: dict[str, str], method: str, path: str, *, params=None, payload=None):
@@ -285,6 +300,7 @@ class EnrichmentJobs:
                 self._failure(job, "request_limit", "RequestLimit")
                 raise RestError("request_limit")
             job["counts"]["rest_requests"] += 1
+            self._event(job, "rest_started", action="finalize" if method == "POST" else path.rsplit("/", 1)[-1])
         if (method, path) not in allowed:
             with self._lock:
                 self._failure(job, "job_failed", "DisallowedEndpoint")
@@ -304,10 +320,15 @@ class EnrichmentJobs:
                         code = "provider_unavailable" if response.status_code in {408, 429, 502, 503, 504} else "job_failed"
                         with self._lock:
                             previous = job.get("failure") or {}
+                            if response.status_code == 500 and previous.get("stage") == job["progress"]["stage"] and previous.get("code") == "source_read_failed":
+                                code = previous["code"]
                             error_type = previous.get("error_type") if response.status_code == 500 and previous.get("stage") == job["progress"]["stage"] and previous.get("code") == code else None
                             self._failure(job, code, error_type or "HTTPStatusError", response.status_code)
                         raise RestError(code)
-                    return response.json()
+                    result = response.json()
+                    with self._lock:
+                        self._event(job, "rest_finished", action="finalize" if method == "POST" else path.rsplit("/", 1)[-1])
+                    return result
                 except (httpx.HTTPError, ValueError, TimeoutError) as exc:
                     if isinstance(exc, RestError):
                         raise
@@ -323,6 +344,7 @@ class EnrichmentJobs:
         with self._lock:
             job = self._job(identifier)
             job.update(status="running", code="running")
+            self._event(job, "child_started")
         failure = None
         try:
             candidates = self._request(identifier, headers, "GET", self.prefix + "/candidates", params={"request_id": identifier})
@@ -357,6 +379,7 @@ class EnrichmentJobs:
                 self._progress(job, "checking_apis", checked, len(selected))
                 job["_research_total"] = len(pending)
                 job["_research_completed"] = set()
+                self._event(job, "inventory_captured", selected=len(selected))
             if pending and research_available:
                 with self._lock:
                     self._progress(job, "researching", total=len(pending))
@@ -386,6 +409,8 @@ class EnrichmentJobs:
                             if time.monotonic() - started > 240 or job["counts"]["model_requests"] >= job["counts"]["max_model_requests"]:
                                 raise RestError("request_limit")
                             job["counts"]["model_requests"] += 1
+                    with self._lock:
+                        self._event(job, event, tool=fields.get("tool"), error_type=fields.get("error_type"))
 
                 def read(name, arguments):
                     if name not in catalog:
@@ -432,6 +457,9 @@ class EnrichmentJobs:
                         raise RestError("proposal_invalid")
         except RestError as exc:
             failure = exc.code
+            with self._lock:
+                if not job.get("failure") or job["failure"].get("code") != failure:
+                    self._failure(job, failure, type(exc).__name__)
             if failure == "request_limit":
                 job["_context_recovery_reason"] = "request_limit"
         except AssistantError as exc:
@@ -452,14 +480,17 @@ class EnrichmentJobs:
             self._request(identifier, headers, "POST", self.prefix + "/ai/" + identifier + "/finalize", payload={"proposal": job["_proposal"]})
         except RestError as exc:
             failure = failure or exc.code
-        except Exception:
+        except Exception as exc:
             failure = failure or "job_failed"
+            with self._lock:
+                self._failure(job, failure, type(exc).__name__)
         with self._lock:
             job.update(status="failed" if failure else "completed", finished_at=_now())
             if failure:
                 job["code"] = failure
             attempted = sum(bool(item.get("attempted")) for item in job["outcomes"] if item.get("security_key") in job["_candidates"])
             self._progress(job, job["status"], attempted, len(job["_candidates"]))
+            self._event(job, "child_failed" if failure else "child_completed", failure=job.get("failure"))
 
     @staticmethod
     def _result_code(job):
@@ -517,6 +548,10 @@ class EnrichmentJobs:
         @router.get(self.prefix + "/ai/{request_id}")
         def status(request_id: str, request: Request):
             return self.get(request_id, user(request)["id"])
+
+        @router.get(self.prefix + "/ai/{request_id}/diagnostics")
+        def diagnostics(request_id: str, request: Request):
+            return self.diagnostics(request_id, user(request)["id"])
 
         @router.get(self.prefix + "/status")
         def outcomes(request: Request):
@@ -643,9 +678,20 @@ class EnrichmentJobs:
                 if cache_key in job["_web_responses"]:
                     return deepcopy(job["_web_responses"][cache_key])
                 candidate = {**deepcopy(job["_candidates"][security_key]), "_request_id": request_id, "_position_scope": job["position_scope"]}
+                operation = {"operation_id": "operation-" + uuid4().hex,
+                             "source_id": arguments.get("source_id"), "link_id": arguments.get("link_id"),
+                             "reader": arguments.get("reader", "auto") if action != "search" else None}
                 with self._lock:
                     self._progress(job, "researching", len(job.get("_research_completed", set())), job.get("_research_total", len(job["_candidates"])), current=candidate)
-                result = self._research_tool_fetcher(candidate, action, arguments)
+                    self._event(job, "source_started", action=action, security_key=security_key, symbol=candidate.get("symbol"), **operation)
+                try:
+                    result = self._research_tool_fetcher(candidate, action, arguments)
+                except Exception as exc:
+                    with self._lock:
+                        self._failure(job, "source_read_failed", type(exc).__name__)
+                        self._event(job, "source_failed", action=action, security_key=security_key,
+                                    symbol=candidate.get("symbol"), failure=job["failure"], **operation)
+                    raise
                 with self._lock:
                     diagnostics = result.get("diagnostics") or {}
                     if isinstance(diagnostics, dict):
@@ -670,6 +716,19 @@ class EnrichmentJobs:
                     skipped = code in {"not_open", "api_managed"} or (code == "request_limit" and not result.get("diagnostics", {}).get("search_requests") and not result.get("diagnostics", {}).get("source_requests"))
                     job["_results"][security_key] = {**previous, "status": "not_attempted" if skipped else "unavailable", "attempted": not skipped,
                         "code": "evidence_rejected" if job["_evidence_by_key"].get(security_key, {}).get("evidence") else "research_incomplete" if code in {"search_results", "sources_found"} else code}
+                    diagnostic = safe_failure({"stage": result.get("failure_stage") or "source_evidence", "code": code, **diagnostics})
+                    if diagnostic:
+                        job["_results"][security_key]["diagnostic"] = diagnostic
+                    document = entries[0] if entries and isinstance(entries[0], dict) else {}
+                    window = document.get("document_window") or {}
+                    completed_operation = {**operation, "source_id": document.get("source_id") or operation["source_id"],
+                        "document_id": document.get("document_id"), "reader": document.get("reader") or operation["reader"],
+                        "reader_engine": document.get("reader_engine"), "search_provider": result.get("search_provider"),
+                        "source_counts": diagnostics, "window_start": window.get("start"), "window_end": window.get("end")}
+                    self._event(job, "source_finished", action=action, security_key=security_key, symbol=candidate.get("symbol"),
+                                code=code, failure=diagnostic, evidence_count=len(entries), source_count=len(result.get("sources") or []),
+                                context_record_count=sum(len(source.get("context_records") or []) for source in entries if isinstance(source, dict)),
+                                **completed_operation)
                     if not skipped:
                         job.setdefault("_research_completed", set()).add(security_key)
                     self._progress(job, "researching", len(job.get("_research_completed", set())), job.get("_research_total", len(job["_candidates"])))
@@ -719,9 +778,12 @@ class EnrichmentJobs:
                 self._progress(job, "saving", total=len(job["_candidates"]))
                 job["_finalizing"] = True
                 pending_outcomes = deepcopy(job["outcomes"])
+                self._event(job, "finalize_started", selected=len(job["_candidates"]))
             try:
                 finalized_outcomes = self._outcome_writer(pending_outcomes, owner["id"], request_id, **extra)
-                if self._event_writer is not None:
+                with self._lock:
+                    self._event(job, "finalize_written", selected=len(finalized_outcomes) if isinstance(finalized_outcomes, list) else len(pending_outcomes))
+                if self._event_writer is not None and self._persist_research_trace:
                     for entry in job.get("_trace", []):
                         try:
                             self._event_writer("security_ai_enrichment_step", request_id=request_id, **entry)
@@ -734,6 +796,11 @@ class EnrichmentJobs:
                 raise
             with self._lock:
                 if isinstance(finalized_outcomes, list):
+                    prior = {row["security_key"]: row for row in pending_outcomes}
+                    for row in finalized_outcomes:
+                        diagnostic = safe_failure(prior.get(row.get("security_key"), {}).get("diagnostic"))
+                        if diagnostic and "diagnostic" not in row:
+                            row["diagnostic"] = diagnostic
                     job["outcomes"] = finalized_outcomes
                     for outcome_status in ("updated", "partial", "unavailable", "not_attempted"):
                         job["summary"][outcome_status] = sum(item.get("status") == outcome_status for item in finalized_outcomes)
@@ -743,6 +810,7 @@ class EnrichmentJobs:
                         job["code"] = self._result_code(job)
                 job["_finalized"] = True
                 job["_finalizing"] = False
+                self._event(job, "finalize_completed")
             return {"finalized": True}
 
         return router

@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import Field, StrictBool
 
 from .security_enrichment import EnrichmentStart, MAX_SELECTED
+from .research_diagnostics import event as diagnostic_event, failure as safe_failure, receipt, snapshot
 
 PREFIX = "/api/securities/enrichment"
 AGENCIES = ("moodys", "sp", "fitch")
@@ -39,13 +40,14 @@ class PortfolioResearchStart(EnrichmentStart):
 
 class PortfolioAIResearch:
     def __init__(self, market_jobs, credit_jobs, inventory_reader, *, risk_jobs=None, country_jobs=None,
-                 country_inventory_reader=None, worker_factory=Thread, poll_seconds=0.25):
+                 country_inventory_reader=None, event_writer=None, worker_factory=Thread, poll_seconds=0.25):
         self.market_jobs, self.credit_jobs = market_jobs, credit_jobs
         self.inventory_reader, self._worker_factory = inventory_reader, worker_factory
         self.risk_jobs, self.country_jobs = risk_jobs, country_jobs
         self.country_inventory_reader = country_inventory_reader
         self.poll_seconds = poll_seconds
         self._lock, self._jobs = RLock(), {}
+        self._event_writer = event_writer
 
     @staticmethod
     def _public(job):
@@ -65,6 +67,20 @@ class PortfolioAIResearch:
         # Internal child URLs and requests started before this coordinator was
         # introduced retain the original owner/authentication contract.
         return self.market_jobs.get(identifier, owner)
+
+    def diagnostics(self, identifier, owner):
+        with self._lock:
+            if identifier in self._jobs:
+                job = self._owned(identifier, owner)
+                children = [deepcopy(row) for row in job.get("children", [])]
+                active = job.get("current_child")
+                if active and not any(row["request_id"] == active["request_id"] for row in children):
+                    children.append(deepcopy(active))
+                return receipt(job, children)
+        return self.market_jobs.diagnostics(identifier, owner)
+
+    def _event(self, job, name, **fields):
+        diagnostic_event(job, self._event_writer, name, **fields)
 
     @staticmethod
     def _summary(rows):
@@ -181,7 +197,7 @@ class PortfolioAIResearch:
                     raise HTTPException(409, "enrichment_scope_changed")
                 if job["status"] != "failed":
                     raise HTTPException(409, "nothing_to_resume")
-                job.update(status="queued", code="queued", failure=None, finished_at=None)
+                job.update(status="queued", code="queued", failure=None, finished_at=None, current_child=None)
                 for row in job["outcomes"] + [r for field in BRANCH_FIELDS.values() for r in job[field]["outcomes"]]:
                     if row["status"] == "not_attempted":
                         row.update(status="pending", code="queued")
@@ -195,7 +211,7 @@ class PortfolioAIResearch:
                     "created_at": _now(), "finished_at": None, "failure": None, "outcomes": [], "summary": self._summary([]),
                     "counts": {}, "per_batch_limits": limits, "coverage": {"inventory_truncated": False, "listed_candidates": 0},
                     "progress": {"stage": "queued", "completed": 0, "total": 0, "current_security": None},
-                    "portfolio_refresh_required": False,
+                    "portfolio_refresh_required": False, "children": [], "current_child": None,
                     "credit_ratings": {"status": "queued", "progress": {"completed": 0, "total": 0, "current_security": None},
                         "summary": self._summary([]), "outcomes": []},
                     "_user_id": user_id, "_security_keys": list(dict.fromkeys(security_keys)) if security_keys else None,
@@ -210,12 +226,14 @@ class PortfolioAIResearch:
                 completed = [key for key, value in self._jobs.items() if value["status"] not in {"queued", "running"}]
                 for key in completed[:-97]:
                     self._jobs.pop(key, None)
+            self._event(job, "parent_queued")
             cleanup = None
             if scheduled_credentials is not None:
                 try:
                     headers, cleanup = scheduled_credentials()
                 except Exception:
                     job.update(status="failed", code="owner_not_authorized", failure={"code": "owner_not_authorized"}, finished_at=_now())
+                    self._event(job, "parent_failed", failure=job["failure"])
                     raise
             forwarded = {key: value for key, value in headers.items() if key.lower() in {"cookie", "authorization", "x-csrf-token"}}
         cleaned = False
@@ -235,6 +253,7 @@ class PortfolioAIResearch:
             cleanup_once()
             with self._lock:
                 job.update(status="failed", code="job_failed", failure={"code": "job_failed"}, finished_at=_now())
+                self._event(job, "parent_failed", failure=job["failure"])
             raise
         with self._lock:
             return self._public(job)
@@ -251,28 +270,47 @@ class PortfolioAIResearch:
                 result = {"status": "updated", "code": "nothing_missing", "attempted": False,
                           "available_fields": [], "missing_fields": [], "sources": []}
             public_attempted = branch not in {"credit", "country"} or int(child.get("counts", {}).get("web_requests", 0)) > 0
-            completed = bool(public_attempted and result and (child["status"] == "completed" or result.get("status") in {"updated", "partial"}))
+            completed = bool(public_attempted and result and (child["status"] == "completed" or
+                branch != "risk" and result.get("status") in {"updated", "partial"}))
             if completed:
+                row.pop("diagnostic", None)
                 row.update(deepcopy(result))
                 parent["_done"][branch].add(row["security_key"])
             else:
-                row.update(status="not_attempted", code="check_incomplete", attempted=bool(public_attempted and result and result.get("attempted")))
+                if branch == "risk" and result:
+                    # API facts survive a failed AI check, but do not make the
+                    # failed listing checked or exclude it from resume.
+                    row.update(deepcopy(result))
+                else:
+                    row.update(status="not_attempted", attempted=bool(public_attempted and result and result.get("attempted")))
+                row["code"] = child.get("code") or (result or {}).get("code") or "check_incomplete"
+                row["diagnostic"] = safe_failure({"code": row["code"], "stage": (child.get("failure") or {}).get("stage") or
+                    (child.get("progress") or {}).get("stage"), "branch": branch, "child_request_id": child["request_id"],
+                    "child_status": child["status"], "child_failure": child.get("failure")})
         parent["_children"].append({"branch": branch, "job": deepcopy(child)})
+        child_summary = snapshot(child, branch=branch, parent_request_id=parent["request_id"])
+        if child.get("children"):
+            child_summary["children"] = deepcopy(child["children"][-100:])
+        parent.setdefault("children", []).append(child_summary)
+        parent["current_child"] = child_summary
         panel["summary"] = self._summary(outcomes)
         if branch != "market":
             panel["progress"]["completed"] = len(parent["_done"][branch])
         parent["portfolio_refresh_required"] |= bool(child.get("portfolio_refresh_required"))
         self._recount(parent)
+        self._event(parent, "child_finished", branch=branch, child_request_id=child["request_id"],
+                    code=child.get("code"), failure=child.get("failure"))
 
     def _start_child(self, parent, branch, manager, batch, headers, language):
         keys = [row["security_key"] for row in batch]
+        context = {"parent_request_id": parent["request_id"]} if hasattr(manager, "diagnostics") else {}
         if branch == "risk":
             return manager.start(parent["_user_id"], headers, language[:2], security_keys=keys,
-                position_scope=parent["position_scope"], refresh_policy=parent["refresh_policy"], mode=parent["risk_mode"])
+                position_scope=parent["position_scope"], refresh_policy=parent["refresh_policy"], mode=parent["risk_mode"], **context)
         if branch == "country":
             return manager.start(parent["_user_id"], headers, language[:2], "all",
                 country_codes=[key.removeprefix("COUNTRY:") for key in keys], refresh_policy=parent["refresh_policy"])
-        options = {}
+        options = context
         if branch == "market" and parent.get("_candidate_options"):
             options["candidate_options"] = {"data_types": [value for value in parent["data_types"] if value in MARKET_TYPES],
                                             "refresh_policy": parent["refresh_policy"]}
@@ -303,6 +341,10 @@ class PortfolioAIResearch:
         with self._lock:
             parent = self._jobs[identifier]
             parent.update(status="running", code="running")
+            parent["_active_branch"] = None
+            parent["_active_security"] = None
+            parent["progress"].update(stage="resuming" if parent["_captured"] else "capturing_inventory", current_security=None)
+            self._event(parent, "parent_started")
         try:
             if not parent["_captured"]:
                 # This is trusted application inventory capture, not a model
@@ -312,6 +354,7 @@ class PortfolioAIResearch:
                 with self._lock:
                     for key in ("_targets", "outcomes", "credit_ratings", "summary", "captured_at", "_captured"):
                         parent[key] = captured[key]
+                    self._event(parent, "inventory_captured", selected=sum(map(len, parent["_targets"].values())))
             branches = [("market", self.market_jobs), ("credit", self.credit_jobs)]
             if "risk_inputs" in parent["data_types"]:
                 if self.risk_jobs is None:
@@ -340,12 +383,22 @@ class PortfolioAIResearch:
                         total=len(parent["_targets"][branch]), current_security=None)
                     if branch != "market":
                         panel["status"] = "running"
+                    parent["_active_branch"] = branch
+                    self._event(parent, "branch_started", branch=branch)
                 size = self._batch_size(branch)
                 for offset in range(0, len(pending), size):
                     batch = pending[offset:offset + size]
+                    with self._lock:
+                        parent["_active_security"] = batch[0] if batch else None
+                        parent["current_child"] = None
+                        self._event(parent, "child_starting", branch=branch, **{key: batch[0].get(key) for key in ("security_key", "symbol")})
                     child = self._start_child(parent, branch, manager, batch, headers, language)
+                    with self._lock:
+                        parent["current_child"] = snapshot(child, branch=branch, parent_request_id=identifier)
+                        self._event(parent, "child_started", branch=branch, child_request_id=child["request_id"])
                     while child["status"] in {"queued", "running"}:
                         with self._lock:
+                            parent["current_child"] = snapshot(child, branch=branch, parent_request_id=identifier)
                             self._recount(parent, child)
                             progress = child.get("progress") or {}
                             # Preflight/model phases are not completed checks.
@@ -368,6 +421,9 @@ class PortfolioAIResearch:
                     if branch != "market":
                         panel["status"] = "completed"
                         panel["progress"]["current_security"] = None
+                    parent["current_child"] = None
+                    parent["_active_security"] = None
+                    self._event(parent, "branch_finished", branch=branch)
             with self._lock:
                 self._refresh_risk_outcomes(parent)
                 parent["credit_ratings"]["status"] = "completed"
@@ -377,6 +433,7 @@ class PortfolioAIResearch:
                     for field in BRANCH_FIELDS.values() for row in parent[field]["outcomes"])
                 parent.update(status="completed", code="nothing_missing" if empty else "research_partial" if unresolved else "research_complete", finished_at=_now())
                 parent["progress"]["stage"] = "completed"
+                self._event(parent, "parent_completed")
         except Exception as error:
             code = error.detail if isinstance(error, HTTPException) and isinstance(error.detail, str) else "check_incomplete"
             with self._lock:
@@ -388,7 +445,15 @@ class PortfolioAIResearch:
                         parent[field]["status"] = "failed"
                     parent[field]["summary"] = self._summary(parent[field]["outcomes"])
                 parent["summary"] = self._summary(parent["outcomes"])
-                parent.update(status="failed", code=code, failure={"code": code}, finished_at=_now())
+                child = parent.get("current_child") or {}
+                subject = parent.get("_active_security") or {}
+                diagnostic = safe_failure({"code": code, "stage": parent["progress"]["stage"],
+                    "branch": parent.get("_active_branch"), "security_key": subject.get("security_key"), "symbol": subject.get("symbol"),
+                    "child_request_id": child.get("request_id"), "child_status": child.get("status"), "child_failure": child.get("failure"),
+                    "error_type": type(error).__name__})
+                parent.update(status="failed", code=code, failure=diagnostic, finished_at=_now())
+                self._event(parent, "parent_failed", failure=diagnostic, branch=parent.get("_active_branch"),
+                            child_request_id=child.get("request_id"), security_key=subject.get("security_key"), symbol=subject.get("symbol"))
                 parent["progress"]["stage"] = "failed"
 
     def router(self):
@@ -411,6 +476,9 @@ class PortfolioAIResearch:
         @router.get(PREFIX + "/ai/{request_id}")
         def status(request_id: str, request: Request):
             return self.get(request_id, user(request)["id"])
+        @router.get(PREFIX + "/ai/{request_id}/diagnostics")
+        def diagnostics(request_id: str, request: Request):
+            return self.diagnostics(request_id, user(request)["id"])
         @router.get(PREFIX + "/status")
         def outcomes(request: Request):
             owner = user(request)

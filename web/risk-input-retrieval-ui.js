@@ -37,6 +37,13 @@
   const outcomeMessage = code => text({data_found:"Supported risk evidence was saved.",partial_data:"Some evidence was found; remaining inputs stay missing.",
     data_unavailable:"No supported public evidence was found for the requested inputs.",fund_underlying_inputs_missing:"Fund holdings were found; some underlying risk inputs remain missing.",provider_unavailable:"The public source could not be reached. Retry later.",
     ai_unavailable:"AI research is unavailable. Review the configured assistant, then retry.",request_limit:"The request budget was reached. Review saved results before retrying.",
+    ai_provider_timeout:"The AI check timed out. Saved results are retained; retry the remaining checks.",
+    ai_provider_unavailable:"The AI connection is unavailable. Check the assistant connection, then retry the remaining checks.",
+    ai_provider_busy:"The AI service is busy. Saved results are retained; retry the remaining checks later.",
+    authentication_expired:"The session expired. Sign in again before retrying.",
+    proposal_invalid:"The AI response could not be verified. Saved results are retained; retry the remaining checks.",
+    check_incomplete:"Research stopped before this check finished. Saved results are retained; retry the remaining checks.",
+    job_failed:"The research request failed. Open request diagnostics for the failure details.",
     evidence_rejected:"The retrieved evidence did not meet the validation requirements.",identity_changed:"The security identity changed. Reload candidates before retrying.",
     owner_not_authorized:"The schedule owner no longer has editing permission.",enrichment_busy:"Another research request is active. Check progress before retrying.",
     queued:"Waiting for its bounded research batch.",invalid_schedule:"The schedule settings could not be used. Reload and review the schedule."}[code] || "The requested risk inputs remain missing.");
@@ -76,6 +83,7 @@
     if (!job?.risk_inputs) return job;
     const branch = job.risk_inputs;
     return {...branch,request_id:job.request_id,status:job.status,code:job.code,
+      failure:job.failure,
       progress:{...(branch.progress || {}),...(activeJob(job) ? job.progress || {} : {}),stage:job.progress?.stage || job.status},
       coverage:branch.coverage || {total_candidates:branch.progress?.total || 0,selected:branch.progress?.total || 0,remaining:0},
       portfolio_refresh_required:job.portfolio_refresh_required};
@@ -113,8 +121,14 @@
     el("reloadRiskRetrieval").disabled = busy;
     el("checkRiskRetrieval").disabled = busy;
     el("checkRiskRetrieval").hidden = !job;
-    el("retryRiskRetrieval").hidden = !job || running || !(job.outcomes || []).some(row => row.status !== "updated" || row.missing_fields?.length);
+    el("retryRiskRetrieval").hidden = !job || running || !(job.status === "failed" || (job.outcomes || []).some(row => row.status !== "updated" || row.missing_fields?.length));
+    el("retryRiskRetrieval").textContent = text(job?.status === "failed" && isParentJob(s.job) ? "Retry remaining checks" : "Retry missing inputs");
     el("retryRiskRetrieval").disabled = !writable() || busy || running;
+    el("riskRetrievalFailure").hidden = job?.status !== "failed";
+    el("riskRetrievalFailure").textContent = job?.status === "failed" ? outcomeMessage(job.failure?.code || job.code) : "";
+    el("riskRetrievalDiagnostics").hidden = !job?.request_id || !isParentJob(s.job);
+    el("riskRetrievalRequestId").textContent = job?.request_id ? text("Request ID: {request_id}",{request_id:job.request_id}) : "";
+    el("riskRetrievalDiagnosticsLink").href = job?.request_id ? `/api/securities/enrichment/ai/${encodeURIComponent(job.request_id)}/diagnostics` : "#";
     el("riskRetrievalCount").textContent = s.loaded ? text("{count} securities have risk inputs to review", {count:stressRiskNumber(s.items.length,0)}) : "";
     const coverage = job?.coverage;
     el("riskRetrievalCoverage").textContent = coverage ? isParentJob(s.job) ? text("Eligible securities in this request: {count}",{count:stressRiskNumber(coverage.total_candidates || 0,0)}) : text("This run includes {selected} of {total} candidates; {remaining} remain outside this batch.", {
@@ -197,15 +211,19 @@
     }
     s.loading = false; scheduleProgress(s); render();
   }
-  async function start() {
+  async function start({retry=false} = {}) {
     const s = session(); if (!writable() || s.starting || s.loading || activeJob(s.job)) return;
     capture();
-    if (s.scope === "selected" && (!s.selected.length || s.selected.length > 3)) {
+    const resume = retry && s.job?.status === "failed" && isParentJob(s.job);
+    if (!resume && s.scope === "selected" && (!s.selected.length || s.selected.length > 3)) {
       s.message = "Choose between one and three securities, or use all missing securities."; render(); el("riskRetrievalSecurities").focus(); return;
     }
     s.starting = true; s.message = ""; s.polls = 0; render();
     try {
-      const job = await api("/api/securities/enrichment/ai",{method:"POST",body:JSON.stringify({security_keys:s.scope === "selected" ? s.selected : null,data_types:["risk_inputs"],position_scope:"open",refresh_policy:"stale",risk_mode:s.mode})});
+      const payload = resume ? {resume_request_id:s.job.request_id,security_keys:s.job.security_keys || null,
+        data_types:s.job.data_types,position_scope:s.job.position_scope || "open",refresh_policy:s.job.refresh_policy || "missing",risk_mode:s.job.risk_mode || "api_then_ai"}
+        : {security_keys:s.scope === "selected" ? s.selected : null,data_types:["risk_inputs"],position_scope:"open",refresh_policy:"stale",risk_mode:s.mode};
+      const job = await api("/api/securities/enrichment/ai",{method:"POST",body:JSON.stringify(payload)});
       if (validSession(s)) acceptJob(s,job);
     } catch (error) {
       if (validSession(s)) {
@@ -293,7 +311,8 @@
   document.addEventListener("click", event => {
     const trigger = event.target.closest?.("[data-open-risk-input-retrieval]");
     if (trigger) open(trigger,trigger.dataset.openRiskInputRetrieval === "schedule");
-    if (event.target.closest?.("#startRiskRetrieval, #retryRiskRetrieval")) start();
+    if (event.target.closest?.("#startRiskRetrieval")) start();
+    if (event.target.closest?.("#retryRiskRetrieval")) start({retry:true});
     if (event.target.closest?.("#reloadRiskRetrieval")) load();
     if (event.target.closest?.("#checkRiskRetrieval")) checkProgress({reset:true});
     if (event.target.closest?.("#reloadRiskRetrievalSchedule")) loadSchedule();

@@ -213,7 +213,9 @@ def test_enrichment_retains_redacted_raw_model_response_only_after_authenticated
     original_writer = env.manager._outcome_writer
 
     def writer(*args, **kwargs):
-        assert (tmp_path / "market-data.log").read_text() == "", "Audit persistence belongs to finalization"
+        prior = [json.loads(line) for line in (tmp_path / "market-data.log").read_text().splitlines()]
+        assert prior and all(row["event"].startswith("research_") for row in prior)
+        assert all("response" not in row and "arguments" not in row for row in prior), "Raw model audit still belongs to finalization"
         return original_writer(*args, **kwargs)
 
     env.manager._outcome_writer = writer

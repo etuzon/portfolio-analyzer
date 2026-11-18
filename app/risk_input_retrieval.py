@@ -20,6 +20,7 @@ from .security_enrichment import EnrichmentJobs, WEB_RESEARCH_POLICY, MAX_SELECT
 from .security_research_tools import ResearchSession, ResearchFailure, WebRequestBudget
 from .security_search import SearchFailure, search_is_configured
 from .scheduling import normalize_schedule, schedule_trigger
+from .research_diagnostics import event as diagnostic_event, failure as safe_failure, receipt, snapshot
 
 PREFIX = "/api/securities/risk-inputs/retrieval"
 CHILD_PREFIX = "/api/securities/risk-inputs/research"
@@ -338,16 +339,29 @@ class RiskEvidenceResearch:
             if self.inputs.identity(latest) != candidate.get("identity_token") or self.inputs.read(latest)["revision"] != candidate.get("expected_revision"):
                 finalized.append({**candidate,"status":"not_attempted","code":"identity_changed","attempted":False,"available_fields":[],"missing_fields":candidate.get("missing_fields",[])})
                 continue
+            validated_documents={}
             for source in (evidence_by_key or {}).get(key,[]):
-                validation=self._validation_source(source,candidate,request_id)
-                accepted.extend(r for r in extract_risk_records(validation,candidate) if self._quote_visible(r,source)
+                # Windows of one retained immutable document have identical
+                # full-source validation. Parse once, then retain the separate
+                # window visibility and selected-record checks below.
+                document_key=(source.get("source_id"),source.get("document_id")) if source.get("document_id") else None
+                cached=validated_documents.get(document_key) if document_key else None
+                if cached is None:
+                    validation=self._validation_source(source,candidate,request_id)
+                    cached=(validation,extract_risk_records(validation,candidate),self._rating_records(validation,candidate),{})
+                    if document_key:
+                        validated_documents[document_key]=cached
+                validation,source_records,source_ratings,source_claims=cached
+                accepted.extend(r for r in source_records if self._quote_visible(r,source)
                     and (key,source.get("source_id"),r["record_id"]) in choices)
-                for claim in claims:
+                for claim_index,claim in enumerate(claims):
                     if isinstance(claim,dict) and claim.get("security_key")==key and claim.get("source_id")==source.get("source_id"):
                         quote=" ".join(str(claim.get("evidence_quote") or "").split())
                         if quote and quote in " ".join(str(source.get("text") or "").split()):
-                            accepted.extend(extract_proposed_risk_records(validation,candidate,claim))
-                for category,record,normalized,subject in self._rating_records(validation,candidate):
+                            if claim_index not in source_claims:
+                                source_claims[claim_index]=extract_proposed_risk_records(validation,candidate,claim)
+                            accepted.extend(source_claims[claim_index])
+                for category,record,normalized,subject in source_ratings:
                     if self._quote_visible(record,source) and (key,source.get("source_id"),record["record_id"]) in choices:
                         ratings[category].append(normalized)
                         rating_subjects[category]=subject
@@ -380,7 +394,7 @@ class RiskEvidenceResearch:
             self._outcomes[key]=deepcopy(row)
         return finalized
 
-    def manager(self,app,settings):
+    def manager(self,app,settings,*,event_writer=None):
         manager=EnrichmentJobs(app,settings,candidate_reader=self.candidates,
             security_fetcher=lambda *_:{"evidence":[],"source_status":"data_unavailable"},
             outcome_reader=lambda:deepcopy(list(self._outcomes.values())),outcome_writer=self.finalize,
@@ -390,17 +404,28 @@ class RiskEvidenceResearch:
             # for validation. Repeating every field's quotation in the initial
             # model prompt can exceed its existing8k limit after an API update.
             research_metadata={"identity_token","expected_revision","issuer_name","researched_issuer_name","researched_issuer_id","verified_issuer_domains","country_code","captured_at"},
-            discovery_subject="official annual report investment country economic currency exposure risk inputs",refresh_portfolio_on_update=False)
+            discovery_subject="official annual report investment country economic currency exposure risk inputs",refresh_portfolio_on_update=False,
+            event_writer=event_writer,persist_research_trace=False)
         self._manager=manager
         return manager
 
 
 class RiskInputRetrieval:
-    def __init__(self, evidence, ai_jobs, credit_jobs, country_jobs, *, worker_factory=Thread,poll_seconds=.25):
+    def __init__(self, evidence, ai_jobs, credit_jobs, country_jobs, *, event_writer=None,worker_factory=Thread,poll_seconds=.25):
         self.evidence,self.ai_jobs,self.credit_jobs,self.country_jobs=evidence,ai_jobs,credit_jobs,country_jobs
         self.worker_factory,self.poll_seconds=worker_factory,poll_seconds
         self.app = getattr(ai_jobs,"app",None)
         self._lock,self._jobs,self._cursors=RLock(),{},{}
+        self._event_writer=event_writer
+
+    def _event(self,job,name,**fields):
+        diagnostic_event(job,self._event_writer,name,**fields)
+
+    def diagnostics(self,identifier,owner):
+        with self._lock:
+            self.get(identifier,owner)
+            job=self._jobs[identifier]
+            return receipt(job,job.get("children",[]))
 
     @staticmethod
     def _public(job):
@@ -420,7 +445,7 @@ class RiskInputRetrieval:
             return {"active_job":self._public(active) if active else None,"last_job":self._public(jobs[-1]) if jobs else None}
 
     def start(self,owner,headers,language="en",*,security_keys=None,mode="api_then_ai",scheduled_credentials=None,batch_offset=None,
-              position_scope="open",refresh_policy="missing"):
+              position_scope="open",refresh_policy="missing",parent_request_id=None):
         if mode not in MODES or language not in {"en","he"} or position_scope not in {"open","all"} or refresh_policy not in REFRESH_POLICIES:
             raise HTTPException(422,"invalid_retrieval_request")
         if security_keys is not None and (not isinstance(security_keys,list) or not 1<=len(security_keys)<=MAX_SELECTED or any(not isinstance(k,str) or not 1<=len(k)<=300 for k in security_keys)):
@@ -462,8 +487,10 @@ class RiskInputRetrieval:
                 "coverage":{"total_candidates":len(captured),"selected":len(targets),"remaining":max(0,len(captured)-len(targets)),"truncated":len(captured)>len(targets),
                             "batch_offset":offset,"next_batch_offset":(offset+len(targets))%max(1,len(captured))},
                 "per_request_limits":{"model":8,"rest":8,"web":8,"selected":MAX_SELECTED},
-                "portfolio_refresh_required":False,"_owner":owner,"_targets":deepcopy(targets)}
+                "portfolio_refresh_required":False,"failure":None,"children":[],"parent_request_id":parent_request_id,
+                "_owner":owner,"_targets":deepcopy(targets)}
             self._jobs[job["request_id"]]=job
+            self._event(job,"retrieval_queued",selected=len(targets))
             for old in [k for k,j in self._jobs.items() if j["status"] not in {"queued","running"}][:-97]:
                 self._jobs.pop(old,None)
         def work():
@@ -476,21 +503,26 @@ class RiskInputRetrieval:
             self.worker_factory(target=work,daemon=True,name="risk-input-retrieval").start()
             if keys is None:
                 self._cursors[cursor_key]=job["coverage"]["next_batch_offset"]
-        except Exception:
+        except Exception as exc:
             if cleanup:
                 cleanup()
             with self._lock:
-                job.update(status="failed",code="job_failed",finished_at=_now())
+                job.update(status="failed",code="job_failed",failure={"code":"job_failed","stage":"queued","error_type":type(exc).__name__},finished_at=_now())
+                self._event(job,"retrieval_failed",failure=job["failure"])
             raise
         return self._public(job)
 
-    def _wait(self,jobs,child,owner):
+    def _wait(self,jobs,child,owner,job=None):
         deadline=time.monotonic()+900
         while child.get("status") in {"queued","running"}:
             if time.monotonic()>deadline:
                 raise HTTPException(504,"request_limit")
             time.sleep(self.poll_seconds)
             child=jobs.get(child["request_id"],owner)
+            if job is not None:
+                with self._lock:
+                    job["children"]=[snapshot(child,branch="risk_ai",parent_request_id=job["request_id"])]
+                    job["counts"].update({key:child.get("counts",{}).get(key,0) for key in ("model_requests","rest_requests","web_requests")})
         return child
 
     def _authorize(self,identifier,headers):
@@ -509,6 +541,7 @@ class RiskInputRetrieval:
         try:
             with self._lock:
                 job.update(status="running",code="running")
+                self._event(job,"retrieval_started")
             self._authorize(identifier,headers)
             candidates=deepcopy(job["_targets"])
             job["progress"]["total"]=len(candidates)
@@ -516,6 +549,7 @@ class RiskInputRetrieval:
             for candidate in candidates:
                 with self._lock:
                     job["progress"].update(stage="api" if job["mode"] != "ai" else "ai",current_security={k:candidate.get(k) for k in ("security_key","symbol")})
+                    self._event(job,"security_started",**{k:candidate.get(k) for k in ("security_key","symbol")})
                 result={"security_key":candidate["security_key"],"symbol":candidate["symbol"],"status":"unavailable","code":"data_unavailable",
                     "available_fields":[],"missing_fields":candidate["missing_fields"],"sources":[],"attempted":False,
                     "api":{"status":"not_attempted","code":"not_requested"},"ai":{"status":"not_attempted","code":"not_requested"}}
@@ -523,8 +557,9 @@ class RiskInputRetrieval:
                     self._authorize(identifier,headers)
                     try:
                         api=self.evidence.api_sources.fetch(self.evidence.inputs.candidate(candidate["security_key"]))
-                    except Exception:
+                    except Exception as exc:
                         api={"records":[],"sources":[],"requests":0,"status":"unavailable","code":"provider_unavailable"}
+                        self._event(job,"api_failed",code="provider_unavailable",error_type=type(exc).__name__,security_key=candidate["security_key"],symbol=candidate["symbol"])
                     job["counts"]["api_requests"]+=api["requests"]
                     result["attempted"] |= api["requests"] > 0
                     self._authorize(identifier,headers)
@@ -538,6 +573,8 @@ class RiskInputRetrieval:
                     result["available_fields"].extend(r["field"] for r in api["records"])
                     result["sources"].extend({"url":s["url"],"source_kind":s["source_kind"],"retrieved_at":s["retrieved_at"],
                         "as_of":s.get("as_of"),"fields":s["fields"]} for s in api["sources"])
+                    self._event(job,"api_finished",code=api["code"],security_key=candidate["security_key"],symbol=candidate["symbol"],
+                        record_count=len(api["records"]),source_count=len(api["sources"]))
                 risk=self.evidence.inputs.read(self.evidence.inputs.candidate(candidate["security_key"]))
                 remaining=missing_fields(risk,candidate)
                 if (remaining or job["refresh_policy"] == "refresh_existing") and job["mode"] != "api" and result["api"]["code"] != "identity_changed":
@@ -551,6 +588,8 @@ class RiskInputRetrieval:
                     job["outcomes"].append(result)
                     job["portfolio_refresh_required"] |= bool(result["available_fields"])
                     job["progress"]["completed"]+=1
+                    self._event(job,"security_api_finished",security_key=candidate["security_key"],symbol=candidate["symbol"],
+                        available_fields_count=len(result["available_fields"]),missing_fields_count=len(result["missing_fields"]))
             # One child shares the existing total budgets across the entire
             # bounded selected set. API failure never skips eligible AI fallback.
             child=None
@@ -562,7 +601,17 @@ class RiskInputRetrieval:
                     options["position_scope"]=job["position_scope"]
                 if job["refresh_policy"] != "missing":
                     options["candidate_options"]={"refresh_policy":job["refresh_policy"]}
-                child=self._wait(self.ai_jobs,self.ai_jobs.start(job["_owner"],headers,language,security_keys=unresolved,**options),job["_owner"])
+                if hasattr(self.ai_jobs,"diagnostics"):
+                    options["parent_request_id"]=identifier
+                self._event(job,"ai_starting",selected=len(unresolved))
+                child=self.ai_jobs.start(job["_owner"],headers,language,security_keys=unresolved,**options)
+                with self._lock:
+                    job["children"]=[snapshot(child,branch="risk_ai",parent_request_id=identifier)]
+                    self._event(job,"ai_started",child_request_id=child["request_id"])
+                child=self._wait(self.ai_jobs,child,job["_owner"],job)
+                with self._lock:
+                    job["children"]=[snapshot(child,branch="risk_ai",parent_request_id=identifier)]
+                    self._event(job,"ai_finished",child_request_id=child["request_id"],code=child.get("code"),failure=child.get("failure"))
                 for field in ("model_requests","rest_requests","web_requests"):
                     job["counts"][field]=child.get("counts",{}).get(field,0)
                 self._authorize(identifier,headers)
@@ -573,7 +622,11 @@ class RiskInputRetrieval:
                     result["attempted"] |= bool(outcome.get("attempted"))
                     result["available_fields"]=sorted(set(result["available_fields"])|set(outcome.get("available_fields",[])))
                     result["sources"].extend(outcome.get("sources",[]))
-                    result["ai"]={"status":child["status"],"code":outcome.get("code") or child.get("code","data_unavailable")}
+                    result["ai"]={"status":child["status"],"code":outcome.get("code") or child.get("code","data_unavailable"),
+                        "request_id":child["request_id"],"failure":safe_failure(child.get("failure")),"counts":deepcopy(child.get("counts",{}))}
+                    if outcome.get("diagnostic") or child.get("failure"):
+                        result["diagnostic"]=safe_failure({**(outcome.get("diagnostic") or child.get("failure") or {}),
+                            "child_request_id":child["request_id"],"child_status":child["status"],"child_failure":child.get("failure")})
                     current=self.evidence.inputs.read(self.evidence.inputs.candidate(result["security_key"]))
                     candidate=next(c for c in candidates if c["security_key"]==result["security_key"])
                     result["missing_fields"]=missing_fields(current,candidate)
@@ -582,11 +635,22 @@ class RiskInputRetrieval:
                     job["portfolio_refresh_required"] |= bool(outcome.get("available_fields"))
             with self._lock:
                 failed=child and child.get("status")=="failed"
-                job.update(status="failed" if failed else "completed",code=child.get("code","job_failed") if failed else "completed",finished_at=_now())
+                diagnostic=safe_failure({**(child.get("failure") or {}),"code":child.get("code") or "job_failed",
+                    "stage":(child.get("failure") or {}).get("stage") or "ai","branch":"risk_ai", "child_request_id":child["request_id"],
+                    "child_status":child["status"],"child_failure":child.get("failure")}) if failed else None
+                job.update(status="failed" if failed else "completed",code=child.get("code","job_failed") if failed else "completed",failure=diagnostic,finished_at=_now())
+                self._event(job,"retrieval_failed" if failed else "retrieval_completed",failure=diagnostic)
                 job["progress"].update(stage=job["status"],completed=len(candidates),current_security=None)
         except Exception as exc:
             with self._lock:
-                job.update(status="failed",code=exc.detail if isinstance(exc,HTTPException) else "job_failed",finished_at=_now())
+                code=exc.detail if isinstance(exc,HTTPException) and isinstance(exc.detail,str) else "job_failed"
+                current=job["progress"].get("current_security") or {}
+                child=(job.get("children") or [{}])[-1]
+                diagnostic=safe_failure({"code":code,"stage":job["progress"]["stage"],"error_type":type(exc).__name__,
+                    "security_key":current.get("security_key"),"symbol":current.get("symbol"),"child_request_id":child.get("request_id"),
+                    "child_status":child.get("status"),"child_failure":child.get("failure")})
+                job.update(status="failed",code=code,failure=diagnostic,finished_at=_now())
+                self._event(job,"retrieval_failed",failure=diagnostic)
                 job["progress"].update(stage="failed",current_security=None)
 
     def router(self):
