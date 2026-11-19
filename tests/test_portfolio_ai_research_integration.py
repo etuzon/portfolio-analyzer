@@ -77,7 +77,7 @@ def env(tmp_path,monkeypatch):
     monkeypatch.setattr(main,'_bond_market_data',lambda *args,**kwargs:None)
     monkeypatch.setattr(main,'_us_fund_market_data',lambda *args,**kwargs:None)
     settings=assistant_settings({'llm':{'enabled':True,'provider':'openai','api_key':'synthetic-model-fixture-token','base_url':'https://never-called.invalid','model':'fixture'}})
-    settings.update(max_tool_loops=8,max_rest_calls=8,max_web_calls=8)
+    settings.update(max_tool_loops=8,max_rest_calls=8,max_web_calls=8,research_concurrency=2)
     monkeypatch.setattr(main,'_enrichment_assistant_settings',lambda:settings)
     service=main.credit_rating_service
     monkeypatch.setattr(service,'_research_settings',lambda:{'search_provider':'auto','max_web_calls':8})
@@ -104,8 +104,13 @@ def env(tmp_path,monkeypatch):
         assert 'synthetic-model-fixture-token' not in json.dumps(messages)
         arrived.set();assert release.wait(5),'QA test failed to release deterministic model'
         active=[job for job in main.credit_rating_jobs._jobs.values() if job['status']=='running']
-        assert len(active)==1,'Unexpected concurrent credit child jobs'
-        job=active[0]
+        assert 1<=len(active)<=2,'Unexpected credit child concurrency'
+        # Select this request from its own model context; sibling jobs may be
+        # researching different companies at the same time.
+        context=json.dumps(messages)
+        matching=[job for job in active if any(key in context for key in job['_candidates'])]
+        assert len(matching)==1,'Model context must identify exactly one child'
+        job=matching[0]
         for key,candidate in job['_candidates'].items():
             if not job['_evidence_by_key'].get(key):
                 hints=candidate['source_hints'];assert hints,key

@@ -88,7 +88,7 @@ def test_general_update_covers_every_risk_subject_then_dependent_countries():
     assert result['code'] == 'research_complete'
     assert [key for call in risk.calls for key in call['keys']] == [r['security_key'] for r in risk.rows]
     assert captures == [7] and countries.calls == [['US']]
-    assert result['risk_inputs']['progress'] == {'completed': 7, 'total': 7, 'current_security': None}
+    assert result['risk_inputs']['progress'] == {'completed': 7, 'total': 7, 'current_security': None, 'current_securities': []}
     assert result['risk_inputs']['coverage']['remaining'] == 0
     assert all(r['missing_fields'] == [] and r['status'] == 'updated' for r in result['risk_inputs']['outcomes'])
     assert all('country_rating' in r['available_fields'] for r in result['risk_inputs']['outcomes'])

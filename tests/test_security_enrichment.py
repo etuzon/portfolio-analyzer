@@ -813,3 +813,72 @@ def test_closed_positions_inventory_uses_actual_ledger_and_excludes_unheld_regis
     assert {item["symbol"] for item in all_items} == {"CLOSED", "OPEN", "SHORT"}
     assert next(item for item in all_items if item["symbol"] == "CLOSED")["quantity"] == 0
     assert {item.holding.symbol for item in store.holdings()} == {"OPEN", "SHORT"}
+
+
+@pytest.mark.parametrize("selection_reader", [False, True])
+@pytest.mark.parametrize("configured_limit", [None, 1, 2, 7])
+def test_parallel_children_require_same_parent_disjoint_selection_and_keep_global_cap(environment, selection_reader, configured_limit):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from fastapi import HTTPException
+    env = environment
+    env.manager._selection_reader = selection_reader
+    if configured_limit is not None:
+        env.settings["research_concurrency"] = configured_limit
+    limit = configured_limit or 5
+    env.state.items = [candidate(str(index)) for index in range(limit + 1)]
+    barrier = Barrier(limit + 1)
+    def launch(item):
+        barrier.wait(timeout=5)
+        try:
+            return env.manager.start("owner", env.headers, "en", security_keys=[item["security_key"]], parent_request_id="parent")
+        except HTTPException as exc:
+            assert exc.status_code == 409 and exc.detail == "enrichment_busy"
+            return None
+    with ThreadPoolExecutor(max_workers=limit + 1) as executor:
+        results = list(executor.map(launch, env.state.items))
+    admitted = [result for result in results if result]
+    assert len(admitted) == limit
+    assert len({result["request_id"] for result in admitted}) == limit
+    for result in admitted:
+        selected = env.manager._jobs[result["request_id"]]["_security_keys"]
+        assert env.manager.start("owner", env.headers, "en", security_keys=selected,
+                                 parent_request_id="parent")["request_id"] == result["request_id"]
+    with pytest.raises(HTTPException, match="enrichment_busy"):
+        env.manager.start("owner", env.headers, "en", security_keys=[env.state.items[-1]["security_key"]], parent_request_id="other-parent")
+    with pytest.raises(HTTPException, match="enrichment_busy"):
+        env.manager.start("owner", env.headers, "en")
+    with pytest.raises(HTTPException) as denied:
+        env.manager.get(admitted[0]["request_id"], "different-owner")
+    assert denied.value.status_code == 404
+
+
+def test_parallel_market_finalization_preserves_every_saved_outcome(environment, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    import time
+    from app import main
+    notes = {}
+    class Store:
+        def get_preference(self, key, default):
+            snapshot = deepcopy(notes.get(key, default))
+            # Release the GIL after the snapshot, exposing lost read/modify/write
+            # updates unless the complete local finalization is synchronized.
+            time.sleep(0.01)
+            return snapshot
+        def set_preference(self, key, value):
+            notes[key] = deepcopy(value)
+    items = [candidate(str(index)) for index in range(8)]
+    monkeypatch.setattr(main, "local_store", Store())
+    monkeypatch.setattr(main, "_enrichment_candidates", lambda **_: {"items": items})
+    monkeypatch.setattr(main, "_enrichment_scope_keys", lambda _: {item["security_key"] for item in items})
+    monkeypatch.setattr(main, "_record_log", lambda *_args, **_kwargs: None)
+    barrier = Barrier(len(items))
+    def save(item):
+        barrier.wait(timeout=5)
+        outcome = {**item, "status": "unavailable", "code": "data_unavailable", "attempted": True, "available_fields": []}
+        return main._save_enrichment_outcomes([outcome], "owner", item["symbol"])
+    with ThreadPoolExecutor(max_workers=len(items)) as executor:
+        results = list(executor.map(save, items))
+    assert len(results) == len(items)
+    assert set(notes["security_enrichment_outcomes_v1"]) == {item["security_key"] for item in items}

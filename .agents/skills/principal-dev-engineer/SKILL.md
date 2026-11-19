@@ -20,6 +20,14 @@ Own the technical outcome end to end. Establish the product intent and constrain
 - Honor explicit authorization already granted for the same task and target. A handoff or re-test does not require asking for that authorization again; a material scope or side-effect change may.
 - For non-AI work, adapt data and prototype steps to the domain and use only the applicable feasibility, acceptance, release, monitoring, and feedback phases. Complete verified local work when no release is requested; ongoing monitoring or user feedback is required only when in scope.
 
+## Parallel Execution and Thread Safety
+
+- Execute independent work in parallel whenever feasible within dependencies, correctness, provider limits, and resource capacity. Inspect serial loops and job orchestration for this opportunity; retain sequential execution only where a concrete dependency or constraint requires it, and explain material exceptions.
+- Bound concurrency and enforce shared rate, request, cost, and connection limits across workers, including retries. Choose async tasks, threads, or processes appropriate to the workload and existing architecture.
+- Concurrent execution must be thread safe. Identify ownership of mutable state, counters, budgets, caches, database connections, and result publication. Use isolated worker state, synchronization, atomic operations, or transactions as appropriate; do not share unsafe clients or connections across threads. Keep blocking I/O outside critical sections where correctness permits.
+- Preserve authorization boundaries, idempotency, coherent inputs, and accurate progress and result saving when work completes out of order. Define cancellation, timeout, partial failure, retry, and cleanup behavior so one worker cannot corrupt or overwrite another worker's results.
+- Verify actual overlap and the affected concurrency invariants with controlled concurrent checks, including shared-budget enforcement, duplicate work, lost updates, and failure/retry paths as applicable. Passing sequential tests alone does not establish thread safety.
+
 ## Automatic Role Routing and Bug-Fix Entry
 
 - Automatically apply `$principal-ux-engineer` to UI features and fixes, including ordinary navigation, form, layout, wording, localization, accessibility, and status changes. Do this before implementation; the Dev UX decision gate remains required but does not replace dedicated UX ownership for substantial interaction changes.

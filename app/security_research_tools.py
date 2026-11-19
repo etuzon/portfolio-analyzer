@@ -18,6 +18,7 @@ import re
 import socket
 import ssl
 import time
+from threading import RLock
 from typing import Any, Callable
 from urllib.parse import urljoin, urlsplit, urlunsplit
 from uuid import uuid4
@@ -47,6 +48,7 @@ class WebRequestBudget:
     timeout_seconds: float = 240
     used: int = 0
     _started: float = field(default_factory=time.monotonic, repr=False)
+    _lock: Any = field(default_factory=RLock, repr=False, compare=False)
 
     def __post_init__(self):
         self.limit = min(8, max(1, int(self.limit)))
@@ -54,18 +56,20 @@ class WebRequestBudget:
 
     @property
     def remaining(self):
-        return max(0, self.limit - self.used)
+        with self._lock:
+            return max(0, self.limit - self.used)
 
     @property
     def remaining_seconds(self):
         return max(0, self._started + self.timeout_seconds - time.monotonic())
 
     def consume(self):
-        if not self.remaining:
-            raise ResearchFailure("request_limit", "The research web request limit was reached.")
-        if not self.remaining_seconds:
-            raise ResearchFailure("timeout", "The research request time limit was reached.")
-        self.used += 1
+        with self._lock:
+            if not self.remaining:
+                raise ResearchFailure("request_limit", "The research web request limit was reached.")
+            if not self.remaining_seconds:
+                raise ResearchFailure("timeout", "The research request time limit was reached.")
+            self.used += 1
 
 
 def public_source_url(value: Any, *, resolve: bool = True, resolver: Callable | None = None) -> str:

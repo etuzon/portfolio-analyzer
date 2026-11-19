@@ -99,6 +99,8 @@ price_agent:
   max_model_calls: 8
   max_rest_calls: 8
   max_web_calls: 8
+  # Independent missing-data checks per category; positive integer. Restart to apply.
+  research_concurrency: 5
   timeout_seconds: 110
   base_url: "https://localhost:6443"
   # jina reads rendered public pages without a key; only public source URLs

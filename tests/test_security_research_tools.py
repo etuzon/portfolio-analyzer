@@ -286,3 +286,27 @@ def test_blocked_reader_document_is_failure_and_consumes_one_read():
     assert research.budget.used == 2  # discovery search + failed read
     assert research.diagnostics['read_failures'] == 1
     assert research.evidence(CANDIDATE) == []
+
+
+def test_web_budget_reservation_is_atomic_across_threads():
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from app.security_research_tools import WebRequestBudget
+
+    budget = WebRequestBudget(limit=8)
+    ready = Barrier(16)
+
+    def reserve(_):
+        ready.wait(timeout=5)
+        try:
+            budget.consume()
+            return 'reserved'
+        except ResearchFailure as exc:
+            return exc.code
+
+    with ThreadPoolExecutor(max_workers=16) as workers:
+        results = list(workers.map(reserve, range(16)))
+    assert results.count('reserved') == 8
+    assert results.count('request_limit') == 8
+    assert budget.used == 8
+    assert budget.remaining == 0

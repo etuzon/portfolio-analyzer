@@ -21,6 +21,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from .assistant_rest import validate_arguments
+from .research_concurrency import research_concurrency
 from .llm_assistant import AssistantError, PortfolioAssistant
 from .research_diagnostics import event as diagnostic_event, failure as safe_failure, receipt
 
@@ -197,6 +198,22 @@ class EnrichmentJobs:
                 raise HTTPException(409, "enrichment_busy")
             for job in self._jobs.values():
                 if job["_user_id"] == user_id and job["status"] in {"queued", "running"}:
+                    # Only the trusted coordinator supplies a parent ID. Its
+                    # disjoint children may overlap; unrelated requests retain
+                    # the existing per-user exclusion and deduplication rules.
+                    if parent_request_id or job.get("parent_request_id"):
+                        if parent_request_id != job.get("parent_request_id"):
+                            raise HTTPException(409, "enrichment_busy")
+                        existing = set(job.get("_security_keys") or [])
+                        selected = set(security_keys or [])
+                        if (job.get("_candidate_options", {}) != candidate_options
+                                or job["position_scope"] != position_scope or not existing or not selected):
+                            raise HTTPException(409, "enrichment_busy")
+                        if existing == selected:
+                            return _public_job(job)
+                        if existing & selected:
+                            raise HTTPException(409, "enrichment_busy")
+                        continue
                     if job.get("_candidate_options", {}) != candidate_options:
                         raise HTTPException(409, "enrichment_busy")
                     if self._selection_reader and (set(job.get("_security_keys") or []) != set(security_keys or [])
@@ -204,7 +221,7 @@ class EnrichmentJobs:
                         raise HTTPException(409, "enrichment_busy")
                     return _public_job(job)
             active = sum(job["status"] in {"queued", "running"} for job in self._jobs.values())
-            if active >= 2:
+            if active >= research_concurrency(configured):
                 raise HTTPException(409, "enrichment_busy")
             finished = sorted((job for job in self._jobs.values() if job["status"] not in {"queued", "running"}), key=lambda value: value["created_at"])
             for job in finished[:-97]:
@@ -248,7 +265,8 @@ class EnrichmentJobs:
             if cleanup:
                 cleanup()
             raise
-        return _public_job(job)
+        with self._lock:
+            return _public_job(job)
 
     def get(self, identifier: str, user_id: str) -> dict[str, Any]:
         with self._lock:

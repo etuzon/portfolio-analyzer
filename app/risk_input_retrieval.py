@@ -17,6 +17,7 @@ from .auth import SESSION_COOKIE_NAME
 from .risk_input_sources import PublicRiskAPIs, extract_risk_records, extract_proposed_risk_records, no_registration_fields
 from .country_currency_reference import CountryCurrencyReference, SIX_CURRENCY_URL
 from .security_enrichment import EnrichmentJobs, WEB_RESEARCH_POLICY, MAX_SELECTED
+from .research_concurrency import research_concurrency
 from .security_research_tools import ResearchSession, ResearchFailure, WebRequestBudget
 from .security_search import SearchFailure, search_is_configured
 from .scheduling import normalize_schedule, schedule_trigger
@@ -391,13 +392,18 @@ class RiskEvidenceResearch:
                     "reference_cache_status":r.get("reference_cache_status"),"fields":[r["field"]]} for r in accepted],
                 "attempted":bool((evidence_by_key or {}).get(key)),"retrieval_mode":"public_ai"}
             finalized.append(row)
-            self._outcomes[key]=deepcopy(row)
+            with self._lock:
+                self._outcomes[key]=deepcopy(row)
         return finalized
+
+    def outcome_reader(self):
+        with self._lock:
+            return deepcopy(list(self._outcomes.values()))
 
     def manager(self,app,settings,*,event_writer=None):
         manager=EnrichmentJobs(app,settings,candidate_reader=self.candidates,
             security_fetcher=lambda *_:{"evidence":[],"source_status":"data_unavailable"},
-            outcome_reader=lambda:deepcopy(list(self._outcomes.values())),outcome_writer=self.finalize,
+            outcome_reader=self.outcome_reader,outcome_writer=self.finalize,
             research_tool_fetcher=self.research_tool,source_hint_reader=lambda c:self.research_tool(c,"discover",{}).get("sources",[]),
             prefix=CHILD_PREFIX,research_policy=POLICY,selection_reader=True,
             # Full fetched evidence stays in the application-owned candidate
@@ -419,7 +425,8 @@ class RiskInputRetrieval:
         self._event_writer=event_writer
 
     def _event(self,job,name,**fields):
-        diagnostic_event(job,self._event_writer,name,**fields)
+        with self._lock:
+            diagnostic_event(job,self._event_writer,name,**fields)
 
     def diagnostics(self,identifier,owner):
         with self._lock:
@@ -451,12 +458,21 @@ class RiskInputRetrieval:
         if security_keys is not None and (not isinstance(security_keys,list) or not 1<=len(security_keys)<=MAX_SELECTED or any(not isinstance(k,str) or not 1<=len(k)<=300 for k in security_keys)):
             raise HTTPException(422,"invalid_retrieval_request")
         keys=list(dict.fromkeys(k.strip().upper() for k in security_keys)) if security_keys else None
+        settings_reader=getattr(self.ai_jobs,"settings",None)
+        concurrency=research_concurrency(settings_reader() if callable(settings_reader) else {})
         with self._lock:
-            active=next((j for j in self._jobs.values() if j["status"] in {"queued","running"}),None)
-            if active:
+            active_jobs=[j for j in self._jobs.values() if j["status"] in {"queued","running"}]
+            for active in active_jobs:
+                same_parent=bool(parent_request_id and parent_request_id == active.get("parent_request_id") and active["_owner"] == owner)
                 if (scheduled_credentials is None and active["_owner"] == owner and active["mode"] == mode and active["security_keys"] == keys
-                        and active.get("position_scope","open") == position_scope and active.get("refresh_policy","missing") == refresh_policy):
+                        and active.get("position_scope","open") == position_scope and active.get("refresh_policy","missing") == refresh_policy
+                        and active.get("parent_request_id") == parent_request_id):
                     return self._public(active)
+                if not (scheduled_credentials is None and same_parent and keys and active["security_keys"]
+                        and not set(keys) & set(active["security_keys"]) and active["mode"] == mode
+                        and active.get("position_scope","open") == position_scope and active.get("refresh_policy","missing") == refresh_policy):
+                    raise HTTPException(409,"enrichment_busy")
+            if len(active_jobs) >= concurrency:
                 raise HTTPException(409,"enrichment_busy")
             cleanup=None
             if scheduled_credentials:
@@ -502,7 +518,8 @@ class RiskInputRetrieval:
         try:
             self.worker_factory(target=work,daemon=True,name="risk-input-retrieval").start()
             if keys is None:
-                self._cursors[cursor_key]=job["coverage"]["next_batch_offset"]
+                with self._lock:
+                    self._cursors[cursor_key]=job["coverage"]["next_batch_offset"]
         except Exception as exc:
             if cleanup:
                 cleanup()
@@ -510,7 +527,8 @@ class RiskInputRetrieval:
                 job.update(status="failed",code="job_failed",failure={"code":"job_failed","stage":"queued","error_type":type(exc).__name__},finished_at=_now())
                 self._event(job,"retrieval_failed",failure=job["failure"])
             raise
-        return self._public(job)
+        with self._lock:
+            return self._public(job)
 
     def _wait(self,jobs,child,owner,job=None):
         deadline=time.monotonic()+900
@@ -544,7 +562,8 @@ class RiskInputRetrieval:
                 self._event(job,"retrieval_started")
             self._authorize(identifier,headers)
             candidates=deepcopy(job["_targets"])
-            job["progress"]["total"]=len(candidates)
+            with self._lock:
+                job["progress"]["total"]=len(candidates)
             unresolved=[]
             for candidate in candidates:
                 with self._lock:
@@ -560,7 +579,8 @@ class RiskInputRetrieval:
                     except Exception as exc:
                         api={"records":[],"sources":[],"requests":0,"status":"unavailable","code":"provider_unavailable"}
                         self._event(job,"api_failed",code="provider_unavailable",error_type=type(exc).__name__,security_key=candidate["security_key"],symbol=candidate["symbol"])
-                    job["counts"]["api_requests"]+=api["requests"]
+                    with self._lock:
+                        job["counts"]["api_requests"]+=api["requests"]
                     result["attempted"] |= api["requests"] > 0
                     self._authorize(identifier,headers)
                     if api["records"]:
@@ -595,14 +615,15 @@ class RiskInputRetrieval:
             child=None
             if unresolved:
                 self._authorize(identifier,headers)
-                job["progress"].update(stage="ai",completed=0)
+                with self._lock:
+                    job["progress"].update(stage="ai",completed=0)
                 options={}
                 if job["position_scope"] != "open":
                     options["position_scope"]=job["position_scope"]
                 if job["refresh_policy"] != "missing":
                     options["candidate_options"]={"refresh_policy":job["refresh_policy"]}
                 if hasattr(self.ai_jobs,"diagnostics"):
-                    options["parent_request_id"]=identifier
+                    options["parent_request_id"]=job.get("parent_request_id") or identifier
                 self._event(job,"ai_starting",selected=len(unresolved))
                 child=self.ai_jobs.start(job["_owner"],headers,language,security_keys=unresolved,**options)
                 with self._lock:
@@ -612,10 +633,12 @@ class RiskInputRetrieval:
                 with self._lock:
                     job["children"]=[snapshot(child,branch="risk_ai",parent_request_id=identifier)]
                     self._event(job,"ai_finished",child_request_id=child["request_id"],code=child.get("code"),failure=child.get("failure"))
-                for field in ("model_requests","rest_requests","web_requests"):
-                    job["counts"][field]=child.get("counts",{}).get(field,0)
+                with self._lock:
+                    for field in ("model_requests","rest_requests","web_requests"):
+                        job["counts"][field]=child.get("counts",{}).get(field,0)
+                    merged_outcomes=deepcopy(job["outcomes"])
                 self._authorize(identifier,headers)
-                for result in job["outcomes"]:
+                for result in merged_outcomes:
                     if result["security_key"] not in unresolved:
                         continue
                     outcome=next((r for r in child.get("outcomes",[]) if r.get("security_key")==result["security_key"]),{})
@@ -632,7 +655,9 @@ class RiskInputRetrieval:
                     result["missing_fields"]=missing_fields(current,candidate)
                     result["status"]=("updated" if not result["missing_fields"] else "partial") if result["available_fields"] else "unavailable"
                     result["code"]="data_found" if result["status"]=="updated" else "partial_data" if result["status"]=="partial" else result["ai"]["code"]
-                    job["portfolio_refresh_required"] |= bool(outcome.get("available_fields"))
+                with self._lock:
+                    job["outcomes"]=merged_outcomes
+                    job["portfolio_refresh_required"] |= any(result["available_fields"] for result in merged_outcomes)
             with self._lock:
                 failed=child and child.get("status")=="failed"
                 diagnostic=safe_failure({**(child.get("failure") or {}),"code":child.get("code") or "job_failed",

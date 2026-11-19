@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import Field, StrictBool
 
 from .security_enrichment import EnrichmentStart, MAX_SELECTED
+from .research_concurrency import research_concurrency
 from .research_diagnostics import event as diagnostic_event, failure as safe_failure, receipt, snapshot
 
 PREFIX = "/api/securities/enrichment"
@@ -73,9 +74,9 @@ class PortfolioAIResearch:
             if identifier in self._jobs:
                 job = self._owned(identifier, owner)
                 children = [deepcopy(row) for row in job.get("children", [])]
-                active = job.get("current_child")
-                if active and not any(row["request_id"] == active["request_id"] for row in children):
-                    children.append(deepcopy(active))
+                for active in job.get("current_children", []) or [job.get("current_child")]:
+                    if active and not any(row["request_id"] == active["request_id"] for row in children):
+                        children.append(deepcopy(active))
                 return receipt(job, children)
         return self.market_jobs.diagnostics(identifier, owner)
 
@@ -93,9 +94,9 @@ class PortfolioAIResearch:
 
     @staticmethod
     def _batch_size(branch):
-        # A shared three-issuer budget can be spent entirely on its first
-        # company. Give every issuer an explicit, bounded public research job.
-        return MAX_SELECTED if branch == "market" else 1
+        # Each independent security/country gets an explicit bounded budget
+        # and can overlap a sibling without competing within one AI planner.
+        return 1
 
     @staticmethod
     def _branch(job, branch):
@@ -124,6 +125,8 @@ class PortfolioAIResearch:
 
     def _recount(self, job, active=None):
         children = [item["job"] for item in job["_children"]]
+        known = {row["request_id"] for row in children}
+        children.extend(item["job"] for item in job.get("_active_children", []) if item["job"]["request_id"] not in known)
         if active and active["request_id"] not in {row["request_id"] for row in children}:
             children.append(active)
         limits = job["per_batch_limits"]
@@ -159,7 +162,7 @@ class PortfolioAIResearch:
 
     def start(self, user_id, headers, language, position_scope="open", *, security_keys=None,
               resume_request_id=None, scheduled_credentials=None, ratings_only=False,
-              data_types=None, refresh_policy="missing", risk_mode="api_then_ai"):
+              data_types=None, refresh_policy="missing", risk_mode="api_then_ai", parent_request_id=None):
         if type(ratings_only) is not bool:
             raise HTTPException(422, "invalid_research_mode")
         if position_scope not in {"open", "all"}:
@@ -182,18 +185,28 @@ class PortfolioAIResearch:
         if security_keys is not None:
             security_keys = list(dict.fromkeys(key.strip().upper() for key in security_keys))
         with self._lock:
-            active = next((job for job in self._jobs.values()
-                if job["_user_id"] == user_id and job["status"] in {"queued", "running"}), None)
-            if active:
-                if scheduled_credentials is not None or active["position_scope"] != position_scope or active["ratings_only"] != ratings_only or active.get("_candidate_options", {}) != options or active.get("risk_mode", "api_then_ai") != risk_mode or set(active["_security_keys"] or []) != set(security_keys or []) or (
-                        resume_request_id and active["request_id"] != resume_request_id):
+            active_jobs = [job for job in self._jobs.values()
+                if job["_user_id"] == user_id and job["status"] in {"queued", "running"}]
+            for active in active_jobs:
+                same_context = (scheduled_credentials is None and active.get("parent_request_id") == parent_request_id
+                    and active["position_scope"] == position_scope and active["ratings_only"] == ratings_only
+                    and active.get("_candidate_options", {}) == options and active.get("risk_mode", "api_then_ai") == risk_mode)
+                if same_context and set(active["_security_keys"] or []) == set(security_keys or []):
+                    if resume_request_id and active["request_id"] != resume_request_id:
+                        raise HTTPException(409, "enrichment_busy")
+                    return self._public(active)
+                if not (same_context and parent_request_id and security_keys and active.get("_security_keys")
+                        and set(security_keys).isdisjoint(active["_security_keys"])):
                     raise HTTPException(409, "enrichment_busy")
-                return self._public(active)
-            if sum(job["status"] in {"queued", "running"} for job in self._jobs.values()) >= 2:
+            # Independent user sweeps retain their admission cap. Internal
+            # disjoint country coordinators share their configured worker cap.
+            parallel_children = research_concurrency(self.market_jobs.settings())
+            admission_limit = parallel_children if parent_request_id else 2
+            if sum(job["status"] in {"queued", "running"} for job in self._jobs.values()) >= admission_limit:
                 raise HTTPException(409, "enrichment_busy")
             if resume_request_id:
                 job = self._owned(resume_request_id, user_id)
-                if job["position_scope"] != position_scope or job["ratings_only"] != ratings_only or job.get("_candidate_options", {}) != options or job.get("risk_mode", "api_then_ai") != risk_mode or set(job["_security_keys"] or []) != set(security_keys or []):
+                if job.get("parent_request_id") != parent_request_id or job["position_scope"] != position_scope or job["ratings_only"] != ratings_only or job.get("_candidate_options", {}) != options or job.get("risk_mode", "api_then_ai") != risk_mode or set(job["_security_keys"] or []) != set(security_keys or []):
                     raise HTTPException(409, "enrichment_scope_changed")
                 if job["status"] != "failed":
                     raise HTTPException(409, "nothing_to_resume")
@@ -211,14 +224,15 @@ class PortfolioAIResearch:
                     "created_at": _now(), "finished_at": None, "failure": None, "outcomes": [], "summary": self._summary([]),
                     "counts": {}, "per_batch_limits": limits, "coverage": {"inventory_truncated": False, "listed_candidates": 0},
                     "progress": {"stage": "queued", "completed": 0, "total": 0, "current_security": None},
-                    "portfolio_refresh_required": False, "children": [], "current_child": None,
+                    "portfolio_refresh_required": False, "children": [], "current_child": None, "current_children": [],
+                    "parent_request_id": parent_request_id, "max_parallel_children": parallel_children,
                     "credit_ratings": {"status": "queued", "progress": {"completed": 0, "total": 0, "current_security": None},
                         "summary": self._summary([]), "outcomes": []},
                     "_user_id": user_id, "_security_keys": list(dict.fromkeys(security_keys)) if security_keys else None,
                     "_candidate_options": options,
                     "_targets": {branch: [] for branch in ("market", *BRANCH_FIELDS)},
                     "_done": {branch: set() for branch in ("market", *BRANCH_FIELDS)},
-                    "_children": [], "_planned_children": 0, "_captured": False, "_captured_branches": set()}
+                    "_children": [], "_active_children": [], "_planned_children": 0, "_captured": False, "_captured_branches": set()}
                 for field in ("risk_inputs", "country_ratings"):
                     job[field] = {"status": "queued", "progress": {"completed": 0, "total": 0, "current_security": None},
                         "summary": self._summary([]), "outcomes": []}
@@ -303,13 +317,13 @@ class PortfolioAIResearch:
 
     def _start_child(self, parent, branch, manager, batch, headers, language):
         keys = [row["security_key"] for row in batch]
-        context = {"parent_request_id": parent["request_id"]} if hasattr(manager, "diagnostics") else {}
+        context = {"parent_request_id": parent.get("parent_request_id") or parent["request_id"]} if hasattr(manager, "diagnostics") else {}
         if branch == "risk":
             return manager.start(parent["_user_id"], headers, language[:2], security_keys=keys,
                 position_scope=parent["position_scope"], refresh_policy=parent["refresh_policy"], mode=parent["risk_mode"], **context)
         if branch == "country":
             return manager.start(parent["_user_id"], headers, language[:2], "all",
-                country_codes=[key.removeprefix("COUNTRY:") for key in keys], refresh_policy=parent["refresh_policy"])
+                country_codes=[key.removeprefix("COUNTRY:") for key in keys], refresh_policy=parent["refresh_policy"], **context)
         options = context
         if branch == "market" and parent.get("_candidate_options"):
             options["candidate_options"] = {"data_types": [value for value in parent["data_types"] if value in MARKET_TYPES],
@@ -336,6 +350,99 @@ class PortfolioAIResearch:
                 row["code"] = "data_found" if not needed else "partial_data"
         panel = parent["risk_inputs"]
         panel["summary"] = self._summary(panel["outcomes"])
+
+    def _publish_active(self, parent, branch):
+        """Only the coordinator mutates its queue; readers take the same lock."""
+        active = parent["_active_children"]
+        parent["current_children"] = [snapshot(item["job"], branch=branch,
+            parent_request_id=parent["request_id"]) for item in active]
+        parent["current_child"] = parent["current_children"][0] if active else None
+        securities = [{key: row.get(key) for key in IDENTITY_FIELDS[:4]} for item in active for row in item["batch"]]
+        parent["progress"]["current_securities"] = deepcopy(securities)
+        if branch != "market":
+            self._branch(parent, branch)["progress"]["current_securities"] = deepcopy(securities)
+        current = securities[0] if securities else None
+        parent["_active_security"] = active[0]["batch"][0] if active else None
+        parent["progress"].update(completed=len(parent["_done"][branch]), current_security=deepcopy(current))
+        if branch != "market":
+            self._branch(parent, branch)["progress"].update(
+                completed=len(parent["_done"][branch]), current_security=deepcopy(current))
+        self._recount(parent)
+
+    def _run_batches(self, parent, branch, manager, batches, headers, language):
+        # Child managers run their own threads. Launch a bounded window, poll
+        # all members, and save terminal results independently of finish order.
+        # Later branches retain their prerequisite ordering: risk and country
+        # inventories may depend on identity/country facts found earlier.
+        offset, failure, failed_subject, failed_child = 0, None, None, None
+        active = parent["_active_children"]
+        while offset < len(batches) or active:
+            while failure is None and offset < len(batches) and len(active) < parent["max_parallel_children"]:
+                batch = batches[offset]
+                try:
+                    with self._lock:
+                        parent["_active_security"] = batch[0]
+                        self._event(parent, "child_starting", branch=branch,
+                            **{key: batch[0].get(key) for key in ("security_key", "symbol")})
+                    child = self._start_child(parent, branch, manager, batch, headers, language)
+                except Exception as error:
+                    # Another parent can occupy a manager slot. Drain our
+                    # existing work before retrying admission; no extra calls.
+                    if active and isinstance(error, HTTPException) and error.status_code == 409:
+                        break
+                    failure, failed_subject = error, batch[0]
+                    break
+                with self._lock:
+                    active.append({"batch": batch, "job": child})
+                    self._event(parent, "child_started", branch=branch, child_request_id=child["request_id"])
+                    self._publish_active(parent, branch)
+                offset += 1
+                # Observe synchronous terminal failures before admitting more.
+                if child["status"] not in {"queued", "running"}:
+                    break
+            for item in list(active):
+                child = item["job"]
+                if child["status"] in {"queued", "running"}:
+                    try:
+                        child = manager.get(child["request_id"], parent["_user_id"])
+                    except Exception as error:
+                        # Keep draining the other started jobs before a parent
+                        # can fail or release its scheduled credentials.
+                        if failure is None:
+                            failure, failed_subject, failed_child = error, item["batch"][0], child
+                        with self._lock:
+                            self._event(parent, "child_poll_failed", branch=branch,
+                                child_request_id=child["request_id"], error_type=type(error).__name__)
+                        # A failed local status read is not evidence that its
+                        # worker stopped. Keep the slot occupied and observe
+                        # it to terminal before releasing parent credentials.
+                        continue
+                    with self._lock:
+                        item["job"] = child
+                if child["status"] in {"queued", "running"}:
+                    continue
+                batch = item["batch"]
+                if failed_child and failed_child["request_id"] == child["request_id"]:
+                    failed_child = child
+                with self._lock:
+                    active.remove(item)
+                    self._accept_child(parent, branch, batch, child)
+                    incomplete = any(row["security_key"] not in parent["_done"][branch] for row in batch)
+                if failure is None and (child["status"] != "completed" or incomplete):
+                    code = (child.get("code") or "check_incomplete") if child["status"] != "completed" else (
+                        "public_research_not_attempted" if branch in {"credit", "country"} and
+                        not int(child.get("counts", {}).get("web_requests", 0)) else "check_incomplete")
+                    failure, failed_subject, failed_child = HTTPException(502, code), batch[0], child
+            with self._lock:
+                self._publish_active(parent, branch)
+            if failure is not None and not active:
+                with self._lock:
+                    parent["_active_security"] = failed_subject
+                    parent["current_child"] = snapshot(failed_child, branch=branch,
+                        parent_request_id=parent["request_id"]) if failed_child else None
+                raise failure
+            if active:
+                time.sleep(self.poll_seconds)
 
     def run(self, identifier, headers, language):
         with self._lock:
@@ -386,37 +493,8 @@ class PortfolioAIResearch:
                     parent["_active_branch"] = branch
                     self._event(parent, "branch_started", branch=branch)
                 size = self._batch_size(branch)
-                for offset in range(0, len(pending), size):
-                    batch = pending[offset:offset + size]
-                    with self._lock:
-                        parent["_active_security"] = batch[0] if batch else None
-                        parent["current_child"] = None
-                        self._event(parent, "child_starting", branch=branch, **{key: batch[0].get(key) for key in ("security_key", "symbol")})
-                    child = self._start_child(parent, branch, manager, batch, headers, language)
-                    with self._lock:
-                        parent["current_child"] = snapshot(child, branch=branch, parent_request_id=identifier)
-                        self._event(parent, "child_started", branch=branch, child_request_id=child["request_id"])
-                    while child["status"] in {"queued", "running"}:
-                        with self._lock:
-                            parent["current_child"] = snapshot(child, branch=branch, parent_request_id=identifier)
-                            self._recount(parent, child)
-                            progress = child.get("progress") or {}
-                            # Preflight/model phases are not completed checks.
-                            # Count a security only after its child finalizes.
-                            completed = len(parent["_done"][branch])
-                            parent["progress"].update(completed=completed, current_security=deepcopy(progress.get("current_security")))
-                            if branch != "market":
-                                panel["progress"].update(completed=completed, current_security=deepcopy(progress.get("current_security")))
-                        time.sleep(self.poll_seconds)
-                        child = manager.get(child["request_id"], parent["_user_id"])
-                    with self._lock:
-                        self._accept_child(parent, branch, batch, child)
-                        parent["progress"].update(completed=len(parent["_done"][branch]), current_security=None)
-                    if child["status"] != "completed":
-                        raise HTTPException(502, child.get("code") or "check_incomplete")
-                    if any(row["security_key"] not in parent["_done"][branch] for row in batch):
-                        raise HTTPException(502, "public_research_not_attempted" if branch in {"credit", "country"} and
-                            not int(child.get("counts", {}).get("web_requests", 0)) else "check_incomplete")
+                self._run_batches(parent, branch, manager,
+                    [pending[offset:offset + size] for offset in range(0, len(pending), size)], headers, language)
                 with self._lock:
                     if branch != "market":
                         panel["status"] = "completed"

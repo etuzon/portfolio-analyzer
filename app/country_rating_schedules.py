@@ -105,7 +105,7 @@ class CountryRatingResearch(PortfolioAIResearch):
         return result
 
     def start(self, user_id, headers, language, country_scope="accounts", *, country_codes=None,
-              resume_request_id=None, scheduled_credentials=None, refresh_policy="refresh_existing"):
+              resume_request_id=None, scheduled_credentials=None, refresh_policy="refresh_existing", parent_request_id=None):
         country_scope = _scope(country_scope)
         keys = None
         if country_codes is not None:
@@ -125,7 +125,8 @@ class CountryRatingResearch(PortfolioAIResearch):
             # schedule supplies narrower missing/stale eligibility.
             options = {} if refresh_policy == "refresh_existing" else {"refresh_policy": refresh_policy, "data_types": ["company_ratings"]}
             return super().start(user_id, headers, language, SCOPES[country_scope], security_keys=keys,
-                resume_request_id=resume_request_id, scheduled_credentials=scheduled_credentials, ratings_only=True, **options)
+                resume_request_id=resume_request_id, scheduled_credentials=scheduled_credentials, ratings_only=True,
+                parent_request_id=parent_request_id, **options)
 
     def get(self, identifier, owner):
         with self._lock:

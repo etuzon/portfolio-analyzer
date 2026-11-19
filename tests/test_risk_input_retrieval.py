@@ -289,3 +289,34 @@ def test_schedule_bounds_rotation_and_revoked_owner_are_visible():
     for payload in ({"schedule_config":{"frequency":"minutely","interval":1}},{"security_keys":["a","b","c","d"]}):
         with pytest.raises(HTTPException):
             schedules.update({"id":"owner","role":"Operator"},payload)
+
+
+@pytest.mark.parametrize("configured_limit", [None, 1, 2, 7])
+def test_risk_parallel_children_are_disjoint_parent_bound_and_globally_bounded(environment, configured_limit):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    _, inventory, _ = environment
+    limit = configured_limit or 5
+    inventory[:] = [candidate("SEC" + str(index)) for index in range(limit + 1)]
+    retrieval, child, _, _ = queue(environment)
+    if configured_limit is not None:
+        child.settings = lambda: {"research_concurrency": configured_limit}
+    barrier = Barrier(limit + 1)
+    def launch(item):
+        barrier.wait(timeout=5)
+        try:
+            return retrieval.start("owner", {}, "en", security_keys=[item["security_key"]], parent_request_id="parent")
+        except HTTPException as exc:
+            assert exc.status_code == 409 and exc.detail == "enrichment_busy"
+            return None
+    with ThreadPoolExecutor(max_workers=limit + 1) as executor:
+        results = list(executor.map(launch, inventory))
+    admitted = [result for result in results if result]
+    assert len(admitted) == limit and len({result["request_id"] for result in admitted}) == limit
+    for result in admitted:
+        assert retrieval.start("owner", {}, "en", security_keys=result["security_keys"],
+                               parent_request_id="parent")["request_id"] == result["request_id"]
+    with pytest.raises(HTTPException, match="enrichment_busy"):
+        retrieval.start("owner", {}, "en", security_keys=[inventory[-1]["security_key"]], parent_request_id="other")
+    with pytest.raises(HTTPException, match="enrichment_busy"):
+        retrieval.start("owner", {}, "en")

@@ -382,3 +382,23 @@ def test_opening_is_inert_and_both_explicit_scopes_are_available(tmp_path, chrom
     assert evaluate("$('aiEnrichmentStartAll').disabled") is True
     assert evaluate("qa.aiPosts") == 1
     assert evaluate("qa.errors") == []
+
+
+@pytest.mark.parametrize('width,language', [(1440, 'en'), (390, 'he')])
+def test_parallel_research_displays_both_active_identities(tmp_path, chromium, width, language):
+    _, evaluate = ready(tmp_path, chromium, language, width)
+    evaluate("""
+state.aiEnrichment.pending=true;
+state.aiEnrichment.job={status:'running',progress:{stage:'researching_market_data',completed:1,total:3,
+ current_securities:[{symbol:'FIRST',stock_market:'NYSE',currency:'USD'},
+ {symbol:'SECOND',stock_market:'TASE',currency:'ILS'}]}};
+renderAIEnrichment();openModal('aiEnrichmentModal');
+""")
+    assert evaluate("$('aiEnrichmentCurrent').hidden") is False
+    text = evaluate("$('aiEnrichmentCurrentSecurity').textContent")
+    assert 'FIRST' in text and 'SECOND' in text
+    assert evaluate("$('aiEnrichmentCurrent').querySelector('span').textContent") == (
+        'Currently researching' if language == 'en' else 'נבדקים כעת')
+    assert evaluate("$('aiEnrichmentProgress').value") == 1
+    evaluate("state.aiEnrichment.pending=false;renderAIEnrichment();")
+    assert evaluate("$('aiEnrichmentCurrent').hidden") is True

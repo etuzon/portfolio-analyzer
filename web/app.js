@@ -1389,9 +1389,9 @@ function renderAIEnrichment() {
   const countText = knownProgress ? t(stage === "researching_country_ratings" ? "Country checks: {completed} of {total}" : "Checked {completed} of {total} securities in this phase").replace("{completed}", fmt(completed, 0)).replace("{total}", fmt(total, 0)) : "";
   if ($("aiEnrichmentCounts").textContent !== countText) $("aiEnrichmentCounts").textContent = countText;
   if (countText) progress.setAttribute("aria-valuetext", countText); else progress.removeAttribute("aria-valuetext");
-  const current = ui.pending && phaseProgress?.current_security;
-  $("aiEnrichmentCurrent").hidden = !current;
-  const currentText = current ? [current.symbol, current.stock_market, current.currency].filter(Boolean).join(" · ") : "";
+  const current = ui.pending ? (phaseProgress?.current_securities || (phaseProgress?.current_security ? [phaseProgress.current_security] : [])) : [];
+  $("aiEnrichmentCurrent").hidden = !current.length;
+  const currentText = current.map(item => [item.symbol, item.stock_market, item.currency].filter(Boolean).join(" · ")).join(" / ");
   if ($("aiEnrichmentCurrentSecurity").textContent !== currentText) $("aiEnrichmentCurrentSecurity").textContent = currentText;
   const summary = ui.job?.summary;
   const marketSelected = !ui.job?.data_types || ui.job.data_types.some(type => ["prices", "profile"].includes(type));

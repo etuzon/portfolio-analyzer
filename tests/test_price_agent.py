@@ -472,3 +472,15 @@ def test_raw_budget_still_cannot_allow_ninth_attempt():
         budget.consume("web")
     assert budget.model_calls == budget.rest_calls == budget.web_calls == 8
     assert budget.counts()["max_web_calls"] == 8
+
+
+def test_research_concurrency_defaults_and_configuration():
+    assert price_agent_settings({})['research_concurrency'] == 5
+    for concurrency in (1, 3, 5, 12):
+        assert price_agent_settings({'price_agent': {'research_concurrency': concurrency}})['research_concurrency'] == concurrency
+
+
+@pytest.mark.parametrize('invalid', [0, -1, True, False, 2.5, '5', None])
+def test_research_concurrency_rejects_invalid_configuration(invalid):
+    with pytest.raises(PriceAgentError, match='research_concurrency must be a positive integer'):
+        price_agent_settings({'price_agent': {'research_concurrency': invalid}})

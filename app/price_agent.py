@@ -49,9 +49,15 @@ def _limit(value: Any, default: int = 8) -> int:
 
 
 def price_agent_settings(raw: dict[str, Any]) -> dict[str, Any]:
+    from .research_concurrency import research_concurrency
+
     section = raw.get("price_agent") or {}
     if not isinstance(section, dict):
         raise PriceAgentError("price_agent must be a YAML mapping.")
+    try:
+        concurrency = research_concurrency(section)
+    except ValueError as exc:
+        raise PriceAgentError(str(exc)) from exc
     provider = str(section.get("provider") or "codex").lower()
     if provider not in {"codex", "claude"}:
         raise PriceAgentError("price_agent.provider must be codex or claude.")
@@ -71,6 +77,7 @@ def price_agent_settings(raw: dict[str, Any]) -> dict[str, Any]:
         "provider": provider,
         "model": str(section.get("model") or ("gpt-6.1-sol" if provider == "codex" else "sonnet")),
         "reasoning_effort": effort,
+        "research_concurrency": concurrency,
         "max_model_calls": _limit(section.get("max_model_calls")),
         "max_rest_calls": _limit(section.get("max_rest_calls")),
         "max_web_calls": _limit(section.get("max_web_calls")),

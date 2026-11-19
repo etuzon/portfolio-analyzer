@@ -5371,7 +5371,20 @@ def _visible_enrichment_proposal(proposal, candidates, evidence_by_key):
     return result
 
 
+_enrichment_save_lock = RLock()
+
+
 def _save_enrichment_outcomes(outcomes: list[dict[str, Any]], user_id: str, request_id: str, *, proposal=None, evidence_by_key=None, candidates=None, context_recovery_reason=None, position_scope: str = "open"):
+    # Serialize only application-owned local finalization. Research/network I/O
+    # runs outside this lock. Profile provenance and the saved outcome index
+    # are read-modify-write structures shared by independent child jobs.
+    with _enrichment_save_lock:
+        return _save_enrichment_outcomes_locked(outcomes, user_id, request_id, proposal=proposal,
+            evidence_by_key=evidence_by_key, candidates=candidates,
+            context_recovery_reason=context_recovery_reason, position_scope=position_scope)
+
+
+def _save_enrichment_outcomes_locked(outcomes: list[dict[str, Any]], user_id: str, request_id: str, *, proposal=None, evidence_by_key=None, candidates=None, context_recovery_reason=None, position_scope: str = "open"):
     saved = {item["security_key"]: item for item in _enrichment_outcomes() if isinstance(item, dict) and item.get("security_key")}
     scope_keys = _enrichment_scope_keys(position_scope)
     if evidence_by_key:
@@ -5506,6 +5519,7 @@ def _enrichment_assistant_settings():
     return {**assistant_settings(config.raw),
             "provider": "local_claude" if configured["provider"] == "claude" else "local_codex",
             "model": configured["model"], "reasoning_effort": configured["reasoning_effort"],
+            "research_concurrency": configured["research_concurrency"],
             "max_tool_loops": configured["max_model_calls"], "max_rest_calls": configured["max_rest_calls"],
             "max_web_calls": configured["max_web_calls"], "timeout_seconds": configured["timeout_seconds"]}
 
