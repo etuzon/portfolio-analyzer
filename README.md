@@ -13,6 +13,28 @@ Open `https://localhost:6443`. The container generates a local self-signed certi
 
 Keep `config.yaml` private because it may include external provider credentials or optional import credentials.
 
+## Codex startup backlog
+
+Starting `codex` or `codex --yolo` interactively from this repository or a subdirectory prints
+the **Features to do** and **Bugs to fix** tables from `BACKLOG.md` before the CLI
+opens. No prompt or AI request is needed. The launcher uses `--no-alt-screen` to
+keep the tables above Codex in terminal scrollback and preserves `--yolo`.
+The equivalent `--dangerously-bypass-approvals-and-sandbox` flag and optional
+`--no-alt-screen` are supported too. Other arguments, noninteractive commands,
+and other repositories pass through unchanged.
+
+Install the local launcher (with `~/.local/bin` before `/usr/local/bin` in PATH):
+
+```bash
+chmod +x scripts/codex-start.sh
+ln -s "$PWD/scripts/codex-start.sh" ~/.local/bin/codex
+hash -r
+```
+
+This launcher delegates to the existing `/usr/local/bin/codex`. To undo it, remove
+the `~/.local/bin/codex` symlink and run `hash -r`. Clients that bypass the launcher
+retain the first-assistant-response fallback in `AGENTS.md`.
+
 ## Trade planning and signals
 
 **Securities → Account recommendation** accepts a stock, Buy or Short, and an optional amount/currency. Buy-signal cards offer the same planner directly. Suggestions use current ledger cash, recent dated prices, the existing account-risk model, cash reserves, stock/sector concentration, and retirement-horizon and volatility proxies. US listings require US investment accounts with USD cash. Missing prices, FX, or unverifiable cash produce an explanation instead of an amount. Saved local instruments can be planned before they are held. Planning never records a transaction or changes the portfolio.
