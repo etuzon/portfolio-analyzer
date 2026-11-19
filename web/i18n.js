@@ -2,6 +2,7 @@
   "use strict";
 
   const HEBREW_TEXT = Object.freeze({
+    "Risk-score badge colors follow the displayed whole-number score: 0–10 dark green, 11–30 green, 31–50 yellow, 51–70 red and 71–100 dark red. Estimate labels and missing-data warning symbols remain visible. Unavailable assessments keep their separate incomplete state.": "צבע תג ציון הסיכון נקבע לפי המספר השלם המוצג: 0–10 ירוק כהה, 11–30 ירוק, 31–50 צהוב, 51–70 אדום ו־71–100 אדום כהה. תוויות אומדן וסמלי אזהרה על נתונים חסרים נשארים גלויים. הערכות שאינן זמינות שומרות על מצב נפרד של נתונים חלקיים.",
     "Full backups capture a consistent snapshot of each SQLite database, including committed cache updates made during research. Unfinished writes are excluded, and restoring the archive does not require separate database journal files.": "גיבויים מלאים שומרים תמונת מצב עקבית של כל מסד נתונים מסוג SQLite, כולל עדכוני מטמון שנשמרו בזמן המחקר. כתיבות שטרם הושלמו אינן נכללות, ושחזור הארכיון אינו דורש קובצי יומן נפרדים של מסד הנתונים.",
     "Research could not prepare the security list. No securities were checked; retry the remaining checks.": "לא ניתן היה להכין את רשימת ניירות הערך. לא נבדקו ניירות; נסו שוב את הבדיקות שנותרו.",
     "Preparing research inventory…": "מכין את רשימת ניירות הערך למחקר…",

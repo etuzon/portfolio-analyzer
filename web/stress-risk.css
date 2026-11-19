@@ -13,6 +13,7 @@ html:has(#riskBadgeExplanation) { scrollbar-gutter: stable; }
 }
 .risk-badge.has-missing-risk-data { gap: 6px; max-width: 100%; }
 .risk-badge .risk-data-warning { color: var(--ux-orange, #ffae18); flex: 0 0 auto; font-size: 14px; line-height: 1; }
+.risk-badge:is(.risk-low, .risk-moderate, .risk-elevated, .risk-high, .risk-extreme) .risk-data-warning { color: inherit; }
 .risk-badge .risk-data-status { font-size: 10px; line-height: 1.25; white-space: normal; max-width: 10ch; text-align: start; }
 .risk-badge.has-missing-risk-data b { flex: 0 0 auto; }
 .risk-badge.risk-stress {

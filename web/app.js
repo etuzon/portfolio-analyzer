@@ -3173,7 +3173,7 @@ function accountHorizonYears(account) {
 }
 
 function riskBand(score) {
-  // Frozen legacy index bands. Current v4 assessments display capital-loss %.
+  // Legacy index labels retain their frozen bands.
   if (!Number.isFinite(score)) return {key:"incomplete",label:optionLabel("Incomplete"),symbol:"—"};
   let band;
   if (score <= 20) band = { key: "low", label: "Low", symbol: "●" };
@@ -3235,8 +3235,11 @@ function riskBadge(risk) {
   const value = presentation ? current ? presentation.scoreValue : presentation.fullValue : number === null ? optionLabel("Incomplete") : `${estimate && !current ? "~" : ""}${current ? Math.min(100,Math.round(number+1e-10)) : number}`;
   const status = presentation ? presentation.statusLabel : estimate ? optionLabel("Estimate") : "";
   const missing = presentation?.missing === true || current && ((risk.gaps || []).length > 0 || risk.coverage?.complete === false);
+  const colorScore = Math.round(presentation?.compatibilityScore ?? risk.score ?? risk.estimated_score);
+  const colorBand = current && Number.isFinite(number)
+    ? ` risk-${colorScore <= 10 ? "low" : colorScore <= 30 ? "moderate" : colorScore <= 50 ? "elevated" : colorScore <= 70 ? "high" : "extreme"}` : "";
   const label = `${metricLabel}: ${value}${status ? ` · ${status}` : ""}${missing && status !== optionLabel("Partial data") ? ` · ${optionLabel("Partial data")}` : ""}${current ? "" : ` · ${band.label}`}`;
-  return `<button class="risk-badge risk-${band.key}${missing ? " has-missing-risk-data" : ""}${presentation?.nonpositiveEquity ? " risk-funding-boundary" : ""}" type="button" data-risk-badge="${esc(risk.label || presentation?.metricLabel || "Risk")}" data-risk-explanation="${esc(riskTooltip(risk))}" aria-label="${esc(label)}" aria-describedby="riskBadgeExplanation"><b><bdi dir="ltr">${esc(value)}</bdi></b>${missing ? '<span class="risk-data-warning" aria-hidden="true">⚠</span>' : ""}${status ? `<small class="risk-data-status">${esc(status)}</small>` : ""}</button>`;
+  return `<button class="risk-badge risk-${band.key}${colorBand}${missing ? " has-missing-risk-data" : ""}${presentation?.nonpositiveEquity ? " risk-funding-boundary" : ""}" type="button" data-risk-badge="${esc(risk.label || presentation?.metricLabel || "Risk")}" data-risk-explanation="${esc(riskTooltip(risk))}" aria-label="${esc(label)}" aria-describedby="riskBadgeExplanation"><b><bdi dir="ltr">${esc(value)}</bdi></b>${missing ? '<span class="risk-data-warning" aria-hidden="true">⚠</span>' : ""}${status ? `<small class="risk-data-status">${esc(status)}</small>` : ""}</button>`;
 }
 
 function riskTooltip(risk) {

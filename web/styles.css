@@ -4161,33 +4161,40 @@ textarea.muted-control {
 }
 
 .risk-low {
-  background: rgba(46, 229, 157, 0.12);
-  border-color: rgba(46, 229, 157, 0.42);
-  color: #6ee787;
+  --risk-background: #14532d;
+  --risk-border: #22c55e;
+  --risk-foreground: #dcfce7;
 }
 
 .risk-moderate {
-  background: rgba(33, 167, 255, 0.12);
-  border-color: rgba(33, 167, 255, 0.42);
-  color: #77c8ff;
+  --risk-background: #4ade80;
+  --risk-border: #86efac;
+  --risk-foreground: #052e16;
 }
 
 .risk-elevated {
-  background: rgba(240, 216, 106, 0.13);
-  border-color: rgba(240, 216, 106, 0.45);
-  color: #f0d86a;
+  --risk-background: #facc15;
+  --risk-border: #fde047;
+  --risk-foreground: #422006;
 }
 
 .risk-high {
-  background: rgba(255, 174, 24, 0.13);
-  border-color: rgba(255, 174, 24, 0.45);
-  color: #ffb84a;
+  --risk-background: #ef4444;
+  --risk-border: #fca5a5;
+  --risk-foreground: #1f0505;
 }
 
 .risk-extreme {
-  background: rgba(255, 82, 109, 0.13);
-  border-color: rgba(255, 82, 109, 0.48);
-  color: #ff6f86;
+  --risk-background: #7f1d1d;
+  --risk-border: #dc2626;
+  --risk-foreground: #fee2e2;
+}
+
+.risk-badge:is(.risk-low, .risk-moderate, .risk-elevated, .risk-high, .risk-extreme),
+.risk-badge.risk-stress:is(.risk-low, .risk-moderate, .risk-elevated, .risk-high, .risk-extreme) {
+  background: var(--risk-background);
+  border-color: var(--risk-border);
+  color: var(--risk-foreground);
 }
 
 .tool-panel {
