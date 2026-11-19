@@ -22,6 +22,11 @@ or editing the shortcut is not a request to release anything.
    the actual change. Do not ask again for release permission already conveyed by
    the invocation. Ask only when the intended scope or deployment target cannot
    be determined from the conversation and repository.
+   Follow [the application-version policy](../../../VERSIONING.md): choose the
+   highest-impact patch, minor, or major bump once per application-changing
+   release, update `app/__init__.py`, and include it in the explicit release file
+   list. Instructions, backlog, skill, and test-only changes need no app bump.
+   Keep the same prepared version when retrying that release.
    For every functionality added, changed, or removed in the release, verify that
    the affected in-app Help and both language versions have been updated in the
    same task. Follow the Help-maintenance rule in the `portfolio-analyzer` skill;
@@ -58,5 +63,7 @@ or editing the shortcut is not a request to release anything.
    monitor a release.
    Complete task-specific behavioral QA before release and include any required
    deployment-specific checks that are not covered by the generic source/health
-   checks. Report the commit, script result and material verification limits. Do not push to a remote, merge a
+   checks. Verify `/api/health` and `/api/about` report the version in the release
+   commit. Report the version and bump reason, commit, script result and material
+   verification limits. Do not push to a remote, merge a
    branch, or change another deployment target unless separately requested.

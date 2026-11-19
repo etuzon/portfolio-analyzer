@@ -33,11 +33,12 @@ claiming tradable value. Keep technical context separate from intrinsic value.
 
 ## Jurisdiction and Taxes
 
-Establish residence, citizenship where relevant, account, fund domicile,
-instrument, and date before personalized conclusions. Verify current official
-authority/treaty documents. Separate withholding, final liability, and credits;
-unknown context permits conditional comparisons, not definitive tax treatment.
-Collect only necessary personal facts.
+For investment-tax calculations or recommendations, use
+[investment-tax-analysis](../../investment-tax-analysis/SKILL.md) for the
+jurisdiction/year, basis, recognition, FX, withholding, credit, and after-tax
+comparison contract. Establish residence, citizenship where relevant, account,
+fund domicile, instrument, and date before personalized conclusions. Unknown
+context permits conditional comparisons; collect only necessary personal facts.
 
 ## Governance and Accounting Quality
 

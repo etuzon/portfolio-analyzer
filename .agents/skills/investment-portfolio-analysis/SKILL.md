@@ -11,6 +11,8 @@ Evaluate the whole portfolio, including concentration, overlapping fund exposure
 
 Verify financial guidance, current product facts, costs and tax rules with primary sources. Prefer regulators, official fund documents, exchanges and provider methodology. State the observation period, source, missing coverage and important assumptions alongside analytical conclusions.
 
+For cost basis, realized gains/losses, withholding, tax credits, or after-tax comparisons, apply [investment-tax-analysis](../investment-tax-analysis/SKILL.md). Keep portfolio performance and tax-recognized amounts distinct; jurisdiction-specific rules and missing tax inputs must not be inferred from holdings display values.
+
 For correlation, use percentage returns rather than price levels. Prefer consistently adjusted price histories when available and disclose unadjusted data and native-currency versus investor-currency returns. Never splice raw local prices into an adjusted series. Align identical start/end intervals; do not forward-fill missing prices into zero returns. Deduplicate identical listings across accounts while retaining exchange identity. Require and expose a declared minimum sample; constant series or insufficient overlap produce unavailable results, never zero. Display actual dates and per-pair counts. Pairwise samples can differ and the resulting matrix is not automatically suitable for optimization.
 
 Explain correlation from −1 to +1 as historical linear co-movement. Near zero does not establish independence or safety; correlations can change in a crisis. Asset-return correlations do not reflect the direction or size of a person's long/short exposure. Do not replace a portfolio-risk score with average pairwise correlation.

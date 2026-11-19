@@ -16,6 +16,8 @@ Read and apply the relevant shared role skill completely before executing each p
 - `$principal-qa-engineer`: own the independent behavioral oracle, positive and negative test strategy, execution evidence, defect classification, and release-readiness recommendation.
 - `$principal-financial-analyst`: own financial source quality, economic assumptions, formulas, scenarios, and interpretation when the task changes financial meaning or behavior. Read its relevant domain modules on demand.
 
+For chart behavior and analytical presentation, use [data-visualization-engineer](../data-visualization-engineer/SKILL.md) within UX and development. It covers encoding accuracy, chart accessibility, and real-data rendering performance without adding a mandatory separate agent or replacing financial ownership or independent QA.
+
 Do not let implementation convenience rewrite UX acceptance criteria or expected test results.
 
 ## Automatic Routing and Review Independence

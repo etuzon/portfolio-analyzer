@@ -7,6 +7,13 @@ description: Lead software features and functional bug fixes with user-centered 
 
 Own the technical outcome end to end. Establish the product intent and constraints, choose the smallest durable design, implement it safely, prove it with evidence, and expose unresolved tradeoffs clearly.
 
+## Repository Session Start
+
+- For a new conversation in portfolio-analyzer, read [BACKLOG.md](../../../BACKLOG.md) before the first task-specific update. Begin the first root-agent response with two compact Markdown tables: Features to do and Bugs to fix, each with adjacent `ID` and `Short summary` columns. Read the actual pending entries; do not substitute remembered or invented items.
+- Use stable feature IDs such as `F-001` and bug IDs such as `B-001`; follow the backlog's category counters and never reuse or renumber IDs. Use the user's conversation language for displayed headings and summaries. Include a clear empty-state row for an empty category; if the file cannot be read, report that instead of assuming it is empty.
+- After showing the tables, continue the user's request. Listing deferred work does not start its implementation. Show the startup tables once per conversation, not on every turn, context compaction, continuation, or subagent handoff; repeat them when the user asks to see the list. This instruction controls the first assistant response after a user message, not a separate Codex app-launch event.
+- When the user defers work, maintain its table row and detailed requirements in the backlog. Remove both only after completion and verification, including deployed checks when release is in scope. Keep partial, blocked, and unverified work listed.
+
 ## Operating Rules
 
 - Read repository instructions and inspect existing architecture, tests, runtime configuration, and current worktree before designing changes.
@@ -31,6 +38,7 @@ Own the technical outcome end to end. Establish the product intent and constrain
 ## Automatic Role Routing and Bug-Fix Entry
 
 - Automatically apply `$principal-ux-engineer` to UI features and fixes, including ordinary navigation, form, layout, wording, localization, accessibility, and status changes. Do this before implementation; the Dev UX decision gate remains required but does not replace dedicated UX ownership for substantial interaction changes.
+- For chart selection, encodings, axes, aggregation, chart accessibility, or rendering performance, also apply [data-visualization-engineer](../data-visualization-engineer/SKILL.md). Reuse existing renderers and verify chart meaning against raw values; cosmetic-only styling needs only the focused UX review.
 - Use `$principal-engineering-triad` for cross-role delivery and independent QA handoffs. Follow its fresh-reviewer and delegation rules when available and permitted. If already assigned a development phase, return to the coordinator rather than launching a second coordination tree.
 - For financial calculations, quote/FX normalization, scores, forecasts, risk, or investment conclusions, obtain the `$principal-financial-analyst` contract before implementation. It defines source cutoffs, units, formulas, assumptions, missing inputs, and raw examples. Ask that owner directly for missing financial details; do not invent financial rules to simplify code. Repository-specific maintained models govern implemented behavior. Financial review does not replace independent QA.
 - Enter a bug fix at reproduction and diagnosis, not at a full new-feature lifecycle. Capture expected and actual behavior, then trace source records, calculations, derived history/caches, API responses, and presentation. Distinguish observed facts from possible causes.
@@ -136,6 +144,9 @@ Exit with the feature integrated, relevant checks passing, and operational signa
 ### 7. Production Deployment
 
 - Proceed only with explicit in-scope authorization. Use the project's existing release process as the rollout plan when it is adequate; propose extra rollout controls only when the change's risk requires them.
+- Include application versioning in release preparation. Follow the repository's policy; for portfolio-analyzer, use [VERSIONING.md](../../../VERSIONING.md) and the single application version in `app/__init__.py`.
+- Bump once for the complete application-changing release, using its highest-impact change: patch for compatible fixes, visual adjustments, translations or performance improvements; minor for compatible new features; major for breaking API, configuration or data contracts. Instruction, backlog, skill and test-only changes need no application bump when shipped behavior is unchanged. Keep financial-model and schema versions separate.
+- Include the version source file in the explicit release commit. Verify the deployed version against that commit (`/api/health` and `/api/about` in portfolio-analyzer), and report the version and bump reason alongside the commit and deployment result. Reuse the prepared version when retrying the same release; do not increment for each attempt or relabel earlier releases.
 - Verify backup, rollback, migration ordering, feature flags, secrets handling, and incident ownership.
 - Prefer staged rollout with post-deploy smoke checks when the environment supports it.
 - Verify the released revision and the affected user scenario, including persisted results after reload. A healthy service endpoint establishes availability; functional verification is a separate result.
@@ -146,6 +157,18 @@ Exit with the feature integrated, relevant checks passing, and operational signa
 - Correlate telemetry without exposing secrets or personal data.
 - Route negative feedback to reproducible cases and the prototype loop.
 - Complete a local task when its local acceptance criteria pass. For a requested release, complete after the deployed revision and affected live checks pass. Ongoing monitoring or user-outcome evaluation is required only when included in the task; do not wait indefinitely for later usage feedback.
+
+## Frontend Implementation
+
+Apply the relevant checks to frontend features and fixes, with evidence proportional to the change. Inspect the current scripts, styles, state helpers, asset loading order, and supported environments first. In portfolio-analyzer, preserve the static HTML/CSS/JavaScript stack unless an authorized requirement justifies a tooling change.
+
+- Keep rendering helpers and event/state ownership clear. Reuse existing escaping helpers for dynamic DOM content and scope styles to the affected components. Repeated renders and navigation must not accumulate listeners, observers, timers, or duplicate requests; clean up resources and preserve the user's focus, selection, and entered values.
+- Optimize the measured critical path: defer or lazily load optional code without breaking script dependencies, avoid duplicate libraries, and size/compress responsive images and font assets appropriately. Reserve layout space and use font fallbacks that remain readable. Code splitting is useful only where the actual loading structure benefits; it does not require introducing a bundler.
+- Separate static-asset caching from private account/API data and verify version freshness after updates. Add offline/service-worker behavior only when required by the task; define its stale-data, authentication, update, and recovery contract before implementation.
+- Set measurable budgets for the important journey: first usable view, interaction response, layout stability, rendering cost, and payload or memory where material. Record the device/browser, dataset, network/cache conditions, baseline, and measured result. Use performance audits as diagnostics; a score alone does not prove the journey works.
+- For large lists, profile representative and expected peak volumes before choosing pagination, incremental rendering, or virtualization. Preserve stable record IDs, sorting/filtering semantics, selection scope, accessible structure, keyboard navigation, and access to every record. Supply a usable alternative if virtualization prevents reliable assistive-technology access.
+- Use feature detection and progressive enhancement for the supported browsers and input methods. Verify relevant layout, dates/numbers, navigation, and interactions in those environments; add targeted fallbacks for unsupported APIs rather than promising universal compatibility. Report unavailable browser checks explicitly.
+- Exercise asset/API failure, partial or stale responses, retry, and interrupted navigation where affected. Preserve input and recovery actions, reject superseded results, and keep concise errors visible. Test with the real application stylesheet, localized content, and authorized data scope; a fixture or screenshot alone does not establish a working browser flow.
 
 ## User Experience Decision Gate
 
@@ -165,6 +188,17 @@ Apply this gate before proposing an approach, approving a design, or handing off
 - Novice and expert efficiency: Can a new user succeed safely while a frequent user avoids unnecessary repetition?
 
 If the technically simplest option creates meaningful user friction, propose a friendlier alternative and make the engineering cost explicit. Apply the UX workflow automatically for UI work; involve the user/product owner only for material product choices that existing requirements and authorization do not settle.
+
+## Architecture Decisions
+
+Apply this guidance when changing module boundaries, dependencies, consistency, or deployment structure. Scale analysis and artifacts to the decision; routine fixes can follow the established design.
+
+- Define business responsibilities, data ownership, and invariants before choosing tools. Identify the transaction or consistency boundary that protects each important invariant, and use explicit contracts or events between modules.
+- Protect dependency direction: keep core business rules independent of HTTP, ORM, framework, and vendor details through appropriate interfaces or adapters. Application services coordinate use cases, authorization, and transactions; adapters translate external models. Improve the affected scope incrementally within the existing architecture.
+- Select patterns for demonstrated needs: layered/CRUD for simple flows, richer domain modeling for complex business rules, ports/adapters for isolation, and modular monoliths for distinct responsibilities within one deployment. Separate services, asynchronous events, or CQRS need benefits that justify their operational and consistency costs.
+- For significant choices, compare viable alternatives, including retaining the current design where appropriate. Name the gains and sacrifices against workload, consistency, failure recovery, team capacity, delivery and operating cost, and reversibility. Recommend the simplest adequate option; a routine fix does not need an artificial second design.
+- For consequential, lasting choices, use a lightweight architecture decision record (ADR): status, context and constraints, alternatives, decision and rationale, consequences, and conditions for revisiting it. Reuse the repository's existing decision location and the triad's shared record; keep accepted decisions distinguishable from proposals and superseded choices.
+- Use a C4 context, container, or component diagram when it clarifies boundaries, dependencies, or data flow. Mermaid is sufficient; choose the smallest useful view and keep it consistent with the implemented design.
 
 ## Engineering Review Lens
 

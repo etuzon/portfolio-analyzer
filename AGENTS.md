@@ -59,6 +59,22 @@ The Docker app is served at `https://localhost:6443`.
 - Treat `data/` as runtime state; avoid editing cached or generated data unless the task explicitly requires it.
 - Local portfolio edits must remain local and must not write back to any external import source.
 
+## Application Versioning
+
+- Follow [VERSIONING.md](VERSIONING.md) when preparing a release. The application version is `__version__` in `app/__init__.py`.
+- Bump once per application-changing release: patch for compatible fixes or visual changes, minor for compatible features, major for breaking contracts. Use the highest-impact change in the release; instructions, backlog, skill, or test-only changes need no application bump.
+- Include the version file in the explicit release file list and verify the deployed `/api/health` and `/api/about` versions against the release commit. Report the version with the commit and deployment result; do not bump again just to retry the same release.
+
+## Deferred Features and Bugs
+
+- On the first assistant response in a new conversation for this repository, read `BACKLOG.md` and show two compact Markdown tables: Features to do and Bugs to fix. Each table has adjacent `ID` and `Short summary` columns, populated from the current backlog. Include an empty-state row when a category has no items; do not invent entries or IDs. Use the user's conversation language for headings and summaries.
+- Show these tables before the task-specific progress update, then continue the user's request. Show them once per conversation, not on every message, continuation, context compaction, or subagent handoff; show them again if the user requests the list. This applies to the first assistant response after a user message, rather than creating a separate app-launch message.
+- Read [BACKLOG.md](BACKLOG.md) when starting a project task and check for relevant deferred requests.
+- Keep IDs stable (`F-001` for features, `B-001` for bugs) and follow the next-ID counters and summary-table format in `BACKLOG.md`.
+- When the user defers a feature or bug fix, record it in the appropriate section of `BACKLOG.md`, following its entry guidelines. Do not invent or silently add speculative work.
+- Keep this file as the shared source of truth across sessions. Preserve unrelated entries; listing an item does not start its implementation.
+- Remove an entry only after the requested work is completed and verified, including deployed verification when release is in scope. Keep partial, blocked, and unverified items with their remaining work recorded.
+
 ## Frontend Notes
 
 - Keep the first screen as the actual dashboard, not a landing page.

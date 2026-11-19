@@ -1,0 +1,4 @@
+interface:
+  display_name: "Investment Tax Analysis"
+  short_description: "Analyze investment taxes with verified local rules"
+  default_prompt: "Use $investment-tax-analysis to assess cost basis, gains, withholding, credits, and after-tax scenarios for the relevant jurisdiction, tax year, and account type."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Data Visualization Engineer"
+  short_description: "Build accurate, accessible, performant app charts"
+  default_prompt: "Use $data-visualization-engineer to design or review application charts for accurate encoding, accessibility, and real-data performance."

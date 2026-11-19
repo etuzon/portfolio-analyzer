@@ -43,6 +43,7 @@ for the analyst, not a requirement to launch one agent per topic.
 |---|---|
 | Financial score meaning, anchors, plausibility and claim validation | [financial-score-validation](../financial-score-validation/SKILL.md) |
 | Portfolio allocation, performance, diversification, suitability | [investment-portfolio-analysis](../investment-portfolio-analysis/SKILL.md) |
+| Investment cost basis, realized gains/losses, withholding, credits and after-tax scenarios | [investment-tax-analysis](../investment-tax-analysis/SKILL.md) |
 | Reports, peer comparisons, industry and supply-chain evidence | [company-report-industry-outlook](../company-report-industry-outlook/SKILL.md) |
 | Economic cycles, inflation, policy, rates, currencies | [macro-economic-analysis](../macro-economic-analysis/SKILL.md) |
 | Pricing power, competition, demand, unit economics | [business-economics-and-competition](../business-economics-and-competition/SKILL.md) |

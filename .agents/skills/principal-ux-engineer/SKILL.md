@@ -31,6 +31,8 @@ Engineer the interaction as a working system. Reduce cognitive load, preserve th
 
 UI features and fixes enter this skill automatically. Establish the user's intended action and the acceptance criteria before implementation, then review the integrated result after development. A small layout or wording fix can use a brief UX pass in the existing screen; create a separate prototype only when it resolves meaningful interaction uncertainty.
 
+For chart selection, encodings, axes, color scales, chart accessibility, or rendering performance, also apply [data-visualization-engineer](../data-visualization-engineer/SKILL.md). It supplies chart-specific accuracy and performance checks within this UX workflow; cosmetic-only dashboard styling can use the existing visual guidance.
+
 For substantial interaction work, use the UX ownership and delegation rules in `$principal-engineering-triad` when available and permitted. An assigned UX reviewer performs the requested phase and returns findings to the coordinator. Routine corrections against established requirements do not require a product approval question.
 
 If a UI symptom is caused by stored data, API behavior, invalidation, or concurrency, send a minimal reproduction and expected contract to development. Retain ownership of the user-visible result and re-check it after the system fix; changing a chart or hiding a bad result does not establish data correctness.
@@ -41,6 +43,17 @@ Ask the assigned financial owner directly and share consequential answers with
 the coordinator. Preserve unavailable data and distinguish scores, forecasts,
 scenarios, and measured returns in copy. Cosmetic changes alone need no financial
 agent. UX must not invent a formula, broker permission, or confidence percentage.
+
+## Design Contract and Research Evidence
+
+For a meaningful new interaction or redesign, keep a concise contract in the existing task or design record. A routine correction can update the affected acceptance criteria without a separate research project.
+
+- State the user and job, first information to notice, primary action, domain objects and data scope, hierarchy and density, responsive priorities, accessibility/localization needs, existing constraints, and observable completion criteria. Explain material design choices through the user's task; reference products are evidence of a pattern, not proof that it fits.
+- Identify the decision and highest-risk assumption before choosing a research method. Use neutral, realistic task prompts with observable outcomes; select interviews, usability sessions, supplied feedback, or analytics according to the question. Record participant criteria and relevant novice/expert, device, language, and access needs without inventing demographic profiles.
+- When real participant research is in scope, define recruitment and sample rationale, task protocol, consent/recording arrangements, minimal data collection, storage/retention, and analysis approach. Use authorized participants and channels; a study plan alone does not authorize outreach or recording. State selection bias and limits on generalization.
+- For a cognitive walkthrough, specify the persona's supported goals, prior knowledge, device, locale, and starting state. At each step ask whether they can notice the action, understand it, act, recognize the outcome, and recover. Mark inferred reactions as simulated hypotheses; invented monologues, quotes, and emotions are not observed user evidence.
+- Tie each finding to its task, evidence, impact, uncertainty, proposed change, and verification condition. Distinguish observed behavior, supplied research, analytics, stakeholder assumptions, and heuristic/simulated inspection. Preserve conflicting findings and say what further evidence would resolve a consequential disagreement.
+- Qualitative sessions and simulations do not establish conversion lift, population prevalence, or statistical significance. For a quantitative experiment, define the metric, comparison/assignment method, sample rationale, and analysis before interpreting results. Keep proposed studies distinct from executed research and carry the contract and evidence into the existing development and QA handoffs.
 
 ## Required UX Engineering Workflow
 
