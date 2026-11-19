@@ -20,7 +20,7 @@
   const modeLabels = {api_then_ai:"Public API, then AI",api:"Public API only",ai:"AI only"};
   const statusLabels = {pending:"Waiting for research",queued:"Queued",running:"Running",completed:"Completed",failed:"Failed",updated:"Updated",
     partial:"Partially updated",unavailable:"Unavailable",not_attempted:"Not attempted"};
-  const stageLabels = {queued:"Queued",api:"Checking public APIs…",ai:"Researching missing risk inputs with AI…",researching_market_data:"Researching missing market data",researching_ratings:"Researching public-source company ratings",researching_risk_inputs:"Researching risk inputs",researching_country_ratings:"Researching public-source country ratings",completed:"Research finished",failed:"Failed"};
+  const stageLabels = {capturing_inventory:"Preparing research inventory…",resuming:"Preparing research inventory…",queued:"Queued",api:"Checking public APIs…",ai:"Researching missing risk inputs with AI…",researching_market_data:"Researching missing market data",researching_ratings:"Researching public-source company ratings",researching_risk_inputs:"Researching risk inputs",researching_country_ratings:"Researching public-source country ratings",completed:"Research finished",failed:"Failed"};
   const fieldLabels = {issuer_identity:"Issuer identity",issuer_id:"Issuer identity",issuer_name:"Issuer name",issuer_domicile:"Issuer domicile",
     country:"Country exposure",country_code:"Issuer country",country_basis:"Country exposure basis",country_exposure:"Country exposure",country_exposures:"Country exposure",filing_sources:"Regulatory filing sources",
     country_rating:"Sovereign rating",credit_rating:"Security credit rating",sovereign_rating:"Sovereign rating",
@@ -125,18 +125,18 @@
     el("retryRiskRetrieval").textContent = text(job?.status === "failed" && isParentJob(s.job) ? "Retry remaining checks" : "Retry missing inputs");
     el("retryRiskRetrieval").disabled = !writable() || busy || running;
     el("riskRetrievalFailure").hidden = job?.status !== "failed";
-    el("riskRetrievalFailure").textContent = job?.status === "failed" ? outcomeMessage(job.failure?.code || job.code) : "";
+    el("riskRetrievalFailure").textContent = job?.status === "failed" ? job.failure?.stage === "capturing_inventory" ? text("Research could not prepare the security list. No securities were checked; retry the remaining checks.") : outcomeMessage(job.failure?.code || job.code) : "";
     el("riskRetrievalDiagnostics").hidden = !job?.request_id || !isParentJob(s.job);
     el("riskRetrievalRequestId").textContent = job?.request_id ? text("Request ID: {request_id}",{request_id:job.request_id}) : "";
     el("riskRetrievalDiagnosticsLink").href = job?.request_id ? `/api/securities/enrichment/ai/${encodeURIComponent(job.request_id)}/diagnostics` : "#";
     el("riskRetrievalCount").textContent = s.loaded ? text("{count} securities have risk inputs to review", {count:stressRiskNumber(s.items.length,0)}) : "";
     const coverage = job?.coverage;
-    el("riskRetrievalCoverage").textContent = coverage ? isParentJob(s.job) ? text("Eligible securities in this request: {count}",{count:stressRiskNumber(coverage.total_candidates || 0,0)}) : text("This run includes {selected} of {total} candidates; {remaining} remain outside this batch.", {
+    el("riskRetrievalCoverage").textContent = coverage && (coverage.total_candidates > 0 || job?.status === "completed") ? isParentJob(s.job) ? text("Eligible securities in this request: {count}",{count:stressRiskNumber(coverage.total_candidates || 0,0)}) : text("This run includes {selected} of {total} candidates; {remaining} remain outside this batch.", {
       selected:stressRiskNumber(coverage.selected || 0,0),total:stressRiskNumber(coverage.total_candidates || 0,0),remaining:stressRiskNumber(coverage.remaining || 0,0)}) : "";
     const progress = job?.progress || {};
     const stage = job?.status === "completed" && window.AIResearchTargets ? AIResearchTargets.completionText(job) : text(stageLabels[progress.stage] || statusLabels[job?.status] || "Running");
     const jobStatus = [stage,
-      text(progress.stage === "researching_country_ratings" ? "{completed} of {total} countries" : "{completed} of {total} securities", {completed:stressRiskNumber(progress.completed || 0,0),total:stressRiskNumber(progress.total || 0,0)}),
+      progress.total > 0 ? text(progress.stage === "researching_country_ratings" ? "{completed} of {total} countries" : "{completed} of {total} securities", {completed:stressRiskNumber(progress.completed || 0,0),total:stressRiskNumber(progress.total || 0,0)}) : "",
       progress.current_security?.symbol || ""].filter(Boolean).join(" · ");
     el("riskRetrievalStatus").textContent = s.loading ? text("Loading risk research…") : s.starting ? text("Starting risk research…")
       : job ? s.message ? `${text(s.message)} ${text("Last known progress: {progress}",{progress:jobStatus})}` : jobStatus

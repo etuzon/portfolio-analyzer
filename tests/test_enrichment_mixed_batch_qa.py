@@ -74,6 +74,10 @@ def test_mixed_batch_industry_only_finalization_preserves_known_name_and_bond_pr
     writes, preferences = [], {}
 
     class Store:
+        def holdings(self, **kwargs):
+            return [{"holding": deepcopy(item)} for item in candidates
+                    if kwargs.get("include_closed") or item["quantity"] != 0]
+
         def manual_security(self, symbol, market):
             return deepcopy(next(item for item in candidates if item["symbol"] == symbol))
 
@@ -99,6 +103,7 @@ def test_mixed_batch_industry_only_finalization_preserves_known_name_and_bond_pr
                 "total_count": 3 if not stock["industry"] else 2, "research_available": True}
 
     monkeypatch.setattr(main, "local_store", Store())
+    monkeypatch.setattr(main, "to_dict", lambda value: value)
     monkeypatch.setattr(main, "_enrichment_candidates", inventory)
     document = {"url": URL, "text": TASE, "retrieved_at": "2026-11-07T12:00:00+00:00"}
 

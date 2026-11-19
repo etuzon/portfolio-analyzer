@@ -14,7 +14,7 @@ import sqlite3
 import stat
 import tempfile
 import zipfile
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from copy import deepcopy
 from datetime import date, datetime, time as clock_time, timedelta, timezone
 from functools import lru_cache
@@ -1765,6 +1765,18 @@ To restore the complete Docker installation:
 """
 
 
+def _sqlite_backup_bytes(path: Path) -> bytes:
+    """Capture committed pages, including WAL, without changing the live database."""
+    with tempfile.TemporaryDirectory(prefix="portfolio-cache-snapshot-") as directory:
+        snapshot = Path(directory) / "snapshot.sqlite3"
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as source:
+            with closing(sqlite3.connect(snapshot)) as target:
+                source.backup(target)
+                # The archive contains one portable file, with no WAL sidecar.
+                target.execute("pragma journal_mode=delete")
+        return snapshot.read_bytes()
+
+
 def _full_backup_payloads() -> dict[str, tuple[bytes, bool]]:
     exported = local_store.export_data()
     payloads: dict[str, tuple[bytes, bool]] = {
@@ -1792,7 +1804,8 @@ def _full_backup_payloads() -> dict[str, tuple[bytes, bool]]:
                 continue
             if relative.name.endswith(("-shm", "-wal")):
                 continue
-            payloads[f"data/{relative.as_posix()}"] = (source.read_bytes(), True)
+            payload = _sqlite_backup_bytes(source) if source.suffix.lower() in {".sqlite3", ".sqlite", ".db"} else source.read_bytes()
+            payloads[f"data/{relative.as_posix()}"] = (payload, True)
 
     cert_root = config_path.parent / "certs"
     if cert_root.exists():
@@ -4903,7 +4916,12 @@ def _enrichment_holdings(position_scope: str = "open"):
 
 
 def _enrichment_scope_keys(position_scope: str = "open") -> set[str]:
-    return {enrichment_security_key(holding) for analysis in _enrichment_holdings(position_scope)
+    if position_scope not in {"open", "all"}:
+        raise ValueError("invalid_position_scope")
+    # Eligibility depends on recorded listings/quantities, not derived market
+    # analytics. A busy optional market cache must not block scope discovery.
+    positions = local_store.holdings(include_closed=True) if position_scope == "all" else local_store.holdings()
+    return {enrichment_security_key(holding) for analysis in positions
             if (holding := to_dict(analysis).get("holding") or {})
             and (quantity := _number_or_none(holding.get("quantity"))) is not None
             and (quantity != 0 or position_scope == "all")
@@ -5538,8 +5556,8 @@ credit_rating_jobs = credit_rating_service.manager(app, lambda: _enrichment_assi
 
 def _portfolio_ai_inventory(position_scope="open", *, ratings_only=False, data_types=None, refresh_policy="missing"):
     """Separate market-data eligibility from public company-rating coverage."""
-    scope_keys = _enrichment_scope_keys(position_scope)
     selected = set(data_types or (["company_ratings"] if ratings_only else ["prices", "profile", "company_ratings"]))
+    scope_keys = _enrichment_scope_keys(position_scope) if "company_ratings" in selected else set()
     credit = [item for item in _credit_rating_inventory() if item["security_key"] in scope_keys] if "company_ratings" in selected else []
     if data_types is not None and refresh_policy != "refresh_existing":
         def needs_credit(candidate):

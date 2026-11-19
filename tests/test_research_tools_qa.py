@@ -743,6 +743,8 @@ def test_final_profile_outcome_uses_current_metadata_after_successful_writes(mon
         return {"items": [{**CANDIDATE, **state, "needs_name": needs_name, "needs_industry": needs_industry,
                             "missing_fields": (["profile"] if needs_name or needs_industry else []) + ["fundamentals"]}]}
     class Store:
+        def holdings(self, **kwargs):
+            return [{"holding": {**deepcopy(CANDIDATE), **state, "quantity": 1}}]
         def manual_security(self, *_args):
             return {**CANDIDATE, **state, "location": "US"}
         def save_manual_security(self, payload):
@@ -780,6 +782,8 @@ def exercise_profile_finalizer(env, monkeypatch, document):
         items = [item] if needs_name or needs_industry else []
         return {"items": items, "total_count": len(items), "research_available": True}
     class Store:
+        def holdings(self, **kwargs):
+            return [{"holding": deepcopy(held)}] if kwargs.get("include_closed") or held["quantity"] != 0 else []
         def manual_security(self, *_args):
             return deepcopy(held)
         def save_manual_security(self, payload):

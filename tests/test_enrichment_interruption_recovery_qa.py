@@ -36,6 +36,10 @@ def test_interruption_retention_through_authenticated_finalizer_and_real_main_wr
     preferences, writes, writer_calls = {}, [], []
 
     class Store:
+        def holdings(self, **kwargs):
+            return [{"holding": deepcopy(item)} for item in candidates
+                    if kwargs.get("include_closed") or item["quantity"] != 0]
+
         def manual_security(self, symbol, market):
             return deepcopy(next(item for item in candidates if item["symbol"] == symbol))
 

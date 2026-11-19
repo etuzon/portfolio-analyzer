@@ -474,6 +474,10 @@ class PortfolioAIResearch:
             for branch, manager in branches:
                 if branch in {"risk", "country"}:
                     with self._lock:
+                        if branch not in parent["_captured_branches"]:
+                            parent["_active_branch"] = branch
+                            parent["progress"].update(stage="capturing_inventory", completed=0, total=0,
+                                current_security=None, current_securities=[])
                         self._capture_auxiliary(parent, branch)
                 with self._lock:
                     remaining = sum((len(self._pending(parent, name)) + self._batch_size(name) - 1) // self._batch_size(name)

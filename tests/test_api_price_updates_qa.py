@@ -102,6 +102,8 @@ def staged_bond(bond_application,monkeypatch):
     class Store:
         manual_security=original.manual_security
         price_history=original.price_history
+        def holdings(self, **kwargs):
+            return [{'holding': deepcopy(state.security)}] if kwargs.get('include_closed') or state.security['quantity'] != 0 else []
         def save_prices(self,rows,*,only_missing=False):
             state.only_missing=only_missing
             if only_missing:

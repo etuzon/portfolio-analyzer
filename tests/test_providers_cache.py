@@ -701,3 +701,50 @@ def test_sec_company_facts_as_of_uses_filing_available_at_historical_cutoff(monk
     reports = provider.fundamentals_as_of("EXM", date(2024, 8, 5))["income_statement"]["annualReports"]
 
     assert reports == [{"fiscalDateEnding": "2023-07-29", "periodStart": "2022-07-31", "totalRevenue": 100.0, "filingDate": "2023-09-01", "netIncome": 10.0}]
+
+
+def test_cache_readers_retain_saved_evidence_during_exclusive_writer(tmp_path):
+    import sqlite3
+    path = tmp_path / 'concurrent.sqlite3'
+    cache = SqliteCache(path, ttl_hours=24)
+    original = {'name': 'Synthetic Legal Issuer', 'country': 'US', 'observed_at': '2026-11-01'}
+    cache.set_security_snapshot('provider', 'QA', 'profile', original)
+    with sqlite3.connect(path) as writer:
+        writer.execute('begin exclusive')
+        writer.execute("update security_snapshot set value = '{}' where symbol = 'QA'")
+        try:
+            assert cache.get_security_snapshot('provider', 'QA', 'profile') == original
+            reopened = SqliteCache(path, ttl_hours=24)
+            assert reopened.get_security_snapshot('provider', 'QA', 'profile') == original
+        finally:
+            writer.rollback()
+    assert cache.get_security_snapshot('provider', 'QA', 'profile') == original
+
+
+def test_cache_migrates_delete_journal_without_losing_saved_evidence(tmp_path):
+    import sqlite3
+    path = tmp_path / 'legacy-cache.sqlite3'
+    with sqlite3.connect(path) as legacy:
+        legacy.execute('pragma journal_mode=delete')
+        legacy.execute('create table cache (key text primary key, created_at real not null, value text not null)')
+        legacy.execute('insert into cache values (?, ?, ?)', ('quote:QA', time.time(), '{"value": 12}'))
+    cache = SqliteCache(path, ttl_hours=24)
+    assert cache.get('quote:QA') == {'value': 12}
+    with sqlite3.connect(path) as observed:
+        assert observed.execute('pragma journal_mode').fetchone()[0] == 'wal'
+
+
+def test_parallel_cache_publishers_preserve_all_security_snapshots(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    path = tmp_path / 'parallel-cache.sqlite3'
+    cache = SqliteCache(path, ttl_hours=24)
+    ready = Barrier(5)
+    def publish(number):
+        worker = SqliteCache(path, ttl_hours=24)
+        ready.wait(timeout=5)
+        worker.set_security_snapshot('provider', f'QA{number}', 'profile', {'name': f'Issuer {number}'})
+    with ThreadPoolExecutor(max_workers=5) as workers:
+        list(workers.map(publish, range(5)))
+    assert [cache.get_security_snapshot('provider', f'QA{n}', 'profile') for n in range(5)] == [
+        {'name': f'Issuer {n}'} for n in range(5)]

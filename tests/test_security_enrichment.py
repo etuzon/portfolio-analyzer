@@ -360,6 +360,8 @@ def test_application_finalizer_validates_source_saves_and_logs_real_outcome(envi
                 "id": "synthetic-security-id", "created_at": "2020-01-01", "updated_at": "2020-01-02"}
     saved_prices, manual_prices, notes, logs = [], [], {}, []
     class FakeStore:
+        def holdings(self, **kwargs):
+            return [{"holding": deepcopy(metadata)}]
         def manual_security(self, symbol, market):
             return deepcopy(metadata)
         def save_prices(self, rows, *, only_missing=False):
@@ -430,6 +432,8 @@ def metadata_application(monkeypatch, *, industry="", name="A", quantity=3):
                                     "asset_class": "EQUITY", "quantity": quantity, "name": name, "industry": industry},
                             profiles=[], prices=[], preferences={}, overrides={}, cached={})
     class FakeStore:
+        def holdings(self, **kwargs):
+            return [{"holding": deepcopy(state.holding)}]
         def manual_security(self, symbol, market):
             return deepcopy(state.holding)
         def list_security_industry_overrides(self):

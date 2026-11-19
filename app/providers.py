@@ -561,12 +561,16 @@ class SqliteCache:
         self._init_db()
 
     def _connect(self):
-        conn = sqlite3.connect(self.path)
-        conn.execute("pragma journal_mode=delete")
+        conn = sqlite3.connect(self.path, timeout=30)
+        conn.execute("pragma busy_timeout=30000")
         return conn
 
     def _init_db(self) -> None:
         with self._connect() as conn:
+            # Saved market evidence must remain readable while independent
+            # research workers publish updates. Never switch journal modes
+            # on the read path: DELETE mode lets a writer block all readers.
+            conn.execute("pragma journal_mode=wal")
             conn.execute(
                 """
                 create table if not exists cache (

@@ -240,3 +240,21 @@ def test_full_scope_copy_and_affected_help_match_observation_behavior(tmp_path, 
             assert phrase in help_text
         for phrase in ["Research", "Check progress", "automatically"]:
             assert phrase not in help_text
+
+
+@pytest.mark.parametrize('language', ['en', 'he'])
+def test_preparation_and_failed_inventory_do_not_report_zero_of_zero(tmp_path, chromium, language):
+    _, evaluate = ready(tmp_path, chromium, language)
+    evaluate("qa.job.progress={stage:'capturing_inventory',completed:0,total:0};qa.job.risk_inputs.progress={completed:0,total:0};qa.job.risk_inputs.outcomes=[];qa.job.risk_inputs.coverage={total_candidates:0};$('checkRiskRetrieval').click()")
+    browser_wait(evaluate, "!$('checkRiskRetrieval').disabled")
+    status = evaluate("$('riskRetrievalStatus').textContent")
+    assert ('Preparing research inventory' if language == 'en' else 'מכין את רשימת') in status
+    assert '0' not in status
+    assert evaluate("$('riskRetrievalCoverage').textContent") == ''
+    evaluate("qa.job.status='failed';qa.job.code='check_incomplete';qa.job.failure={stage:'capturing_inventory',code:'check_incomplete',error_type:'OperationalError'};qa.job.progress.stage='failed';$('checkRiskRetrieval').click()")
+    browser_wait(evaluate, "!$('checkRiskRetrieval').disabled")
+    assert '0' not in evaluate("$('riskRetrievalStatus').textContent")
+    failure = evaluate("$('riskRetrievalFailure').textContent")
+    assert ('No securities were checked' if language == 'en' else 'לא נבדקו ניירות') in failure
+    assert evaluate("$('retryRiskRetrieval').disabled") is False
+    assert evaluate('qa.writes') == []
